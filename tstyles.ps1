@@ -98,8 +98,36 @@ function Test-UpdateAvailable {
 }
 
 function Invoke-TerminalStylesUpdate {
+    [CmdletBinding()]
+    param([switch]$Force)
+
     Write-Host ""
     Write-Host "Updating TerminalStyles from GitHub..." -ForegroundColor Cyan
+
+    # Cheap check first: if we already have the current main SHA, skip the
+    # ~10MB ZIP download entirely. -Force overrides (for recovery from a
+    # botched install).
+    $shaFile = Join-Path $script:TStylesRoot '.installed-sha'
+    if (-not $Force -and (Test-Path -LiteralPath $shaFile)) {
+        try {
+            $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
+            $resp = Invoke-RestMethod `
+                -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
+                -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
+                -TimeoutSec 5 -ErrorAction Stop
+            if ($resp.sha -and $resp.sha -eq $installed) {
+                Write-Host "Already up to date ($($installed.Substring(0,7))). Use -Force to reinstall anyway." -ForegroundColor Green
+                return
+            }
+        } catch {
+            # If the check fails (offline, rate-limited), fall through to the
+            # full download path. Better to update than to fail silently.
+        }
+    }
+
+    # Suppress the IWR progress bar -- dominant cost on WinPS 5.1.
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
     try {
         $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
         Invoke-Expression $installerScript
@@ -114,6 +142,8 @@ function Invoke-TerminalStylesUpdate {
         Write-Host "Update failed: $_" -ForegroundColor Red
         Write-Host "You can retry manually:" -ForegroundColor Yellow
         Write-Host "  iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex" -ForegroundColor Cyan
+    } finally {
+        $ProgressPreference = $prevProgress
     }
 }
 
@@ -432,13 +462,16 @@ function Invoke-TerminalStyle {
         # current tab's profile via $env:WT_PROFILE_ID).
         [string]$Target,
         [string]$BackgroundImage,
-        [switch]$Update
+        [switch]$Update,
+        # Used with `tstyles update -Force` to skip the same-SHA optimization
+        # and force a full reinstall (e.g., after a botched install).
+        [switch]$Force
     )
 
     $bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
 
     # --- Subcommand dispatch ---
-    if ($Update -or $Arg -eq 'update')   { Invoke-TerminalStylesUpdate;     return }
+    if ($Update -or $Arg -eq 'update')   { Invoke-TerminalStylesUpdate -Force:$Force; return }
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }

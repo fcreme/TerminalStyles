@@ -14,6 +14,11 @@
 #Requires -Version 5.1
 
 $ErrorActionPreference = 'Stop'
+# Suppress the IWR / Expand-Archive progress UI. On Windows PowerShell 5.1
+# this is the dominant cost of the install -- the progress-bar rendering
+# can make a ~10MB download take 30+ seconds. Silencing it gives 5-10x
+# speedups. Doesn't affect pwsh 7 noticeably but doesn't hurt either.
+$ProgressPreference = 'SilentlyContinue'
 
 $repo       = 'fcreme/TerminalStyles'
 $branch     = 'main'
@@ -85,20 +90,34 @@ try {
     Write-Host "Note: couldn't record install SHA (network?); update checker will be disabled." -ForegroundColor DarkGray
 }
 
-# --- Helper: get a shell's $PROFILE path by invoking that engine directly ---
-function Get-ShellProfilePath {
+# --- Helper: get a shell's $PROFILE + execution policy in ONE launch ---
+# Each shell launch (pwsh.exe / powershell.exe) costs ~500ms on cold start.
+# We previously launched each shell twice (once for $PROFILE, once for
+# Get-ExecutionPolicy). Combining cuts ~1s off install on dual-shell systems.
+function Get-ShellInfo {
     param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string]$Label)
     $cmd = Get-Command -Name $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) {
         Write-Host "  $Label not detected on PATH, skipping." -ForegroundColor DarkGray
         return $null
     }
-    $p = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
-    if ([string]::IsNullOrWhiteSpace($p)) {
+    # Marker-separated output keeps parsing simple across both engines.
+    $out = & $cmd.Source -NoProfile -NonInteractive -Command "Write-Output ('PROFILE='+`$PROFILE); Write-Output ('POLICY='+(Get-ExecutionPolicy))" 2>$null
+    $profilePath = $null
+    $policy = $null
+    foreach ($line in @($out)) {
+        $s = "$line".Trim()
+        if ($s.StartsWith('PROFILE=')) { $profilePath = $s.Substring(8) }
+        elseif ($s.StartsWith('POLICY=')) { $policy = $s.Substring(7) }
+    }
+    if ([string]::IsNullOrWhiteSpace($profilePath)) {
         Write-Host "  Could not determine $Label profile path, skipping." -ForegroundColor Yellow
         return $null
     }
-    return $p.Trim()
+    return [pscustomobject]@{
+        ProfilePath = $profilePath
+        Policy      = $policy
+    }
 }
 
 # --- Helper: write the loader block into a profile, migrating bundled-style content if matched ---
@@ -154,15 +173,19 @@ function Register-LoaderInProfile {
     Write-Host "  Loader registered in: $ProfilePath" -ForegroundColor Green
 }
 
-# --- Helper: detect Restricted/AllSigned execution policy for an engine and offer to fix ---
+# --- Helper: offer to fix Restricted/AllSigned execution policy for an engine ---
+# Takes the already-queried policy value to avoid a second shell launch.
 function Resolve-ExecutionPolicy {
-    param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string]$Label)
+    param(
+        [Parameter(Mandatory)][string]$Exe,
+        [Parameter(Mandatory)][string]$Label,
+        [string]$EffectivePolicy
+    )
     $cmd = Get-Command -Name $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) { return }
 
-    $eff = & $cmd.Source -NoProfile -NonInteractive -Command 'Get-ExecutionPolicy' 2>$null
-    if ([string]::IsNullOrWhiteSpace($eff)) { return }
-    $eff = $eff.Trim()
+    if ([string]::IsNullOrWhiteSpace($EffectivePolicy)) { return }
+    $eff = $EffectivePolicy.Trim()
 
     if ($eff -notin @('Restricted', 'AllSigned')) { return }
 
@@ -197,11 +220,11 @@ $registered = @()
 foreach ($s in $shells) {
     Write-Host ""
     Write-Host "[$($s.Label)]" -ForegroundColor Cyan
-    $p = Get-ShellProfilePath -Exe $s.Exe -Label $s.Label
-    if (-not $p) { continue }
-    Register-LoaderInProfile -ProfilePath $p -Label $s.Label -InstallDir $installDir `
+    $info = Get-ShellInfo -Exe $s.Exe -Label $s.Label
+    if (-not $info) { continue }
+    Register-LoaderInProfile -ProfilePath $info.ProfilePath -Label $s.Label -InstallDir $installDir `
         -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
-    Resolve-ExecutionPolicy -Exe $s.Exe -Label $s.Label
+    Resolve-ExecutionPolicy -Exe $s.Exe -Label $s.Label -EffectivePolicy $info.Policy
     $registered += $s.Label
 }
 
