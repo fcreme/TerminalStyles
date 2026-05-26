@@ -1,0 +1,23 @@
+{
+    "name": "rain",
+    "background": "#2a2e48",
+    "foreground": "#c8c5dc",
+    "cursorColor": "#9ca0cc",
+    "selectionBackground": "#3c4060",
+    "black": "#0f1220",
+    "red": "#a85850",
+    "green": "#5c8e5c",
+    "yellow": "#a89860",
+    "blue": "#7a8ac8",
+    "purple": "#8a7ab0",
+    "cyan": "#8aa8c8",
+    "white": "#c8c5dc",
+    "brightBlack": "#3c4060",
+    "brightRed": "#c87878",
+    "brightGreen": "#7aa868",
+    "brightYellow": "#c8b850",
+    "brightBlue": "#9ca0cc",
+    "brightPurple": "#a89ac8",
+    "brightCyan": "#a8c5d8",
+    "brightWhite": "#e5e2f0"
+}
