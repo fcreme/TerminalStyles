@@ -10,11 +10,13 @@
 !docs/**/*.png
 !docs/**/*.jpg
 
-# Allow per-style bundled background images
-!styles/**/background.gif
-!styles/**/background.png
-!styles/**/background.jpg
-!styles/**/background.jpeg
+# Per-style background images are NOT committed to main.
+# They live on the `gifs` branch and are lazy-fetched at runtime.
+# (Previously these were committed via the four !styles/**/background.*
+# exceptions; removed when the architecture moved to lazy-fetch.)
+
+# Negative-cache markers written by Get-StyleBundledBackground on failed fetch
+styles/**/.no-background
 
 # PowerShell profile backups created by install.ps1
 *.bak-*

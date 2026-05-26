@@ -35,11 +35,44 @@ function Get-AvailableStyles {
 }
 
 function Get-StyleBundledBackground {
+    # See tstyles.ps1 for full notes. Three-tier resolution: local file ->
+    # negative-cache marker -> lazy-fetch from the `gifs` branch with caching.
     param([Parameter(Mandatory)][string]$StyleDir)
+
     foreach ($ext in 'gif','png','jpg','jpeg') {
         $candidate = Join-Path $StyleDir "background.$ext"
         if (Test-Path -LiteralPath $candidate) { return $candidate }
     }
+
+    $noBgMarker = Join-Path $StyleDir '.no-background'
+    if (Test-Path -LiteralPath $noBgMarker) { return $null }
+
+    $styleName = Split-Path -Leaf $StyleDir
+    $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        foreach ($ext in 'gif','png','jpg','jpeg') {
+            $url = "$remoteBase.$ext"
+            $local = Join-Path $StyleDir "background.$ext"
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $local -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
+                    return $local
+                } else {
+                    Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+                }
+            } catch {
+                if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    } finally {
+        $ProgressPreference = $prevProgress
+    }
+
+    try {
+        New-Item -ItemType File -Path $noBgMarker -Force | Out-Null
+    } catch { }
     return $null
 }
 

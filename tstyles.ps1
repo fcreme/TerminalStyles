@@ -43,11 +43,57 @@ function Get-CurrentWTProfileName {
 }
 
 function Get-StyleBundledBackground {
+    # Three-tier resolution:
+    #   1. Local file in $StyleDir (covers dev workflow + previously-fetched cache)
+    #   2. Negative cache (.no-background marker) -- skip fetch, return $null
+    #   3. Fetch from the `gifs` branch on GitHub, cache locally, return path
+    #
+    # This keeps the main install ZIP code-only (~100 KB instead of ~10 MB)
+    # and pulls each background on first use of its style. After the first
+    # fetch, subsequent runs are instant -- the GIF lives next to the rest
+    # of the style files in %LOCALAPPDATA%\TerminalStyles\styles\<name>\.
     param([Parameter(Mandatory)][string]$StyleDir)
+
+    # 1. Local file already present
     foreach ($ext in 'gif','png','jpg','jpeg') {
         $candidate = Join-Path $StyleDir "background.$ext"
         if (Test-Path -LiteralPath $candidate) { return $candidate }
     }
+
+    # 2. Negative cache (we've tried and the remote has nothing for this style)
+    $noBgMarker = Join-Path $StyleDir '.no-background'
+    if (Test-Path -LiteralPath $noBgMarker) { return $null }
+
+    # 3. Lazy-fetch from the gifs branch
+    $styleName = Split-Path -Leaf $StyleDir
+    $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        foreach ($ext in 'gif','png','jpg','jpeg') {
+            $url = "$remoteBase.$ext"
+            $local = Join-Path $StyleDir "background.$ext"
+            try {
+                Invoke-WebRequest -Uri $url -OutFile $local -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
+                    return $local
+                } else {
+                    Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+                }
+            } catch {
+                # Try next extension; remove any partial file
+                if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
+            }
+        }
+    } finally {
+        $ProgressPreference = $prevProgress
+    }
+
+    # All extensions failed -- write negative-cache marker so we don't re-probe
+    # on every arrow-key press in the picker.
+    try {
+        New-Item -ItemType File -Path $noBgMarker -Force | Out-Null
+    } catch { }
     return $null
 }
 

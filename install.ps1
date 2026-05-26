@@ -51,11 +51,31 @@ Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
 $extractedRoot = Get-ChildItem -LiteralPath $tempDir -Directory | Select-Object -First 1
 if (-not $extractedRoot) { throw "Failed to locate extracted folder under $tempDir" }
 
-# --- Install to %LOCALAPPDATA% (preserve current-style.ps1 across reinstalls) ---
+# --- Install to %LOCALAPPDATA% (preserve current-style.ps1 + cached GIFs across reinstalls) ---
 $preservedCurrentStyle = Join-Path $installDir 'current-style.ps1'
 $preservedBytes = $null
 if (Test-Path -LiteralPath $preservedCurrentStyle) {
     $preservedBytes = [System.IO.File]::ReadAllBytes($preservedCurrentStyle)
+}
+
+# Preserve any previously-fetched background images so they don't have to be
+# re-downloaded from the gifs branch on every update.
+$preservedBackgrounds = @()
+$existingStylesDir = Join-Path $installDir 'styles'
+if (Test-Path -LiteralPath $existingStylesDir) {
+    foreach ($styleFolder in Get-ChildItem -LiteralPath $existingStylesDir -Directory) {
+        foreach ($ext in 'gif','png','jpg','jpeg') {
+            $bg = Join-Path $styleFolder.FullName "background.$ext"
+            if (Test-Path -LiteralPath $bg) {
+                $preservedBackgrounds += [pscustomobject]@{
+                    StyleName = $styleFolder.Name
+                    Ext       = $ext
+                    Bytes     = [System.IO.File]::ReadAllBytes($bg)
+                }
+                break  # at most one background per style
+            }
+        }
+    }
 }
 
 if (Test-Path -LiteralPath $installDir) {
@@ -66,6 +86,16 @@ Move-Item -LiteralPath $extractedRoot.FullName -Destination $installDir
 if ($preservedBytes) {
     [System.IO.File]::WriteAllBytes((Join-Path $installDir 'current-style.ps1'), $preservedBytes)
     Write-Host "Preserved your existing style selection."
+}
+
+if ($preservedBackgrounds) {
+    foreach ($p in $preservedBackgrounds) {
+        $destDir = Join-Path $installDir "styles\$($p.StyleName)"
+        if (Test-Path -LiteralPath $destDir) {
+            [System.IO.File]::WriteAllBytes((Join-Path $destDir "background.$($p.Ext)"), $p.Bytes)
+        }
+    }
+    Write-Host ("Preserved {0} cached background image(s)." -f $preservedBackgrounds.Count)
 }
 
 # Cleanup temp
