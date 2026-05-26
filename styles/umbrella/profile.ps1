@@ -1,33 +1,33 @@
-# UMBRELLA TERMINAL profile -- pwsh 7
-# Applies only to PowerShell 7+ (Microsoft.PowerShell_profile.ps1 in the
-# `PowerShell` folder, not the `WindowsPowerShell` folder).
+# UMBRELLA TERMINAL profile -- works in pwsh 7 and Windows PowerShell 5.1.
+# Loaded by tstyles.ps1 both at shell startup ($PROFILE -> current-style.ps1)
+# and live, right after the picker confirms a new style. For the live-reload
+# case to work mid-session, prompt MUST be defined as `function global:prompt`
+# and colors must live inside the function (no $script: references, since
+# dot-sourcing from another script's function changes what $script: points at).
 
 $Host.UI.RawUI.WindowTitle = 'UMBRELLA TERMINAL'
 
-# Palette (24-bit ANSI). [char]27 instead of `e so this works in both pwsh 7 and WinPS 5.1.
-$script:UmbEsc = [char]27
-$script:UmbR = "$($script:UmbEsc)[38;2;180;30;30m"    # muted blood red
-$script:UmbW = "$($script:UmbEsc)[38;2;232;220;200m"  # bone white
-$script:UmbX = "$($script:UmbEsc)[0m"                 # reset
-
 # Startup banner
-function Show-UmbrellaBanner {
-    $r = $script:UmbR; $w = $script:UmbW; $x = $script:UmbX
-    Write-Host ""
-    Write-Host "${r}+------------------------------------------+${x}"
-    Write-Host "${r}|  ${w}UMBRELLA CORP. // OPERATOR TERMINAL     ${r}|${x}"
-    Write-Host "${r}|  ${w}CLEARANCE: PERSONAL  ::  STATUS: FINE   ${r}|${x}"
-    Write-Host "${r}+------------------------------------------+${x}"
-    Write-Host ""
-}
-Show-UmbrellaBanner
+$Esc = [char]27
+$R = "$Esc[38;2;180;30;30m"    # muted blood red
+$W = "$Esc[38;2;232;220;200m"  # bone white
+$X = "$Esc[0m"                 # reset
 
-# Prompt
-function prompt {
-    $r = $script:UmbR; $w = $script:UmbW; $x = $script:UmbX
+Write-Host ""
+Write-Host "${R}+------------------------------------------+${X}"
+Write-Host "${R}|  ${W}UMBRELLA CORP. // OPERATOR TERMINAL     ${R}|${X}"
+Write-Host "${R}|  ${W}CLEARANCE: PERSONAL  ::  STATUS: FINE   ${R}|${X}"
+Write-Host "${R}+------------------------------------------+${X}"
+Write-Host ""
+
+function global:prompt {
+    $Esc = [char]27
+    $R = "$Esc[38;2;180;30;30m"
+    $W = "$Esc[38;2;232;220;200m"
+    $X = "$Esc[0m"
     $op  = $env:USERNAME
     $cwd = $PWD.Path
-    "${r}[UMBRELLA // OPERATOR: ${w}${op}${r}]${x}`n${r}[CWD: ${w}${cwd}${r}]${x}`n${r}>${x} "
+    "${R}[UMBRELLA // OPERATOR: ${W}${op}${R}]${X}`n${R}[CWD: ${W}${cwd}${R}]${X}`n${R}>${X} "
 }
 
 # PSReadLine -- colors + history-based inline prediction
@@ -51,7 +51,7 @@ if (Get-Module -ListAvailable PSReadLine) {
         Member           = '#E8DCC8'
         Default          = '#E8DCC8'
         Error            = '#FF4444'
-        Selection        = "$($script:UmbEsc)[48;2;90;15;15m"
+        Selection        = "$Esc[48;2;90;15;15m"
         InlinePrediction = '#6E6862'
     }
 }

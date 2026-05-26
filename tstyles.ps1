@@ -241,10 +241,16 @@ function Invoke-TerminalStyle {
         Write-Host ""
         Write-Host "  Style applied: " -NoNewline
         Write-Host $selectedStyle.Name -ForegroundColor Green
-        if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
-            Write-Host "  Open a new pwsh tab to load this style's prompt." -ForegroundColor DarkGray
-        }
         Write-Host ""
+
+        # Live-reload: dot-source the newly active profile so the title,
+        # prompt, banner, and PSReadLine colors update in THIS session
+        # without requiring the user to open a new tab. Each theme's
+        # profile.ps1 uses `function global:prompt` so the binding escapes
+        # this function's scope.
+        if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+            . $script:TStylesCurrent
+        }
     } finally {
         [Console]::CursorVisible = $true
     }
