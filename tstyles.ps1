@@ -51,6 +51,61 @@ function Get-StyleBundledBackground {
     return $null
 }
 
+function Test-UpdateAvailable {
+    # Returns a pscustomobject with short SHAs if a newer commit is available
+    # on origin/main, or $null if not / can't tell. Throttled to one API
+    # call per 24h via .last-update-check; the timestamp is always written
+    # (even on network failure) so a transient outage doesn't trigger
+    # retries on every tstyles invocation.
+    $shaFile   = Join-Path $script:TStylesRoot '.installed-sha'
+    $stampFile = Join-Path $script:TStylesRoot '.last-update-check'
+
+    if (Test-Path -LiteralPath $stampFile) {
+        try {
+            $stamp = [datetime]::Parse((Get-Content -LiteralPath $stampFile -Raw).Trim())
+            if (((Get-Date) - $stamp).TotalHours -lt 24) { return $null }
+        } catch { }
+    }
+
+    if (-not (Test-Path -LiteralPath $shaFile)) { return $null }
+    $installed = (Get-Content -LiteralPath $shaFile -Raw).Trim()
+    if (-not $installed) { return $null }
+
+    $remote = $null
+    try {
+        $resp = Invoke-RestMethod `
+            -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
+            -TimeoutSec 3 -ErrorAction Stop
+        $remote = $resp.sha
+    } catch { }
+
+    try {
+        Set-Content -LiteralPath $stampFile -Value (Get-Date -Format 'o') `
+                    -Encoding UTF8 -NoNewline -ErrorAction Stop
+    } catch { }
+
+    if ($remote -and $remote -ne $installed) {
+        return [pscustomobject]@{
+            Installed = $installed.Substring(0, [Math]::Min(7, $installed.Length))
+            Remote    = $remote.Substring(0, [Math]::Min(7, $remote.Length))
+        }
+    }
+    return $null
+}
+
+function Invoke-TerminalStylesUpdate {
+    Write-Host ""
+    Write-Host "Updating TerminalStyles from GitHub..." -ForegroundColor Cyan
+    try {
+        $script = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
+        Invoke-Expression $script
+    } catch {
+        Write-Host "Update failed: $_" -ForegroundColor Red
+        Write-Host "You can retry manually:" -ForegroundColor Yellow
+        Write-Host "  iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex" -ForegroundColor Cyan
+    }
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
@@ -129,8 +184,22 @@ function Invoke-TerminalStyle {
     [CmdletBinding()]
     param(
         [string]$Target,
-        [string]$BackgroundImage
+        [string]$BackgroundImage,
+        [switch]$Update
     )
+
+    # Subcommand routing: `tstyles update` (positional) or `tstyles -Update`.
+    if ($Update -or $Target -eq 'update') {
+        Invoke-TerminalStylesUpdate
+        return
+    }
+
+    # Once-per-day update notice. Non-blocking, silent on any error.
+    $pending = Test-UpdateAvailable
+    if ($pending) {
+        Write-Host ("Update available ({0} -> {1}). Run: tstyles update" -f $pending.Installed, $pending.Remote) -ForegroundColor Yellow
+        Write-Host ""
+    }
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) {

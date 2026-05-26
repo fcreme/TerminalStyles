@@ -118,9 +118,32 @@ list.
 
 ## Updating
 
-Re-run the install one-liner to pull the latest styles. Your currently
-selected style (the `current-style.ps1` file) is preserved across
+`tstyles` checks once per day for new commits on `main` and prints a
+one-line notice if a newer version is available. To actually pull the
+update, run:
+
+```powershell
+tstyles update
+```
+
+This re-runs the install one-liner against the latest `main`. Your
+currently selected style (`current-style.ps1`) is preserved across
 reinstalls.
+
+If `tstyles update` fails (no internet, GitHub down, corporate proxy),
+the original install one-liner still works:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex
+```
+
+### How the update check works
+
+When you run `tstyles`, it makes at most one HTTP GET per day to
+`api.github.com` to compare your installed commit SHA against `main`. No
+authentication, no payload sent, no analytics. If your machine is offline
+or the API is unreachable, the check fails silently and `tstyles` works
+normally.
 
 ## Uninstalling
 

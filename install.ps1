@@ -69,6 +69,20 @@ Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 
 Write-Host "Files installed at: $installDir" -ForegroundColor Green
 
+# --- Record install SHA for the update checker ---
+try {
+    $commitInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/$branch" `
+                                    -TimeoutSec 5 -ErrorAction Stop
+    if ($commitInfo.sha) {
+        [System.IO.File]::WriteAllText(
+            (Join-Path $installDir '.installed-sha'),
+            $commitInfo.sha,
+            [System.Text.UTF8Encoding]::new($false))
+    }
+} catch {
+    Write-Host "Note: couldn't record install SHA (network?); update checker will be disabled." -ForegroundColor DarkGray
+}
+
 # --- Helper: get a shell's $PROFILE path by invoking that engine directly ---
 function Get-ShellProfilePath {
     param([Parameter(Mandatory)][string]$Exe, [Parameter(Mandatory)][string]$Label)
