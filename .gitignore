@@ -6,9 +6,10 @@
 *.mp4
 *.webm
 
-# Allow screenshots used in the README
+# Allow screenshots / demo videos used in the README
 !docs/**/*.png
 !docs/**/*.jpg
+!docs/**/*.mp4
 
 # Per-style background images are NOT committed to main.
 # They live on the `gifs` branch and are lazy-fetched at runtime.
