@@ -7,7 +7,7 @@
 # All write operations restore on Escape; the original settings.json bytes are
 # snapshotted on entry so a cancel is byte-exact.
 
-#Requires -Version 7
+#Requires -Version 5.1
 
 $script:TStylesRoot = $PSScriptRoot
 if (-not $script:TStylesRoot) {
@@ -51,7 +51,7 @@ function Merge-StyleIntoSettings {
         [bool]$BackgroundImageProvided
     )
 
-    $scheme = Get-Content -LiteralPath (Join-Path $StyleDir 'scheme.json') -Raw | ConvertFrom-Json -Depth 32
+    $scheme = Get-Content -LiteralPath (Join-Path $StyleDir 'scheme.json') -Raw | ConvertFrom-Json
 
     if (-not $Settings.PSObject.Properties.Match('schemes').Count) {
         $Settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
@@ -60,7 +60,7 @@ function Merge-StyleIntoSettings {
 
     $themePath = Join-Path $StyleDir 'theme.json'
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
-    $theme = Get-Content -LiteralPath $themePath -Raw | ConvertFrom-Json -Depth 32
+    $theme = Get-Content -LiteralPath $themePath -Raw | ConvertFrom-Json
 
     $entry = if ($TargetName -eq 'defaults') {
         if (-not $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
@@ -128,7 +128,7 @@ function Invoke-TerminalStyle {
 
     # Snapshot original (byte-exact for revert)
     $originalJson = Get-Content -LiteralPath $settingsPath -Raw
-    $originalSettings = $originalJson | ConvertFrom-Json -Depth 32
+    $originalSettings = $originalJson | ConvertFrom-Json
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
     if (-not $Target) {
@@ -149,7 +149,7 @@ function Invoke-TerminalStyle {
     [Console]::CursorVisible = $false
     try {
         # Apply first preview before showing the menu
-        $preview = $originalJson | ConvertFrom-Json -Depth 32
+        $preview = $originalJson | ConvertFrom-Json
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
         Write-SettingsFile -Path $settingsPath -Settings $preview
 
@@ -184,7 +184,7 @@ function Invoke-TerminalStyle {
             }
 
             if ($changed) {
-                $preview = $originalJson | ConvertFrom-Json -Depth 32
+                $preview = $originalJson | ConvertFrom-Json
                 $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
                 Write-SettingsFile -Path $settingsPath -Settings $preview
             }

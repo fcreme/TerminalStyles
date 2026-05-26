@@ -4,10 +4,11 @@
 
 $Host.UI.RawUI.WindowTitle = 'UMBRELLA TERMINAL'
 
-# Palette (24-bit ANSI)
-$script:UmbR = "`e[38;2;180;30;30m"    # muted blood red
-$script:UmbW = "`e[38;2;232;220;200m"  # bone white
-$script:UmbX = "`e[0m"                 # reset
+# Palette (24-bit ANSI). [char]27 instead of `e so this works in both pwsh 7 and WinPS 5.1.
+$script:UmbEsc = [char]27
+$script:UmbR = "$($script:UmbEsc)[38;2;180;30;30m"    # muted blood red
+$script:UmbW = "$($script:UmbEsc)[38;2;232;220;200m"  # bone white
+$script:UmbX = "$($script:UmbEsc)[0m"                 # reset
 
 # Startup banner
 function Show-UmbrellaBanner {
@@ -50,7 +51,7 @@ if (Get-Module -ListAvailable PSReadLine) {
         Member           = '#E8DCC8'
         Default          = '#E8DCC8'
         Error            = '#FF4444'
-        Selection        = "`e[48;2;90;15;15m"
+        Selection        = "$($script:UmbEsc)[48;2;90;15;15m"
         InlinePrediction = '#6E6862'
     }
 }

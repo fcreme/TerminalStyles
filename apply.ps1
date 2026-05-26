@@ -10,7 +10,7 @@
 # Always backs up settings.json (and $PROFILE if overwriting one) before
 # making changes.
 
-#Requires -Version 7
+#Requires -Version 5.1
 
 [CmdletBinding()]
 param(
@@ -116,7 +116,7 @@ if (-not (Test-Path -LiteralPath $SettingsPath)) {
 }
 Write-Host "Settings file: $SettingsPath"
 
-$settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json -Depth 32
+$settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
 
 # --- Target profile selection ---
 $profileNames = @('defaults') + @($settings.profiles.list | ForEach-Object { $_.name })
@@ -140,9 +140,9 @@ if ($BackgroundImage -and -not (Test-Path -LiteralPath $BackgroundImage)) {
 # --- Load style content ---
 $schemePath = Join-Path $styleDir 'scheme.json'
 $themePath  = Join-Path $styleDir 'theme.json'
-$scheme = Get-Content -LiteralPath $schemePath -Raw | ConvertFrom-Json -Depth 32
+$scheme = Get-Content -LiteralPath $schemePath -Raw | ConvertFrom-Json
 $theme  = if (Test-Path -LiteralPath $themePath) {
-    Get-Content -LiteralPath $themePath -Raw | ConvertFrom-Json -Depth 32
+    Get-Content -LiteralPath $themePath -Raw | ConvertFrom-Json
 } else { $null }
 
 # --- Backup settings.json ---

@@ -1,24 +1,31 @@
 # TerminalStyles
 
-Themed styles for **PowerShell 7** in **Windows Terminal**. Install once,
-then run `tstyles` to switch — arrow keys preview each style live in your
-current tab, Enter keeps it, Esc cancels.
+Themed styles for **PowerShell** (5.1 and 7+) in **Windows Terminal**.
+Install once, then run `tstyles` to switch — arrow keys preview each style
+live in your current tab, Enter keeps it, Esc cancels.
 
 ![demo placeholder](docs/screenshots/demo.gif)
 
 ## Install
 
-Open a **PowerShell 7** tab in Windows Terminal and run:
+Open a **PowerShell** tab in Windows Terminal (either Windows PowerShell
+5.1 or PowerShell 7+ works) and run:
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex
 ```
 
-That's it. You don't need to clone anything. The installer downloads the
-styles to `%LOCALAPPDATA%\TerminalStyles\` and registers a single line in
-your `$PROFILE` that defines the `tstyles` command.
+That's it. You don't need to clone anything. The installer:
 
-Then open a new pwsh tab (or run `. $PROFILE` to reload).
+1. Downloads the styles to `%LOCALAPPDATA%\TerminalStyles\`.
+2. Registers a loader line in your `$PROFILE` for **every** PowerShell
+   engine it finds on PATH (`pwsh.exe` and `powershell.exe`), so one run
+   sets up both shells.
+3. Detects if either engine's execution policy is `Restricted` /
+   `AllSigned` and offers to set `CurrentUser` to `RemoteSigned` for you
+   (it asks first — never silent).
+
+Then open a new pwsh or powershell tab (or run `. $PROFILE` to reload).
 
 ## Use
 
@@ -68,7 +75,23 @@ The path is applied to the same target profile (alongside scheme / cursor
 - Windows 10 / 11
 - [Windows Terminal](https://aka.ms/terminal) (live preview only shows up
   here — VS Code's integrated terminal etc. won't reflect the changes)
-- [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`)
+- **Either** Windows PowerShell 5.1 (ships with Windows) **or**
+  [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`).
+  Both engines work; if both are installed, the one-liner sets up both.
+
+### Execution policy
+
+If you see `UnauthorizedAccess` / "ejecución de scripts deshabilitada"
+on shell startup, your `CurrentUser` execution policy is `Restricted`.
+The installer asks to fix this for you. To do it manually:
+
+```powershell
+Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
+```
+
+(GPO-locked machine policy can override `CurrentUser`. If the install
+shows that, ask your admin or run an elevated `Set-ExecutionPolicy` at
+`LocalMachine` scope.)
 
 ## Scriptable / non-interactive
 
