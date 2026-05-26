@@ -42,6 +42,15 @@ function Get-CurrentWTProfileName {
     return $null
 }
 
+function Get-StyleBundledBackground {
+    param([Parameter(Mandatory)][string]$StyleDir)
+    foreach ($ext in 'gif','png','jpg','jpeg') {
+        $candidate = Join-Path $StyleDir "background.$ext"
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
@@ -72,17 +81,29 @@ function Merge-StyleIntoSettings {
     }
     if (-not $entry) { return $Settings }
 
+    # Resolve effective background:
+    #   1. User passed -BackgroundImage <path> (incl. "")   -> use that
+    #   2. Style ships a bundled background.{gif,png,jpg}   -> use that
+    #   3. Otherwise                                        -> leave user's bg alone
+    $effectiveBg = $BackgroundImage
+    $applyBg = $BackgroundImageProvided
+    if (-not $applyBg) {
+        $bundled = Get-StyleBundledBackground -StyleDir $StyleDir
+        if ($bundled) {
+            $effectiveBg = $bundled
+            $applyBg = $true
+        }
+    }
+
     $bgFields = @('backgroundImage', 'backgroundImageOpacity', 'backgroundImageStretchMode', 'backgroundImageAlignment')
     foreach ($prop in $theme.PSObject.Properties) {
         $name  = $prop.Name
         $value = $prop.Value
 
         if ($name -in $bgFields) {
-            # During live preview, don't touch the user's existing background image
-            # unless they explicitly asked us to via -BackgroundImage.
-            if (-not $BackgroundImageProvided) { continue }
+            if (-not $applyBg) { continue }
             if ($name -eq 'backgroundImage' -and $value -eq '{{BACKGROUND_IMAGE}}') {
-                $value = $BackgroundImage
+                $value = $effectiveBg
             }
         }
 

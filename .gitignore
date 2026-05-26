@@ -10,6 +10,12 @@
 !docs/**/*.png
 !docs/**/*.jpg
 
+# Allow per-style bundled background images
+!styles/**/background.gif
+!styles/**/background.png
+!styles/**/background.jpg
+!styles/**/background.jpeg
+
 # PowerShell profile backups created by install.ps1
 *.bak-*
 

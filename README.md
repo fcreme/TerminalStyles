@@ -58,17 +58,26 @@ style, **Esc** to revert to how things looked before you ran `tstyles`.
 
 Each style folder has its own README with full details.
 
-## Optional: background image
+## Background image
 
-`tstyles` doesn't touch your existing background image. To swap that too,
-pass `-BackgroundImage`:
+Each bundled style ships with its own `background.gif` (or `.png` / `.jpg`)
+under `styles/<name>/`. Picking a style auto-applies that image — arrow
+keys cycle the GIF live alongside the colors / cursor / font.
+
+To override the bundled image with your own:
 
 ```powershell
 tstyles -BackgroundImage "C:\Users\me\Pictures\moody.gif"
 ```
 
-The path is applied to the same target profile (alongside scheme / cursor
-/ font) and stays in place after Enter.
+To disable backgrounds for this style:
+
+```powershell
+tstyles -BackgroundImage ""
+```
+
+Styles without a bundled image leave your existing background untouched
+unless you pass `-BackgroundImage`.
 
 ## Requirements
 
@@ -141,6 +150,7 @@ Once installed, you can drop a new style folder into
 ├── scheme.json        # Windows Terminal color scheme (required)
 ├── theme.json         # profile-level overrides (optional)
 ├── profile.ps1        # custom pwsh $PROFILE (optional)
+├── background.gif     # default background image (optional, .png/.jpg also accepted)
 └── README.md          # description (optional)
 ```
 
@@ -152,19 +162,28 @@ and open a PR.
 - **scheme.json** must contain a unique `name`. See
   [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
 - **theme.json** uses the literal string `"{{BACKGROUND_IMAGE}}"` for
-  the background image field; `tstyles` substitutes the user's chosen
-  path or strips the field if none is provided.
+  the background image field; `tstyles` substitutes the bundled
+  `background.*` (or the user's `-BackgroundImage` flag if passed) and
+  strips the field if neither is available.
 - **profile.ps1** is copied to `current-style.ps1` on apply and
   dot-sourced from `$PROFILE` on shell startup.
+- **background.gif / .png / .jpg / .jpeg** is auto-applied when the style
+  is selected. Priority order if multiple exist: `.gif > .png > .jpg >
+  .jpeg`. Only contribute images you have the right to redistribute.
 
 ## Known limitations
 
 - **One `$PROFILE` per host.** Confirming a style with a custom prompt
   replaces `current-style.ps1`. Switching styles changes the prompt
   globally — there's no per-tab prompt configuration.
-- **Background images aren't shipped.** Each style describes the kind
-  of imagery it pairs well with; you bring your own. (Shipping GIFs
-  would balloon the repo and raise copyright questions.)
+- **Preview carryover for bundle-less styles.** Arrow-keying from a style
+  with a bundled `background.*` onto a style without one leaves the
+  previous GIF visible (the bundle-less path doesn't touch background
+  fields). Pass `-BackgroundImage ""` to clear, or just confirm the
+  selection.
+- **Repo size grows with styles.** Bundled GIFs are committed binaries;
+  contributors should keep each under ~2 MB and only submit images they
+  have the right to redistribute.
 - **Live preview is Windows-Terminal-only.** Other hosts (VS Code,
   conhost) don't read `settings.json`, so the menu won't show theme
   changes there — `tstyles` warns when this is the case.

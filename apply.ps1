@@ -34,6 +34,15 @@ function Get-AvailableStyles {
     }
 }
 
+function Get-StyleBundledBackground {
+    param([Parameter(Mandatory)][string]$StyleDir)
+    foreach ($ext in 'gif','png','jpg','jpeg') {
+        $candidate = Join-Path $StyleDir "background.$ext"
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
 function Find-SettingsPath {
     $candidates = @(
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
@@ -129,9 +138,21 @@ if ($Target -ne 'defaults' -and -not ($settings.profiles.list | Where-Object nam
 Write-Host "Target: $Target" -ForegroundColor Green
 
 # --- Background image ---
+# Precedence: explicit -BackgroundImage > interactive prompt > bundled style background
+$bundledBg = Get-StyleBundledBackground -StyleDir $styleDir
+
 if (-not $PSBoundParameters.ContainsKey('BackgroundImage')) {
     Write-Host ""
-    $BackgroundImage = (Read-Host "Background image absolute path (leave blank for none)").Trim()
+    $hint = if ($bundledBg) { "blank = use bundled '$([System.IO.Path]::GetFileName($bundledBg))', 'none' = no background" }
+            else            { "blank = no background" }
+    $answer = (Read-Host "Background image absolute path ($hint)").Trim()
+    if ($answer -eq '') {
+        $BackgroundImage = if ($bundledBg) { $bundledBg } else { '' }
+    } elseif ($answer -eq 'none') {
+        $BackgroundImage = ''
+    } else {
+        $BackgroundImage = $answer
+    }
 }
 if ($BackgroundImage -and -not (Test-Path -LiteralPath $BackgroundImage)) {
     Write-Warning "Background image path doesn't exist: $BackgroundImage (will still apply the setting)"
