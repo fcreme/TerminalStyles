@@ -29,32 +29,55 @@ Then open a new pwsh or powershell tab (or run `. $PROFILE` to reload).
 
 ## Use
 
+### Interactive picker
+
 ```powershell
 PS C:\> tstyles
 ```
 
-You'll get an arrow-key menu like:
+Arrow-key menu, with a 5-color swatch next to each style so you can see
+the palette before previewing:
 
 ```
   Choose a style for 'PowerShell'
   Up/Down to preview, Enter to keep, Esc to cancel
 
-   > umbrella
-     kitty
-     golden-forest
+   > umbrella         ██████████
+     eva              ██████████
+     ex-machina       ██████████
+     ...
 ```
 
 As you arrow up/down, the terminal actually changes in real time — color
-scheme, cursor, font, opacity. Press **Enter** to keep the highlighted
-style, **Esc** to revert to how things looked before you ran `tstyles`.
+scheme, cursor, font, background GIF, opacity. Press **Enter** to keep
+the highlighted style, **Esc** to revert to how things looked before
+you ran `tstyles`.
+
+### Subcommands
+
+```powershell
+tstyles umbrella        # Apply a specific style directly (no picker)
+tstyles list            # List all themes; '*' marks the active one
+tstyles current         # Print just the active style name
+tstyles random          # Pick a random style and apply it
+tstyles update          # Pull the latest version from GitHub
+tstyles uninstall       # Remove TerminalStyles cleanly (asks confirmation)
+```
+
+Tab completion works on the subcommand and style names:
+`tstyles u<TAB>` cycles `umbrella`, `uninstall`, `update`.
 
 ## Styles
 
-| Style | Vibe | Includes |
-|---|---|---|
-| [**umbrella**](styles/umbrella) | Resident-Evil / survival-horror | scheme + theme + custom prompt (`[UMBRELLA // OPERATOR]` 3-line classified-doc prompt, startup banner) |
-| [**kitty**](styles/kitty) | Soft pastel CRT | scheme + theme (retro effect, acrylic, vintage cursor, corner GIF) |
-| [**golden-forest**](styles/golden-forest) | Warm sepia / autumn | scheme + theme (filledBox cursor, fullscreen GIF) |
+| Style | Vibe |
+|---|---|
+| [**umbrella**](styles/umbrella) | Resident-Evil / survival-horror; red brackets + bone white |
+| [**eva**](styles/eva) | Asuka / Evangelion red CRT with mustard accent |
+| [**ex-machina**](styles/ex-machina) | Ava body-scan: electric cyan + coral pink |
+| [**golden-forest**](styles/golden-forest) | Warm sepia / autumn forest |
+| [**kitty**](styles/kitty) | Soft pastel CRT |
+| [**rain**](styles/rain) | Contemplative highland-storm field-journal |
+| [**sober**](styles/sober) | Minimalist monochrome with one teal accent; no banner |
 
 Each style folder has its own README with full details.
 
