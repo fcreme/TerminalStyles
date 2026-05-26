@@ -1,0 +1,18 @@
+{
+    "colorScheme": "ex-machina",
+    "tabTitle": "EX MACHINA // BLUEBOOK",
+    "cursorShape": "vintage",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "semi-bold"
+    },
+    "padding": "12",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 0.35,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}

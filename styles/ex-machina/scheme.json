@@ -1,0 +1,23 @@
+{
+    "name": "ex-machina",
+    "background": "#02060d",
+    "foreground": "#b8f0ff",
+    "cursorColor": "#00ccff",
+    "selectionBackground": "#1a4d6e",
+    "black": "#02060d",
+    "red": "#ff3d5a",
+    "green": "#4adba8",
+    "yellow": "#ffb870",
+    "blue": "#00ccff",
+    "purple": "#c094ff",
+    "cyan": "#5fe3ff",
+    "white": "#b8f0ff",
+    "brightBlack": "#1a4d6e",
+    "brightRed": "#ff7b8a",
+    "brightGreen": "#7df0c4",
+    "brightYellow": "#ffd4a8",
+    "brightBlue": "#6ed5ff",
+    "brightPurple": "#dbb8ff",
+    "brightCyan": "#a8e5ff",
+    "brightWhite": "#ffffff"
+}
