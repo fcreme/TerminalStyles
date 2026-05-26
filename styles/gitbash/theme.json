@@ -1,0 +1,18 @@
+{
+    "colorScheme": "gitbash",
+    "tabTitle": "GITBASH // MINGW64",
+    "cursorShape": "bar",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "normal"
+    },
+    "padding": "10",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 1.0,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}
