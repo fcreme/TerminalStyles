@@ -346,7 +346,7 @@ function Get-SchemeSwatch {
         $r = [Convert]::ToInt32($h.Substring(0,2), 16)
         $g = [Convert]::ToInt32($h.Substring(2,2), 16)
         $b = [Convert]::ToInt32($h.Substring(4,2), 16)
-        [void]$sb.Append([char]27).Append("[48;2;${r};${g};${b}m  ").Append([char]27).Append('[49m ')
+        [void]$sb.Append([char]27).Append("[48;2;${r};${g};${b}m    ").Append([char]27).Append('[49m ')
     }
     [void]$sb.Append([char]27).Append('[0m')
     return $sb.ToString()
