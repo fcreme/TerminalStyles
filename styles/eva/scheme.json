@@ -1,0 +1,23 @@
+{
+    "name": "eva",
+    "background": "#0a0006",
+    "foreground": "#ffe8e8",
+    "cursorColor": "#ff3d5a",
+    "selectionBackground": "#4a0a14",
+    "black": "#0a0006",
+    "red": "#c41e3a",
+    "green": "#7aae7a",
+    "yellow": "#e8c547",
+    "blue": "#6ed5ff",
+    "purple": "#e5419e",
+    "cyan": "#b8c5e0",
+    "white": "#ffe8e8",
+    "brightBlack": "#4a1a20",
+    "brightRed": "#ff3d5a",
+    "brightGreen": "#9ec99e",
+    "brightYellow": "#f4d87a",
+    "brightBlue": "#a8c5e8",
+    "brightPurple": "#ff85b8",
+    "brightCyan": "#d4ddf0",
+    "brightWhite": "#ffffff"
+}
