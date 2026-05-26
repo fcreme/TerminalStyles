@@ -321,26 +321,41 @@ function Test-StyleResolved {
 }
 
 function Get-SchemeSwatch {
-    # Returns a one-line ANSI swatch (5 colored blocks) summarising a theme.
-    # Picks slots that actually distinguish themes from each other -- the
-    # background, foreground, cursor accent, and two anchor ANSI hues. The
-    # prior pick (brightRed/yellow/brightGreen/brightCyan/brightPurple) read
-    # as the same red->yellow->green->cyan->purple rainbow on every theme
-    # because those slots are semantically constrained to those hues.
-    # Renders each slot as a background-colored cell (two spaces with
-    # \e[48;2;R;G;Bm) so even near-black backgrounds stay visible against
+    # Returns a one-line ANSI swatch (up to 5 colored blocks) summarising a
+    # theme. Picks slots that actually distinguish themes from each other --
+    # background, foreground, cursor accent, and two anchor ANSI hues -- and
+    # falls back to other ANSI slots when those duplicate (e.g. sober has
+    # cursorColor == foreground, eva has cursorColor == brightRed, which
+    # would otherwise show the same color twice). Renders each slot as a
+    # background-colored cell so even near-black colors stay visible against
     # the terminal background. Trailing reset.
     param([Parameter(Mandatory)]$Scheme)
-    $picks = @(
+    # Primary picks first, then fallbacks in order of theme-distinguishing
+    # power. The first 5 unique hex values from this list are rendered.
+    $candidates = @(
         $Scheme.background,
         $Scheme.foreground,
         $Scheme.cursorColor,
         $Scheme.brightRed,
-        $Scheme.brightCyan
+        $Scheme.brightCyan,
+        $Scheme.selectionBackground,
+        $Scheme.brightPurple,
+        $Scheme.brightYellow,
+        $Scheme.brightGreen,
+        $Scheme.brightBlue
     )
+    $seen = @{}
+    $picks = @()
+    foreach ($hex in $candidates) {
+        if ($picks.Count -ge 5) { break }
+        if (-not $hex) { continue }
+        $key = ([string]$hex).TrimStart('#').ToLowerInvariant()
+        if ($seen.ContainsKey($key)) { continue }
+        $seen[$key] = $true
+        $picks += $hex
+    }
     $sb = New-Object System.Text.StringBuilder
     foreach ($hex in $picks) {
-        if (-not $hex) { continue }
         $h = ([string]$hex).TrimStart('#')
         if ($h.Length -lt 6) { continue }
         $r = [Convert]::ToInt32($h.Substring(0,2), 16)
