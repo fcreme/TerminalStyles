@@ -622,7 +622,16 @@ function Invoke-TerminalStyle {
         Write-Host "Note: live preview is only visible inside Windows Terminal." -ForegroundColor Yellow
     }
 
+    # Start on the currently active style if we can detect one -- opening
+    # the picker should land where the user already is, not at the first
+    # alphabetical entry. Falls back to 0 for custom/unrecognized profiles.
     $idx = 0
+    $currentName = Get-CurrentStyleName
+    if ($currentName) {
+        for ($i = 0; $i -lt $styles.Count; $i++) {
+            if ($styles[$i].Name -eq $currentName) { $idx = $i; break }
+        }
+    }
     $confirmed = $false
 
     # Pre-load each style's color swatch once so the render loop doesn't
