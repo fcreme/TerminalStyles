@@ -99,39 +99,26 @@ function Get-StyleBundledBackground {
 
 function Test-UpdateAvailable {
     # Returns a pscustomobject with short SHAs if a newer commit is available
-    # on origin/main, or $null if not / can't tell. Throttled to one API
-    # call per 24h via .last-update-check; the timestamp is always written
-    # (even on network failure) so a transient outage doesn't trigger
-    # retries on every tstyles invocation.
-    $shaFile   = Join-Path $script:TStylesRoot '.installed-sha'
-    $stampFile = Join-Path $script:TStylesRoot '.last-update-check'
-
-    if (Test-Path -LiteralPath $stampFile) {
-        try {
-            $stamp = [datetime]::Parse((Get-Content -LiteralPath $stampFile -Raw).Trim())
-            if (((Get-Date) - $stamp).TotalHours -lt 24) { return $null }
-        } catch { }
-    }
-
+    # on origin/main, or $null if local already matches / no .installed-sha /
+    # the API call fails.
+    #
+    # No throttling: checks every tstyles invocation so the user always sees
+    # a current notice if local is behind. The HTTP call is typically
+    # ~100-200ms; -TimeoutSec 2 caps worst-case at 2s for slow networks.
+    # Stays well inside GitHub's 60/hr unauthenticated rate limit unless
+    # tstyles is being invoked extremely frequently from scripts.
+    $shaFile = Join-Path $script:TStylesRoot '.installed-sha'
     if (-not (Test-Path -LiteralPath $shaFile)) { return $null }
-    $installed = (Get-Content -LiteralPath $shaFile -Raw).Trim()
+    $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
     if (-not $installed) { return $null }
 
     $remote = $null
     try {
-        # GitHub's API documents User-Agent as required for unauthenticated
-        # requests. Without it you can sporadically hit 403 even under the
-        # rate limit. Identify the tool so requests are well-formed.
         $resp = Invoke-RestMethod `
             -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
             -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
-            -TimeoutSec 3 -ErrorAction Stop
+            -TimeoutSec 2 -ErrorAction Stop
         $remote = $resp.sha
-    } catch { }
-
-    try {
-        Set-Content -LiteralPath $stampFile -Value (Get-Date -Format 'o') `
-                    -Encoding UTF8 -NoNewline -ErrorAction Stop
     } catch { }
 
     if ($remote -and $remote -ne $installed) {
@@ -141,6 +128,18 @@ function Test-UpdateAvailable {
         }
     }
     return $null
+}
+
+function Show-UpdateNoticeIfAvailable {
+    # Prints the one-line yellow update notice if there's a newer commit
+    # on origin/main. Called from every non-updating tstyles invocation
+    # (picker, direct apply, list, current, random) so the user sees it
+    # regardless of how they entered the tool.
+    $pending = Test-UpdateAvailable
+    if ($pending) {
+        Write-Host ("Update available ({0} -> {1}). Run: tstyles update" -f $pending.Installed, $pending.Remote) -ForegroundColor Yellow
+        Write-Host ""
+    }
 }
 
 function Invoke-TerminalStylesUpdate {
@@ -343,6 +342,7 @@ function Get-SchemeSwatch {
 
 function Show-StyleList {
     # `tstyles list` -- print available styles, marking the active one.
+    Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     $styles = Get-AvailableStyles
     Write-Host ""
@@ -365,6 +365,7 @@ function Show-StyleList {
 
 function Show-CurrentStyle {
     # `tstyles current` -- print just the active style name on stdout.
+    Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     if ($current) {
         Write-Output $current
@@ -376,6 +377,7 @@ function Show-CurrentStyle {
 function Invoke-RandomStyle {
     # `tstyles random` -- pick a random bundled style and apply it.
     # Excludes the currently active one so it actually changes.
+    Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     $candidates = @(Get-AvailableStyles | Where-Object { $_.Name -ne $current })
     if (-not $candidates) {
@@ -406,6 +408,8 @@ function Apply-StyleDirect {
         Write-Error "Style '$StyleName' not found. Run 'tstyles list' to see available styles."
         return
     }
+
+    Show-UpdateNoticeIfAvailable
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) {
@@ -551,12 +555,9 @@ function Invoke-TerminalStyle {
         if (-not $Target) { $Target = $Arg }
     }
 
-    # Once-per-day update notice. Non-blocking, silent on any error.
-    $pending = Test-UpdateAvailable
-    if ($pending) {
-        Write-Host ("Update available ({0} -> {1}). Run: tstyles update" -f $pending.Installed, $pending.Remote) -ForegroundColor Yellow
-        Write-Host ""
-    }
+    # Update notice fires on every passive invocation now (see
+    # Show-UpdateNoticeIfAvailable). Picker is one of them.
+    Show-UpdateNoticeIfAvailable
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) {
