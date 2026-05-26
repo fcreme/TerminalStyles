@@ -306,6 +306,21 @@ function Get-CurrentStyleName {
     return $null
 }
 
+function Test-StyleResolved {
+    # A style is "resolved" if we know its background state -- either a local
+    # background.* exists, or a .no-background marker says we already tried
+    # and the remote has nothing. Used by the picker to decide whether to
+    # show '...fetching' next to the style name, and by the memoization to
+    # decide whether to cache the merged JSON (only resolved styles cache
+    # safely; a pending fetch could land between cache reads).
+    param([Parameter(Mandatory)][string]$StyleDir)
+    foreach ($ext in 'gif','png','jpg','jpeg') {
+        if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
+    }
+    if (Test-Path -LiteralPath (Join-Path $StyleDir '.no-background')) { return $true }
+    return $false
+}
+
 function Get-SchemeSwatch {
     # Returns a one-line ANSI swatch (5 colored blocks) summarising a theme.
     # Picks colors that show character: warm accent, secondary warm, green,
@@ -591,12 +606,74 @@ function Invoke-TerminalStyle {
         $swatches[$i] = Get-SchemeSwatch -Scheme $scheme
     }
 
+    # Background prefetch: kick off ONE job that downloads any missing GIFs
+    # from the gifs branch serially. The picker stays interactive while this
+    # runs; by the time the user arrow-keys through a few styles, the rest
+    # are usually already cached locally. Worst case: the user reaches a
+    # style before its GIF arrives -- the synchronous fetch in
+    # Get-StyleBundledBackground handles it (same code path as today).
+    $missingPaths = @()
+    foreach ($s in $styles) {
+        if (-not (Test-StyleResolved -StyleDir $s.FullName)) {
+            $missingPaths += $s.FullName
+        }
+    }
+    $prefetchJob = $null
+    if ($missingPaths.Count -gt 0) {
+        # Prefer Start-ThreadJob if available -- it's ~10x faster to start
+        # than Start-Job (pwsh 7 ships it; WinPS 5.1 has it only if the
+        # user installed the ThreadJob module). Falls back to Start-Job.
+        $jobStarter = if (Get-Command Start-ThreadJob -ErrorAction SilentlyContinue) {
+            'Start-ThreadJob'
+        } else {
+            'Start-Job'
+        }
+        $prefetchJob = & $jobStarter -ScriptBlock {
+            param($Paths)
+            $ProgressPreference = 'SilentlyContinue'
+            foreach ($styleDir in $Paths) {
+                $styleName = Split-Path -Leaf $styleDir
+                $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
+                $success = $false
+                foreach ($ext in 'gif','png','jpg','jpeg') {
+                    $local = Join-Path $styleDir "background.$ext"
+                    try {
+                        Invoke-WebRequest -Uri "$remoteBase.$ext" -OutFile $local `
+                            -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                        if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
+                            $success = $true
+                            break
+                        } else {
+                            Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+                        }
+                    } catch {
+                        if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
+                    }
+                }
+                if (-not $success) {
+                    try { New-Item -ItemType File -Path (Join-Path $styleDir '.no-background') -Force | Out-Null } catch { }
+                }
+            }
+        } -ArgumentList (,$missingPaths)
+    }
+
+    # Memoization: cache the final JSON string per style index. Only cache
+    # AFTER the style is resolved (so we don't pin a JSON that was computed
+    # while the GIF was still pending). Arrow-keying back to a previously-
+    # visited resolved style writes the cached string straight to disk --
+    # skips ConvertFrom-Json + Merge + ConvertTo-Json (~100ms per cycle).
+    $mergedCache = @{}
+
     [Console]::CursorVisible = $false
     try {
         # Apply first preview before showing the menu
         $preview = $originalJson | ConvertFrom-Json
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-        Write-SettingsFile -Path $settingsPath -Settings $preview
+        $initialJson = $preview | ConvertTo-Json -Depth 32
+        [System.IO.File]::WriteAllText($settingsPath, $initialJson, [System.Text.UTF8Encoding]::new($false))
+        if (Test-StyleResolved -StyleDir $styles[$idx].FullName) {
+            $mergedCache[$idx] = $initialJson
+        }
 
         while (-not $confirmed) {
             Clear-Host
@@ -607,13 +684,14 @@ function Invoke-TerminalStyle {
             Write-Host ""
             for ($i = 0; $i -lt $styles.Count; $i++) {
                 $name = $styles[$i].Name
-                $swatch = $swatches[$i]
-                if ($i -eq $idx) {
-                    Write-Host ("   > {0,-16}  " -f $name) -ForegroundColor Yellow -NoNewline
-                    Write-Host $swatch
+                $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
+                $color = if ($i -eq $idx) { 'Yellow' } else { 'Gray' }
+                $prefix = if ($i -eq $idx) { '   > ' } else { '     ' }
+                Write-Host ($prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
+                if ($resolved) {
+                    Write-Host $swatches[$i]
                 } else {
-                    Write-Host ("     {0,-16}  " -f $name) -ForegroundColor Gray -NoNewline
-                    Write-Host $swatch
+                    Write-Host '...fetching background' -ForegroundColor DarkGray
                 }
             }
             Write-Host ""
@@ -633,9 +711,19 @@ function Invoke-TerminalStyle {
             }
 
             if ($changed) {
-                $preview = $originalJson | ConvertFrom-Json
-                $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                Write-SettingsFile -Path $settingsPath -Settings $preview
+                $resolved = Test-StyleResolved -StyleDir $styles[$idx].FullName
+                if ($resolved -and $mergedCache.ContainsKey($idx)) {
+                    # Cached JSON for this style is still valid (it was
+                    # cached while resolved, and the resolved state is
+                    # monotonic -- can't become unresolved). Skip the merge.
+                    [System.IO.File]::WriteAllText($settingsPath, $mergedCache[$idx], [System.Text.UTF8Encoding]::new($false))
+                } else {
+                    $preview = $originalJson | ConvertFrom-Json
+                    $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+                    $json = $preview | ConvertTo-Json -Depth 32
+                    [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
+                    if ($resolved) { $mergedCache[$idx] = $json }
+                }
             }
         }
 
@@ -681,6 +769,14 @@ function Invoke-TerminalStyle {
         }
     } finally {
         [Console]::CursorVisible = $true
+        # Clean up the background prefetch job. If it's still mid-fetch
+        # (user picked quickly), the downloads in progress may be cut off
+        # -- the next Get-StyleBundledBackground call will fall back to
+        # synchronous fetch for whatever didn't complete.
+        if ($prefetchJob) {
+            Stop-Job -Job $prefetchJob -ErrorAction SilentlyContinue
+            Remove-Job -Job $prefetchJob -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
