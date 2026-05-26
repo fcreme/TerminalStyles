@@ -71,7 +71,9 @@ Write-Host "Files installed at: $installDir" -ForegroundColor Green
 
 # --- Record install SHA for the update checker ---
 try {
+    # GitHub's API documents User-Agent as required for unauthenticated requests.
     $commitInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/$branch" `
+                                    -Headers @{ 'User-Agent' = 'TerminalStyles-Installer' } `
                                     -TimeoutSec 5 -ErrorAction Stop
     if ($commitInfo.sha) {
         [System.IO.File]::WriteAllText(

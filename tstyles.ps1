@@ -73,8 +73,12 @@ function Test-UpdateAvailable {
 
     $remote = $null
     try {
+        # GitHub's API documents User-Agent as required for unauthenticated
+        # requests. Without it you can sporadically hit 403 even under the
+        # rate limit. Identify the tool so requests are well-formed.
         $resp = Invoke-RestMethod `
             -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
+            -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
             -TimeoutSec 3 -ErrorAction Stop
         $remote = $resp.sha
     } catch { }
@@ -97,8 +101,15 @@ function Invoke-TerminalStylesUpdate {
     Write-Host ""
     Write-Host "Updating TerminalStyles from GitHub..." -ForegroundColor Cyan
     try {
-        $script = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
-        Invoke-Expression $script
+        $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
+        Invoke-Expression $installerScript
+        # Files on disk are new; this session is still running the OLD
+        # tstyles.ps1 (functions are bound at dot-source time, not per call).
+        # Tell the user how to pick up the new code.
+        Write-Host ""
+        Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
+        Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
+        Write-Host "  . `$PROFILE" -ForegroundColor Cyan
     } catch {
         Write-Host "Update failed: $_" -ForegroundColor Red
         Write-Host "You can retry manually:" -ForegroundColor Yellow
@@ -137,9 +148,10 @@ function Merge-StyleIntoSettings {
     if (-not $entry) { return $Settings }
 
     # Resolve effective background:
-    #   1. User passed -BackgroundImage <path> (incl. "")   -> use that
-    #   2. Style ships a bundled background.{gif,png,jpg}   -> use that
-    #   3. Otherwise                                        -> leave user's bg alone
+    #   1. User passed -BackgroundImage <path>  -> use that
+    #   2. User passed -BackgroundImage ""      -> strip (remove fields entirely)
+    #   3. Style ships a bundled background.*   -> use that
+    #   4. Otherwise                            -> leave user's existing bg alone
     $effectiveBg = $BackgroundImage
     $applyBg = $BackgroundImageProvided
     if (-not $applyBg) {
@@ -150,13 +162,28 @@ function Merge-StyleIntoSettings {
         }
     }
 
+    # Three actions for bg fields:
+    #   skip   : don't touch them
+    #   remove : strip them from the profile (explicit empty path => disable)
+    #   apply  : substitute the placeholder and write all bg fields
+    $bgAction = if (-not $applyBg) { 'skip' }
+                elseif ([string]::IsNullOrEmpty($effectiveBg)) { 'remove' }
+                else { 'apply' }
+
     $bgFields = @('backgroundImage', 'backgroundImageOpacity', 'backgroundImageStretchMode', 'backgroundImageAlignment')
     foreach ($prop in $theme.PSObject.Properties) {
         $name  = $prop.Name
         $value = $prop.Value
 
         if ($name -in $bgFields) {
-            if (-not $applyBg) { continue }
+            if ($bgAction -eq 'skip') { continue }
+            if ($bgAction -eq 'remove') {
+                if ($entry.PSObject.Properties.Match($name).Count -gt 0) {
+                    $entry.PSObject.Properties.Remove($name)
+                }
+                continue
+            }
+            # bgAction = 'apply'
             if ($name -eq 'backgroundImage' -and $value -eq '{{BACKGROUND_IMAGE}}') {
                 $value = $effectiveBg
             }
