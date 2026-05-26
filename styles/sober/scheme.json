@@ -1,0 +1,23 @@
+{
+    "name": "sober",
+    "background": "#0a0a0a",
+    "foreground": "#d5d5d5",
+    "cursorColor": "#d5d5d5",
+    "selectionBackground": "#2e2e2e",
+    "black": "#0a0a0a",
+    "red": "#a85050",
+    "green": "#6e8e6e",
+    "yellow": "#a89878",
+    "blue": "#7a9999",
+    "purple": "#8a7a8a",
+    "cyan": "#8a9b9b",
+    "white": "#d5d5d5",
+    "brightBlack": "#4a4a4a",
+    "brightRed": "#c87878",
+    "brightGreen": "#8eae8e",
+    "brightYellow": "#c8b898",
+    "brightBlue": "#9ab8b8",
+    "brightPurple": "#aa9aaa",
+    "brightCyan": "#a8b9b9",
+    "brightWhite": "#f0f0f0"
+}

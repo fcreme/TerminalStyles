@@ -1,0 +1,18 @@
+{
+    "colorScheme": "sober",
+    "tabTitle": "SOBER",
+    "cursorShape": "bar",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "normal"
+    },
+    "padding": "16",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 1.0,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}
