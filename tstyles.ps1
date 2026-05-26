@@ -391,11 +391,24 @@ function Show-StyleList {
 }
 
 function Show-CurrentStyle {
-    # `tstyles current` -- print just the active style name on stdout.
+    # `tstyles current` -- print the active style name. Interactive callers
+    # see name + swatch (visual self-check); piped/redirected callers get
+    # just the name on stdout, preserving scriptability for `tstyles current
+    # | grep ...` etc.
     Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     if ($current) {
-        Write-Output $current
+        if ([Console]::IsOutputRedirected) {
+            Write-Output $current
+        } else {
+            $schemePath = Join-Path $script:TStylesRoot "styles\$current\scheme.json"
+            if (Test-Path -LiteralPath $schemePath) {
+                $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                Write-Host ("{0,-16}  {1}" -f $current, (Get-SchemeSwatch -Scheme $scheme))
+            } else {
+                Write-Host $current
+            }
+        }
     } else {
         Write-Host "(no bundled style currently active)" -ForegroundColor DarkGray
     }
