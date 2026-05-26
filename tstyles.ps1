@@ -322,10 +322,22 @@ function Test-StyleResolved {
 
 function Get-SchemeSwatch {
     # Returns a one-line ANSI swatch (5 colored blocks) summarising a theme.
-    # Picks colors that show character: warm accent, secondary warm, green,
-    # cool, accent magenta. Trailing reset.
+    # Picks slots that actually distinguish themes from each other -- the
+    # background, foreground, cursor accent, and two anchor ANSI hues. The
+    # prior pick (brightRed/yellow/brightGreen/brightCyan/brightPurple) read
+    # as the same red->yellow->green->cyan->purple rainbow on every theme
+    # because those slots are semantically constrained to those hues.
+    # Renders each slot as a background-colored cell (two spaces with
+    # \e[48;2;R;G;Bm) so even near-black backgrounds stay visible against
+    # the terminal background. Trailing reset.
     param([Parameter(Mandatory)]$Scheme)
-    $picks = @($Scheme.brightRed, $Scheme.yellow, $Scheme.brightGreen, $Scheme.brightCyan, $Scheme.brightPurple)
+    $picks = @(
+        $Scheme.background,
+        $Scheme.foreground,
+        $Scheme.cursorColor,
+        $Scheme.brightRed,
+        $Scheme.brightCyan
+    )
     $sb = New-Object System.Text.StringBuilder
     foreach ($hex in $picks) {
         if (-not $hex) { continue }
@@ -334,7 +346,7 @@ function Get-SchemeSwatch {
         $r = [Convert]::ToInt32($h.Substring(0,2), 16)
         $g = [Convert]::ToInt32($h.Substring(2,2), 16)
         $b = [Convert]::ToInt32($h.Substring(4,2), 16)
-        [void]$sb.Append([char]27).Append("[38;2;${r};${g};${b}m").Append([char]0x2588).Append([char]0x2588)
+        [void]$sb.Append([char]27).Append("[48;2;${r};${g};${b}m  ").Append([char]27).Append('[49m ')
     }
     [void]$sb.Append([char]27).Append('[0m')
     return $sb.ToString()
