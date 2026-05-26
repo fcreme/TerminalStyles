@@ -1,0 +1,20 @@
+# Don't commit binary backgrounds
+*.gif
+*.png
+*.jpg
+*.jpeg
+*.mp4
+*.webm
+
+# Allow screenshots used in the README
+!docs/**/*.png
+!docs/**/*.jpg
+
+# PowerShell profile backups created by install.ps1
+*.bak-*
+
+# OS/editor cruft
+Thumbs.db
+.DS_Store
+.vscode/
+.idea/

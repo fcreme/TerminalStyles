@@ -1,0 +1,9 @@
+{
+    "_comment": "Merge these fields into your PowerShell 7 profile entry in Windows Terminal's settings.json. Replace <YOUR_GIF_PATH> with the absolute path to your background GIF (or remove the backgroundImage* fields if you don't want one).",
+    "colorScheme": "umbrella",
+    "tabTitle": "UMBRELLA TERMINAL",
+    "backgroundImage": "<YOUR_GIF_PATH>",
+    "backgroundImageOpacity": 0.35,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}

@@ -1,0 +1,23 @@
+{
+    "name": "umbrella",
+    "background": "#0a0808",
+    "foreground": "#e8dcc8",
+    "cursorColor": "#b41e1e",
+    "selectionBackground": "#5a0f0f",
+    "black": "#1a1614",
+    "red": "#b41e1e",
+    "green": "#6e8e6e",
+    "yellow": "#c9a66b",
+    "blue": "#7b6e5a",
+    "purple": "#8b3030",
+    "cyan": "#a89878",
+    "white": "#e8dcc8",
+    "brightBlack": "#4a423a",
+    "brightRed": "#e04848",
+    "brightGreen": "#8eae8e",
+    "brightYellow": "#d4b888",
+    "brightBlue": "#9b8e70",
+    "brightPurple": "#b85050",
+    "brightCyan": "#c8b898",
+    "brightWhite": "#fff8e8"
+}
