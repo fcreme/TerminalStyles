@@ -42,19 +42,23 @@ if (Get-Module -ListAvailable PSReadLine) {
     } catch { }
     Set-PSReadLineOption -EditMode Windows
     Set-PSReadLineOption -Colors @{
-        Command          = '#B8F0FF'
-        Parameter        = '#00CCFF'
-        String           = '#FF7B8A'
-        Number           = '#FFB870'
-        Comment          = '#1A4D6E'
-        Operator         = '#A8E5FF'
-        Variable         = '#5FE3FF'
-        Type             = '#C094FF'
-        Keyword          = '#00CCFF'
-        Member           = '#B8F0FF'
-        Default          = '#B8F0FF'
-        Error            = '#FF3D5A'
-        Selection        = "$Esc[48;2;26;77;110m"
-        InlinePrediction = '#1A4D6E'
+        Command   = '#B8F0FF'
+        Parameter = '#00CCFF'
+        String    = '#FF7B8A'
+        Number    = '#FFB870'
+        Comment   = '#1A4D6E'
+        Operator  = '#A8E5FF'
+        Variable  = '#5FE3FF'
+        Type      = '#C094FF'
+        Keyword   = '#00CCFF'
+        Member    = '#B8F0FF'
+        Default   = '#B8F0FF'
+        Error     = '#FF3D5A'
+        Selection = "$Esc[48;2;26;77;110m"
     }
+    # InlinePrediction is PSReadLine 2.1+; stock WinPS 5.1's PSReadLine
+    # rejects the whole -Colors call if it's included. Set it separately.
+    try {
+        Set-PSReadLineOption -Colors @{ InlinePrediction = '#1A4D6E' } -ErrorAction Stop
+    } catch { }
 }

@@ -39,19 +39,25 @@ if (Get-Module -ListAvailable PSReadLine) {
     } catch { }
     Set-PSReadLineOption -EditMode Windows
     Set-PSReadLineOption -Colors @{
-        Command          = '#E8DCC8'
-        Parameter        = '#B41E1E'
-        String           = '#C9A66B'
-        Number           = '#E04848'
-        Comment          = '#6E6862'
-        Operator         = '#E8DCC8'
-        Variable         = '#E8DCC8'
-        Type             = '#C9A66B'
-        Keyword          = '#B41E1E'
-        Member           = '#E8DCC8'
-        Default          = '#E8DCC8'
-        Error            = '#FF4444'
-        Selection        = "$Esc[48;2;90;15;15m"
-        InlinePrediction = '#6E6862'
+        Command   = '#E8DCC8'
+        Parameter = '#B41E1E'
+        String    = '#C9A66B'
+        Number    = '#E04848'
+        Comment   = '#6E6862'
+        Operator  = '#E8DCC8'
+        Variable  = '#E8DCC8'
+        Type      = '#C9A66B'
+        Keyword   = '#B41E1E'
+        Member    = '#E8DCC8'
+        Default   = '#E8DCC8'
+        Error     = '#FF4444'
+        Selection = "$Esc[48;2;90;15;15m"
     }
+    # InlinePrediction was added in PSReadLine 2.1; the version shipped
+    # with stock Windows PowerShell 5.1 rejects it and -- crucially --
+    # rejects the WHOLE -Colors call if it's included, dropping every
+    # other color too. Set it separately so it can fail in isolation.
+    try {
+        Set-PSReadLineOption -Colors @{ InlinePrediction = '#6E6862' } -ErrorAction Stop
+    } catch { }
 }
