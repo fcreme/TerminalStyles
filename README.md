@@ -1,132 +1,153 @@
 # TerminalStyles
 
-A pack of themed styles for **PowerShell 7** in **Windows Terminal**. Pick a
-mood, run `apply.ps1`, and your terminal switches over — scheme, cursor,
-font, optional GIF background, and (for styles that include one) a
-custom prompt.
+Themed styles for **PowerShell 7** in **Windows Terminal**. Install once,
+then run `tstyles` to switch — arrow keys preview each style live in your
+current tab, Enter keeps it, Esc cancels.
+
+![demo placeholder](docs/screenshots/demo.gif)
+
+## Install
+
+Open a **PowerShell 7** tab in Windows Terminal and run:
+
+```powershell
+iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex
+```
+
+That's it. You don't need to clone anything. The installer downloads the
+styles to `%LOCALAPPDATA%\TerminalStyles\` and registers a single line in
+your `$PROFILE` that defines the `tstyles` command.
+
+Then open a new pwsh tab (or run `. $PROFILE` to reload).
+
+## Use
+
+```powershell
+PS C:\> tstyles
+```
+
+You'll get an arrow-key menu like:
+
+```
+  Choose a style for 'PowerShell'
+  Up/Down to preview, Enter to keep, Esc to cancel
+
+   > umbrella
+     kitty
+     golden-forest
+```
+
+As you arrow up/down, the terminal actually changes in real time — color
+scheme, cursor, font, opacity. Press **Enter** to keep the highlighted
+style, **Esc** to revert to how things looked before you ran `tstyles`.
 
 ## Styles
 
 | Style | Vibe | Includes |
 |---|---|---|
-| [**umbrella**](styles/umbrella) | Resident-Evil / survival-horror | scheme + theme + custom prompt (`[UMBRELLA // OPERATOR]` 3-line classified-doc prompt, startup banner, tuned PSReadLine colors) |
+| [**umbrella**](styles/umbrella) | Resident-Evil / survival-horror | scheme + theme + custom prompt (`[UMBRELLA // OPERATOR]` 3-line classified-doc prompt, startup banner) |
 | [**kitty**](styles/kitty) | Soft pastel CRT | scheme + theme (retro effect, acrylic, vintage cursor, corner GIF) |
-| [**golden-forest**](styles/golden-forest) | Warm sepia / autumn | scheme + theme (filledBox cursor, no acrylic, fullscreen GIF) |
+| [**golden-forest**](styles/golden-forest) | Warm sepia / autumn | scheme + theme (filledBox cursor, fullscreen GIF) |
 
-Each style lives in `styles/<name>/` with its own README and preview.
+Each style folder has its own README with full details.
+
+## Optional: background image
+
+`tstyles` doesn't touch your existing background image. To swap that too,
+pass `-BackgroundImage`:
+
+```powershell
+tstyles -BackgroundImage "C:\Users\me\Pictures\moody.gif"
+```
+
+The path is applied to the same target profile (alongside scheme / cursor
+/ font) and stays in place after Enter.
 
 ## Requirements
 
 - Windows 10 / 11
-- [Windows Terminal](https://aka.ms/terminal)
-- [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`) —
-  **not** Windows PowerShell 5.1, which has a separate `$PROFILE`
+- [Windows Terminal](https://aka.ms/terminal) (live preview only shows up
+  here — VS Code's integrated terminal etc. won't reflect the changes)
+- [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`)
 
-## Quick start
+## Scriptable / non-interactive
 
-```powershell
-git clone https://github.com/fcreme/TerminalStyles.git
-cd TerminalStyles
-pwsh -File .\apply.ps1
-```
-
-You'll be prompted interactively for:
-
-1. Which style to apply
-2. Which Windows Terminal profile to apply it to (e.g. `PowerShell`,
-   `Windows PowerShell`, `Command Prompt`, or `defaults` to apply globally)
-3. An optional background image path
-
-`apply.ps1` always backs up `settings.json` (and `$PROFILE` if it
-overwrites one) before making changes.
-
-## Non-interactive
+For dotfiles managers, CI, or anything that needs a one-shot apply (no
+menu), there's a direct script:
 
 ```powershell
-pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -BackgroundImage "C:\path\to\your.gif"
-
-# Apply a style globally (defaults block — affects all WT profiles):
-pwsh -File .\apply.ps1 -Style kitty -Target defaults
-
-# Skip installing the style's profile.ps1 even if it has one:
-pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -NoProfile
-
-# Point at a non-standard settings.json:
-pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -SettingsPath "D:\custom\settings.json"
+pwsh -File "$env:LOCALAPPDATA\TerminalStyles\apply.ps1" -Style umbrella -Target "PowerShell" -BackgroundImage "C:\img.gif"
 ```
 
-## What the script does
+`apply.ps1` is the same logic as the interactive picker but driven
+entirely by flags, with a one-time backup of `settings.json` and
+`$PROFILE` before applying. See `apply.ps1 -?` for the full parameter
+list.
 
-For your chosen style:
+## Updating
 
-1. **Backs up** `settings.json` to `settings.json.bak-<timestamp>`.
-2. **Adds the color scheme** to the `schemes` array (replacing any existing
-   scheme with the same name).
-3. **Applies the theme** (cursor shape, font, opacity, GIF settings,
-   `colorScheme`, etc.) to the target profile entry.
-4. If the style includes a `profile.ps1` and the target is a PowerShell
-   profile, **backs up** any existing `$PROFILE` and **installs** the
-   style's profile.
+Re-run the install one-liner to pull the latest styles. Your currently
+selected style (the `current-style.ps1` file) is preserved across
+reinstalls.
 
-Background image handling:
-
-- If you provide an image path, the script substitutes it into
-  `theme.json`'s `{{BACKGROUND_IMAGE}}` placeholder.
-- If you provide nothing, the `backgroundImage*` fields are removed from
-  the target profile entirely (the terminal will use whatever it
-  inherits from `defaults`, or no background at all).
-
-## Reverting
-
-Each apply creates a timestamped backup next to the file it modified.
-To roll back the most recent apply:
+## Uninstalling
 
 ```powershell
-# Restore Windows Terminal settings
-Move-Item "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json.bak-<timestamp>" `
-          "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json" -Force
+# Remove the installed files
+Remove-Item "$env:LOCALAPPDATA\TerminalStyles" -Recurse -Force
 
-# Restore PowerShell profile
-Move-Item "$PROFILE.bak-<timestamp>" $PROFILE -Force
+# Remove the loader block from your $PROFILE (between the BEGIN/END markers)
+# You can do this by hand, or:
+$content = Get-Content $PROFILE -Raw
+$content = [regex]::Replace($content, '(?ms)# ===== TerminalStyles BEGIN =====.*?# ===== TerminalStyles END =====\r?\n?', '')
+[System.IO.File]::WriteAllText($PROFILE, $content, [System.Text.UTF8Encoding]::new($false))
 ```
+
+The original `settings.json` is restored automatically if you press Esc
+in the menu before confirming. If you've already confirmed a style,
+restore the appropriate `.bak-<timestamp>` file in your Windows Terminal
+`LocalState` folder.
 
 ## Adding your own style
 
-Create a new directory under `styles/`:
+Once installed, you can drop a new style folder into
+`%LOCALAPPDATA%\TerminalStyles\styles\<name>\` with:
 
 ```
-styles/<your-style>/
+<name>/
 ├── scheme.json        # Windows Terminal color scheme (required)
-├── theme.json         # profile-level overrides (optional but recommended)
-├── profile.ps1        # custom $PROFILE (optional)
-└── README.md          # description + preview (optional)
+├── theme.json         # profile-level overrides (optional)
+├── profile.ps1        # custom pwsh $PROFILE (optional)
+└── README.md          # description (optional)
 ```
 
-- **scheme.json** — a single Windows Terminal scheme object (with `name`,
-  `background`, `foreground`, ANSI colors, etc.). The `name` field must be
-  unique across styles. See
-  [Microsoft's scheme docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
-- **theme.json** — fields to merge onto the target Windows Terminal profile
-  entry. Use the literal string `"{{BACKGROUND_IMAGE}}"` as the
-  `backgroundImage` value — `apply.ps1` substitutes the user's chosen
-  path, or removes all `backgroundImage*` fields if none provided.
-- **profile.ps1** — PowerShell 7 profile script. Will be copied to
-  `$PROFILE` when the user targets a PowerShell profile.
+`tstyles` will pick it up automatically — no registration needed.
 
-The script will automatically detect new styles — no registration needed.
+For contributing back, fork the repo, add the folder under `styles/`,
+and open a PR.
+
+- **scheme.json** must contain a unique `name`. See
+  [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
+- **theme.json** uses the literal string `"{{BACKGROUND_IMAGE}}"` for
+  the background image field; `tstyles` substitutes the user's chosen
+  path or strips the field if none is provided.
+- **profile.ps1** is copied to `current-style.ps1` on apply and
+  dot-sourced from `$PROFILE` on shell startup.
 
 ## Known limitations
 
-- **One `$PROFILE` per host.** Applying a style with a custom prompt
-  overwrites your existing profile (backed up). Switching styles changes
-  the prompt globally.
-- **GIFs aren't bundled.** Each style describes the mood it wants from a
-  background, but you bring your own image. (Repo would balloon and
-  raise copyright headaches if we shipped them.)
-- **JSON reformatting.** `apply.ps1` reformats `settings.json` cosmetically
-  on save (PowerShell's `ConvertTo-Json` differs slightly from Windows
-  Terminal's default). Functionally identical; Windows Terminal rewrites
-  the file on its next save anyway.
+- **One `$PROFILE` per host.** Confirming a style with a custom prompt
+  replaces `current-style.ps1`. Switching styles changes the prompt
+  globally — there's no per-tab prompt configuration.
+- **Background images aren't shipped.** Each style describes the kind
+  of imagery it pairs well with; you bring your own. (Shipping GIFs
+  would balloon the repo and raise copyright questions.)
+- **Live preview is Windows-Terminal-only.** Other hosts (VS Code,
+  conhost) don't read `settings.json`, so the menu won't show theme
+  changes there — `tstyles` warns when this is the case.
+- **JSON reformatting.** Each apply reformats `settings.json` cosmetically
+  (PowerShell's `ConvertTo-Json` style). Functionally identical;
+  Windows Terminal rewrites the file on its next save anyway.
 
 ## License
 
