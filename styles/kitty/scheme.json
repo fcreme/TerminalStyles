@@ -1,0 +1,23 @@
+{
+    "name": "kitty",
+    "background": "#1a1622",
+    "foreground": "#f4e1e8",
+    "cursorColor": "#ffb3c6",
+    "selectionBackground": "#ffb3c6",
+    "black": "#2a2535",
+    "red": "#ff8fa3",
+    "green": "#a8e6cf",
+    "yellow": "#ffd6a5",
+    "blue": "#a5b4fc",
+    "purple": "#c4b5fd",
+    "cyan": "#bae6fd",
+    "white": "#fce4ec",
+    "brightBlack": "#5a5468",
+    "brightRed": "#ffb3c1",
+    "brightGreen": "#c9f5e0",
+    "brightYellow": "#ffe4c2",
+    "brightBlue": "#c7d2fe",
+    "brightPurple": "#ddd6fe",
+    "brightCyan": "#dbeafe",
+    "brightWhite": "#ffffff"
+}

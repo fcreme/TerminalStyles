@@ -1,0 +1,17 @@
+{
+    "colorScheme": "golden-forest",
+    "cursorShape": "filledBox",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "semi-bold"
+    },
+    "padding": "12",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 0.55,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "topLeft"
+}

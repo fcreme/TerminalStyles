@@ -1,0 +1,17 @@
+{
+    "colorScheme": "kitty",
+    "cursorShape": "vintage",
+    "useAcrylic": true,
+    "opacity": 80,
+    "experimental.retroTerminalEffect": true,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "semi-bold"
+    },
+    "padding": "12",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 0.35,
+    "backgroundImageStretchMode": "none",
+    "backgroundImageAlignment": "bottomRight"
+}

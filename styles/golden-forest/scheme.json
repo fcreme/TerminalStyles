@@ -1,0 +1,23 @@
+{
+    "name": "golden-forest",
+    "background": "#0d1108",
+    "foreground": "#e8c873",
+    "cursorColor": "#ffb938",
+    "selectionBackground": "#5a4a1a",
+    "black": "#1a1f0d",
+    "red": "#a85a2a",
+    "green": "#7a8f3e",
+    "yellow": "#d4a017",
+    "blue": "#4d5d3a",
+    "purple": "#8b6f3a",
+    "cyan": "#a9b87c",
+    "white": "#e8d68a",
+    "brightBlack": "#3d4429",
+    "brightRed": "#d4825c",
+    "brightGreen": "#a8bf66",
+    "brightYellow": "#f4c948",
+    "brightBlue": "#7a8a5e",
+    "brightPurple": "#b8966a",
+    "brightCyan": "#c8d4a0",
+    "brightWhite": "#f5e8b8"
+}
