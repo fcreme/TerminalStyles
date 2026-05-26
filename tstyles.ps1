@@ -115,7 +115,7 @@ function Merge-StyleIntoSettings {
         [bool]$BackgroundImageProvided
     )
 
-    $scheme = Get-Content -LiteralPath (Join-Path $StyleDir 'scheme.json') -Raw | ConvertFrom-Json
+    $scheme = [System.IO.File]::ReadAllText((Join-Path $StyleDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
     if (-not $Settings.PSObject.Properties.Match('schemes').Count) {
         $Settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
@@ -124,7 +124,7 @@ function Merge-StyleIntoSettings {
 
     $themePath = Join-Path $StyleDir 'theme.json'
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
-    $theme = Get-Content -LiteralPath $themePath -Raw | ConvertFrom-Json
+    $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
     $entry = if ($TargetName -eq 'defaults') {
         if (-not $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
@@ -217,7 +217,12 @@ function Invoke-TerminalStyle {
     }
 
     # Snapshot original (byte-exact for revert)
-    $originalJson = Get-Content -LiteralPath $settingsPath -Raw
+    # MUST be UTF-8 explicit: Get-Content -Raw in Windows PowerShell 5.1
+    # defaults to the system ANSI codepage (Windows-1252 on Spanish locale),
+    # which mangles non-ASCII profile names (e.g. "Símbolo del sistema").
+    # The mangled string then round-trips through ConvertTo-Json + WriteAllText
+    # as UTF-8, doubling the byte count of non-ASCII chars on every call.
+    $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $originalSettings = $originalJson | ConvertFrom-Json
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }

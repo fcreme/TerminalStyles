@@ -125,7 +125,9 @@ if (-not (Test-Path -LiteralPath $SettingsPath)) {
 }
 Write-Host "Settings file: $SettingsPath"
 
-$settings = Get-Content -LiteralPath $SettingsPath -Raw | ConvertFrom-Json
+# UTF-8 explicit: Get-Content -Raw in WinPS 5.1 defaults to Windows-1252,
+# which mangles non-ASCII WT profile names (e.g. "Símbolo del sistema").
+$settings = [System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
 # --- Target profile selection ---
 $profileNames = @('defaults') + @($settings.profiles.list | ForEach-Object { $_.name })
@@ -161,9 +163,9 @@ if ($BackgroundImage -and -not (Test-Path -LiteralPath $BackgroundImage)) {
 # --- Load style content ---
 $schemePath = Join-Path $styleDir 'scheme.json'
 $themePath  = Join-Path $styleDir 'theme.json'
-$scheme = Get-Content -LiteralPath $schemePath -Raw | ConvertFrom-Json
+$scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 $theme  = if (Test-Path -LiteralPath $themePath) {
-    Get-Content -LiteralPath $themePath -Raw | ConvertFrom-Json
+    [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 } else { $null }
 
 # --- Backup settings.json ---

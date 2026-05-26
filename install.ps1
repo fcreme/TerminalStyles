@@ -115,8 +115,9 @@ function Register-LoaderInProfile {
         New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
     }
 
+    # UTF-8 explicit (WinPS 5.1's Get-Content -Raw defaults to ANSI codepage).
     $existing = if (Test-Path -LiteralPath $ProfilePath) {
-        Get-Content -LiteralPath $ProfilePath -Raw
+        [System.IO.File]::ReadAllText($ProfilePath, [System.Text.UTF8Encoding]::new($false))
     } else { '' }
 
     if ($existing.Trim().Length -gt 0) {
@@ -124,7 +125,7 @@ function Register-LoaderInProfile {
         foreach ($s in $styleDirs) {
             $sp = Join-Path $s.FullName 'profile.ps1'
             if (Test-Path -LiteralPath $sp) {
-                $styleContent = Get-Content -LiteralPath $sp -Raw
+                $styleContent = [System.IO.File]::ReadAllText($sp, [System.Text.UTF8Encoding]::new($false))
                 if ($styleContent.TrimEnd() -eq $existing.TrimEnd()) {
                     $bak = "$ProfilePath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
                     Copy-Item -LiteralPath $ProfilePath -Destination $bak -Force
