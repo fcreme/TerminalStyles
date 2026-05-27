@@ -647,13 +647,18 @@ function Invoke-TerminalStyle {
     }
     $confirmed = $false
 
-    # Pre-load each style's color swatch once so the render loop doesn't
-    # re-read scheme.json on every arrow press.
+    # Pre-load each style's color swatch AND the parsed scheme object.
+    # Schemes are reused per-arrow to emit OSC color escapes (see the
+    # render loop below) so the terminal repaints colors in <5ms, well
+    # before the eventual settings.json write triggers Windows Terminal's
+    # full reload cycle.
     $swatches = @{}
+    $schemes  = @{}
     for ($i = 0; $i -lt $styles.Count; $i++) {
         $sp = Join-Path $styles[$i].FullName 'scheme.json'
         $scheme = [System.IO.File]::ReadAllText($sp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
         $swatches[$i] = Get-SchemeSwatch -Scheme $scheme
+        $schemes[$i]  = $scheme
     }
 
     # Pre-load each style's tabTitle (from theme.json). settings.json's
@@ -785,6 +790,38 @@ function Invoke-TerminalStyle {
         #   Mash 5 keys -> cursor moves through all 5 visually, only
         #                  the final position is written to settings.json,
         #                  WT does one reload instead of five.
+        # Build pre-serialized OSC color packets, one per theme. Each
+        # packet is a single string of ANSI OSC sequences that, when
+        # written to stdout, instantly retints the terminal's
+        # foreground / background / cursor / selection / 16-color
+        # palette to that theme -- no settings.json write, no Windows
+        # Terminal reload. The eventual settings.json write (deferred
+        # to when the keypress queue drains) still happens and brings
+        # the background image, cursor shape, font, etc. into line a
+        # few hundred ms later, but the colors have already shifted
+        # so the perceived freeze drops to near-zero.
+        $oscPackets = @{}
+        $BEL  = [char]7
+        $oscEsc = [char]27
+        $palette = 'black','red','green','yellow','blue','purple','cyan','white',
+                   'brightBlack','brightRed','brightGreen','brightYellow',
+                   'brightBlue','brightPurple','brightCyan','brightWhite'
+        for ($i = 0; $i -lt $styles.Count; $i++) {
+            $s = $schemes[$i]
+            $sb = [System.Text.StringBuilder]::new()
+            if ($s.foreground)          { [void]$sb.Append("${oscEsc}]10;$($s.foreground)$BEL") }
+            if ($s.background)          { [void]$sb.Append("${oscEsc}]11;$($s.background)$BEL") }
+            if ($s.cursorColor)         { [void]$sb.Append("${oscEsc}]12;$($s.cursorColor)$BEL") }
+            if ($s.selectionBackground) { [void]$sb.Append("${oscEsc}]17;$($s.selectionBackground)$BEL") }
+            for ($p = 0; $p -lt $palette.Count; $p++) {
+                $color = $s.($palette[$p])
+                if ($color) {
+                    [void]$sb.Append("${oscEsc}]4;${p};${color}$BEL")
+                }
+            }
+            $oscPackets[$i] = $sb.ToString()
+        }
+
         $drawMenu = {
             [Console]::SetCursorPosition(0, $renderHomeY)
             Write-Host ""
@@ -837,11 +874,13 @@ function Invoke-TerminalStyle {
                     'UpArrow' {
                         if ($idx -gt 0) {
                             $idx--; $needsRedraw = $true; $pendingApply = $idx
+                            [Console]::Out.Write($oscPackets[$idx])
                         }
                     }
                     'DownArrow' {
                         if ($idx -lt $styles.Count - 1) {
                             $idx++; $needsRedraw = $true; $pendingApply = $idx
+                            [Console]::Out.Write($oscPackets[$idx])
                         }
                     }
                     'Enter' {
