@@ -300,8 +300,9 @@ list.
 
 ## Updating
 
-Every `tstyles` invocation checks `api.github.com` for new commits on
-`main` and prints a one-line yellow notice if your install is behind:
+`tstyles` checks `api.github.com` for new commits on `main` at most once
+per day per machine and prints a one-line yellow notice if your install
+is behind:
 
 ```
 Update available (abc1234 -> def5678). Run: tstyles update
@@ -327,13 +328,16 @@ iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.p
 
 ### How the update check works
 
-`tstyles` issues a single unauthenticated HTTP GET to
-`api.github.com/repos/fcreme/TerminalStyles/commits/main` on every
-invocation (capped at 2 seconds), comparing the returned commit SHA
-against the one recorded at install time in `%LOCALAPPDATA%\TerminalStyles\.installed-sha`.
-No authentication, no payload sent, no analytics. Offline / API
-unreachable / rate-limited → check fails silently and `tstyles` works
-normally.
+`tstyles` issues at most one unauthenticated HTTP GET per 24 hours per
+machine to `api.github.com/repos/fcreme/TerminalStyles/commits/main`
+(capped at 2 seconds), comparing the returned commit SHA against the
+one recorded at install time in
+`%LOCALAPPDATA%\TerminalStyles\.installed-sha`. The 24h throttle is
+tracked in `%LOCALAPPDATA%\TerminalStyles\.last-update-check` and
+applies even on failure (so an offline machine doesn't retry the
+2s timeout on every invocation). No authentication, no payload sent,
+no analytics. Offline / API unreachable / rate-limited → check fails
+silently and `tstyles` works normally.
 
 ## Uninstalling
 
