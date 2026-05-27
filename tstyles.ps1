@@ -414,13 +414,29 @@ function Get-StyleDir {
 }
 
 function Get-AvailableStyles {
-    # Returns an array of DirectoryInfo for every styles/<name>/ that has a
-    # scheme.json. Sorted alphabetically by name.
-    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
-    if (-not (Test-Path -LiteralPath $stylesDir)) { return @() }
-    @(Get-ChildItem -LiteralPath $stylesDir -Directory | Where-Object {
-        Test-Path (Join-Path $_.FullName 'scheme.json')
-    } | Sort-Object Name)
+    # Returns DirectoryInfo for every styles/<name>/ that has a scheme.json,
+    # merged from two locations:
+    #   1. $DataRoot\styles\<name>\ -- user dir, persistent across updates
+    #   2. $ModuleRoot\styles\<name>\ -- bundled, install-managed
+    # User-wins on name collision (matches Get-StyleDir's precedence).
+    # Sorted alphabetically by name.
+    $userStylesDir    = Join-Path $script:TStylesDataRoot   'styles'
+    $bundledStylesDir = Join-Path $script:TStylesModuleRoot 'styles'
+
+    $user = if (Test-Path -LiteralPath $userStylesDir) {
+        @(Get-ChildItem -LiteralPath $userStylesDir -Directory | Where-Object {
+            Test-Path (Join-Path $_.FullName 'scheme.json')
+        })
+    } else { @() }
+
+    $bundled = if (Test-Path -LiteralPath $bundledStylesDir) {
+        @(Get-ChildItem -LiteralPath $bundledStylesDir -Directory | Where-Object {
+            Test-Path (Join-Path $_.FullName 'scheme.json')
+        })
+    } else { @() }
+
+    $userNames = @($user | ForEach-Object Name)
+    @(@($user) + @($bundled | Where-Object { $_.Name -notin $userNames })) | Sort-Object Name
 }
 
 function Get-CurrentStyleName {
@@ -536,8 +552,9 @@ function Show-CurrentStyle {
         if ([Console]::IsOutputRedirected) {
             Write-Output $current
         } else {
-            $schemePath = Join-Path $script:TStylesModuleRoot "styles\$current\scheme.json"
-            if (Test-Path -LiteralPath $schemePath) {
+            $styleDir = Get-StyleDir -StyleName $current
+            $schemePath = if ($styleDir) { Join-Path $styleDir 'scheme.json' } else { $null }
+            if ($schemePath -and (Test-Path -LiteralPath $schemePath)) {
                 $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
                 Write-Host ("{0,-16}  {1}" -f $current, (Get-SchemeSwatch -Scheme $scheme))
             } else {
@@ -578,8 +595,8 @@ function Apply-StyleDirect {
         [bool]$BackgroundImageProvided = $false
     )
 
-    $styleDir = Join-Path $script:TStylesModuleRoot "styles\$StyleName"
-    if (-not (Test-Path -LiteralPath (Join-Path $styleDir 'scheme.json'))) {
+    $styleDir = Get-StyleDir -StyleName $StyleName
+    if (-not $styleDir) {
         Write-Error "Style '$StyleName' not found. Run 'tstyles list' to see available styles."
         return
     }
@@ -1203,13 +1220,11 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
     $subcommands = @('list', 'current', 'random', 'update', 'uninstall')
-    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
-    $styleNames = if (Test-Path -LiteralPath $stylesDir) {
-        @(Get-ChildItem -LiteralPath $stylesDir -Directory -ErrorAction SilentlyContinue |
-            Where-Object { Test-Path (Join-Path $_.FullName 'scheme.json') } |
-            ForEach-Object { $_.Name })
-    } else { @() }
-    $all = @($subcommands + $styleNames | Sort-Object)
+    # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
+    # with user-wins dedup -- single source of truth for what `tstyles <name>`
+    # can target.
+    $styleNames = @(Get-AvailableStyles | ForEach-Object Name)
+    $all = @($subcommands + $styleNames | Sort-Object -Unique)
     $all | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     }
