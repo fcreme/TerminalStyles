@@ -14,6 +14,6 @@
     "padding": "12",
     "backgroundImage": "{{BACKGROUND_IMAGE}}",
     "backgroundImageOpacity": 0.55,
-    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageStretchMode": "uniform",
     "backgroundImageAlignment": "center"
 }
