@@ -400,8 +400,8 @@ or open WT Settings → "Open JSON file" and edit by hand.
 
 ## Adding your own style
 
-Once installed, you can drop a new style folder into your
-TerminalStyles install dir with:
+Drop a folder into `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`
+with:
 
 ```
 <name>/
@@ -412,25 +412,15 @@ TerminalStyles install dir with:
 └── README.md          # description (optional)
 ```
 
-The install dir depends on which install path you used:
+`tstyles` picks it up automatically on next module load — no
+registration needed. The dir is the same regardless of install path
+(bootstrap or PSGallery), and folders here **survive updates**: both
+`tstyles update` (bootstrap re-install) and `Update-PSResource`
+leave `%LOCALAPPDATA%\TerminalStyles\` untouched.
 
-- **Bootstrap (`iwr | iex`):** `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`.
-- **PSGallery (`Install-PSResource`):** the module's per-version dir,
-  e.g. `~\Documents\PowerShell\Modules\TerminalStyles\0.2.0\styles\<name>\`.
-
-`tstyles` will pick it up automatically on next module load — no
-registration needed.
-
-**Custom styles don't survive `tstyles update` on either path** — the
-installer re-extracts (bootstrap) or installs into a fresh per-version
-dir (PSGallery), so user-added folders inside `styles/` aren't carried
-over. Your active style (`current-style.ps1`) and any lazy-fetched
-backgrounds at `%LOCALAPPDATA%\TerminalStyles\` *are* preserved.
-
-For a custom style you want long-term, the cleanest path is to
-contribute it upstream — see "For contributing back" below. If you
-want to keep working ones locally between updates, save the folder
-somewhere outside `styles/` and re-drop it in after each update.
+If you drop in a folder with the same name as a bundled theme (e.g.
+`eva/`), your version wins — useful for tweaking a bundled theme's
+prompt or palette without forking the repo.
 
 For contributing back:
 
