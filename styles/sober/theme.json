@@ -1,6 +1,7 @@
 {
     "colorScheme": "sober",
     "tabTitle": "SOBER",
+    "tabColor": "#d5d5d5",
     "cursorShape": "bar",
     "useAcrylic": false,
     "opacity": 100,

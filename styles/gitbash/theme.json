@@ -1,6 +1,7 @@
 {
     "colorScheme": "gitbash",
     "tabTitle": "GITBASH // MINGW64",
+    "tabColor": "#a31515",
     "cursorShape": "bar",
     "useAcrylic": false,
     "opacity": 100,

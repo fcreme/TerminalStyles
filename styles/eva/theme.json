@@ -1,6 +1,7 @@
 {
     "colorScheme": "eva",
     "tabTitle": "EVA // NERV",
+    "tabColor": "#ff3d5a",
     "cursorShape": "filledBox",
     "useAcrylic": false,
     "opacity": 100,

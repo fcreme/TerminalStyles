@@ -656,6 +656,24 @@ function Invoke-TerminalStyle {
         $swatches[$i] = Get-SchemeSwatch -Scheme $scheme
     }
 
+    # Pre-load each style's tabTitle (from theme.json). settings.json's
+    # tabTitle isn't honored by Windows Terminal for a tab whose shell has
+    # already set $Host.UI.RawUI.WindowTitle (every theme's profile.ps1
+    # does), so we have to set WindowTitle explicitly on each arrow change
+    # to make the title preview live. Themes without a tabTitle simply
+    # leave the current title untouched while highlighted.
+    $titles = @{}
+    for ($i = 0; $i -lt $styles.Count; $i++) {
+        $tp = Join-Path $styles[$i].FullName 'theme.json'
+        if (-not (Test-Path -LiteralPath $tp)) { continue }
+        try {
+            $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            if ($theme.PSObject.Properties.Match('tabTitle').Count -gt 0) {
+                $titles[$i] = $theme.tabTitle
+            }
+        } catch { }
+    }
+
     # Background prefetch: kick off ONE job that downloads any missing GIFs
     # from the gifs branch serially. The picker stays interactive while this
     # runs; by the time the user arrow-keys through a few styles, the rest
@@ -715,6 +733,7 @@ function Invoke-TerminalStyle {
     $mergedCache = @{}
 
     [Console]::CursorVisible = $false
+    $originalTitle = $Host.UI.RawUI.WindowTitle
     try {
         # Apply first preview before showing the menu
         $preview = $originalJson | ConvertFrom-Json
@@ -724,6 +743,7 @@ function Invoke-TerminalStyle {
         if (Test-StyleResolved -StyleDir $styles[$idx].FullName) {
             $mergedCache[$idx] = $initialJson
         }
+        if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
 
         while (-not $confirmed) {
             Clear-Host
@@ -774,6 +794,7 @@ function Invoke-TerminalStyle {
                     [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
                     if ($resolved) { $mergedCache[$idx] = $json }
                 }
+                if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
             }
         }
 
@@ -819,6 +840,13 @@ function Invoke-TerminalStyle {
         }
     } finally {
         [Console]::CursorVisible = $true
+        # Restore the original window title on cancel / exception. The
+        # confirm path already had the selected theme's profile.ps1
+        # dot-sourced (which sets its own title), so we only restore when
+        # the user didn't confirm.
+        if (-not $confirmed) {
+            $Host.UI.RawUI.WindowTitle = $originalTitle
+        }
         # Clean up the background prefetch job. If it's still mid-fetch
         # (user picked quickly), the downloads in progress may be cut off
         # -- the next Get-StyleBundledBackground call will fall back to

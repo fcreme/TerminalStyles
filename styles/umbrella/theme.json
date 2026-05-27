@@ -1,6 +1,7 @@
 {
     "colorScheme": "umbrella",
     "tabTitle": "UMBRELLA TERMINAL",
+    "tabColor": "#b41e1e",
     "cursorShape": "vintage",
     "useAcrylic": false,
     "opacity": 100,

@@ -1,5 +1,7 @@
 {
     "colorScheme": "kitty",
+    "tabTitle": "KITTY TERMINAL",
+    "tabColor": "#ffb3c6",
     "cursorShape": "vintage",
     "useAcrylic": true,
     "opacity": 80,

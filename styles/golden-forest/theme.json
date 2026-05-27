@@ -1,5 +1,7 @@
 {
     "colorScheme": "golden-forest",
+    "tabTitle": "GOLDEN FOREST",
+    "tabColor": "#ffb938",
     "cursorShape": "filledBox",
     "useAcrylic": false,
     "opacity": 100,
