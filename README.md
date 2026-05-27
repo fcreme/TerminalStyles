@@ -52,7 +52,9 @@ That's it. You don't need to clone anything. The installer:
    `AllSigned` and offers to set `CurrentUser` to `RemoteSigned` for you
    (it asks first — never silent).
 
-Then open a new pwsh or powershell tab (or run `. $PROFILE` to reload).
+Once the installer finishes, you can run `tstyles` immediately in the
+same tab. Any other tabs already open (and the other PowerShell engine
+if both are installed) will pick it up the next time they start.
 
 ## Use
 
