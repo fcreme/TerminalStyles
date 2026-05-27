@@ -90,7 +90,7 @@ yellow status overlay. NERV operations banner.
 
 ### [ex-machina](styles/ex-machina)
 
-<video src="https://github.com/fcreme/TerminalStyles/raw/main/docs/videos/exmachina.mp4" controls autoplay loop muted playsinline width="900"></video>
+![ex-machina](docs/screenshots/ex-machina.png)
 
 **Ava body-scan / Bluebook research.** Cold electric cyan wireframe
 with a coral pink accent.
