@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.1.0'
+    ModuleVersion     = '0.2.0'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Themes', 'Color', 'Prompt', 'pwsh')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'Initial module structure (sub-project A of the PSGallery migration). No behavior changes from the prior dot-sourced install.'
+            ReleaseNotes = 'v0.2.0: state files relocated to %LOCALAPPDATA%\TerminalStyles\ (survives version upgrades). tstyles update / uninstall now delegate to Update-PSResource / Uninstall-PSResource for PSGallery-installed copies. README leads with Install-PSResource; iwr|iex bootstrap is now a documented fallback. Transparent migration of cached background images on first import.'
         }
     }
 }
