@@ -1,5 +1,7 @@
 # TerminalStyles
 
+[![Tests](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg)](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml)
+
 Themed styles for **PowerShell** (5.1 and 7+) in **Windows Terminal**.
 Install once, then run `tstyles` to switch — arrow keys preview each style
 live in your current tab, Enter keeps it, Esc cancels.
