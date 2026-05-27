@@ -154,8 +154,9 @@ function Test-UpdateAvailable {
 function Show-UpdateNoticeIfAvailable {
     # Prints the one-line yellow update notice if there's a newer commit
     # on origin/main. Called from every non-updating tstyles invocation
-    # (picker, direct apply, list, current, random) so the user sees it
-    # regardless of how they entered the tool.
+    # (picker, direct apply, list, current, random), but Test-UpdateAvailable
+    # short-circuits inside the 24h throttle window, so the notice displays
+    # at most once per day while an update is pending.
     $pending = Test-UpdateAvailable
     if ($pending) {
         Write-Host ("Update available ({0} -> {1}). Run: tstyles update" -f $pending.Installed, $pending.Remote) -ForegroundColor Yellow
@@ -616,8 +617,8 @@ function Invoke-TerminalStyle {
         if (-not $Target) { $Target = $Arg }
     }
 
-    # Update notice fires on every passive invocation now (see
-    # Show-UpdateNoticeIfAvailable). Picker is one of them.
+    # Update-notice path runs on every passive invocation (picker included),
+    # but Test-UpdateAvailable short-circuits inside the 24h throttle window.
     Show-UpdateNoticeIfAvailable
 
     $settingsPath = Find-WTSettingsPath
