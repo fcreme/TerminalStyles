@@ -181,6 +181,10 @@ function Test-UpdateAvailable {
     # .last-update-check. The timestamp is rewritten on every attempt
     # (success or failure), so an offline machine doesn't retry the
     # 2s timeout on every single tstyles invocation.
+    # PSResourceGet installs update via Update-PSResource, not git. Skip
+    # the SHA-based check entirely; the user runs `tstyles update` whenever.
+    if ((Get-TerminalStylesInstallKind) -eq 'PSResourceGet') { return $null }
+
     $shaFile   = Join-Path $script:TStylesDataRoot '.installed-sha'
     $stampFile = Join-Path $script:TStylesDataRoot '.last-update-check'
 
@@ -244,48 +248,63 @@ function Invoke-TerminalStylesUpdate {
     param([switch]$Force)
 
     Write-Host ""
-    Write-Host "Updating TerminalStyles from GitHub..." -ForegroundColor Cyan
+    Write-Host "Updating TerminalStyles..." -ForegroundColor Cyan
 
-    # Cheap check first: if we already have the current main SHA, skip the
-    # ~10MB ZIP download entirely. -Force overrides (for recovery from a
-    # botched install).
-    $shaFile = Join-Path $script:TStylesDataRoot '.installed-sha'
-    if (-not $Force -and (Test-Path -LiteralPath $shaFile)) {
-        try {
-            $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
-            $resp = Invoke-RestMethod `
-                -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
-                -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
-                -TimeoutSec 5 -ErrorAction Stop
-            if ($resp.sha -and $resp.sha -eq $installed) {
-                Write-Host "Already up to date ($($installed.Substring(0,7))). Use -Force to reinstall anyway." -ForegroundColor Green
-                return
+    switch (Get-TerminalStylesInstallKind) {
+        'PSResourceGet' {
+            try {
+                Update-PSResource -Name TerminalStyles -TrustRepository -ErrorAction Stop
+                Write-Host ""
+                Write-Host "Update complete. To use the new version in THIS session," -ForegroundColor Yellow
+                Write-Host "open a new tab, or run:" -ForegroundColor Yellow
+                Write-Host "  Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+            } catch {
+                Write-Host "Update failed: $_" -ForegroundColor Red
+                Write-Host "You can retry manually:" -ForegroundColor Yellow
+                Write-Host "  Update-PSResource -Name TerminalStyles -TrustRepository" -ForegroundColor Cyan
             }
-        } catch {
-            # If the check fails (offline, rate-limited), fall through to the
-            # full download path. Better to update than to fail silently.
         }
-    }
+        'Bootstrap' {
+            # Re-run the iwr installer one-liner. Existing behavior, preserved
+            # so users who installed via iwr|iex keep updating that way.
 
-    # Suppress the IWR progress bar -- dominant cost on WinPS 5.1.
-    $prevProgress = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'
-    try {
-        $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
-        Invoke-Expression $installerScript
-        # Files on disk are new; this session is still running the OLD
-        # tstyles.ps1 (functions are bound at dot-source time, not per call).
-        # Tell the user how to pick up the new code.
-        Write-Host ""
-        Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
-        Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
-        Write-Host "  . `$PROFILE" -ForegroundColor Cyan
-    } catch {
-        Write-Host "Update failed: $_" -ForegroundColor Red
-        Write-Host "You can retry manually:" -ForegroundColor Yellow
-        Write-Host "  iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex" -ForegroundColor Cyan
-    } finally {
-        $ProgressPreference = $prevProgress
+            # Cheap check first: if we already have the current main SHA, skip
+            # the ~10MB ZIP download entirely. -Force overrides.
+            $shaFile = Join-Path $script:TStylesDataRoot '.installed-sha'
+            if (-not $Force -and (Test-Path -LiteralPath $shaFile)) {
+                try {
+                    $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
+                    $resp = Invoke-RestMethod `
+                        -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
+                        -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
+                        -TimeoutSec 5 -ErrorAction Stop
+                    if ($resp.sha -and $resp.sha -eq $installed) {
+                        Write-Host "Already up to date ($($installed.Substring(0,7))). Use -Force to reinstall anyway." -ForegroundColor Green
+                        return
+                    }
+                } catch {
+                    # Network failure -- fall through to full download.
+                }
+            }
+
+            # Suppress IWR progress bar (dominant cost on WinPS 5.1).
+            $prevProgress = $ProgressPreference
+            $ProgressPreference = 'SilentlyContinue'
+            try {
+                $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
+                Invoke-Expression $installerScript
+                Write-Host ""
+                Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
+                Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
+                Write-Host "  . `$PROFILE" -ForegroundColor Cyan
+            } catch {
+                Write-Host "Update failed: $_" -ForegroundColor Red
+                Write-Host "You can retry manually:" -ForegroundColor Yellow
+                Write-Host "  iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex" -ForegroundColor Cyan
+            } finally {
+                $ProgressPreference = $prevProgress
+            }
+        }
     }
 }
 
@@ -621,14 +640,31 @@ function Apply-StyleDirect {
 }
 
 function Invoke-TerminalStylesUninstall {
-    # `tstyles uninstall` -- remove %LOCALAPPDATA%\TerminalStyles and the
-    # loader block from both PowerShell engines' $PROFILE. Asks confirmation.
-    # Does NOT modify settings.json (user keeps whatever scheme/bg they had).
+    [CmdletBinding()]
+    param(
+        [switch]$DeleteData    # also remove %LOCALAPPDATA%\TerminalStyles\ (user state)
+    )
+
+    $dataDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+    $kind = Get-TerminalStylesInstallKind
+
     Write-Host ""
-    Write-Host "This will remove TerminalStyles:" -ForegroundColor Yellow
-    Write-Host ("  - " + (Join-Path $env:LOCALAPPDATA 'TerminalStyles') + " (entire folder)") -ForegroundColor Yellow
-    Write-Host "  - The loader block from pwsh 7 and Windows PowerShell 5.1 `$PROFILE files" -ForegroundColor Yellow
-    Write-Host "  - It will NOT modify Windows Terminal's settings.json." -ForegroundColor Yellow
+    Write-Host "This will uninstall TerminalStyles (detected: $kind):" -ForegroundColor Yellow
+    switch ($kind) {
+        'PSResourceGet' {
+            Write-Host "  - Uninstall-PSResource -Name TerminalStyles" -ForegroundColor Yellow
+        }
+        'Bootstrap' {
+            Write-Host "  - Remove install-managed files from $dataDir" -ForegroundColor Yellow
+        }
+    }
+    Write-Host "  - Strip the loader block from pwsh 7 and Windows PowerShell 5.1 `$PROFILE files" -ForegroundColor Yellow
+    if ($DeleteData) {
+        Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp)" -ForegroundColor Red
+    } else {
+        Write-Host "  - PRESERVE user state ($dataDir contents -- pass -DeleteData to wipe)" -ForegroundColor Gray
+    }
+    Write-Host "  - Will NOT modify Windows Terminal's settings.json." -ForegroundColor Yellow
     Write-Host ""
     $ans = Read-Host "Continue? [y/N]"
     if ($ans -notmatch '^(?i)y') {
@@ -636,6 +672,34 @@ function Invoke-TerminalStylesUninstall {
         return
     }
 
+    # 1. Remove the module / install-managed files
+    switch ($kind) {
+        'PSResourceGet' {
+            try {
+                Uninstall-PSResource -Name TerminalStyles -ErrorAction Stop
+                Write-Host "  Removed module via Uninstall-PSResource" -ForegroundColor Green
+            } catch {
+                Write-Host "  Uninstall-PSResource failed: $_" -ForegroundColor Red
+            }
+        }
+        'Bootstrap' {
+            $installManagedItems = @(
+                'tstyles.ps1', 'apply.ps1', 'install.ps1',
+                'TerminalStyles.psd1', 'TerminalStyles.psm1',
+                'styles', 'scripts',
+                'README.md', 'LICENSE'
+            )
+            foreach ($item in $installManagedItems) {
+                $path = Join-Path $dataDir $item
+                if (Test-Path -LiteralPath $path) {
+                    Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
+                }
+            }
+            Write-Host "  Removed install-managed files from $dataDir" -ForegroundColor Green
+        }
+    }
+
+    # 2. Strip the loader from both PowerShell engines' $PROFILE
     foreach ($exe in 'pwsh.exe', 'powershell.exe') {
         $cmd = Get-Command -Name $exe -ErrorAction SilentlyContinue
         if (-not $cmd) { continue }
@@ -652,10 +716,16 @@ function Invoke-TerminalStylesUninstall {
         }
     }
 
-    $installDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
-    if (Test-Path -LiteralPath $installDir) {
-        Remove-Item -LiteralPath $installDir -Recurse -Force
-        Write-Host "  Removed $installDir" -ForegroundColor Green
+    # 3. Optionally remove user state
+    if ($DeleteData) {
+        if (Test-Path -LiteralPath $dataDir) {
+            Remove-Item -LiteralPath $dataDir -Recurse -Force
+            Write-Host "  Removed $dataDir (full wipe via -DeleteData)" -ForegroundColor Green
+        }
+    } else {
+        Write-Host ""
+        Write-Host "  User state preserved at $dataDir" -ForegroundColor Gray
+        Write-Host "  Pass -DeleteData to remove that too." -ForegroundColor Gray
     }
 
     Write-Host ""
