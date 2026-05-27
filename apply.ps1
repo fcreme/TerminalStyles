@@ -252,13 +252,34 @@ if ($hasProfile -and -not $NoProfile) {
         if (-not (Test-Path -LiteralPath $destDir)) {
             New-Item -ItemType Directory -Force -Path $destDir | Out-Null
         }
+
+        # If $PROFILE already contains the tstyles loader block (from
+        # install.ps1), this user is on the loader-managed install path:
+        # writing the theme's profile.ps1 over $PROFILE would obliterate
+        # the loader and break `tstyles`, live-reload, and update-check.
+        # Write to current-style.ps1 instead -- the same target the
+        # interactive picker uses for live reload.
+        $hasLoader = $false
         if (Test-Path -LiteralPath $profileDest) {
-            $profileBak = "$profileDest.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-            Copy-Item -LiteralPath $profileDest -Destination $profileBak
-            Write-Host "Backed up existing profile to: $profileBak" -ForegroundColor Gray
+            $profileContent = [System.IO.File]::ReadAllText($profileDest, [System.Text.UTF8Encoding]::new($false))
+            if ($profileContent -match '(?m)^# =+ TerminalStyles BEGIN =+') {
+                $hasLoader = $true
+            }
         }
-        Copy-Item -LiteralPath $profilePs1 -Destination $profileDest -Force
-        Write-Host "Installed profile.ps1 to: $profileDest" -ForegroundColor Green
+
+        if ($hasLoader) {
+            $currentStyleDest = Join-Path $repoRoot 'current-style.ps1'
+            Copy-Item -LiteralPath $profilePs1 -Destination $currentStyleDest -Force
+            Write-Host "Updated current-style.ps1 (tstyles loader detected; `$PROFILE left intact)" -ForegroundColor Green
+        } else {
+            if (Test-Path -LiteralPath $profileDest) {
+                $profileBak = "$profileDest.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+                Copy-Item -LiteralPath $profileDest -Destination $profileBak
+                Write-Host "Backed up existing profile to: $profileBak" -ForegroundColor Gray
+            }
+            Copy-Item -LiteralPath $profilePs1 -Destination $profileDest -Force
+            Write-Host "Installed profile.ps1 to: $profileDest" -ForegroundColor Green
+        }
     } else {
         Write-Host "Note: '$Target' is not a PowerShell profile -- skipping profile.ps1 install." -ForegroundColor Yellow
     }
