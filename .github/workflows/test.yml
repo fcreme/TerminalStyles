@@ -16,7 +16,12 @@ jobs:
       - name: Install Pester 5
         shell: pwsh
         run: |
-          Install-Module -Name Pester -Force -SkipPublisherCheck -MinimumVersion 5.0.0 -Scope CurrentUser
+          # Install-PSResource (PSResourceGet, preinstalled on windows-latest)
+          # is the modern replacement for Install-Module. It handles trusted
+          # repos and dependency resolution more reliably than the legacy
+          # PowerShellGet v2 Install-Module, which has been flaky for
+          # 'No match was found' errors against PSGallery on CI runners.
+          Install-PSResource -Name Pester -Version '[5.0.0,)' -TrustRepository -Reinstall
           Import-Module Pester
           (Get-Module Pester).Version
 
