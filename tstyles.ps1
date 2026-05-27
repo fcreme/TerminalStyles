@@ -765,47 +765,94 @@ function Invoke-TerminalStyle {
         Clear-Host
         $renderHomeY = [Console]::CursorTop
 
-        # Non-blocking render loop. Each iteration either consumes a
-        # pending key, prebuilds one theme's merged JSON in the
-        # background, or sleeps briefly. Prebuild fills $mergedCache
-        # ahead of the user's arrow keys so by the time they navigate
-        # to a theme, the JSON is already serialized and the on-press
-        # path is reduced to a single WriteAllText call (no parse /
-        # merge / serialize). For themes the user reaches before
-        # prebuild gets to them, the original on-demand merge runs
-        # exactly as before.
+        # Non-blocking render loop with three responsibilities, in
+        # strict priority order:
+        #   1. Process pending keypresses -- update $idx, redraw the
+        #      menu IMMEDIATELY so the cursor visually moves, but do
+        #      NOT apply the theme yet. Set $pendingApply = $idx and
+        #      loop back to drain any further keypresses.
+        #   2. Apply the pending theme (settings.json write + tab
+        #      title) once the keypress queue is empty. Mashed arrows
+        #      collapse to a single apply at the final position --
+        #      Windows Terminal does one reload instead of N.
+        #   3. Prebuild the next uncached resolved theme's merged
+        #      JSON during idle slices so future applies are pure
+        #      WriteAllText (no parse / merge / serialize).
+        #
+        # Net effect:
+        #   Single tap  -> cursor jumps in ~5ms, theme applies after
+        #                  ~50-100ms once the gap is detected.
+        #   Mash 5 keys -> cursor moves through all 5 visually, only
+        #                  the final position is written to settings.json,
+        #                  WT does one reload instead of five.
+        $drawMenu = {
+            [Console]::SetCursorPosition(0, $renderHomeY)
+            Write-Host ""
+            Write-Host "  Choose a style for " -NoNewline
+            Write-Host "'$Target'" -ForegroundColor Cyan
+            Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
+            Write-Host ""
+            for ($i = 0; $i -lt $styles.Count; $i++) {
+                $name = $styles[$i].Name
+                $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
+                $color = if ($i -eq $idx) { 'Yellow' } else { 'Gray' }
+                $prefix = if ($i -eq $idx) { '   > ' } else { '     ' }
+                Write-Host ($prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
+                if ($resolved) {
+                    Write-Host $swatches[$i]
+                } else {
+                    Write-Host "$hintColor...fetching background$resetColor"
+                }
+            }
+            Write-Host ""
+        }
+
+        $applyTheme = {
+            param([int]$i)
+            $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
+            if ($resolved -and $mergedCache.ContainsKey($i)) {
+                [System.IO.File]::WriteAllText($settingsPath, $mergedCache[$i], [System.Text.UTF8Encoding]::new($false))
+            } else {
+                $preview = $originalJson | ConvertFrom-Json
+                $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$i].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+                $json = $preview | ConvertTo-Json -Depth 32
+                [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
+                if ($resolved) { $mergedCache[$i] = $json }
+            }
+            if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
+        }
+
         $needsRedraw = $true
+        $pendingApply = -1
+
         while (-not $confirmed) {
             if ($needsRedraw) {
-                [Console]::SetCursorPosition(0, $renderHomeY)
-                Write-Host ""
-                Write-Host "  Choose a style for " -NoNewline
-                Write-Host "'$Target'" -ForegroundColor Cyan
-                Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
-                Write-Host ""
-                for ($i = 0; $i -lt $styles.Count; $i++) {
-                    $name = $styles[$i].Name
-                    $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
-                    $color = if ($i -eq $idx) { 'Yellow' } else { 'Gray' }
-                    $prefix = if ($i -eq $idx) { '   > ' } else { '     ' }
-                    Write-Host ($prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
-                    if ($resolved) {
-                        Write-Host $swatches[$i]
-                    } else {
-                        Write-Host "$hintColor...fetching background$resetColor"
-                    }
-                }
-                Write-Host ""
+                & $drawMenu
                 $needsRedraw = $false
             }
 
             if ([Console]::KeyAvailable) {
                 $key = [Console]::ReadKey($true)
-                $changed = $false
                 switch ($key.Key) {
-                    'UpArrow'   { if ($idx -gt 0) { $idx--; $changed = $true } }
-                    'DownArrow' { if ($idx -lt $styles.Count - 1) { $idx++; $changed = $true } }
-                    'Enter'     { $confirmed = $true }
+                    'UpArrow' {
+                        if ($idx -gt 0) {
+                            $idx--; $needsRedraw = $true; $pendingApply = $idx
+                        }
+                    }
+                    'DownArrow' {
+                        if ($idx -lt $styles.Count - 1) {
+                            $idx++; $needsRedraw = $true; $pendingApply = $idx
+                        }
+                    }
+                    'Enter' {
+                        # Drain any pending apply so the confirmed theme
+                        # is in settings.json before we copy profile.ps1.
+                        if ($pendingApply -ge 0) {
+                            & $applyTheme $pendingApply
+                            $pendingApply = -1
+                        }
+                        $confirmed = $true
+                    }
                     'Escape' {
                         [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
                         Clear-Host
@@ -813,48 +860,38 @@ function Invoke-TerminalStyle {
                         return
                     }
                 }
+                continue
+            }
 
-                if ($changed) {
-                    $resolved = Test-StyleResolved -StyleDir $styles[$idx].FullName
-                    if ($resolved -and $mergedCache.ContainsKey($idx)) {
-                        # Cache hit -- prebuild already serialized this theme,
-                        # or a prior arrow press did. Pure file write.
-                        [System.IO.File]::WriteAllText($settingsPath, $mergedCache[$idx], [System.Text.UTF8Encoding]::new($false))
-                    } else {
-                        # Cache miss -- compute now (user arrowed faster than
-                        # prebuild, or the theme is still unresolved).
-                        $preview = $originalJson | ConvertFrom-Json
-                        $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                        $json = $preview | ConvertTo-Json -Depth 32
-                        [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
-                        if ($resolved) { $mergedCache[$idx] = $json }
-                    }
-                    if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
-                    $needsRedraw = $true
-                }
+            # Keypress queue empty. Apply the latest pending theme (if
+            # any) before doing anything else. This is the "debounce
+            # tail" -- only the final position from a mash sequence
+            # actually gets written to settings.json.
+            if ($pendingApply -ge 0) {
+                $applyIdx = $pendingApply
+                $pendingApply = -1
+                & $applyTheme $applyIdx
+                continue
+            }
+
+            # Truly idle. Prebuild the next uncached resolved theme.
+            # Skips themes whose backgrounds haven't been fetched yet
+            # (the prefetch job is still downloading them) -- those
+            # cache lazily once resolved, or via on-demand merge if
+            # the user arrows there first.
+            $nextPrebuild = -1
+            for ($j = 0; $j -lt $styles.Count; $j++) {
+                if ($mergedCache.ContainsKey($j)) { continue }
+                if (-not (Test-StyleResolved -StyleDir $styles[$j].FullName)) { continue }
+                $nextPrebuild = $j
+                break
+            }
+            if ($nextPrebuild -ge 0) {
+                $pp = $originalJson | ConvertFrom-Json
+                $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+                $mergedCache[$nextPrebuild] = $pp | ConvertTo-Json -Depth 32
             } else {
-                # No pending key. Use the idle slice to prebuild the next
-                # uncached resolved theme. Skips themes whose backgrounds
-                # haven't been fetched yet (the prefetch job is still
-                # downloading them) -- those will be cached lazily once
-                # resolved, or via on-demand merge if the user arrows to
-                # them first.
-                $nextPrebuild = -1
-                for ($j = 0; $j -lt $styles.Count; $j++) {
-                    if ($mergedCache.ContainsKey($j)) { continue }
-                    if (-not (Test-StyleResolved -StyleDir $styles[$j].FullName)) { continue }
-                    $nextPrebuild = $j
-                    break
-                }
-                if ($nextPrebuild -ge 0) {
-                    $pp = $originalJson | ConvertFrom-Json
-                    $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                    $mergedCache[$nextPrebuild] = $pp | ConvertTo-Json -Depth 32
-                } else {
-                    # Either all resolved themes are cached, or nothing is
-                    # resolved yet. Brief sleep to avoid busy-spinning.
-                    Start-Sleep -Milliseconds 50
-                }
+                Start-Sleep -Milliseconds 50
             }
         }
 
