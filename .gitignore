@@ -27,3 +27,6 @@ Thumbs.db
 .DS_Store
 .vscode/
 .idea/
+
+# Staging dir for PSGallery publish (scripts/publish.ps1)
+out/
