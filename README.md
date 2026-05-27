@@ -69,7 +69,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Eight themes ship out of the box. Click any name to jump to that style's
+Nine themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
