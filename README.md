@@ -4,7 +4,23 @@ Themed styles for **PowerShell** (5.1 and 7+) in **Windows Terminal**.
 Install once, then run `tstyles` to switch — arrow keys preview each style
 live in your current tab, Enter keeps it, Esc cancels.
 
-![umbrella demo](docs/screenshots/umbrella.png)
+<table>
+  <tr>
+    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="280" alt="umbrella"></td>
+    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="280" alt="eva"></td>
+    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="280" alt="ex-machina"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="280" alt="forest"></td>
+    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="280" alt="gitbash"></td>
+    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="280" alt="golden-forest"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="280" alt="kitty"></td>
+    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="280" alt="rain"></td>
+    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="280" alt="sober"></td>
+  </tr>
+</table>
 
 ## Install
 
