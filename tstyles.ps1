@@ -753,8 +753,20 @@ function Invoke-TerminalStyle {
         $hintColor  = "$([char]27)[38;2;160;160;160m"
         $resetColor = "$([char]27)[0m"
 
+        # Clear once, then capture the buffer Y of the picker's home row.
+        # Subsequent iterations reposition the cursor here and overwrite in
+        # place instead of Clear-Host-ing per arrow press -- the per-arrow
+        # clear was the source of the visible flicker. The number of lines
+        # is constant (header + hint + blank + N styles + blank), so the
+        # overwrite covers the previous frame exactly with no leftover
+        # characters. \e[K appended to each potentially shrinking line
+        # would defend against future content-width changes; not needed
+        # today since every row has stable width.
+        Clear-Host
+        $renderHomeY = [Console]::CursorTop
+
         while (-not $confirmed) {
-            Clear-Host
+            [Console]::SetCursorPosition(0, $renderHomeY)
             Write-Host ""
             Write-Host "  Choose a style for " -NoNewline
             Write-Host "'$Target'" -ForegroundColor Cyan
