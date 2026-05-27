@@ -15,5 +15,5 @@
     "backgroundImage": "{{BACKGROUND_IMAGE}}",
     "backgroundImageOpacity": 0.55,
     "backgroundImageStretchMode": "uniform",
-    "backgroundImageAlignment": "center"
+    "backgroundImageAlignment": "right"
 }
