@@ -17,8 +17,16 @@
 # └─┘ → ✓ ·) render correctly. The default Windows console codepage is
 # OEM (e.g. 437 / 850 / 1252) which can't represent these Unicode code
 # points; without this, they show as `?` substitutes even in Windows
-# Terminal. Setting only [Console]::OutputEncoding (not $OutputEncoding
-# or chcp) is sufficient and scoped to this process.
+# Terminal.
+#
+# Both knobs are needed:
+#   - chcp 65001 flips the Win32 console codepage. WinPS 5.1's cached
+#     Console.Out TextWriter is initialized at process start with that
+#     codepage; without the chcp call, mid-process [Console]::OutputEncoding
+#     changes are ignored by Write-Host in WinPS 5.1.
+#   - [Console]::OutputEncoding aligns the .NET wrapper so any other
+#     consumer of Console.Write*/OutputEncoding sees the same encoding.
+$null = & chcp 65001 2>&1
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
 $ErrorActionPreference = 'Stop'
