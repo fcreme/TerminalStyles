@@ -13,6 +13,14 @@
 
 #Requires -Version 5.1
 
+# Force UTF-8 console output so the box-drawing chars in our UI (── ┌─┐ │
+# └─┘ → ✓ ·) render correctly. The default Windows console codepage is
+# OEM (e.g. 437 / 850 / 1252) which can't represent these Unicode code
+# points; without this, they show as `?` substitutes even in Windows
+# Terminal. Setting only [Console]::OutputEncoding (not $OutputEncoding
+# or chcp) is sufficient and scoped to this process.
+[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
 $ErrorActionPreference = 'Stop'
 # Suppress the IWR / Expand-Archive progress UI. On Windows PowerShell 5.1
 # this is the dominant cost of the install -- the progress-bar rendering
