@@ -294,9 +294,27 @@ pwsh -File "$env:LOCALAPPDATA\TerminalStyles\apply.ps1" -Style umbrella -Target 
 ```
 
 `apply.ps1` is the same logic as the interactive picker but driven
-entirely by flags, with a one-time backup of `settings.json` and
-`$PROFILE` before applying. See `apply.ps1 -?` for the full parameter
-list.
+entirely by flags. It writes a timestamped `settings.json.bak-<timestamp>`
+(and a `$PROFILE.bak-<timestamp>` when overwriting one) before applying,
+keeping a full audit trail of every run. See `apply.ps1 -?` for the
+full parameter list.
+
+### Recovering from a bad direct apply
+
+`tstyles <name>` and `tstyles random` write a rolling backup to
+`settings.json.bak` (no timestamp — overwritten on each direct apply)
+in the same directory as `settings.json` before each change. To restore
+the last-known-good state:
+
+```powershell
+$wt = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
+Copy-Item "$wt.bak" $wt -Force
+```
+
+The picker (`tstyles` with no arg) doesn't write a `.bak` — pressing
+Esc reverts in-memory to the exact prior bytes. If you need a full
+history of changes (rather than just "undo the most recent direct
+apply"), use `apply.ps1` instead — it keeps timestamped backups per run.
 
 ## Updating
 
