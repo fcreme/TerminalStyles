@@ -19,14 +19,14 @@ live in your current tab, Enter keeps it, Esc cancels.
     <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="170" alt="golden-forest"></td>
     <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="170" alt="kitty"></td>
     <td align="center"><b>lain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/lain.gif" width="170" alt="lain"></td>
-    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="170" alt="neon-rain"></td>
+    <td align="center"><b>marquee</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/marquee.gif" width="170" alt="marquee"></td>
   </tr>
   <tr>
+    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="170" alt="neon-rain"></td>
     <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="170" alt="rain"></td>
     <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="170" alt="snowday"></td>
     <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="170" alt="sober"></td>
     <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="170" alt="tombraider"></td>
-    <td></td>
   </tr>
 </table>
 
@@ -93,7 +93,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Fourteen themes ship out of the box. Click any name to jump to that style's
+Fifteen themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -166,6 +166,15 @@ cursor, acrylic. The most playful theme in the set.
 faint red status lights, the teddy bear. Deep blackish base,
 lavender-pink monitor glow, vintage CRT cursor.
 *"Present day, present time. Hahaha."*
+
+### [marquee](styles/marquee)
+
+![marquee](docs/screenshots/marquee.png)
+
+**EXT3-series LED marquee.** Hot magenta dot-matrix portrait,
+blue arm accents, gold EXT3 label. Pure black canvas, right-aligned
+image so text sits on the left half. Sister piece to tombraider.
+*"Through the glass, after hours."*
 
 ### [neon-rain](styles/neon-rain)
 

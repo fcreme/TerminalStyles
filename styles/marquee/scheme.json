@@ -1,0 +1,23 @@
+{
+    "name": "marquee",
+    "background": "#000000",
+    "foreground": "#f0c8d8",
+    "cursorColor": "#ff4090",
+    "selectionBackground": "#3a1028",
+    "black": "#000000",
+    "red": "#d83080",
+    "green": "#30d090",
+    "yellow": "#f0d040",
+    "blue": "#4090f0",
+    "purple": "#b048c8",
+    "cyan": "#40e0e0",
+    "white": "#f0c8d8",
+    "brightBlack": "#2a1820",
+    "brightRed": "#ff6098",
+    "brightGreen": "#60f0a8",
+    "brightYellow": "#ffe860",
+    "brightBlue": "#60a8ff",
+    "brightPurple": "#ff80d8",
+    "brightCyan": "#80f0f0",
+    "brightWhite": "#ffe0e8"
+}
