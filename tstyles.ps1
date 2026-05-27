@@ -488,6 +488,21 @@ function Apply-StyleDirect {
         return
     }
 
+    # Rolling backup: copy the on-disk settings.json to settings.json.bak
+    # before any mutation. Single file, overwritten on each direct apply --
+    # gives the user a one-line undo without filling LocalState with timestamped
+    # backups over time. The picker doesn't need this (Esc reverts in-memory);
+    # apply.ps1 keeps its own timestamped audit trail. -ErrorAction Stop so
+    # non-terminating errors (permission denied, etc.) enter the catch block
+    # rather than silently logging via $Error.
+    $bakPath = "$settingsPath.bak"
+    try {
+        Copy-Item -LiteralPath $settingsPath -Destination $bakPath -Force -ErrorAction Stop
+        Write-Host "Backed up settings to: $bakPath" -ForegroundColor DarkGray
+    } catch {
+        Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
+    }
+
     $settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
         -TargetName $Target -BackgroundImage $BackgroundImage `
         -BackgroundImageProvided $BackgroundImageProvided
