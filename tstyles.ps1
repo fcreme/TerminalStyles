@@ -396,6 +396,23 @@ function Write-SettingsFile {
     [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
 }
 
+function Get-StyleDir {
+    # Resolves a style name to its on-disk directory, checking the user
+    # dir first ($DataRoot\styles\<name>\) then the bundled dir
+    # ($ModuleRoot\styles\<name>\). Returns $null if neither has a
+    # scheme.json for that name. User-wins matches Get-AvailableStyles'
+    # union-and-dedup precedence.
+    param([Parameter(Mandatory)][string]$StyleName)
+
+    $userDir = Join-Path $script:TStylesDataRoot "styles\$StyleName"
+    if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) { return $userDir }
+
+    $bundledDir = Join-Path $script:TStylesModuleRoot "styles\$StyleName"
+    if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) { return $bundledDir }
+
+    return $null
+}
+
 function Get-AvailableStyles {
     # Returns an array of DirectoryInfo for every styles/<name>/ that has a
     # scheme.json. Sorted alphabetically by name.
