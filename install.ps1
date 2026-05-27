@@ -13,19 +13,11 @@
 
 #Requires -Version 5.1
 
-# Force UTF-8 console output so the box-drawing chars in our UI (── ┌─┐ │
-# └─┘ → ✓ ·) render correctly. The default Windows console codepage is
-# OEM (e.g. 437 / 850 / 1252) which can't represent these Unicode code
-# points; without this, they show as `?` substitutes even in Windows
-# Terminal.
-#
-# Both knobs are needed:
-#   - chcp 65001 flips the Win32 console codepage. WinPS 5.1's cached
-#     Console.Out TextWriter is initialized at process start with that
-#     codepage; without the chcp call, mid-process [Console]::OutputEncoding
-#     changes are ignored by Write-Host in WinPS 5.1.
-#   - [Console]::OutputEncoding aligns the .NET wrapper so any other
-#     consumer of Console.Write*/OutputEncoding sees the same encoding.
+# Force UTF-8 console output as defense-in-depth. The installer's own
+# output is pure 7-bit ASCII (so it renders identically in any codepage,
+# including WinPS 5.1's CP437 default where Unicode mid-process encoding
+# changes are unreliable). These settings still apply for any downstream
+# code that emits Unicode -- harmless if not needed.
 $null = & chcp 65001 2>&1
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
@@ -52,34 +44,34 @@ $loaderEnd
 "@
 
 # --- Output helpers ---
-# Branded banner + step list + bordered "Ready" panel. Pure string
-# composition with ANSI colors; safe on both pwsh 7 and WinPS 5.1, and
-# uses box-drawing characters supported by Cascadia Mono / Consolas
-# (Windows Terminal's default fonts).
+# Branded banner + step list + bordered "Ready" panel. Pure 7-bit ASCII
+# so rendering is identical in any codepage / shell / terminal -- no
+# Unicode box-drawing or arrows that might become `?` substitutes on
+# WinPS 5.1's CP437 default.
 
 function Write-InstallBanner {
     # Cyan rule + wordmark + tagline + cyan rule.
-    $rule = '─' * 52
+    $rule = '-' * 52
     Write-Host ''
     Write-Host "  $rule" -ForegroundColor Cyan
     Write-Host '   tstyles' -ForegroundColor White -NoNewline
-    Write-Host '  ·  Windows Terminal themes for pwsh' -ForegroundColor DarkGray
+    Write-Host '  --  Windows Terminal themes for pwsh' -ForegroundColor DarkGray
     Write-Host "  $rule" -ForegroundColor Cyan
     Write-Host ''
 }
 
 function Write-InstallStep {
-    # Single-line step indicator. -Check appends a green checkmark to
+    # Single-line step indicator. -Check appends a green [ok] tag to
     # signal completion of an action whose "in progress" version printed
     # on the previous line.
     param(
         [Parameter(Mandatory)][string]$Message,
         [switch]$Check
     )
-    Write-Host '  → ' -ForegroundColor DarkGray -NoNewline
+    Write-Host '  > ' -ForegroundColor DarkGray -NoNewline
     Write-Host $Message -NoNewline
     if ($Check) {
-        Write-Host ' ✓' -ForegroundColor Green
+        Write-Host ' [ok]' -ForegroundColor Green
     } else {
         Write-Host ''
     }
@@ -87,17 +79,18 @@ function Write-InstallStep {
 
 function Write-InstallPanel {
     # Bordered "Ready" panel listing the count, the one command to run,
-    # and all theme names wrapped to fit.
+    # and all theme names wrapped to fit. ASCII corners (+) + sides (|)
+    # + dashes (-) for cross-codepage rendering.
     param(
         [Parameter(Mandatory)][string[]]$ThemeNames,
         [Parameter(Mandatory)][string[]]$RegisteredEngines
     )
-    $width = 56   # interior width, between │ chars (not counting them)
+    $width = 56   # interior width, between | chars (not counting them)
 
     # Borders -- both 58 visible chars (1 corner + 56 interior + 1 corner)
-    $labelPart = '─ Ready '                                  # 8 chars
-    $top    = '┌' + $labelPart + ('─' * ($width - $labelPart.Length)) + '┐'
-    $bottom = '└' + ('─' * $width) + '┘'
+    $labelPart = '- Ready '                                  # 8 chars
+    $top    = '+' + $labelPart + ('-' * ($width - $labelPart.Length)) + '+'
+    $bottom = '+' + ('-' * $width) + '+'
 
     # Row writer: writes one panel row with the leading '  ' indent,
     # green borders, and middle content padded to exactly $width chars.
@@ -108,7 +101,7 @@ function Write-InstallPanel {
             [string[]]$Segments = @(),
             [string[]]$Colors
         )
-        Write-Host '  │' -ForegroundColor Green -NoNewline
+        Write-Host '  |' -ForegroundColor Green -NoNewline
         $printed = 0
         for ($i = 0; $i -lt $Segments.Count; $i++) {
             $seg = $Segments[$i]
@@ -123,7 +116,7 @@ function Write-InstallPanel {
         if ($printed -lt $Width) {
             Write-Host (' ' * ($Width - $printed)) -NoNewline
         }
-        Write-Host '│' -ForegroundColor Green
+        Write-Host '|' -ForegroundColor Green
     }
 
     Write-Host ''
@@ -141,10 +134,10 @@ function Write-InstallPanel {
     # Spacer row
     WriteRow -Width $width -Segments @('')
 
-    # Theme-name rows: wrap at $width chars
+    # Theme-name rows: wrap at $width chars. ' * ' separator (ASCII).
     $line = '  '
     foreach ($name in $ThemeNames) {
-        $candidate = if ($line.Trim().Length -eq 0) { "$line$name" } else { "$line · $name" }
+        $candidate = if ($line.Trim().Length -eq 0) { "$line$name" } else { "$line * $name" }
         if ($candidate.Length -gt $width) {
             WriteRow -Width $width -Segments @($line) -Colors @('DarkGray')
             $line = "  $name"
@@ -164,7 +157,7 @@ function Write-InstallPanel {
     if ($RegisteredEngines.Count -gt 1) {
         $current    = $PSVersionTable.PSEdition  # 'Core' for pwsh 7, 'Desktop' for WinPS 5.1
         $otherLabel = if ($current -eq 'Core') { 'Windows PowerShell 5.1' } else { 'PowerShell 7' }
-        Write-Host "  Also wired up for $otherLabel — available in any new tab there." -ForegroundColor DarkGray
+        Write-Host "  Also wired up for $otherLabel -- available in any new tab there." -ForegroundColor DarkGray
         Write-Host ''
     }
 }
