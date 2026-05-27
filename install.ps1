@@ -39,7 +39,7 @@ $loaderBegin = '# ===== TerminalStyles BEGIN ====='
 $loaderEnd   = '# ===== TerminalStyles END ====='
 $loaderBody  = @"
 $loaderBegin
-. "`$env:LOCALAPPDATA\TerminalStyles\tstyles.ps1"
+Import-Module "`$env:LOCALAPPDATA\TerminalStyles\TerminalStyles.psd1" -DisableNameChecking
 $loaderEnd
 "@
 
@@ -394,12 +394,11 @@ $themeNames = @(
 Write-InstallPanel -ThemeNames $themeNames -RegisteredEngines $registered
 
 # --- Same-tab handoff ---
-# Dot-source the freshly-installed tstyles.ps1 into the current scope
-# so the user can type `tstyles` immediately without opening a new tab.
-# `iwr | iex` runs this whole installer in the caller's scope, so a
-# dot-source from here exposes Invoke-TerminalStyle (the function
-# behind the `tstyles` command) to that scope too.
-$installedLib = Join-Path $installDir 'tstyles.ps1'
-if (Test-Path -LiteralPath $installedLib) {
-    . $installedLib *> $null
+# Import the freshly-installed module into the GLOBAL scope (not the
+# script's child scope) so the `tstyles` command is available in the
+# caller's session immediately. Without -Global, the import would be
+# scoped to this script and disappear when install.ps1 returns.
+$installedManifest = Join-Path $installDir 'TerminalStyles.psd1'
+if (Test-Path -LiteralPath $installedManifest) {
+    Import-Module $installedManifest -Force -Global -DisableNameChecking *> $null
 }
