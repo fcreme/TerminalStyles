@@ -1,0 +1,23 @@
+{
+    "name": "lain",
+    "background": "#08080f",
+    "foreground": "#d8d4e0",
+    "cursorColor": "#e090b8",
+    "selectionBackground": "#2a1f30",
+    "black": "#050508",
+    "red": "#b04050",
+    "green": "#6aa090",
+    "yellow": "#c8a878",
+    "blue": "#6a8aa8",
+    "purple": "#a890c8",
+    "cyan": "#88a8c0",
+    "white": "#d8d4e0",
+    "brightBlack": "#2a2530",
+    "brightRed": "#d06070",
+    "brightGreen": "#88c0a8",
+    "brightYellow": "#d8b888",
+    "brightBlue": "#88a8c0",
+    "brightPurple": "#d0a8d8",
+    "brightCyan": "#b0c8d8",
+    "brightWhite": "#f0e8f0"
+}

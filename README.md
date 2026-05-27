@@ -8,18 +8,22 @@ live in your current tab, Enter keeps it, Esc cancels.
 
 <table>
   <tr>
-    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="180" alt="umbrella"></td>
-    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="180" alt="eva"></td>
-    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="180" alt="ex-machina"></td>
-    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="180" alt="forest"></td>
-    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="180" alt="gitbash"></td>
+    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="210" alt="umbrella"></td>
+    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="210" alt="eva"></td>
+    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="210" alt="ex-machina"></td>
+    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="210" alt="forest"></td>
   </tr>
   <tr>
-    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="180" alt="golden-forest"></td>
-    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="180" alt="kitty"></td>
-    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="180" alt="neon-rain"></td>
-    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="180" alt="rain"></td>
-    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="180" alt="sober"></td>
+    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="210" alt="gitbash"></td>
+    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="210" alt="golden-forest"></td>
+    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="210" alt="kitty"></td>
+    <td align="center"><b>lain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/lain.gif" width="210" alt="lain"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="210" alt="neon-rain"></td>
+    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="210" alt="rain"></td>
+    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="210" alt="sober"></td>
+    <td></td>
   </tr>
 </table>
 
@@ -86,7 +90,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Ten themes ship out of the box. Click any name to jump to that style's
+Eleven themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -142,6 +146,15 @@ Quiet — no banner, gentle for long sessions.
 
 **Soft pastel CRT.** Pink, lavender, mint pastels. Retro / vintage
 cursor, acrylic. The most playful theme in the set.
+
+### [lain](styles/lain)
+
+![lain](docs/screenshots/lain.png)
+
+**Serial Experiments Lain.** Lain at her Navi — tangled cables,
+faint red status lights, the teddy bear. Deep blackish base,
+lavender-pink monitor glow, vintage CRT cursor.
+*"Present day, present time. Hahaha."*
 
 ### [neon-rain](styles/neon-rain)
 
