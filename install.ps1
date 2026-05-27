@@ -35,6 +35,124 @@ $loaderBegin
 $loaderEnd
 "@
 
+# --- Output helpers ---
+# Branded banner + step list + bordered "Ready" panel. Pure string
+# composition with ANSI colors; safe on both pwsh 7 and WinPS 5.1, and
+# uses box-drawing characters supported by Cascadia Mono / Consolas
+# (Windows Terminal's default fonts).
+
+function Write-InstallBanner {
+    # Cyan rule + wordmark + tagline + cyan rule.
+    $rule = '─' * 52
+    Write-Host ''
+    Write-Host "  $rule" -ForegroundColor Cyan
+    Write-Host '   tstyles' -ForegroundColor White -NoNewline
+    Write-Host '  ·  Windows Terminal themes for pwsh' -ForegroundColor DarkGray
+    Write-Host "  $rule" -ForegroundColor Cyan
+    Write-Host ''
+}
+
+function Write-InstallStep {
+    # Single-line step indicator. -Check appends a green checkmark to
+    # signal completion of an action whose "in progress" version printed
+    # on the previous line.
+    param(
+        [Parameter(Mandatory)][string]$Message,
+        [switch]$Check
+    )
+    Write-Host '  → ' -ForegroundColor DarkGray -NoNewline
+    Write-Host $Message -NoNewline
+    if ($Check) {
+        Write-Host ' ✓' -ForegroundColor Green
+    } else {
+        Write-Host ''
+    }
+}
+
+function Write-InstallPanel {
+    # Bordered "Ready" panel listing the count, the one command to run,
+    # and all theme names wrapped to fit.
+    param(
+        [Parameter(Mandatory)][string[]]$ThemeNames,
+        [Parameter(Mandatory)][string[]]$RegisteredEngines
+    )
+    $width = 56   # interior width, between │ chars (not counting them)
+
+    # Borders -- both 58 visible chars (1 corner + 56 interior + 1 corner)
+    $labelPart = '─ Ready '                                  # 8 chars
+    $top    = '┌' + $labelPart + ('─' * ($width - $labelPart.Length)) + '┐'
+    $bottom = '└' + ('─' * $width) + '┘'
+
+    # Row writer: writes one panel row with the leading '  ' indent,
+    # green borders, and middle content padded to exactly $width chars.
+    # The middle content is rendered as up to three colored segments.
+    function WriteRow {
+        param(
+            [Parameter(Mandatory)][int]$Width,
+            [string[]]$Segments = @(),
+            [string[]]$Colors
+        )
+        Write-Host '  │' -ForegroundColor Green -NoNewline
+        $printed = 0
+        for ($i = 0; $i -lt $Segments.Count; $i++) {
+            $seg = $Segments[$i]
+            $color = if ($Colors -and $i -lt $Colors.Count -and $Colors[$i]) { $Colors[$i] } else { $null }
+            if ($color) {
+                Write-Host $seg -ForegroundColor $color -NoNewline
+            } else {
+                Write-Host $seg -NoNewline
+            }
+            $printed += $seg.Length
+        }
+        if ($printed -lt $Width) {
+            Write-Host (' ' * ($Width - $printed)) -NoNewline
+        }
+        Write-Host '│' -ForegroundColor Green
+    }
+
+    Write-Host ''
+    Write-Host "  $top" -ForegroundColor Green
+
+    # Row: "  N themes installed."
+    WriteRow -Width $width -Segments @('  ', "$($ThemeNames.Count) themes installed.")
+
+    # Spacer row
+    WriteRow -Width $width -Segments @('')
+
+    # Row: "      tstyles" with the command in cyan
+    WriteRow -Width $width -Segments @('      ', 'tstyles') -Colors @($null, 'Cyan')
+
+    # Spacer row
+    WriteRow -Width $width -Segments @('')
+
+    # Theme-name rows: wrap at $width chars
+    $line = '  '
+    foreach ($name in $ThemeNames) {
+        $candidate = if ($line.Trim().Length -eq 0) { "$line$name" } else { "$line · $name" }
+        if ($candidate.Length -gt $width) {
+            WriteRow -Width $width -Segments @($line) -Colors @('DarkGray')
+            $line = "  $name"
+        } else {
+            $line = $candidate
+        }
+    }
+    if ($line.Trim().Length -gt 0) {
+        WriteRow -Width $width -Segments @($line) -Colors @('DarkGray')
+    }
+
+    Write-Host "  $bottom" -ForegroundColor Green
+    Write-Host ''
+
+    # If both engines were registered, mention the one the user isn't
+    # currently in -- they need a new tab for that side.
+    if ($RegisteredEngines.Count -gt 1) {
+        $current    = $PSVersionTable.PSEdition  # 'Core' for pwsh 7, 'Desktop' for WinPS 5.1
+        $otherLabel = if ($current -eq 'Core') { 'Windows PowerShell 5.1' } else { 'PowerShell 7' }
+        Write-Host "  Also wired up for $otherLabel — available in any new tab there." -ForegroundColor DarkGray
+        Write-Host ''
+    }
+}
+
 Write-Host ""
 Write-Host "TerminalStyles installer" -ForegroundColor Cyan
 Write-Host "------------------------" -ForegroundColor Cyan
