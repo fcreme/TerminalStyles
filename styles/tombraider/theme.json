@@ -1,0 +1,19 @@
+{
+    "colorScheme": "tombraider",
+    "tabTitle": "TOMB RAIDER // EXT3",
+    "tabColor": "#ff3088",
+    "cursorShape": "vintage",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "semi-bold"
+    },
+    "padding": "12",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 0.55,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}

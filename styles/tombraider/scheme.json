@@ -1,0 +1,23 @@
+{
+    "name": "tombraider",
+    "background": "#050308",
+    "foreground": "#f0c8d8",
+    "cursorColor": "#ff3088",
+    "selectionBackground": "#3a1028",
+    "black": "#000000",
+    "red": "#d83078",
+    "green": "#30d090",
+    "yellow": "#f0d040",
+    "blue": "#4090f0",
+    "purple": "#a040d0",
+    "cyan": "#40e0e0",
+    "white": "#f0c8d8",
+    "brightBlack": "#2a1820",
+    "brightRed": "#ff5090",
+    "brightGreen": "#60f0a8",
+    "brightYellow": "#ffe860",
+    "brightBlue": "#60a8ff",
+    "brightPurple": "#ff60d0",
+    "brightCyan": "#80f0f0",
+    "brightWhite": "#ffe0e8"
+}
