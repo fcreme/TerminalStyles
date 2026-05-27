@@ -8,19 +8,18 @@ live in your current tab, Enter keeps it, Esc cancels.
 
 <table>
   <tr>
-    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="280" alt="umbrella"></td>
-    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="280" alt="eva"></td>
-    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="280" alt="ex-machina"></td>
+    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="180" alt="umbrella"></td>
+    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="180" alt="eva"></td>
+    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="180" alt="ex-machina"></td>
+    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="180" alt="forest"></td>
+    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="180" alt="gitbash"></td>
   </tr>
   <tr>
-    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="280" alt="forest"></td>
-    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="280" alt="gitbash"></td>
-    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="280" alt="golden-forest"></td>
-  </tr>
-  <tr>
-    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="280" alt="kitty"></td>
-    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="280" alt="rain"></td>
-    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="280" alt="sober"></td>
+    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="180" alt="golden-forest"></td>
+    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="180" alt="kitty"></td>
+    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="180" alt="neon-rain"></td>
+    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="180" alt="rain"></td>
+    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="180" alt="sober"></td>
   </tr>
 </table>
 
@@ -87,7 +86,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Nine themes ship out of the box. Click any name to jump to that style's
+Ten themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -143,6 +142,15 @@ Quiet — no banner, gentle for long sessions.
 
 **Soft pastel CRT.** Pink, lavender, mint pastels. Retro / vintage
 cursor, acrylic. The most playful theme in the set.
+
+### [neon-rain](styles/neon-rain)
+
+![neon-rain](docs/screenshots/neon-rain.png)
+
+**Cyberpunk rainy night.** District-05 corporate tower, neon yellow
+sign, matrix-green displays, lone delivery truck under steady rain.
+Deep blue base, neon yellow cursor, matrix-green status accents.
+*"The neon never sleeps."*
 
 ### [rain](styles/rain)
 

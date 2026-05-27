@@ -1,0 +1,19 @@
+{
+    "colorScheme": "neon-rain",
+    "tabTitle": "NEON RAIN // DISTRICT-05",
+    "tabColor": "#f0c850",
+    "cursorShape": "vintage",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "semi-bold"
+    },
+    "padding": "12",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 0.4,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}

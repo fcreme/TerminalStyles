@@ -1,0 +1,23 @@
+{
+    "name": "neon-rain",
+    "background": "#0c1828",
+    "foreground": "#d8e4f0",
+    "cursorColor": "#f0c850",
+    "selectionBackground": "#1a2840",
+    "black": "#060b14",
+    "red": "#c44a3a",
+    "green": "#5ee090",
+    "yellow": "#ffd848",
+    "blue": "#5a90d0",
+    "purple": "#5a4870",
+    "cyan": "#88c0e0",
+    "white": "#e8e8e0",
+    "brightBlack": "#2a3548",
+    "brightRed": "#d86850",
+    "brightGreen": "#88f0a8",
+    "brightYellow": "#ffe890",
+    "brightBlue": "#88b0e0",
+    "brightPurple": "#a890c0",
+    "brightCyan": "#b0d8e8",
+    "brightWhite": "#ffffff"
+}
