@@ -9,19 +9,19 @@
 
 #Requires -Version 5.1
 
-$script:TStylesRoot = $PSScriptRoot
-if (-not $script:TStylesRoot) {
-    $script:TStylesRoot = Split-Path $MyInvocation.MyCommand.Path -Parent
+$script:TStylesModuleRoot = $PSScriptRoot
+if (-not $script:TStylesModuleRoot) {
+    $script:TStylesModuleRoot = Split-Path $MyInvocation.MyCommand.Path -Parent
 }
-# Alias for the dual-root refactor coming in sub-project C. For now both
-# point at the same dir; Task 2 splits them properly.
-$script:TStylesModuleRoot = $script:TStylesRoot
-$script:TStylesCurrent = Join-Path $script:TStylesRoot 'current-style.ps1'
-
-# === Auto-load the currently selected style's profile.ps1 ===
-if (Test-Path -LiteralPath $script:TStylesCurrent) {
-    . $script:TStylesCurrent
+# Stable per-user data dir. Survives module version upgrades (PSResourceGet
+# installs a new version to a sibling dir; state stays here). For bootstrap-
+# installed users, this happens to equal $script:TStylesModuleRoot --
+# backward-compatible by design.
+$script:TStylesDataRoot = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+if (-not (Test-Path -LiteralPath $script:TStylesDataRoot)) {
+    New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
 }
+$script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
 
 # === Internals ===
 
@@ -47,35 +47,41 @@ function Get-CurrentWTProfileName {
 
 function Get-StyleBundledBackground {
     # Three-tier resolution:
-    #   1. Local file in $StyleDir (covers dev workflow + previously-fetched cache)
-    #   2. Negative cache (.no-background marker) -- skip fetch, return $null
-    #   3. Fetch from the `gifs` branch on GitHub, cache locally, return path
+    #   1. Bundled file under $StyleDir (module root, read-only-ish on PSGallery)
+    #   2. Cached file under $DataRoot\cache\<name>\ (writable, persistent)
+    #   3. Lazy-fetch from gifs branch -> write to $DataRoot\cache\<name>\
     #
-    # This keeps the main install ZIP code-only (~100 KB instead of ~10 MB)
-    # and pulls each background on first use of its style. After the first
-    # fetch, subsequent runs are instant -- the GIF lives next to the rest
-    # of the style files in %LOCALAPPDATA%\TerminalStyles\styles\<name>\.
+    # The negative-cache marker (.no-background) lives in the cache dir, never
+    # in the bundled dir, so we can write it on PSGallery installs.
     param([Parameter(Mandatory)][string]$StyleDir)
 
-    # 1. Local file already present
+    # 1. Bundled (under module root)
     foreach ($ext in 'gif','png','jpg','jpeg') {
-        $candidate = Join-Path $StyleDir "background.$ext"
-        if (Test-Path -LiteralPath $candidate) { return $candidate }
+        $bundled = Join-Path $StyleDir "background.$ext"
+        if (Test-Path -LiteralPath $bundled) { return $bundled }
     }
 
-    # 2. Negative cache (we've tried and the remote has nothing for this style)
-    $noBgMarker = Join-Path $StyleDir '.no-background'
-    if (Test-Path -LiteralPath $noBgMarker) { return $null }
-
-    # 3. Lazy-fetch from the gifs branch
     $styleName = Split-Path -Leaf $StyleDir
+    $cacheDir  = Join-Path $script:TStylesDataRoot "cache\$styleName"
+
+    # 2. Cached (under data root)
+    foreach ($ext in 'gif','png','jpg','jpeg') {
+        $cached = Join-Path $cacheDir "background.$ext"
+        if (Test-Path -LiteralPath $cached) { return $cached }
+    }
+    if (Test-Path -LiteralPath (Join-Path $cacheDir '.no-background')) { return $null }
+
+    # 3. Lazy-fetch into cache
+    if (-not (Test-Path -LiteralPath $cacheDir)) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+    }
     $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
     $prevProgress = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
     try {
         foreach ($ext in 'gif','png','jpg','jpeg') {
             $url = "$remoteBase.$ext"
-            $local = Join-Path $StyleDir "background.$ext"
+            $local = Join-Path $cacheDir "background.$ext"
             try {
                 Invoke-WebRequest -Uri $url -OutFile $local -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
                 if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
@@ -84,7 +90,6 @@ function Get-StyleBundledBackground {
                     Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
                 }
             } catch {
-                # Try next extension; remove any partial file
                 if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
             }
         }
@@ -92,12 +97,64 @@ function Get-StyleBundledBackground {
         $ProgressPreference = $prevProgress
     }
 
-    # All extensions failed -- write negative-cache marker so we don't re-probe
-    # on every arrow-key press in the picker.
+    # All extensions failed -- write negative-cache marker in CACHE dir
     try {
-        New-Item -ItemType File -Path $noBgMarker -Force | Out-Null
+        New-Item -ItemType File -Path (Join-Path $cacheDir '.no-background') -Force | Out-Null
     } catch { }
     return $null
+}
+
+function Invoke-TerminalStylesStateMigration {
+    # Migrates pre-0.2.0 data layout to 0.2.0:
+    #   - Cached background.<ext> files move from $ModuleRoot\styles\<name>\
+    #     to $DataRoot\cache\<name>\.
+    #   - .no-background negative-cache markers move similarly.
+    # Idempotent. Skips work if the marker file exists.
+    $marker = Join-Path $script:TStylesDataRoot '.migrated-0.2.0'
+    if (Test-Path -LiteralPath $marker) { return }
+
+    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
+    if (-not (Test-Path -LiteralPath $stylesDir)) {
+        # No styles dir to migrate from. Mark done so we don't re-check.
+        try { New-Item -ItemType File -Path $marker -Force | Out-Null } catch { }
+        return
+    }
+
+    foreach ($styleDir in Get-ChildItem -LiteralPath $stylesDir -Directory) {
+        $styleName = $styleDir.Name
+        $cacheDir = Join-Path $script:TStylesDataRoot "cache\$styleName"
+
+        # Move cached background files
+        foreach ($ext in 'gif','png','jpg','jpeg') {
+            $src = Join-Path $styleDir.FullName "background.$ext"
+            if (Test-Path -LiteralPath $src) {
+                if (-not (Test-Path -LiteralPath $cacheDir)) {
+                    try { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null } catch { }
+                }
+                $dest = Join-Path $cacheDir "background.$ext"
+                try {
+                    Move-Item -LiteralPath $src -Destination $dest -Force -ErrorAction Stop
+                } catch {
+                    # Source might be read-only (PSGallery install with stale
+                    # bundled file from manual user copy). Acceptable -- the
+                    # bundled file stays readable in place.
+                }
+            }
+        }
+
+        # Move negative-cache marker
+        $srcMarker = Join-Path $styleDir.FullName '.no-background'
+        if (Test-Path -LiteralPath $srcMarker) {
+            if (-not (Test-Path -LiteralPath $cacheDir)) {
+                try { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null } catch { }
+            }
+            try {
+                Move-Item -LiteralPath $srcMarker -Destination (Join-Path $cacheDir '.no-background') -Force -ErrorAction Stop
+            } catch { }
+        }
+    }
+
+    try { New-Item -ItemType File -Path $marker -Force | Out-Null } catch { }
 }
 
 function Get-TerminalStylesInstallKind {
@@ -124,8 +181,8 @@ function Test-UpdateAvailable {
     # .last-update-check. The timestamp is rewritten on every attempt
     # (success or failure), so an offline machine doesn't retry the
     # 2s timeout on every single tstyles invocation.
-    $shaFile   = Join-Path $script:TStylesRoot '.installed-sha'
-    $stampFile = Join-Path $script:TStylesRoot '.last-update-check'
+    $shaFile   = Join-Path $script:TStylesDataRoot '.installed-sha'
+    $stampFile = Join-Path $script:TStylesDataRoot '.last-update-check'
 
     # --- Throttle gate ---
     # If the stamp file is present and parses as a datetime less than 24h old,
@@ -192,7 +249,7 @@ function Invoke-TerminalStylesUpdate {
     # Cheap check first: if we already have the current main SHA, skip the
     # ~10MB ZIP download entirely. -Force overrides (for recovery from a
     # botched install).
-    $shaFile = Join-Path $script:TStylesRoot '.installed-sha'
+    $shaFile = Join-Path $script:TStylesDataRoot '.installed-sha'
     if (-not $Force -and (Test-Path -LiteralPath $shaFile)) {
         try {
             $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
@@ -323,7 +380,7 @@ function Write-SettingsFile {
 function Get-AvailableStyles {
     # Returns an array of DirectoryInfo for every styles/<name>/ that has a
     # scheme.json. Sorted alphabetically by name.
-    $stylesDir = Join-Path $script:TStylesRoot 'styles'
+    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
     if (-not (Test-Path -LiteralPath $stylesDir)) { return @() }
     @(Get-ChildItem -LiteralPath $stylesDir -Directory | Where-Object {
         Test-Path (Join-Path $_.FullName 'scheme.json')
@@ -346,17 +403,19 @@ function Get-CurrentStyleName {
 }
 
 function Test-StyleResolved {
-    # A style is "resolved" if we know its background state -- either a local
-    # background.* exists, or a .no-background marker says we already tried
-    # and the remote has nothing. Used by the picker to decide whether to
-    # show '...fetching' next to the style name, and by the memoization to
-    # decide whether to cache the merged JSON (only resolved styles cache
-    # safely; a pending fetch could land between cache reads).
+    # A style is "resolved" if we know its background state -- either a
+    # bundled background.<ext> exists under $StyleDir (module root), or a
+    # cached background.<ext>/.no-background exists under $DataRoot\cache\<name>\.
     param([Parameter(Mandatory)][string]$StyleDir)
     foreach ($ext in 'gif','png','jpg','jpeg') {
         if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
     }
-    if (Test-Path -LiteralPath (Join-Path $StyleDir '.no-background')) { return $true }
+    $styleName = Split-Path -Leaf $StyleDir
+    $cacheDir = Join-Path $script:TStylesDataRoot "cache\$styleName"
+    foreach ($ext in 'gif','png','jpg','jpeg') {
+        if (Test-Path -LiteralPath (Join-Path $cacheDir "background.$ext")) { return $true }
+    }
+    if (Test-Path -LiteralPath (Join-Path $cacheDir '.no-background')) { return $true }
     return $false
 }
 
@@ -441,7 +500,7 @@ function Show-CurrentStyle {
         if ([Console]::IsOutputRedirected) {
             Write-Output $current
         } else {
-            $schemePath = Join-Path $script:TStylesRoot "styles\$current\scheme.json"
+            $schemePath = Join-Path $script:TStylesModuleRoot "styles\$current\scheme.json"
             if (Test-Path -LiteralPath $schemePath) {
                 $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
                 Write-Host ("{0,-16}  {1}" -f $current, (Get-SchemeSwatch -Scheme $scheme))
@@ -483,7 +542,7 @@ function Apply-StyleDirect {
         [bool]$BackgroundImageProvided = $false
     )
 
-    $styleDir = Join-Path $script:TStylesRoot "styles\$StyleName"
+    $styleDir = Join-Path $script:TStylesModuleRoot "styles\$StyleName"
     if (-not (Test-Path -LiteralPath (Join-Path $styleDir 'scheme.json'))) {
         Write-Error "Style '$StyleName' not found. Run 'tstyles list' to see available styles."
         return
@@ -660,7 +719,7 @@ function Invoke-TerminalStyle {
         return
     }
 
-    $stylesDir = Join-Path $script:TStylesRoot 'styles'
+    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
     $styles = @(Get-ChildItem -LiteralPath $stylesDir -Directory | Where-Object {
         Test-Path (Join-Path $_.FullName 'scheme.json')
     } | Sort-Object Name)
@@ -1057,7 +1116,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
     $subcommands = @('list', 'current', 'random', 'update', 'uninstall')
-    $stylesDir = Join-Path $script:TStylesRoot 'styles'
+    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
     $styleNames = if (Test-Path -LiteralPath $stylesDir) {
         @(Get-ChildItem -LiteralPath $stylesDir -Directory -ErrorAction SilentlyContinue |
             Where-Object { Test-Path (Join-Path $_.FullName 'scheme.json') } |
@@ -1067,4 +1126,13 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg 
     $all | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
         [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
     }
+}
+
+# One-time data-layout migration for users upgrading from pre-0.2.0.
+# Idempotent; gated by a marker file.
+Invoke-TerminalStylesStateMigration
+
+# === Auto-load the currently selected style's profile.ps1 ===
+if (Test-Path -LiteralPath $script:TStylesCurrent) {
+    . $script:TStylesCurrent
 }

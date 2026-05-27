@@ -33,7 +33,10 @@ BeforeAll {
 Describe 'Apply-StyleDirect backup behavior' {
     InModuleScope TerminalStyles {
         BeforeEach {
-            $script:TStylesRoot = $TestDrive
+            $script:TStylesModuleRoot = $TestDrive
+            $script:TStylesDataRoot   = $TestDrive
+            # Mock install-kind: tests for the bootstrap-only flow.
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
 
             $script:fakeSettings = Join-Path $TestDrive 'fake-settings.json'
             $initialContent = '{"profiles":{"list":[{"name":"PowerShell","guid":"{x}"}]}}'

@@ -31,7 +31,12 @@ BeforeAll {
 Describe 'Test-UpdateAvailable' {
     InModuleScope TerminalStyles {
         BeforeEach {
-            $script:TStylesRoot = $TestDrive
+            $script:TStylesModuleRoot = $TestDrive
+            $script:TStylesDataRoot   = $TestDrive
+            # Mock the install-kind detection: tests assume Bootstrap behavior
+            # (PSResourceGet would short-circuit Test-UpdateAvailable to $null,
+            # breaking every assertion below).
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
             $stampFile = Join-Path $TestDrive '.last-update-check'
             $shaFile   = Join-Path $TestDrive '.installed-sha'
             Remove-Item $stampFile -ErrorAction SilentlyContinue
