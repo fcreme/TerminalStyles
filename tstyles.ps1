@@ -745,12 +745,20 @@ function Invoke-TerminalStyle {
         }
         if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
 
+        # Truecolor mid-gray for the picker's secondary text. PowerShell's
+        # "DarkGray" maps to each scheme's brightBlack slot, which on
+        # low-contrast themes (rain, forest, golden-forest) sits too close
+        # to the background to read. A fixed #a0a0a0 stays legible on every
+        # background -- dark themes and the light gitbash alike.
+        $hintColor  = "$([char]27)[38;2;160;160;160m"
+        $resetColor = "$([char]27)[0m"
+
         while (-not $confirmed) {
             Clear-Host
             Write-Host ""
             Write-Host "  Choose a style for " -NoNewline
             Write-Host "'$Target'" -ForegroundColor Cyan
-            Write-Host "  Up/Down to preview, Enter to keep, Esc to cancel" -ForegroundColor DarkGray
+            Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
             Write-Host ""
             for ($i = 0; $i -lt $styles.Count; $i++) {
                 $name = $styles[$i].Name
@@ -761,7 +769,7 @@ function Invoke-TerminalStyle {
                 if ($resolved) {
                     Write-Host $swatches[$i]
                 } else {
-                    Write-Host '...fetching background' -ForegroundColor DarkGray
+                    Write-Host "$hintColor...fetching background$resetColor"
                 }
             }
             Write-Host ""
