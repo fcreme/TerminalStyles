@@ -32,8 +32,13 @@ $repo       = 'fcreme/TerminalStyles'
 $branch     = 'main'
 $installDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
 $zipUrl     = "https://github.com/$repo/archive/refs/heads/$branch.zip"
-$tempZip    = Join-Path $env:TEMP "TerminalStyles-$branch.zip"
-$tempDir    = Join-Path $env:TEMP "TerminalStyles-extract-$([guid]::NewGuid().Guid.Substring(0,8))"
+# GUID-suffix both temp paths so back-to-back runs (or a crashed prior
+# run leaving a locked file behind) never collide. AV scanners and
+# OneDrive sync can hold transient locks on $env:TEMP files; a fresh
+# name per invocation sidesteps that entirely.
+$runId      = [guid]::NewGuid().Guid.Substring(0,8)
+$tempZip    = Join-Path $env:TEMP "TerminalStyles-$branch-$runId.zip"
+$tempDir    = Join-Path $env:TEMP "TerminalStyles-extract-$runId"
 
 $loaderBegin = '# ===== TerminalStyles BEGIN ====='
 $loaderEnd   = '# ===== TerminalStyles END ====='
