@@ -1,6 +1,11 @@
-# Pester 5 tests for Get-SchemeSwatch.
+# Pester 5 tests for Get-SchemeSwatch (module-private).
 #
-# Guards against the two swatch bugs caught manually this session:
+# Module-restructure migration: dot-source replaced with Import-Module,
+# Get-SchemeSwatch calls wrapped in InModuleScope so the test can see
+# the module-private function.
+#
+# Guards against the two swatch bugs caught manually before the test
+# was written:
 #   1. "All themes look like rainbows": prior picks (brightRed / yellow /
 #      brightGreen / brightCyan / brightPurple) sat in semantically fixed
 #      hue slots, so every theme rendered the same red->yellow->green->
@@ -12,7 +17,7 @@
 #      colors assertion.
 #
 # Run: Invoke-Pester (Join-Path $PSScriptRoot 'tests')
-# Requires: Pester 5+  (Install-Module Pester -Force -SkipPublisherCheck)
+# Requires: Pester 5+
 
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
@@ -27,24 +32,21 @@ BeforeDiscovery {
 
 BeforeAll {
     $repoRoot = Split-Path $PSScriptRoot -Parent
-    # Dot-source tstyles.ps1 to bring Get-SchemeSwatch into scope. Suppress
-    # its load-time output (alias registration, current-style.ps1 banner if
-    # any) so the test runner stays clean.
-    . (Join-Path $repoRoot 'tstyles.ps1') *> $null
-
-    function Get-ThemeSwatchRGBs {
-        param([Parameter(Mandatory)][string]$ThemeName, [Parameter(Mandatory)][string]$RepoRoot)
-        $schemePath = Join-Path $RepoRoot "styles\$ThemeName\scheme.json"
-        $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-        $swatch = Get-SchemeSwatch -Scheme $scheme
-        return [regex]::Matches($swatch, '\[48;2;(\d+;\d+;\d+)m') | ForEach-Object { $_.Groups[1].Value }
-    }
+    Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
 }
 
 Describe 'Get-SchemeSwatch' {
     Context 'For theme <_>' -ForEach $themeNames {
         BeforeAll {
-            $rgbs = Get-ThemeSwatchRGBs -ThemeName $_ -RepoRoot (Split-Path $PSScriptRoot -Parent)
+            $themeName = $_
+            $repoRoot  = Split-Path $PSScriptRoot -Parent
+            $rgbs = InModuleScope TerminalStyles -Parameters @{ ThemeName = $themeName; RepoRoot = $repoRoot } {
+                param($ThemeName, $RepoRoot)
+                $schemePath = Join-Path $RepoRoot "styles\$ThemeName\scheme.json"
+                $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                $swatch = Get-SchemeSwatch -Scheme $scheme
+                [regex]::Matches($swatch, '\[48;2;(\d+;\d+;\d+)m') | ForEach-Object { $_.Groups[1].Value }
+            }
         }
 
         It 'produces exactly 5 colored cells' {
@@ -59,9 +61,17 @@ Describe 'Get-SchemeSwatch' {
     Context 'Across all themes' {
         It 'every pair of themes produces a byte-distinct swatch' {
             $repoRoot = Split-Path $PSScriptRoot -Parent
-            $signatures = @{}
-            foreach ($name in $themeNames) {
-                $signatures[$name] = (Get-ThemeSwatchRGBs -ThemeName $name -RepoRoot $repoRoot) -join '|'
+            $signatures = InModuleScope TerminalStyles -Parameters @{ ThemeNames = $themeNames; RepoRoot = $repoRoot } {
+                param($ThemeNames, $RepoRoot)
+                $sigs = @{}
+                foreach ($name in $ThemeNames) {
+                    $schemePath = Join-Path $RepoRoot "styles\$name\scheme.json"
+                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    $swatch = Get-SchemeSwatch -Scheme $scheme
+                    $rgbs = [regex]::Matches($swatch, '\[48;2;(\d+;\d+;\d+)m') | ForEach-Object { $_.Groups[1].Value }
+                    $sigs[$name] = $rgbs -join '|'
+                }
+                $sigs
             }
             $names = @($themeNames)
             $collisions = @()
