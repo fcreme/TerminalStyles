@@ -153,18 +153,18 @@ function Write-InstallPanel {
     }
 }
 
-Write-Host ""
-Write-Host "TerminalStyles installer" -ForegroundColor Cyan
-Write-Host "------------------------" -ForegroundColor Cyan
+Write-InstallBanner
 
 # --- Download ---
-Write-Host "Downloading from $zipUrl ..."
+Write-InstallStep "Downloading"
 Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
+Write-InstallStep "Downloading" -Check
 
 # --- Extract ---
-Write-Host "Extracting ..."
+Write-InstallStep "Extracting"
 if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force }
 Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
+Write-InstallStep "Extracting" -Check
 
 $extractedRoot = Get-ChildItem -LiteralPath $tempDir -Directory | Select-Object -First 1
 if (-not $extractedRoot) { throw "Failed to locate extracted folder under $tempDir" }
@@ -203,7 +203,7 @@ Move-Item -LiteralPath $extractedRoot.FullName -Destination $installDir
 
 if ($preservedBytes) {
     [System.IO.File]::WriteAllBytes((Join-Path $installDir 'current-style.ps1'), $preservedBytes)
-    Write-Host "Preserved your existing style selection."
+    Write-InstallStep "Preserved your active style" -Check
 }
 
 if ($preservedBackgrounds) {
@@ -213,14 +213,12 @@ if ($preservedBackgrounds) {
             [System.IO.File]::WriteAllBytes((Join-Path $destDir "background.$($p.Ext)"), $p.Bytes)
         }
     }
-    Write-Host ("Preserved {0} cached background image(s)." -f $preservedBackgrounds.Count)
+    Write-InstallStep ("Preserved {0} cached background(s)" -f $preservedBackgrounds.Count) -Check
 }
 
 # Cleanup temp
 Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
 Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-
-Write-Host "Files installed at: $installDir" -ForegroundColor Green
 
 # --- Record install SHA for the update checker ---
 try {
@@ -317,8 +315,6 @@ function Register-LoaderInProfile {
 
     $final = ($existing.TrimEnd() + "`r`n`r`n" + $LoaderBody + "`r`n").TrimStart()
     [System.IO.File]::WriteAllText($ProfilePath, $final, [System.Text.UTF8Encoding]::new($false))
-
-    Write-Host "  Loader registered in: $ProfilePath" -ForegroundColor Green
 }
 
 # --- Helper: offer to fix Restricted/AllSigned execution policy for an engine ---
@@ -366,13 +362,12 @@ $shells = @(
 
 $registered = @()
 foreach ($s in $shells) {
-    Write-Host ""
-    Write-Host "[$($s.Label)]" -ForegroundColor Cyan
     $info = Get-ShellInfo -Exe $s.Exe -Label $s.Label
     if (-not $info) { continue }
     Register-LoaderInProfile -ProfilePath $info.ProfilePath -Label $s.Label -InstallDir $installDir `
         -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
     Resolve-ExecutionPolicy -Exe $s.Exe -Label $s.Label -EffectivePolicy $info.Policy
+    Write-InstallStep "Registered loader: $($s.Label)" -Check
     $registered += $s.Label
 }
 
@@ -380,10 +375,12 @@ if (-not $registered) {
     throw "Neither pwsh.exe nor powershell.exe was found on PATH. Cannot register TerminalStyles loader."
 }
 
-Write-Host ""
-Write-Host "Done!" -ForegroundColor Green
-Write-Host "  Registered for: $($registered -join ', ')"
-Write-Host "  1. Open a new tab in one of those shells (or run: . `$PROFILE)"
-Write-Host "  2. Run:  tstyles"
-Write-Host "     -> Arrow keys to preview each style live, Enter to keep, Esc to cancel."
-Write-Host ""
+# Gather the bundled theme names for the "Ready" panel
+$themeNames = @(
+    Get-ChildItem -LiteralPath (Join-Path $installDir 'styles') -Directory |
+        Where-Object { Test-Path (Join-Path $_.FullName 'scheme.json') } |
+        Sort-Object Name |
+        ForEach-Object Name
+)
+
+Write-InstallPanel -ThemeNames $themeNames -RegisteredEngines $registered
