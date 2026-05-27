@@ -1,0 +1,23 @@
+{
+    "name": "forest",
+    "background": "#0a1820",
+    "foreground": "#d8e4ec",
+    "cursorColor": "#d49680",
+    "selectionBackground": "#1a3548",
+    "black": "#0a1614",
+    "red": "#c47a5a",
+    "green": "#5a8a4a",
+    "yellow": "#98b86a",
+    "blue": "#3a8ee0",
+    "purple": "#a8b0c8",
+    "cyan": "#5a9ec4",
+    "white": "#e8dac8",
+    "brightBlack": "#2a3a30",
+    "brightRed": "#e0a088",
+    "brightGreen": "#88b56a",
+    "brightYellow": "#c8d49a",
+    "brightBlue": "#5aa5f0",
+    "brightPurple": "#c8d0e0",
+    "brightCyan": "#88c0e0",
+    "brightWhite": "#f5e8d8"
+}

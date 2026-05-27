@@ -96,6 +96,14 @@ yellow status overlay. NERV operations banner.
 with a coral pink accent.
 *"You've been programmed and fed by another. Are you bothered?"*
 
+### [forest](styles/forest)
+
+![forest](docs/screenshots/forest.png)
+
+**Quiet alpine wilderness.** Pixel-art mountain vista — snow-tipped
+peaks at golden hour, deep evergreen forest, mirror lake. Cool
+blue-green base, peach accents. No banner — gentle for long sessions.
+
 ### [gitbash](styles/gitbash)
 
 ![gitbash](docs/screenshots/gitbash.png)
