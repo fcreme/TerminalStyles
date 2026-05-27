@@ -1,7 +1,7 @@
 # Bundled Per-Style Backgrounds — Design
 
 **Date:** 2026-05-26
-**Status:** Approved (pending implementation)
+**Status:** Implemented 2026-05-27
 **Author:** Felipe
 **Builds on:** [dual-shell support](2026-05-26-dual-shell-support-design.md)
 

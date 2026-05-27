@@ -1,7 +1,7 @@
 # Dual-Shell Support (pwsh 7 + Windows PowerShell 5.1) — Design
 
 **Date:** 2026-05-26
-**Status:** Approved (pending implementation)
+**Status:** Implemented 2026-05-27
 **Author:** Felipe
 
 ## Problem
