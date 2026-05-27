@@ -498,7 +498,7 @@ function Apply-StyleDirect {
     $bakPath = "$settingsPath.bak"
     try {
         Copy-Item -LiteralPath $settingsPath -Destination $bakPath -Force -ErrorAction Stop
-        Write-Host "Backed up settings to: $bakPath" -ForegroundColor DarkGray
+        Write-Host "Backed up settings to: $bakPath" -ForegroundColor Gray
     } catch {
         Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
     }
