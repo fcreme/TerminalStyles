@@ -13,6 +13,9 @@ $script:TStylesRoot = $PSScriptRoot
 if (-not $script:TStylesRoot) {
     $script:TStylesRoot = Split-Path $MyInvocation.MyCommand.Path -Parent
 }
+# Alias for the dual-root refactor coming in sub-project C. For now both
+# point at the same dir; Task 2 splits them properly.
+$script:TStylesModuleRoot = $script:TStylesRoot
 $script:TStylesCurrent = Join-Path $script:TStylesRoot 'current-style.ps1'
 
 # === Auto-load the currently selected style's profile.ps1 ===
@@ -95,6 +98,21 @@ function Get-StyleBundledBackground {
         New-Item -ItemType File -Path $noBgMarker -Force | Out-Null
     } catch { }
     return $null
+}
+
+function Get-TerminalStylesInstallKind {
+    # Returns 'Bootstrap' if the module loaded from %LOCALAPPDATA%\TerminalStyles\
+    # (the iwr-installer path), else 'PSResourceGet' (PSModulePath-based install).
+    # Used by Invoke-TerminalStylesUpdate / Invoke-TerminalStylesUninstall to
+    # delegate to the right mechanism, and by Test-UpdateAvailable to skip the
+    # SHA-based check entirely for PSResourceGet installs.
+    #
+    # Note: $script:TStylesModuleRoot is set during module load. For installs
+    # made before the dual-root refactor (sub-project C), the variable still
+    # has the right value because the init block sets it from $PSScriptRoot.
+    $bootstrapDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+    if ($script:TStylesModuleRoot -eq $bootstrapDir) { return 'Bootstrap' }
+    return 'PSResourceGet'
 }
 
 function Test-UpdateAvailable {
