@@ -1,0 +1,23 @@
+{
+    "name": "garden-rain",
+    "background": "#142028",
+    "foreground": "#c8d4dc",
+    "cursorColor": "#5ec47a",
+    "selectionBackground": "#1a3040",
+    "black": "#0a1218",
+    "red": "#a85060",
+    "green": "#5ea870",
+    "yellow": "#c8b048",
+    "blue": "#3a78b8",
+    "purple": "#7068a0",
+    "cyan": "#5a9ec0",
+    "white": "#c8d4dc",
+    "brightBlack": "#38424a",
+    "brightRed": "#c87080",
+    "brightGreen": "#88c890",
+    "brightYellow": "#d8c068",
+    "brightBlue": "#5a98d8",
+    "brightPurple": "#9088b8",
+    "brightCyan": "#88c0d8",
+    "brightWhite": "#e8e8e8"
+}

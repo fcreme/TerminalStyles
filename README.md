@@ -12,20 +12,20 @@ live in your current tab, Enter keeps it, Esc cancels.
     <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="170" alt="eva"></td>
     <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="170" alt="ex-machina"></td>
     <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="170" alt="forest"></td>
-    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="170" alt="gitbash"></td>
+    <td align="center"><b>garden-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/garden-rain.gif" width="170" alt="garden-rain"></td>
   </tr>
   <tr>
+    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="170" alt="gitbash"></td>
     <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="170" alt="golden-forest"></td>
     <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="170" alt="kitty"></td>
     <td align="center"><b>lain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/lain.gif" width="170" alt="lain"></td>
     <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="170" alt="neon-rain"></td>
-    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="170" alt="rain"></td>
   </tr>
   <tr>
+    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="170" alt="rain"></td>
     <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="170" alt="snowday"></td>
     <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="170" alt="sober"></td>
     <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="170" alt="tombraider"></td>
-    <td></td>
     <td></td>
   </tr>
 </table>
@@ -93,7 +93,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Thirteen themes ship out of the box. Click any name to jump to that style's
+Fourteen themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -127,6 +127,14 @@ with a coral pink accent.
 **Quiet alpine wilderness.** Pixel-art mountain vista — snow-tipped
 peaks at golden hour, deep evergreen forest, mirror lake. Cool
 blue-green base, peach accents. No banner — gentle for long sessions.
+
+### [garden-rain](styles/garden-rain)
+
+![garden-rain](docs/screenshots/garden-rain.png)
+
+**Ghibli-style garden rainfall.** Wet stone steps, a metal bucket
+and a blue plastic one catching rainwater, leafy plants with blue
+flowers. Cool slate-blue base, plant-green cursor, no banner.
 
 ### [gitbash](styles/gitbash)
 
