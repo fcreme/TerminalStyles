@@ -8,25 +8,28 @@ live in your current tab, Enter keeps it, Esc cancels.
 
 <table>
   <tr>
-    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="170" alt="umbrella"></td>
-    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="170" alt="eva"></td>
-    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="170" alt="ex-machina"></td>
-    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="170" alt="forest"></td>
-    <td align="center"><b>garden-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/garden-rain.gif" width="170" alt="garden-rain"></td>
+    <td align="center"><b>umbrella</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/umbrella.gif" width="210" alt="umbrella"></td>
+    <td align="center"><b>eva</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/eva.gif" width="210" alt="eva"></td>
+    <td align="center"><b>ex-machina</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/ex-machina.gif" width="210" alt="ex-machina"></td>
+    <td align="center"><b>forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/forest.gif" width="210" alt="forest"></td>
   </tr>
   <tr>
-    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="170" alt="gitbash"></td>
-    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="170" alt="golden-forest"></td>
-    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="170" alt="kitty"></td>
-    <td align="center"><b>lain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/lain.gif" width="170" alt="lain"></td>
-    <td align="center"><b>marquee</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/marquee.gif" width="170" alt="marquee"></td>
+    <td align="center"><b>garden-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/garden-rain.gif" width="210" alt="garden-rain"></td>
+    <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="210" alt="gitbash"></td>
+    <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="210" alt="golden-forest"></td>
+    <td align="center"><b>halo</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/halo.gif" width="210" alt="halo"></td>
   </tr>
   <tr>
-    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="170" alt="neon-rain"></td>
-    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="170" alt="rain"></td>
-    <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="170" alt="snowday"></td>
-    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="170" alt="sober"></td>
-    <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="170" alt="tombraider"></td>
+    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="210" alt="kitty"></td>
+    <td align="center"><b>lain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/lain.gif" width="210" alt="lain"></td>
+    <td align="center"><b>marquee</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/marquee.gif" width="210" alt="marquee"></td>
+    <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="210" alt="neon-rain"></td>
+  </tr>
+  <tr>
+    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="210" alt="rain"></td>
+    <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="210" alt="snowday"></td>
+    <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="210" alt="sober"></td>
+    <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="210" alt="tombraider"></td>
   </tr>
 </table>
 
@@ -93,7 +96,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Fifteen themes ship out of the box. Click any name to jump to that style's
+Sixteen themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -150,6 +153,16 @@ detection. The only light-mode theme in the catalog.
 
 **Warm sepia autumn.** Amber and moss palette over deep dark green.
 Quiet — no banner, gentle for long sessions.
+
+### [halo](styles/halo)
+
+![halo](docs/screenshots/halo.png)
+
+**EXT3-series LED halo portrait.** Third in the EXT3 dot-matrix
+series alongside tombraider and marquee. Psychedelic multi-color
+portrait inside a circular halo ring — coral primary, gold EXT3
+label, blue and lavender accents. Right-aligned on pure black,
+vintage CRT cursor. *"Look up. Look closer."*
 
 ### [kitty](styles/kitty)
 

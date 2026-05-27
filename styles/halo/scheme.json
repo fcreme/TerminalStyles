@@ -1,0 +1,23 @@
+{
+    "name": "halo",
+    "background": "#000000",
+    "foreground": "#f0d8c0",
+    "cursorColor": "#ff6850",
+    "selectionBackground": "#2a1a30",
+    "black": "#000000",
+    "red": "#d8504a",
+    "green": "#50d090",
+    "yellow": "#f0d040",
+    "blue": "#4868d8",
+    "purple": "#9070d8",
+    "cyan": "#50c8e0",
+    "white": "#f0d8c0",
+    "brightBlack": "#2a1820",
+    "brightRed": "#ff8068",
+    "brightGreen": "#80e8a8",
+    "brightYellow": "#ffe860",
+    "brightBlue": "#6890ff",
+    "brightPurple": "#c0a0f0",
+    "brightCyan": "#80e0f0",
+    "brightWhite": "#ffe8d0"
+}
