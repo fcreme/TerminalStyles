@@ -100,14 +100,27 @@ function Get-StyleBundledBackground {
 function Test-UpdateAvailable {
     # Returns a pscustomobject with short SHAs if a newer commit is available
     # on origin/main, or $null if local already matches / no .installed-sha /
-    # the API call fails.
+    # we're inside the 24h throttle window / the API call fails.
     #
-    # No throttling: checks every tstyles invocation so the user always sees
-    # a current notice if local is behind. The HTTP call is typically
-    # ~100-200ms; -TimeoutSec 2 caps worst-case at 2s for slow networks.
-    # Stays well inside GitHub's 60/hr unauthenticated rate limit unless
-    # tstyles is being invoked extremely frequently from scripts.
-    $shaFile = Join-Path $script:TStylesRoot '.installed-sha'
+    # Throttled to <= 1 HTTP request per 24 hours per machine via
+    # .last-update-check. The timestamp is rewritten on every attempt
+    # (success or failure), so an offline machine doesn't retry the
+    # 2s timeout on every single tstyles invocation.
+    $shaFile   = Join-Path $script:TStylesRoot '.installed-sha'
+    $stampFile = Join-Path $script:TStylesRoot '.last-update-check'
+
+    # --- Throttle gate ---
+    # If the stamp file is present and parses as a datetime less than 24h old,
+    # skip everything below. Unparseable / missing -> fall through and the
+    # timestamp write at the end will overwrite with a valid value (self-heal).
+    if (Test-Path -LiteralPath $stampFile) {
+        try {
+            $raw = [System.IO.File]::ReadAllText($stampFile, [System.Text.UTF8Encoding]::new($false)).Trim()
+            $stamp = [datetime]::Parse($raw, [System.Globalization.CultureInfo]::InvariantCulture, [System.Globalization.DateTimeStyles]::RoundtripKind)
+            if (((Get-Date) - $stamp).TotalHours -lt 24) { return $null }
+        } catch { }
+    }
+
     if (-not (Test-Path -LiteralPath $shaFile)) { return $null }
     $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
     if (-not $installed) { return $null }
@@ -119,6 +132,14 @@ function Test-UpdateAvailable {
             -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
             -TimeoutSec 2 -ErrorAction Stop
         $remote = $resp.sha
+    } catch { }
+
+    # --- Throttle write ---
+    # Always write the timestamp, even on API failure. Without this, an
+    # offline machine would retry the 2s timeout on every invocation.
+    try {
+        $now = (Get-Date).ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+        [System.IO.File]::WriteAllText($stampFile, $now, [System.Text.UTF8Encoding]::new($false))
     } catch { }
 
     if ($remote -and $remote -ne $installed) {
