@@ -165,9 +165,13 @@ that script from inside Windows Terminal and commit the output.
 
 ## Background image
 
-Each bundled style ships with its own `background.gif` (or `.png` / `.jpg`)
-under `styles/<name>/`. Picking a style auto-applies that image — arrow
-keys cycle the GIF live alongside the colors / cursor / font.
+Each bundled style has its own animated background, hosted on the
+[`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) of
+this repo. `tstyles` lazy-fetches each one on first use of the style and
+caches it under `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`, so the
+install ZIP stays small (~100 KB instead of ~10 MB). Picking a style
+auto-applies the image — arrow keys cycle the background live alongside
+the colors / cursor / font.
 
 To override the bundled image with your own:
 
@@ -301,8 +305,15 @@ Once installed, you can drop a new style folder into
 
 `tstyles` will pick it up automatically — no registration needed.
 
-For contributing back, fork the repo, add the folder under `styles/`,
-and open a PR.
+For contributing back:
+
+1. Fork the repo, add the code-only folder (scheme.json / theme.json /
+   profile.ps1 / README.md — no background) under `styles/<name>/` on
+   `main`, and open a PR.
+2. If your theme ships a background, also switch to the `gifs` branch
+   and drop the file at the root as `<name>.<ext>` (flat naming, no
+   subfolder). `main` stays code-only; `tstyles` lazy-fetches the
+   background on first use of your style.
 
 - **scheme.json** must contain a unique `name`. See
   [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).

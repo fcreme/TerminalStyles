@@ -383,9 +383,9 @@ function Show-StyleList {
     }
     Write-Host ""
     if ($current) {
-        Write-Host "  (* = currently active)" -ForegroundColor DarkGray
+        Write-Host "$([char]27)[38;2;160;160;160m  (* = currently active)$([char]27)[0m"
     } else {
-        Write-Host "  (no bundled style currently active)" -ForegroundColor DarkGray
+        Write-Host "$([char]27)[38;2;160;160;160m  (no bundled style currently active)$([char]27)[0m"
     }
     Write-Host ""
 }
@@ -410,7 +410,7 @@ function Show-CurrentStyle {
             }
         }
     } else {
-        Write-Host "(no bundled style currently active)" -ForegroundColor DarkGray
+        Write-Host "$([char]27)[38;2;160;160;160m(no bundled style currently active)$([char]27)[0m"
     }
 }
 

@@ -67,7 +67,10 @@ try {
     }
 
     # --- Step 2: create / switch to orphan gifs branch ---
-    $gifsExists = (git branch --list gifs).Trim()
+    # `git branch --list` returns $null (not an empty string) when no
+    # match is found, and .Trim() on $null throws. Out-String forces a
+    # non-null string (possibly empty) so the comparison below is safe.
+    $gifsExists = ((git branch --list gifs) | Out-String).Trim()
     if (-not $gifsExists) {
         Write-Host ""
         Write-Host "Creating orphan 'gifs' branch..." -ForegroundColor Cyan
