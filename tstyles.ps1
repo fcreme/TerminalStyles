@@ -931,6 +931,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }
+    if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall;  return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
@@ -1352,7 +1353,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('list', 'current', 'random', 'update', 'uninstall')
+    $subcommands = @('list', 'current', 'random', 'register', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.
