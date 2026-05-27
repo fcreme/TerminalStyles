@@ -35,26 +35,38 @@ live in your current tab, Enter keeps it, Esc cancels.
 
 ## Install
 
-Open a **PowerShell** tab in Windows Terminal (either Windows PowerShell
-5.1 or PowerShell 7+ works) and run:
+```powershell
+Install-PSResource -Name TerminalStyles
+Import-Module TerminalStyles -DisableNameChecking
+```
+
+Add the `Import-Module` line to your `$PROFILE` so it loads on every
+new shell tab. Then:
+
+```powershell
+tstyles
+```
+
+Arrow keys preview each style live, Enter keeps it, Esc cancels.
+
+### Alternate: bootstrap installer
+
+For setups without [PSResourceGet](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.psresourceget/)
+(rare on modern Windows; ships natively in pwsh 7.4+), use the
+bootstrap one-liner installer instead. It also auto-registers the
+loader in your `$PROFILE`:
 
 ```powershell
 iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex
 ```
 
-That's it. You don't need to clone anything. The installer:
+This downloads to `%LOCALAPPDATA%\TerminalStyles\`, registers a
+loader for every PowerShell engine it finds, and offers to fix
+restrictive execution policies if needed. Once it finishes, run
+`tstyles` immediately in the same tab.
 
-1. Downloads the styles to `%LOCALAPPDATA%\TerminalStyles\`.
-2. Registers a loader line in your `$PROFILE` for **every** PowerShell
-   engine it finds on PATH (`pwsh.exe` and `powershell.exe`), so one run
-   sets up both shells.
-3. Detects if either engine's execution policy is `Restricted` /
-   `AllSigned` and offers to set `CurrentUser` to `RemoteSigned` for you
-   (it asks first — never silent).
-
-Once the installer finishes, you can run `tstyles` immediately in the
-same tab. Any other tabs already open (and the other PowerShell engine
-if both are installed) will pick it up the next time they start.
+The bootstrap install and the PSGallery install can coexist —
+whichever your `$PROFILE` loads wins; the other is orphaned silently.
 
 ## Use
 
@@ -320,44 +332,31 @@ apply"), use `apply.ps1` instead — it keeps timestamped backups per run.
 
 ## Updating
 
-`tstyles` checks `api.github.com` for new commits on `main` at most once
-per day per machine and prints a one-line yellow notice if your install
-is behind:
-
-```
-Update available (abc1234 -> def5678). Run: tstyles update
-```
-
-To pull the update:
-
 ```powershell
 tstyles update
 ```
 
-This re-runs the install one-liner against the latest `main`. Your
-currently selected style (`current-style.ps1`) is preserved across
-reinstalls. Add `-Force` to skip the same-SHA fast-path and reinstall
-anyway (useful for recovering from a botched install).
+`tstyles update` detects how the module was installed and delegates:
 
-If `tstyles update` fails (no internet, GitHub down, corporate proxy),
-the original install one-liner still works:
+- **PSGallery (`Install-PSResource`)** → runs `Update-PSResource -Name TerminalStyles`.
+- **Bootstrap (`iwr | iex`)** → re-runs the bootstrap one-liner.
 
-```powershell
-iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex
-```
+After update, open a new tab (or run `Import-Module TerminalStyles -Force -DisableNameChecking`) for the new version to take effect.
 
 ### How the update check works
 
-`tstyles` issues at most one unauthenticated HTTP GET per 24 hours per
-machine to `api.github.com/repos/fcreme/TerminalStyles/commits/main`
-(capped at 2 seconds), comparing the returned commit SHA against the
-one recorded at install time in
+For **bootstrap** installs only, `tstyles` issues at most one
+unauthenticated HTTP GET per 24 hours per machine to
+`api.github.com/repos/fcreme/TerminalStyles/commits/main` (capped at
+2 seconds), comparing the returned commit SHA against the one
+recorded at install time in
 `%LOCALAPPDATA%\TerminalStyles\.installed-sha`. The 24h throttle is
 tracked in `%LOCALAPPDATA%\TerminalStyles\.last-update-check` and
-applies even on failure (so an offline machine doesn't retry the
-2s timeout on every invocation). No authentication, no payload sent,
-no analytics. Offline / API unreachable / rate-limited → check fails
-silently and `tstyles` works normally.
+applies even on failure. No authentication, no payload sent, no
+analytics.
+
+PSGallery-installed copies skip this check entirely — `Update-PSResource`
+handles version comparison internally when you run `tstyles update`.
 
 ## Uninstalling
 
@@ -365,26 +364,33 @@ silently and `tstyles` works normally.
 tstyles uninstall
 ```
 
-Asks for confirmation, then removes `%LOCALAPPDATA%\TerminalStyles\` and
-strips the loader block from both pwsh 7 and Windows PowerShell 5.1
-`$PROFILE` files. **Does not modify `settings.json`** — your color
-scheme / cursor / background stays whatever it was last set to.
+`tstyles uninstall` detects how the module was installed and delegates:
+
+- **PSGallery** → runs `Uninstall-PSResource -Name TerminalStyles` +
+  strips the `Import-Module` loader from your `$PROFILE`.
+- **Bootstrap** → removes the install-managed files from
+  `%LOCALAPPDATA%\TerminalStyles\` (script files, bundled styles) and
+  strips the loader.
+
+**Either path preserves your user state by default** — your active
+style (`current-style.ps1`), update-check throttle, and cached
+background images stay at `%LOCALAPPDATA%\TerminalStyles\`. You can
+reinstall (either path) and pick up where you left off.
+
+To also remove the user state, pass `-DeleteData`:
+
+```powershell
+tstyles uninstall -DeleteData
+```
+
+Neither path modifies Windows Terminal's `settings.json` — your
+current color scheme / cursor / background stays whatever it was
+last set to.
 
 If you want a clean default look back, either restore a
 `settings.json.bak-<timestamp>` file from
 `%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\`,
 or open WT Settings → "Open JSON file" and edit by hand.
-
-If `tstyles uninstall` isn't available (e.g., the loader is broken), the
-manual equivalent is:
-
-```powershell
-Remove-Item "$env:LOCALAPPDATA\TerminalStyles" -Recurse -Force
-
-$content = Get-Content $PROFILE -Raw
-$content = [regex]::Replace($content, '(?ms)# ===== TerminalStyles BEGIN =====.*?# ===== TerminalStyles END =====\r?\n?', '')
-[System.IO.File]::WriteAllText($PROFILE, $content, [System.Text.UTF8Encoding]::new($false))
-```
 
 ## Adding your own style
 
@@ -456,6 +462,15 @@ takes one PNG of the WT window, then restores your original theme.
 - **JSON reformatting.** Each apply reformats `settings.json` cosmetically
   (PowerShell's `ConvertTo-Json` style). Functionally identical;
   Windows Terminal rewrites the file on its next save anyway.
+- **User state lives at `%LOCALAPPDATA%\TerminalStyles\`** regardless
+  of install method. This dir holds your active style, cached
+  background images, and the update-check throttle. It survives
+  uninstall (unless you pass `-DeleteData`) and version upgrades.
+- **Bootstrap + PSGallery installs can coexist.** If you've run both,
+  whichever your `$PROFILE` loads first wins; the other is orphaned
+  silently. To clean up: `tstyles uninstall` removes whichever is
+  currently loaded; run it twice (switching shells between runs if
+  needed) to clean both.
 
 ## License
 
