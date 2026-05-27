@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.2.0'
+    ModuleVersion     = '0.2.1'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Themes', 'Color', 'Prompt', 'pwsh')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.2.0: state files relocated to %LOCALAPPDATA%\TerminalStyles\ (survives version upgrades). tstyles update / uninstall now delegate to Update-PSResource / Uninstall-PSResource for PSGallery-installed copies. README leads with Install-PSResource; iwr|iex bootstrap is now a documented fallback. Transparent migration of cached background images on first import.'
+            ReleaseNotes = 'v0.2.1: user-added themes at %LOCALAPPDATA%\TerminalStyles\styles\<name>\ are now picked up alongside bundled themes AND survive any update path (bootstrap re-install, Update-PSResource). User-wins on name collision lets you locally override a bundled theme without forking. Purely additive -- zero behavior change if you don''t use the new user-styles dir.'
         }
     }
 }
