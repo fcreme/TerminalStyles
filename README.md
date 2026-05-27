@@ -41,7 +41,9 @@ Import-Module TerminalStyles -DisableNameChecking
 ```
 
 Add the `Import-Module` line to your `$PROFILE` so it loads on every
-new shell tab. Then:
+new shell tab — or run `tstyles register` once and it does that for
+you (both pwsh 7 and Windows PowerShell 5.1 `$PROFILE` files, with a
+confirm prompt first). Then:
 
 ```powershell
 tstyles
@@ -101,6 +103,7 @@ tstyles umbrella                  # Apply a specific style directly (no picker)
 tstyles list                      # List all themes; '*' marks the active one
 tstyles current                   # Print just the active style name
 tstyles random                    # Pick a random style and apply it
+tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
 tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\TerminalStyles\ entirely.
