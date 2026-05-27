@@ -384,3 +384,14 @@ $themeNames = @(
 )
 
 Write-InstallPanel -ThemeNames $themeNames -RegisteredEngines $registered
+
+# --- Same-tab handoff ---
+# Dot-source the freshly-installed tstyles.ps1 into the current scope
+# so the user can type `tstyles` immediately without opening a new tab.
+# `iwr | iex` runs this whole installer in the caller's scope, so a
+# dot-source from here exposes Invoke-TerminalStyle (the function
+# behind the `tstyles` command) to that scope too.
+$installedLib = Join-Path $installDir 'tstyles.ps1'
+if (Test-Path -LiteralPath $installedLib) {
+    . $installedLib *> $null
+}
