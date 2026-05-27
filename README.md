@@ -22,8 +22,8 @@ live in your current tab, Enter keeps it, Esc cancels.
   <tr>
     <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="210" alt="neon-rain"></td>
     <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="210" alt="rain"></td>
+    <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="210" alt="snowday"></td>
     <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="210" alt="sober"></td>
-    <td></td>
   </tr>
 </table>
 
@@ -90,7 +90,7 @@ Tab completion works on the subcommand and style names:
 
 ## Styles
 
-Eleven themes ship out of the box. Click any name to jump to that style's
+Twelve themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -172,6 +172,14 @@ Deep blue base, neon yellow cursor, matrix-green status accents.
 **Contemplative highland-storm.** Slate-purple stormy sky, moss-yellow
 accents, rust for the lone cloaked traveler. Field-journal banner.
 *"Still no sign of the others."*
+
+### [snowday](styles/snowday)
+
+![snowday](docs/screenshots/snowday.png)
+
+**Quiet winter sunset.** Pixel-art creek through a snow-dusted birch
+grove, peach-coral light through bare branches, soft dusty mountain
+in the distance. Deep dusk-blue base, sunset peach cursor, no banner.
 
 ### [sober](styles/sober)
 

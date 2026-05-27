@@ -1,0 +1,23 @@
+{
+    "name": "snowday",
+    "background": "#15243a",
+    "foreground": "#e8d4b8",
+    "cursorColor": "#e09870",
+    "selectionBackground": "#2a3a58",
+    "black": "#1a1410",
+    "red": "#c46850",
+    "green": "#7a9078",
+    "yellow": "#d8b878",
+    "blue": "#3a6890",
+    "purple": "#a08098",
+    "cyan": "#88a8b8",
+    "white": "#e8d4b8",
+    "brightBlack": "#3a3028",
+    "brightRed": "#e89880",
+    "brightGreen": "#98b098",
+    "brightYellow": "#ffd8a0",
+    "brightBlue": "#6a90b8",
+    "brightPurple": "#c8a8c0",
+    "brightCyan": "#b0c8d8",
+    "brightWhite": "#f5e8d0"
+}
