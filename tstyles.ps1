@@ -673,6 +673,139 @@ function Apply-StyleDirect {
     }
 }
 
+function Invoke-TerminalStylesRegister {
+    # Adds `Import-Module TerminalStyles -DisableNameChecking` to both
+    # PowerShell engines' $PROFILE files, wrapped in the same
+    # # ===== TerminalStyles BEGIN ===== / END markers that
+    # Invoke-TerminalStylesUninstall knows how to strip.
+    #
+    # Idempotent: skips an engine whose $PROFILE already has the block.
+    # -Force replaces the existing block (strip + re-add).
+    #
+    # -Targets is an internal/test injection: tests pass a synthetic
+    # array of objects with ProfilePath/Exists/HasLoader/Label fields,
+    # bypassing the real engine discovery (which Pester 5 can't cleanly
+    # mock because it goes through the call-operator `& $cmd.Source`).
+    # Real callers never pass -Targets and get the normal discovery.
+    [CmdletBinding()]
+    param(
+        [switch]$Force,
+        [object[]]$Targets
+    )
+
+    $loaderBegin = '# ===== TerminalStyles BEGIN ====='
+    $loaderEnd   = '# ===== TerminalStyles END ====='
+    $loaderBody  = @"
+$loaderBegin
+Import-Module TerminalStyles -DisableNameChecking
+$loaderEnd
+"@
+
+    if (-not $Targets) {
+        # Discover both engines, get $PROFILE per engine
+        $shells = @(
+            @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
+            @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
+        )
+        $targets = @()
+        foreach ($s in $shells) {
+            $cmd = Get-Command -Name $s.Exe -ErrorAction SilentlyContinue
+            if (-not $cmd) { continue }
+            $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
+            if (-not $profilePath) { continue }
+            $profilePath = "$profilePath".Trim()
+            if (-not $profilePath) { continue }
+            $targets += [pscustomobject]@{
+                Label       = $s.Label
+                ProfilePath = $profilePath
+                Exists      = Test-Path -LiteralPath $profilePath
+                HasLoader   = $false
+            }
+        }
+    } else {
+        $targets = @($Targets)
+        # For test-injected targets, ensure required fields exist
+        foreach ($t in $targets) {
+            if ($null -eq $t.Exists)    { $t | Add-Member -NotePropertyName Exists    -NotePropertyValue (Test-Path -LiteralPath $t.ProfilePath) -Force }
+            if ($null -eq $t.HasLoader) { $t | Add-Member -NotePropertyName HasLoader -NotePropertyValue $false -Force }
+            if ($null -eq $t.Label)     { $t | Add-Member -NotePropertyName Label     -NotePropertyValue 'PowerShell' -Force }
+        }
+    }
+
+    if (-not $targets) {
+        Write-Host ""
+        Write-Host "Neither pwsh.exe nor powershell.exe was found on PATH. Nothing to do." -ForegroundColor Yellow
+        return
+    }
+
+    # Detect existing loader block per target
+    $blockPattern = "(?ms)$([regex]::Escape($loaderBegin)).*?$([regex]::Escape($loaderEnd))\r?\n?"
+    foreach ($t in $targets) {
+        if ($t.Exists) {
+            $content = [System.IO.File]::ReadAllText($t.ProfilePath, [System.Text.UTF8Encoding]::new($false))
+            $t.HasLoader = ($content -match $blockPattern)
+        }
+    }
+
+    # Decide what to do per target
+    $toWrite = @()
+    foreach ($t in $targets) {
+        if ($t.HasLoader -and -not $Force) {
+            Write-Host "  Already registered in $($t.ProfilePath) (use -Force to replace)" -ForegroundColor Gray
+            continue
+        }
+        $toWrite += $t
+    }
+
+    if (-not $toWrite) {
+        Write-Host ""
+        Write-Host "Nothing to do." -ForegroundColor Yellow
+        return
+    }
+
+    # Single confirm prompt covering all targets
+    Write-Host ""
+    Write-Host "Will register the TerminalStyles loader in:" -ForegroundColor Cyan
+    foreach ($t in $toWrite) {
+        Write-Host "  $($t.Label): $($t.ProfilePath)" -ForegroundColor Gray
+    }
+    Write-Host ""
+    Write-Host "The loader is one line wrapped in BEGIN/END markers:" -ForegroundColor Gray
+    Write-Host "  Import-Module TerminalStyles -DisableNameChecking" -ForegroundColor Cyan
+    Write-Host ""
+    $ans = Read-Host "Continue? [Y/n]"
+    if ($ans -match '^(?i)n') {
+        Write-Host "Cancelled." -ForegroundColor Gray
+        return
+    }
+
+    # Write the block per target (strip first for -Force path)
+    foreach ($t in $toWrite) {
+        $profileDir = Split-Path -Parent $t.ProfilePath
+        if ($profileDir -and -not (Test-Path -LiteralPath $profileDir)) {
+            New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        }
+
+        $existing = if ($t.Exists) {
+            [System.IO.File]::ReadAllText($t.ProfilePath, [System.Text.UTF8Encoding]::new($false))
+        } else { '' }
+
+        if ($existing -match $blockPattern) {
+            $existing = [regex]::Replace($existing, $blockPattern, '')
+        }
+
+        $final = ($existing.TrimEnd() + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart()
+        [System.IO.File]::WriteAllText($t.ProfilePath, $final, [System.Text.UTF8Encoding]::new($false))
+
+        Write-Host "  Registered in $($t.ProfilePath)" -ForegroundColor Green
+    }
+
+    Write-Host ""
+    Write-Host "TerminalStyles will auto-load on every new shell tab." -ForegroundColor Cyan
+    Write-Host "To verify in this session: Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Gray
+    Write-Host ""
+}
+
 function Invoke-TerminalStylesUninstall {
     [CmdletBinding()]
     param(
