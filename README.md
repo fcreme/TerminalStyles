@@ -97,12 +97,13 @@ you ran `tstyles`.
 ### Subcommands
 
 ```powershell
-tstyles umbrella        # Apply a specific style directly (no picker)
-tstyles list            # List all themes; '*' marks the active one
-tstyles current         # Print just the active style name
-tstyles random          # Pick a random style and apply it
-tstyles update          # Pull the latest version from GitHub
-tstyles uninstall       # Remove TerminalStyles cleanly (asks confirmation)
+tstyles umbrella                  # Apply a specific style directly (no picker)
+tstyles list                      # List all themes; '*' marks the active one
+tstyles current                   # Print just the active style name
+tstyles random                    # Pick a random style and apply it
+tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
+tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
+tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\TerminalStyles\ entirely.
 ```
 
 Tab completion works on the subcommand and style names:
@@ -282,7 +283,12 @@ unless you pass `-BackgroundImage`.
   here — VS Code's integrated terminal etc. won't reflect the changes)
 - **Either** Windows PowerShell 5.1 (ships with Windows) **or**
   [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`).
-  Both engines work; if both are installed, the one-liner sets up both.
+  Both engines work.
+- For the PSGallery install path (`Install-PSResource`), PowerShell
+  7.4+ ships [PSResourceGet](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.psresourceget/)
+  natively. Older shells can use the bootstrap `iwr | iex` one-liner
+  instead — it auto-registers a loader in every PowerShell engine
+  it finds.
 
 ### Execution policy
 
@@ -394,8 +400,8 @@ or open WT Settings → "Open JSON file" and edit by hand.
 
 ## Adding your own style
 
-Once installed, you can drop a new style folder into
-`%LOCALAPPDATA%\TerminalStyles\styles\<name>\` with:
+Once installed, you can drop a new style folder into your
+TerminalStyles install dir with:
 
 ```
 <name>/
@@ -406,7 +412,25 @@ Once installed, you can drop a new style folder into
 └── README.md          # description (optional)
 ```
 
-`tstyles` will pick it up automatically — no registration needed.
+The install dir depends on which install path you used:
+
+- **Bootstrap (`iwr | iex`):** `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`.
+- **PSGallery (`Install-PSResource`):** the module's per-version dir,
+  e.g. `~\Documents\PowerShell\Modules\TerminalStyles\0.2.0\styles\<name>\`.
+
+`tstyles` will pick it up automatically on next module load — no
+registration needed.
+
+**Custom styles don't survive `tstyles update` on either path** — the
+installer re-extracts (bootstrap) or installs into a fresh per-version
+dir (PSGallery), so user-added folders inside `styles/` aren't carried
+over. Your active style (`current-style.ps1`) and any lazy-fetched
+backgrounds at `%LOCALAPPDATA%\TerminalStyles\` *are* preserved.
+
+For a custom style you want long-term, the cleanest path is to
+contribute it upstream — see "For contributing back" below. If you
+want to keep working ones locally between updates, save the folder
+somewhere outside `styles/` and re-drop it in after each update.
 
 For contributing back:
 
