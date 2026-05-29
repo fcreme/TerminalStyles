@@ -108,6 +108,7 @@ tstyles register                  # Auto-add `Import-Module TerminalStyles ...` 
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
 tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\TerminalStyles\ entirely.
+tstyles help [command]            # Show all commands, or details for one
 ```
 
 Tab completion works on the subcommand and style names:
