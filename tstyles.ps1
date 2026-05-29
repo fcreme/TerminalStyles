@@ -1131,7 +1131,17 @@ function Save-TunedStyle {
 
     $profileSrc = Join-Path $BaseStyleDir 'profile.ps1'
     if (Test-Path -LiteralPath $profileSrc) {
-        Copy-Item -LiteralPath $profileSrc -Destination (Join-Path $destDir 'profile.ps1') -Force
+        # Append a per-style marker so the materialized profile is byte-distinct
+        # from the base's (we copied it verbatim). Without this, Get-CurrentStyleName
+        # -- which byte-compares current-style.ps1 against each style's profile.ps1
+        # and returns the alphabetically-first match -- would attribute this tuned
+        # style to its base. The marker is an inert comment (profile is dot-sourced).
+        $profileContent = [System.IO.File]::ReadAllText($profileSrc, [System.Text.UTF8Encoding]::new($false))
+        $marker = [Environment]::NewLine + "# tstyles-tuned: $SaveName" + [Environment]::NewLine
+        [System.IO.File]::WriteAllText(
+            (Join-Path $destDir 'profile.ps1'),
+            ($profileContent + $marker),
+            [System.Text.UTF8Encoding]::new($false))
     }
 
     $tune = [pscustomobject]@{
