@@ -1041,6 +1041,89 @@ function Get-MonospaceFontList {
     return @($list | Select-Object -Unique)
 }
 
+function New-TunedThemeObject {
+    # Builds the theme.json object for a tuned style: base theme.json (or {})
+    # with colorScheme/opacity/font overridden. Preserves font.weight and the
+    # backgroundImage placeholder. Shared by Save-TunedStyle and the live
+    # preview so the saved result matches what was previewed.
+    param(
+        [Parameter(Mandatory)][string]$BaseStyleDir,
+        [Parameter(Mandatory)][string]$ColorScheme,
+        [int]$Opacity,
+        [string]$FontFace,
+        [int]$FontSize
+    )
+    $themeSrc = Join-Path $BaseStyleDir 'theme.json'
+    $theme = if (Test-Path -LiteralPath $themeSrc) {
+        [System.IO.File]::ReadAllText($themeSrc, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } else { [pscustomobject]@{} }
+
+    $theme | Add-Member -NotePropertyName colorScheme -NotePropertyValue $ColorScheme -Force
+    $theme | Add-Member -NotePropertyName opacity     -NotePropertyValue $Opacity     -Force
+
+    $font = if ($theme.PSObject.Properties.Match('font').Count) { $theme.font } else { [pscustomobject]@{} }
+    $font | Add-Member -NotePropertyName face -NotePropertyValue $FontFace -Force
+    $font | Add-Member -NotePropertyName size -NotePropertyValue $FontSize -Force
+    $theme | Add-Member -NotePropertyName font -NotePropertyValue $font -Force
+    return $theme
+}
+
+function Save-TunedStyle {
+    # Materializes a tuned style into $DataRoot\styles\$SaveName\:
+    #   scheme.json (adjusted colors, name = $SaveName)
+    #   theme.json  (base theme + colorScheme/opacity/font overrides)
+    #   profile.ps1 (copied from base if present)
+    #   tune.json   (deltas + base name, for re-tuning)
+    param(
+        [Parameter(Mandatory)]$AdjustedScheme,
+        [Parameter(Mandatory)][string]$SaveName,
+        [Parameter(Mandatory)][string]$BaseStyleDir,
+        [Parameter(Mandatory)][string]$BaseName,
+        [int]$Brightness, [int]$Saturation, [int]$Opacity,
+        [string]$FontFace, [int]$FontSize
+    )
+    $destDir = Join-Path $script:TStylesDataRoot "styles\$SaveName"
+    if (-not (Test-Path -LiteralPath $destDir)) {
+        New-Item -ItemType Directory -Path $destDir -Force | Out-Null
+    }
+
+    # Clone so the caller's object is not mutated (matches Get-AdjustedScheme's contract).
+    $scheme = $AdjustedScheme.PSObject.Copy()
+    $scheme | Add-Member -NotePropertyName name -NotePropertyValue $SaveName -Force
+    [System.IO.File]::WriteAllText(
+        (Join-Path $destDir 'scheme.json'),
+        ($scheme | ConvertTo-Json -Depth 16),
+        [System.Text.UTF8Encoding]::new($false))
+
+    $theme = New-TunedThemeObject -BaseStyleDir $BaseStyleDir -ColorScheme $SaveName `
+        -Opacity $Opacity -FontFace $FontFace -FontSize $FontSize
+    [System.IO.File]::WriteAllText(
+        (Join-Path $destDir 'theme.json'),
+        ($theme | ConvertTo-Json -Depth 16),
+        [System.Text.UTF8Encoding]::new($false))
+
+    $profileSrc = Join-Path $BaseStyleDir 'profile.ps1'
+    if (Test-Path -LiteralPath $profileSrc) {
+        Copy-Item -LiteralPath $profileSrc -Destination (Join-Path $destDir 'profile.ps1') -Force
+    }
+
+    $tune = [pscustomobject]@{
+        schemaVersion = 1
+        base          = $BaseName
+        brightness    = $Brightness
+        saturation    = $Saturation
+        opacity       = $Opacity
+        fontFace      = $FontFace
+        fontSize      = $FontSize
+    }
+    [System.IO.File]::WriteAllText(
+        (Join-Path $destDir 'tune.json'),
+        ($tune | ConvertTo-Json -Depth 8),
+        [System.Text.UTF8Encoding]::new($false))
+
+    return $destDir
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
