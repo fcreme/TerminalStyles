@@ -37,3 +37,17 @@ Describe 'tstyles help tab completion' {
         $matches | Should -Contain 'help'
     }
 }
+
+Describe 'tstyles unknown-arg fallback' {
+    InModuleScope TerminalStyles {
+        It 'shows help and does NOT open the picker for an unknown arg' {
+            Mock Show-TerminalStyleHelp {}
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Get-AvailableStyles { @() }   # nothing matches the arg
+            Mock Find-WTSettingsPath { throw 'picker path must not be reached' }
+            { Invoke-TerminalStyle -Arg 'definitely-not-a-real-thing' } | Should -Not -Throw
+            Should -Invoke Show-TerminalStyleHelp -Times 1
+            Should -Not -Invoke Find-WTSettingsPath
+        }
+    }
+}

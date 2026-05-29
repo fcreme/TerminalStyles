@@ -1609,10 +1609,10 @@ function Show-TerminalStyleHelp {
 function Invoke-TerminalStyle {
     [CmdletBinding()]
     param(
-        # Positional argument: a subcommand (list / current / random / update /
-        # uninstall), a bundled style name (umbrella / eva / ...), or -- as a
-        # backward-compat fallback -- a Windows Terminal profile name to
-        # target with the interactive picker.
+        # Positional argument: a subcommand (list / current / random / tune /
+        # register / update / uninstall / help), or a bundled style name
+        # (umbrella / eva / ...). Use -Target to specify a Windows Terminal
+        # profile explicitly; an unrecognized arg prints help.
         [Parameter(Position=0)]
         [string]$Arg,
         # Second positional: a style name for `tstyles tune <name>`. Backward-
@@ -1649,9 +1649,13 @@ function Invoke-TerminalStyle {
                 -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
             return
         }
-        # Backward compat: $Arg wasn't a subcommand or a style name, so treat
-        # it as a Windows Terminal profile name for the picker (old behavior).
-        if (-not $Target) { $Target = $Arg }
+        # Not a subcommand and not a style name: show help instead of silently
+        # opening the picker against a (likely bogus) profile name. To target a
+        # specific Windows Terminal profile, use the -Target parameter.
+        Write-Host "Unknown command or style: '$Arg'" -ForegroundColor Yellow
+        Show-TerminalStyleHelp
+        Write-Host "To target a Windows Terminal profile, use: tstyles -Target '<name>'" -ForegroundColor DarkGray
+        return
     }
 
     # Update-notice path runs on every passive invocation (picker included),
