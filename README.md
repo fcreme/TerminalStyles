@@ -103,6 +103,7 @@ tstyles umbrella                  # Apply a specific style directly (no picker)
 tstyles list                      # List all themes; '*' marks the active one
 tstyles current                   # Print just the active style name
 tstyles random                    # Pick a random style and apply it
+tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
@@ -111,6 +112,26 @@ tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\Termina
 
 Tab completion works on the subcommand and style names:
 `tstyles u<TAB>` cycles `umbrella`, `uninstall`, `update`.
+
+### Tuning a theme
+
+```powershell
+tstyles tune            # tune the active style
+tstyles tune eva        # tune a specific style
+```
+
+Opens a live editor with arrow-key sliders for **brightness**,
+**saturation**, **opacity**, **font face**, and **font size**. Up/Down
+selects a knob, Left/Right adjusts it, **R** resets colors, **Enter** saves,
+**Esc** reverts. Colors retint instantly; opacity/font follow a beat
+later (one Windows Terminal reload).
+
+On save you choose **Overwrite** (shadows the theme you tuned) or **Save
+as** a new name. The result lands in your user-styles dir as a full style
+— so it shows up in `tstyles list`, the picker, and tab-completion, and
+survives updates. It inherits the base theme's background, and a small
+`tune.json` remembers your adjustments so `tstyles tune <name>` resumes
+where you left off.
 
 ## Styles
 

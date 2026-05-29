@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.2.2'
+    ModuleVersion     = '0.3.0'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Themes', 'Color', 'Prompt', 'pwsh')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.2.2: new `tstyles register` subcommand auto-writes the Import-Module loader to both PowerShell engines'' $PROFILE files (with a confirm prompt). Closes the manual-edit gap for PSGallery installs. Idempotent; -Force replaces. Purely additive -- existing behavior unchanged.'
+            ReleaseNotes = 'v0.3.0: new `tstyles tune [name]` subcommand -- live, arrow-key tuning of a style''s brightness, saturation, opacity, font face, and font size. Colors retint instantly; Enter saves the result to your user-styles dir (Overwrite or Save As) as a full style that inherits the base background and remembers its adjustments. Purely additive -- existing behavior unchanged.'
         }
     }
 }
