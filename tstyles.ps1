@@ -1169,6 +1169,303 @@ function Get-TunedBaseBackground {
     return Get-StyleBundledBackground -StyleDir $baseDir -NoInherit
 }
 
+function Invoke-TerminalStyleTune {
+    # `tstyles tune [name]` -- interactive live tuning of a style's brightness,
+    # saturation, opacity, font face, and font size. Colors retint instantly
+    # via OSC; opacity/font ride a debounced settings.json write (through a
+    # scratch style dir reusing Merge-StyleIntoSettings). Esc reverts byte-
+    # exact; Enter prompts Save / Save As into the user-styles dir.
+    [CmdletBinding()]
+    param([string]$StyleName)
+
+    Show-UpdateNoticeIfAvailable
+
+    # --- Resolve the style (all guards run BEFORE any console interaction) ---
+    if (-not $StyleName) {
+        $StyleName = Get-CurrentStyleName
+        if (-not $StyleName) {
+            Write-Error "No active style detected. Try: tstyles tune <name>"
+            return
+        }
+    }
+    $styleDir = Get-StyleDir -StyleName $StyleName
+    if (-not $styleDir) {
+        Write-Error "Style '$StyleName' not found. Run 'tstyles list' to see available styles."
+        return
+    }
+
+    $settingsPath = Find-WTSettingsPath
+    if (-not $settingsPath) {
+        Write-Error "Could not locate Windows Terminal settings.json."
+        return
+    }
+
+    # --- Establish working base scheme + seed knob values ---
+    # If this style is itself a tuned style (has tune.json), the working base
+    # is its recorded base's PRISTINE scheme, and knobs seed from the deltas
+    # (so re-deriving never double-applies onto the baked file). Otherwise the
+    # working base is this style's own scheme with neutral knobs.
+    $brightness = 0; $saturation = 0
+    $opacity = 100; $fontFace = $null; $fontSize = 12
+    $baseName = $StyleName
+    $baseDir  = $styleDir
+
+    $tuneFile = Join-Path $styleDir 'tune.json'
+    if (Test-Path -LiteralPath $tuneFile) {
+        try {
+            $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            if ($tune.base) {
+                $resolvedBaseDir = Get-StyleDir -StyleName $tune.base
+                if ($resolvedBaseDir) {
+                    $baseName = $tune.base
+                    $baseDir  = $resolvedBaseDir
+                    $brightness = [int]$tune.brightness
+                    $saturation = [int]$tune.saturation
+                    $opacity    = [int]$tune.opacity
+                    $fontFace   = [string]$tune.fontFace
+                    $fontSize   = [int]$tune.fontSize
+                }
+            }
+        } catch { }
+    }
+
+    $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+
+    # Seed font/opacity from the base theme.json when not already set from tune.json.
+    $baseThemePath = Join-Path $baseDir 'theme.json'
+    $baseTheme = if (Test-Path -LiteralPath $baseThemePath) {
+        [System.IO.File]::ReadAllText($baseThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } else { $null }
+    if (-not (Test-Path -LiteralPath $tuneFile)) {
+        if ($baseTheme) {
+            if ($baseTheme.PSObject.Properties.Match('opacity').Count) { $opacity = [int]$baseTheme.opacity }
+            if ($baseTheme.PSObject.Properties.Match('font').Count) {
+                if ($baseTheme.font.PSObject.Properties.Match('face').Count) { $fontFace = [string]$baseTheme.font.face }
+                if ($baseTheme.font.PSObject.Properties.Match('size').Count) { $fontSize = [int]$baseTheme.font.size }
+            }
+        }
+    }
+
+    $fontList = Get-MonospaceFontList -Current $fontFace
+    if (-not $fontFace) { $fontFace = $fontList[0] }
+    $fontIdx = [Math]::Max(0, [array]::IndexOf($fontList, $fontFace))
+
+    # --- Target WT profile ---
+    $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+    $originalSettings = $originalJson | ConvertFrom-Json
+    $target = Get-CurrentWTProfileName -Settings $originalSettings
+    if (-not $target) {
+        Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
+        return
+    }
+    if (-not $env:WT_SESSION) {
+        Write-Host "Note: live preview is only visible inside Windows Terminal." -ForegroundColor Yellow
+    }
+
+    # --- Scratch dir for the debounced settings.json preview (reuses Merge) ---
+    $scratchDir = Join-Path $script:TStylesDataRoot ".tune-preview\$baseName"
+    if (-not (Test-Path -LiteralPath $scratchDir)) {
+        New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
+    }
+
+    # Knob model: index 0..4 = brightness, saturation, opacity, font face, size.
+    $sel = 0
+    $confirmed = $false
+    $applied = $false   # set true only after a saved style is applied; gates the revert
+    $pendingApply = $false  # the explicit `& $writePreview` below seeds the preview; this gates only knob edits
+
+    $hint  = "$([char]27)[38;2;160;160;160m"
+    $reset = "$([char]27)[0m"
+
+    # Recompute the adjusted scheme + cache its OSC packet.
+    $adjusted   = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
+    $oscPacket  = Get-SchemeOscPacket -Scheme $adjusted
+
+    $writePreview = {
+        # Write scratch scheme/theme then merge into settings.json (brings
+        # opacity/font/background live). Colors are already shown via OSC.
+        $adj = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
+        $adj | Add-Member -NotePropertyName name -NotePropertyValue $baseScheme.name -Force
+        [System.IO.File]::WriteAllText((Join-Path $scratchDir 'scheme.json'),
+            ($adj | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
+        $theme = New-TunedThemeObject -BaseStyleDir $baseDir -ColorScheme $baseScheme.name `
+            -Opacity $opacity -FontFace $fontFace -FontSize $fontSize
+        [System.IO.File]::WriteAllText((Join-Path $scratchDir 'theme.json'),
+            ($theme | ConvertTo-Json -Depth 16), [System.Text.UTF8Encoding]::new($false))
+        # tune.json so background inheritance resolves the base GIF in preview.
+        [System.IO.File]::WriteAllText((Join-Path $scratchDir 'tune.json'),
+            ('{"base":"' + $baseName + '"}'), [System.Text.UTF8Encoding]::new($false))
+
+        $preview = $originalJson | ConvertFrom-Json
+        $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $scratchDir `
+            -TargetName $target -BackgroundImage '' -BackgroundImageProvided $false
+        [System.IO.File]::WriteAllText($settingsPath, ($preview | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+    }
+
+    $bar = {
+        param([int]$Value, [int]$Min, [int]$Max)
+        $width = 10
+        $pos = [int][Math]::Round(($Value - $Min) / [double]($Max - $Min) * ($width - 1))
+        $pos = [Math]::Max(0, [Math]::Min($width - 1, $pos))
+        $cells = (1..$width | ForEach-Object { if (($_ - 1) -eq $pos) { 'o' } else { '-' } }) -join ''
+        return "[$cells]"
+    }
+
+    $drawMenu = {
+        Clear-Host
+        Write-Host ""
+        Write-Host "  Tuning " -NoNewline
+        Write-Host "'$StyleName'" -ForegroundColor Cyan -NoNewline
+        Write-Host "                      base: $baseName" -ForegroundColor DarkGray
+        Write-Host "$hint  Up/Down select   Left/Right adjust   R reset color   Enter save   Esc cancel$reset"
+        Write-Host ""
+        $rows = @(
+            @{ Label = 'Brightness'; Display = (& $bar $brightness -100 100); Value = ('{0:+#;-#;0}' -f $brightness) },
+            @{ Label = 'Saturation'; Display = (& $bar $saturation -100 100); Value = ('{0:+#;-#;0}' -f $saturation) },
+            @{ Label = 'Opacity';    Display = (& $bar $opacity 0 100);       Value = "$opacity%" },
+            @{ Label = 'Font face';  Display = "< $fontFace >";                Value = '' },
+            @{ Label = 'Font size';  Display = (& $bar $fontSize 6 36);        Value = "$fontSize" }
+        )
+        for ($i = 0; $i -lt $rows.Count; $i++) {
+            $color  = if ($i -eq $sel) { 'Yellow' } else { 'Gray' }
+            $prefix = if ($i -eq $sel) { '   > ' } else { '     ' }
+            Write-Host ($prefix + ('{0,-12} ' -f $rows[$i].Label) + ('{0,-14} ' -f $rows[$i].Display) + $rows[$i].Value) -ForegroundColor $color
+        }
+        Write-Host ""
+        Write-Host "  Preview  " -NoNewline
+        Write-Host (Get-SchemeSwatch -Scheme $adjusted)
+        Write-Host ""
+    }
+
+    [Console]::CursorVisible = $false
+    $originalTitle = $Host.UI.RawUI.WindowTitle
+    $needsRedraw = $true
+    try {
+        & $writePreview   # initial preview from seeds
+        [Console]::Out.Write($oscPacket)
+
+        while (-not $confirmed) {
+            if ($needsRedraw) { & $drawMenu; $needsRedraw = $false }
+
+            if ([Console]::KeyAvailable) {
+                $key = [Console]::ReadKey($true)
+                $isColor = ($sel -eq 0 -or $sel -eq 1)
+                switch ($key.Key) {
+                    'UpArrow'   { if ($sel -gt 0) { $sel-- }; $needsRedraw = $true; continue }
+                    'DownArrow' { if ($sel -lt 4) { $sel++ }; $needsRedraw = $true; continue }
+                    'LeftArrow' {
+                        switch ($sel) {
+                            0 { $brightness = [Math]::Max(-100, $brightness - 5) }
+                            1 { $saturation = [Math]::Max(-100, $saturation - 5) }
+                            2 { $opacity    = [Math]::Max(0,    $opacity - 5) }
+                            3 { $fontIdx = ($fontIdx - 1 + $fontList.Count) % $fontList.Count; $fontFace = $fontList[$fontIdx] }
+                            4 { $fontSize = [Math]::Max(6, $fontSize - 1) }
+                        }
+                        if ($isColor) {
+                            $adjusted  = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
+                            $oscPacket = Get-SchemeOscPacket -Scheme $adjusted
+                            [Console]::Out.Write($oscPacket)
+                        }
+                        $pendingApply = $true; $needsRedraw = $true; continue
+                    }
+                    'RightArrow' {
+                        switch ($sel) {
+                            0 { $brightness = [Math]::Min(100, $brightness + 5) }
+                            1 { $saturation = [Math]::Min(100, $saturation + 5) }
+                            2 { $opacity    = [Math]::Min(100, $opacity + 5) }
+                            3 { $fontIdx = ($fontIdx + 1) % $fontList.Count; $fontFace = $fontList[$fontIdx] }
+                            4 { $fontSize = [Math]::Min(36, $fontSize + 1) }
+                        }
+                        if ($isColor) {
+                            $adjusted  = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
+                            $oscPacket = Get-SchemeOscPacket -Scheme $adjusted
+                            [Console]::Out.Write($oscPacket)
+                        }
+                        $pendingApply = $true; $needsRedraw = $true; continue
+                    }
+                    'R' {
+                        $brightness = 0; $saturation = 0
+                        $adjusted  = Get-AdjustedScheme -Scheme $baseScheme -Brightness 0 -Saturation 0
+                        $oscPacket = Get-SchemeOscPacket -Scheme $adjusted
+                        [Console]::Out.Write($oscPacket)
+                        $pendingApply = $true; $needsRedraw = $true; continue
+                    }
+                    'Enter'  { if ($pendingApply) { & $writePreview; $pendingApply = $false }; $confirmed = $true; continue }
+                    'Escape' {
+                        [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+                        Clear-Host
+                        Write-Host "Reverted." -ForegroundColor Yellow
+                        return
+                    }
+                }
+                continue
+            }
+
+            if ($pendingApply) { $pendingApply = $false; & $writePreview; continue }
+            Start-Sleep -Milliseconds 50
+        }
+
+        # --- Confirmed: Save / Save As prompt ---
+        Clear-Host
+        Write-Host ""
+        Write-Host "  Save tuned '$StyleName'?" -ForegroundColor Cyan
+        Write-Host "    [1] Overwrite '$StyleName'   (shadows the bundled style)"
+        Write-Host "    [2] Save as a new name"
+        Write-Host ""
+        $choice = (Read-Host "  Choose [1/2]").Trim()
+        $saveName = $null
+        if ($choice -eq '1') {
+            $saveName = $StyleName
+        } else {
+            while (-not $saveName) {
+                $candidate = (Read-Host "  New style name").Trim()
+                if (-not $candidate) { Write-Host "  Cancelled." -ForegroundColor Gray; break }
+                if ($candidate -notmatch '^[A-Za-z0-9._-]+$') {
+                    Write-Host "  Use letters, digits, dot, underscore, or hyphen only." -ForegroundColor Yellow
+                    continue
+                }
+                $bundledDir = Join-Path $script:TStylesModuleRoot "styles\$candidate"
+                if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) {
+                    $warn = (Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]").Trim()
+                    if ($warn -notmatch '^(?i)y') { continue }
+                }
+                $saveName = $candidate
+            }
+        }
+
+        if (-not $saveName) {
+            # Treat an aborted save like a cancel: revert and exit.
+            [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+            Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
+            return
+        }
+
+        # Bake + persist, then apply the saved style from a clean settings.json
+        # so no preview-scheme pollution lingers.
+        $finalScheme = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
+        Save-TunedStyle -AdjustedScheme $finalScheme -SaveName $saveName `
+            -BaseStyleDir $baseDir -BaseName $baseName `
+            -Brightness $brightness -Saturation $saturation -Opacity $opacity `
+            -FontFace $fontFace -FontSize $fontSize | Out-Null
+
+        [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+        Apply-StyleDirect -StyleName $saveName -Target $target
+        $applied = $true
+    } finally {
+        [Console]::CursorVisible = $true
+        if (-not $applied) {
+            # Safety net: restore settings.json + title unless a saved style was
+            # applied. Esc / aborted-save already reverted explicitly; this also
+            # covers an exception thrown mid-session (the key loop is not tested).
+            [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+            $Host.UI.RawUI.WindowTitle = $originalTitle
+        }
+        if (Test-Path -LiteralPath $scratchDir) {
+            Remove-Item -LiteralPath $scratchDir -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
