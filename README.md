@@ -495,9 +495,12 @@ takes one PNG of the WT window, then restores your original theme.
 - **Repo size grows with styles.** Bundled GIFs are committed binaries;
   contributors should keep each under ~2 MB and only submit images they
   have the right to redistribute.
-- **Live preview is Windows-Terminal-only.** Other hosts (VS Code,
-  conhost) don't read `settings.json`, so the menu won't show theme
-  changes there — `tstyles` warns when this is the case.
+- **Windows-Terminal-only styling.** A style's colors, cursor, font, and
+  background apply through Windows Terminal's `settings.json`, which other hosts
+  (VS Code, Visual Studio, conhost) don't read. To avoid a half-themed look
+  there, the style's prompt/banner (`profile.ps1`) is loaded **only** in Windows
+  Terminal — non-WT hosts stay plain by design. The module's commands still work
+  everywhere; the picker also warns when run outside Windows Terminal.
 - **JSON reformatting.** Each apply reformats `settings.json` cosmetically
   (PowerShell's `ConvertTo-Json` style). Functionally identical;
   Windows Terminal rewrites the file on its next save anyway.
