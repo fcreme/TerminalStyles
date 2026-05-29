@@ -990,6 +990,29 @@ function Get-AdjustedScheme {
     return $out
 }
 
+function Get-SchemeOscPacket {
+    # Returns a single string of OSC escape sequences that, when written to
+    # stdout, instantly retints the terminal's fg/bg/cursor/selection + the
+    # 16-color palette to $Scheme -- no settings.json write, no WT reload.
+    # Extracted from the picker so the tuner reuses the exact same format.
+    param([Parameter(Mandatory)]$Scheme)
+    $BEL = [char]7
+    $E   = [char]27
+    $palette = 'black','red','green','yellow','blue','purple','cyan','white',
+               'brightBlack','brightRed','brightGreen','brightYellow',
+               'brightBlue','brightPurple','brightCyan','brightWhite'
+    $sb = [System.Text.StringBuilder]::new()
+    if ($Scheme.foreground)          { [void]$sb.Append("$E]10;$($Scheme.foreground)$BEL") }
+    if ($Scheme.background)          { [void]$sb.Append("$E]11;$($Scheme.background)$BEL") }
+    if ($Scheme.cursorColor)         { [void]$sb.Append("$E]12;$($Scheme.cursorColor)$BEL") }
+    if ($Scheme.selectionBackground) { [void]$sb.Append("$E]17;$($Scheme.selectionBackground)$BEL") }
+    for ($p = 0; $p -lt $palette.Count; $p++) {
+        $color = $Scheme.($palette[$p])
+        if ($color) { [void]$sb.Append("$E]4;${p};${color}$BEL") }
+    }
+    return $sb.ToString()
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
@@ -1240,25 +1263,8 @@ function Invoke-TerminalStyle {
         # few hundred ms later, but the colors have already shifted
         # so the perceived freeze drops to near-zero.
         $oscPackets = @{}
-        $BEL  = [char]7
-        $oscEsc = [char]27
-        $palette = 'black','red','green','yellow','blue','purple','cyan','white',
-                   'brightBlack','brightRed','brightGreen','brightYellow',
-                   'brightBlue','brightPurple','brightCyan','brightWhite'
         for ($i = 0; $i -lt $styles.Count; $i++) {
-            $s = $schemes[$i]
-            $sb = [System.Text.StringBuilder]::new()
-            if ($s.foreground)          { [void]$sb.Append("${oscEsc}]10;$($s.foreground)$BEL") }
-            if ($s.background)          { [void]$sb.Append("${oscEsc}]11;$($s.background)$BEL") }
-            if ($s.cursorColor)         { [void]$sb.Append("${oscEsc}]12;$($s.cursorColor)$BEL") }
-            if ($s.selectionBackground) { [void]$sb.Append("${oscEsc}]17;$($s.selectionBackground)$BEL") }
-            for ($p = 0; $p -lt $palette.Count; $p++) {
-                $color = $s.($palette[$p])
-                if ($color) {
-                    [void]$sb.Append("${oscEsc}]4;${p};${color}$BEL")
-                }
-            }
-            $oscPackets[$i] = $sb.ToString()
+            $oscPackets[$i] = Get-SchemeOscPacket -Scheme $schemes[$i]
         }
 
         $drawMenu = {
