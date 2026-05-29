@@ -1477,6 +1477,10 @@ function Invoke-TerminalStyle {
         # target with the interactive picker.
         [Parameter(Position=0)]
         [string]$Arg,
+        # Second positional: a style name for `tstyles tune <name>`. Backward-
+        # compatible -- existing single-positional usage binds to $Arg only.
+        [Parameter(Position=1)]
+        [string]$SubArg,
         # Explicit Windows Terminal profile to apply to (defaults to the
         # current tab's profile via $env:WT_PROFILE_ID).
         [string]$Target,
@@ -1494,6 +1498,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }
+    if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall;  return }
 
@@ -1899,7 +1904,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('list', 'current', 'random', 'register', 'update', 'uninstall')
+    $subcommands = @('list', 'current', 'random', 'register', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.
