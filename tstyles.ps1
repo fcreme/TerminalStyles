@@ -1874,6 +1874,7 @@ function Invoke-TerminalStyle {
             Write-Host "  Choose a style for " -NoNewline
             Write-Host "'$Target'" -ForegroundColor Cyan
             Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
+            Write-Host "$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
             Write-Host ""
             for ($i = 0; $i -lt $styles.Count; $i++) {
                 $name = $styles[$i].Name
