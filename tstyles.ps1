@@ -1668,12 +1668,12 @@ function Invoke-TerminalStyle {
         return
     }
 
-    $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
-    $styles = @(Get-ChildItem -LiteralPath $stylesDir -Directory | Where-Object {
-        Test-Path (Join-Path $_.FullName 'scheme.json')
-    } | Sort-Object Name)
+    # Enumerate via the shared helper so the picker shows user + tuned styles
+    # too (the same union that list/current/random/dispatch/tab-completion use),
+    # not just the bundled set.
+    $styles = @(Get-AvailableStyles)
     if (-not $styles) {
-        Write-Error "No styles found at $stylesDir"
+        Write-Error "No styles found."
         return
     }
 
