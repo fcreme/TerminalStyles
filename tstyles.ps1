@@ -903,6 +903,93 @@ function Invoke-TerminalStylesUninstall {
     Write-Host ""
 }
 
+function Convert-HueToRgb {
+    # HSL hue helper. Internal to Convert-HexAdjust.
+    param([double]$P, [double]$Q, [double]$T)
+    if ($T -lt 0) { $T += 1.0 }
+    if ($T -gt 1) { $T -= 1.0 }
+    if ($T -lt (1.0/6.0)) { return $P + ($Q - $P) * 6.0 * $T }
+    if ($T -lt (1.0/2.0)) { return $Q }
+    if ($T -lt (2.0/3.0)) { return $P + ($Q - $P) * ((2.0/3.0) - $T) * 6.0 }
+    return $P
+}
+
+function Convert-HexAdjust {
+    # hex -> RGB -> HSL -> adjust (L additive, S multiplicative) -> RGB -> hex.
+    # Brightness/Saturation in -100..+100. Preserves a leading '#'. Lowercase out.
+    param(
+        [Parameter(Mandatory)][string]$Hex,
+        [int]$Brightness = 0,
+        [int]$Saturation = 0
+    )
+    $hadHash = $Hex.StartsWith('#')
+    $h = $Hex.TrimStart('#')
+    $r = [Convert]::ToInt32($h.Substring(0,2),16) / 255.0
+    $g = [Convert]::ToInt32($h.Substring(2,2),16) / 255.0
+    $b = [Convert]::ToInt32($h.Substring(4,2),16) / 255.0
+
+    $max = [Math]::Max($r, [Math]::Max($g, $b))
+    $min = [Math]::Min($r, [Math]::Min($g, $b))
+    $l = ($max + $min) / 2.0
+    $d = $max - $min
+    if ($d -eq 0) {
+        $hh = 0.0; $s = 0.0
+    } else {
+        $s = if ($l -gt 0.5) { $d / (2.0 - $max - $min) } else { $d / ($max + $min) }
+        if     ($max -eq $r) { $hh = (($g - $b) / $d) % 6 }
+        elseif ($max -eq $g) { $hh = (($b - $r) / $d) + 2 }
+        else                 { $hh = (($r - $g) / $d) + 4 }
+        $hh = $hh * 60.0
+        if ($hh -lt 0) { $hh += 360.0 }
+    }
+
+    $l = [Math]::Max(0.0, [Math]::Min(1.0, $l + ($Brightness / 100.0) * 0.5))
+    $s = [Math]::Max(0.0, [Math]::Min(1.0, $s * (1.0 + ($Saturation / 100.0))))
+
+    if ($s -eq 0) {
+        $r2 = $l; $g2 = $l; $b2 = $l
+    } else {
+        $q = if ($l -lt 0.5) { $l * (1.0 + $s) } else { $l + $s - $l * $s }
+        $p = 2.0 * $l - $q
+        $hk = $hh / 360.0
+        $r2 = Convert-HueToRgb -P $p -Q $q -T ($hk + 1.0/3.0)
+        $g2 = Convert-HueToRgb -P $p -Q $q -T $hk
+        $b2 = Convert-HueToRgb -P $p -Q $q -T ($hk - 1.0/3.0)
+    }
+
+    $ri = [int][Math]::Round($r2 * 255.0)
+    $gi = [int][Math]::Round($g2 * 255.0)
+    $bi = [int][Math]::Round($b2 * 255.0)
+    $out = '{0:x2}{1:x2}{2:x2}' -f $ri, $gi, $bi
+    if ($hadHash) { return "#$out" } else { return $out }
+}
+
+function Get-AdjustedScheme {
+    # Returns a NEW scheme object (does not mutate $Scheme) with every hex
+    # color slot adjusted by the brightness/saturation deltas in HSL space.
+    # Non-color props (name, etc.) pass through. Missing slots skipped;
+    # malformed hex passed through unchanged.
+    param(
+        [Parameter(Mandatory)]$Scheme,
+        [int]$Brightness = 0,
+        [int]$Saturation = 0
+    )
+    $slots = @('background','foreground','cursorColor','selectionBackground',
+               'black','red','green','yellow','blue','purple','cyan','white',
+               'brightBlack','brightRed','brightGreen','brightYellow',
+               'brightBlue','brightPurple','brightCyan','brightWhite')
+    $out = [pscustomobject]@{}
+    foreach ($prop in $Scheme.PSObject.Properties) {
+        $name = $prop.Name
+        $val  = $prop.Value
+        if (($name -in $slots) -and ($val -is [string]) -and ($val -match '^#?[0-9a-fA-F]{6}$')) {
+            $val = Convert-HexAdjust -Hex $val -Brightness $Brightness -Saturation $Saturation
+        }
+        $out | Add-Member -NotePropertyName $name -NotePropertyValue $val -Force
+    }
+    return $out
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
