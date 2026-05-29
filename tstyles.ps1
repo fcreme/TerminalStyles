@@ -1476,6 +1476,70 @@ function Invoke-TerminalStyleTune {
     }
 }
 
+function Get-TerminalStyleHelpData {
+    # Single source of truth for `tstyles help`. Ordered command descriptors.
+    # Name is the dispatch token AND the `help <Name>` topic key. The picker
+    # and `tstyles <style>` are arg-less modes described in the overview
+    # preamble (Show-TerminalStyleHelp), not topics here. A drift-guard test
+    # asserts every dispatched subcommand has an entry.
+    @(
+        [pscustomobject]@{
+            Name = 'list'; Usage = 'list'; Summary = "List all styles; '*' marks the active one"
+            Detail = @("Prints every available style (bundled + your own), one per line,",
+                       "with the active style marked by an asterisk.")
+            Keys = @(); Examples = @('tstyles list')
+        }
+        [pscustomobject]@{
+            Name = 'current'; Usage = 'current'; Summary = 'Print the active style name'
+            Detail = @("Prints just the name of the currently applied style (or nothing",
+                       "if none is detected).")
+            Keys = @(); Examples = @('tstyles current')
+        }
+        [pscustomobject]@{
+            Name = 'random'; Usage = 'random'; Summary = 'Apply a random style'
+            Detail = @("Picks a random style and applies it immediately.")
+            Keys = @(); Examples = @('tstyles random')
+        }
+        [pscustomobject]@{
+            Name = 'tune'; Usage = 'tune [name]'; Summary = 'Live-tune a style; save as your own'
+            Detail = @("Opens an arrow-key editor for the active style (or [name]). Adjusts",
+                       "brightness, saturation, opacity, font face, and font size.",
+                       "Saved styles land in your user dir and show up in 'tstyles list'.")
+            Keys = @('Up/Down      select a knob',
+                     'Left/Right   adjust it',
+                     'R            reset color',
+                     'Enter        save (Overwrite / Save as)',
+                     'Esc          revert')
+            Examples = @('tstyles tune', 'tstyles tune eva')
+        }
+        [pscustomobject]@{
+            Name = 'register'; Usage = 'register'; Summary = 'Add the loader to your $PROFILE'
+            Detail = @("Adds the Import-Module loader to both PowerShell 7 and Windows",
+                       "PowerShell 5.1 `$PROFILE files (with a confirm prompt) so tstyles",
+                       "loads on every new tab.")
+            Keys = @(); Examples = @('tstyles register')
+        }
+        [pscustomobject]@{
+            Name = 'update'; Usage = 'update'; Summary = 'Update to the latest version'
+            Detail = @("Updates TerminalStyles. PSGallery installs run Update-PSResource;",
+                       "bootstrap installs re-run the installer.")
+            Keys = @(); Examples = @('tstyles update')
+        }
+        [pscustomobject]@{
+            Name = 'uninstall'; Usage = 'uninstall'; Summary = 'Remove the module (keeps your styles)'
+            Detail = @("Removes the module and strips the `$PROFILE loader. Your saved",
+                       "styles and state are preserved unless you pass -DeleteData.")
+            Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
+        }
+        [pscustomobject]@{
+            Name = 'help'; Usage = 'help [command]'; Summary = 'Show all commands, or details for one'
+            Detail = @("With no argument, lists every command. With a command name, shows",
+                       "detailed help for that command.")
+            Keys = @(); Examples = @('tstyles help', 'tstyles help tune')
+        }
+    )
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
