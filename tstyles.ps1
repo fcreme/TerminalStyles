@@ -1540,6 +1540,70 @@ function Get-TerminalStyleHelpData {
     )
 }
 
+function Show-TerminalStyleHelp {
+    # Renders `tstyles help`. No -Command: the overview (USAGE + COMMANDS +
+    # EXAMPLES + docs link). With -Command: that command's detail, or a
+    # not-found message. Data comes from Get-TerminalStyleHelpData. All ASCII,
+    # lightly colorized to match the picker/tuner.
+    param([string]$Command)
+
+    $data = Get-TerminalStyleHelpData
+
+    if ($Command) {
+        $entry = $data | Where-Object { $_.Name -eq $Command.ToLower() } | Select-Object -First 1
+        if (-not $entry) {
+            Write-Host "No help topic '$Command'." -ForegroundColor Yellow
+            Write-Host ("Topics: " + (($data.Name) -join ', ')) -ForegroundColor DarkGray
+            return
+        }
+        Write-Host ""
+        Write-Host ("tstyles " + $entry.Usage) -ForegroundColor Cyan -NoNewline
+        Write-Host (" - " + $entry.Summary)
+        if ($entry.Detail) {
+            Write-Host ""
+            foreach ($line in $entry.Detail) { Write-Host ("  " + $line) }
+        }
+        if ($entry.Keys) {
+            Write-Host ""
+            Write-Host "KEYS" -ForegroundColor DarkGray
+            foreach ($k in $entry.Keys) { Write-Host ("  " + $k) }
+        }
+        if ($entry.Examples) {
+            Write-Host ""
+            Write-Host "EXAMPLES" -ForegroundColor DarkGray
+            foreach ($e in $entry.Examples) { Write-Host ("  " + $e) }
+        }
+        Write-Host ""
+        return
+    }
+
+    # Overview. Module version is best-effort (no disk I/O); omitted if absent.
+    $ver = $ExecutionContext.SessionState.Module.Version
+    $title = if ($ver) { "tstyles - themed styles for Windows Terminal (v$ver)" }
+             else       { "tstyles - themed styles for Windows Terminal" }
+
+    Write-Host ""
+    Write-Host $title -ForegroundColor Cyan
+    Write-Host ""
+    Write-Host "USAGE" -ForegroundColor DarkGray
+    Write-Host "  tstyles [command] [args]"
+    Write-Host ""
+    Write-Host "COMMANDS" -ForegroundColor DarkGray
+    Write-Host "  (no command)      Open the interactive picker"
+    Write-Host "  <style>           Apply a style by name (umbrella, eva, ...)"
+    foreach ($e in $data) {
+        Write-Host ("  " + ('{0,-16}' -f $e.Usage) + "  " + $e.Summary)
+    }
+    Write-Host ""
+    Write-Host "EXAMPLES" -ForegroundColor DarkGray
+    Write-Host "  tstyles                 # pick interactively"
+    Write-Host "  tstyles eva             # apply 'eva'"
+    Write-Host "  tstyles tune eva        # tune + save your own"
+    Write-Host ""
+    Write-Host "More: https://github.com/fcreme/TerminalStyles" -ForegroundColor DarkGray
+    Write-Host ""
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
