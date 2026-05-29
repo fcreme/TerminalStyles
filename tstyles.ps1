@@ -695,7 +695,7 @@ function Apply-StyleDirect {
     Write-Host ""
 
     # Live reload (same pattern as the picker's confirm path)
-    if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+    if ($isPwshTarget -and (Test-InWindowsTerminal) -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
         . $script:TStylesCurrent
     }
 }
@@ -1701,8 +1701,8 @@ function Invoke-TerminalStyle {
         if (-not $Target) { return }
     }
 
-    if (-not $env:WT_SESSION) {
-        Write-Host "Note: live preview is only visible inside Windows Terminal." -ForegroundColor Yellow
+    if (-not (Test-InWindowsTerminal)) {
+        Write-Host "Note: color scheme + background only render in Windows Terminal; this host shows a plain prompt." -ForegroundColor Yellow
     }
 
     # Start on the currently active style if we can detect one -- opening
@@ -2025,7 +2025,7 @@ function Invoke-TerminalStyle {
         # without requiring the user to open a new tab. Each theme's
         # profile.ps1 uses `function global:prompt` so the binding escapes
         # this function's scope.
-        if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+        if ($isPwshTarget -and (Test-InWindowsTerminal) -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
             . $script:TStylesCurrent
         }
     } finally {
@@ -2070,7 +2070,10 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg 
 # Idempotent; gated by a marker file.
 Invoke-TerminalStylesStateMigration
 
-# === Auto-load the currently selected style's profile.ps1 ===
-if (Test-Path -LiteralPath $script:TStylesCurrent) {
+# === Auto-load the currently selected style's profile.ps1 (Windows Terminal only) ===
+# Skipped outside WT: other hosts (VS Code, Visual Studio, conhost) don't render
+# the style's colors/background, so loading the prompt/banner there would be a
+# half-themed look. Module functions are already imported regardless.
+if ((Test-InWindowsTerminal) -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
     . $script:TStylesCurrent
 }
