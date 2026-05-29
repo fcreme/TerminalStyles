@@ -53,7 +53,7 @@ function Get-StyleBundledBackground {
     #
     # The negative-cache marker (.no-background) lives in the cache dir, never
     # in the bundled dir, so we can write it on PSGallery installs.
-    param([Parameter(Mandatory)][string]$StyleDir)
+    param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
 
     # 1. Bundled (under module root)
     foreach ($ext in 'gif','png','jpg','jpeg') {
@@ -69,6 +69,15 @@ function Get-StyleBundledBackground {
         $cached = Join-Path $cacheDir "background.$ext"
         if (Test-Path -LiteralPath $cached) { return $cached }
     }
+    # 2b. Inheritance: a tuned style inherits its base's background. For a
+    # non-tuned style this returns $null instantly (no tune.json), so the
+    # normal path is unaffected. -NoInherit suppresses this (used when
+    # resolving a base, so inheritance is strictly one hop -- no cycles).
+    if (-not $NoInherit) {
+        $inherited = Get-TunedBaseBackground -StyleDir $StyleDir
+        if ($inherited) { return $inherited }
+    }
+
     if (Test-Path -LiteralPath (Join-Path $cacheDir '.no-background')) { return $null }
 
     # 3. Lazy-fetch into cache
@@ -458,7 +467,7 @@ function Test-StyleResolved {
     # A style is "resolved" if we know its background state -- either a
     # bundled background.<ext> exists under $StyleDir (module root), or a
     # cached background.<ext>/.no-background exists under $DataRoot\cache\<name>\.
-    param([Parameter(Mandatory)][string]$StyleDir)
+    param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
     foreach ($ext in 'gif','png','jpg','jpeg') {
         if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
     }
@@ -468,6 +477,24 @@ function Test-StyleResolved {
         if (Test-Path -LiteralPath (Join-Path $cacheDir "background.$ext")) { return $true }
     }
     if (Test-Path -LiteralPath (Join-Path $cacheDir '.no-background')) { return $true }
+
+    # Tuned styles inherit resolution from their base. -NoInherit suppresses
+    # this (used on the recursive base call) so a cyclic tune.json (A->B->A)
+    # cannot recurse -- resolution is strictly one hop.
+    if (-not $NoInherit) {
+        $tuneFile = Join-Path $StyleDir 'tune.json'
+        if (Test-Path -LiteralPath $tuneFile) {
+            try {
+                $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                if ($tune.base) {
+                    $baseDir = Get-StyleDir -StyleName $tune.base
+                    if ($baseDir -and ($baseDir -ne $StyleDir)) {
+                        return (Test-StyleResolved -StyleDir $baseDir -NoInherit)
+                    }
+                }
+            } catch { }
+        }
+    }
     return $false
 }
 
@@ -1122,6 +1149,24 @@ function Save-TunedStyle {
         [System.Text.UTF8Encoding]::new($false))
 
     return $destDir
+}
+
+function Get-TunedBaseBackground {
+    # If $StyleDir is a tuned style (tune.json with a 'base'), resolve and
+    # return the base style's background (with the base's own lazy-fetch).
+    # $null if not tuned / base missing / base has no background. Strictly one
+    # hop: the base is resolved with -NoInherit, so cyclic tune.json (A->B->A)
+    # cannot recurse.
+    param([Parameter(Mandatory)][string]$StyleDir)
+    $tuneFile = Join-Path $StyleDir 'tune.json'
+    if (-not (Test-Path -LiteralPath $tuneFile)) { return $null }
+    try {
+        $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } catch { return $null }
+    if (-not $tune.base) { return $null }
+    $baseDir = Get-StyleDir -StyleName $tune.base
+    if (-not $baseDir -or ($baseDir -eq $StyleDir)) { return $null }
+    return Get-StyleBundledBackground -StyleDir $baseDir -NoInherit
 }
 
 # === Public command ===
