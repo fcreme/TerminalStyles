@@ -1604,6 +1604,13 @@ function Show-TerminalStyleHelp {
     Write-Host ""
 }
 
+function Test-InWindowsTerminal {
+    # True when the current session is hosted by Windows Terminal (which sets
+    # WT_SESSION). WT is the only host that renders a style's colors/background,
+    # so the themed prompt/banner is loaded only here.
+    return [bool]$env:WT_SESSION
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
