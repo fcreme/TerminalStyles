@@ -1013,6 +1013,34 @@ function Get-SchemeOscPacket {
     return $sb.ToString()
 }
 
+function Get-MonospaceFontList {
+    # Ordered, de-duplicated list of monospace font families to cycle in the
+    # tuner: a curated allowlist intersected with installed fonts, with
+    # $Current guaranteed present and first. -Installed is a test seam; real
+    # callers omit it and we enumerate via System.Drawing.
+    param(
+        [string]$Current,
+        [string[]]$Installed
+    )
+    if (-not $Installed) {
+        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+        try {
+            $Installed = [System.Drawing.Text.InstalledFontCollection]::new().Families.Name
+        } catch {
+            $Installed = @()
+        }
+    }
+    $allow = @('Cascadia Mono','Cascadia Code','Consolas','JetBrains Mono',
+               'Fira Code','Hack','Source Code Pro','DejaVu Sans Mono',
+               'Lucida Console','Courier New')
+    $list = @($allow | Where-Object { $_ -in $Installed })
+    if (-not $list) { $list = @('Consolas') }
+    if ($Current) {
+        $list = @($Current) + @($list | Where-Object { $_ -ne $Current })
+    }
+    return @($list | Select-Object -Unique)
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
