@@ -23,6 +23,16 @@ if (-not (Test-Path -LiteralPath $script:TStylesDataRoot)) {
 }
 $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
 
+# Profile fields TerminalStyles writes onto a Windows Terminal profile entry.
+# Single source of truth shared by Merge-StyleIntoSettings (apply) and
+# Reset-StyleDirect (reset), so the two can't drift. Verified as the union of
+# keys across all 16 bundled styles/*/theme.json files.
+$script:TStylesBgFields    = @('backgroundImage', 'backgroundImageOpacity',
+                               'backgroundImageStretchMode', 'backgroundImageAlignment')
+$script:TStylesThemeFields = @('colorScheme', 'tabTitle', 'tabColor', 'cursorShape',
+                               'useAcrylic', 'opacity', 'experimental.retroTerminalEffect',
+                               'font', 'padding') + $script:TStylesBgFields
+
 # === Internals ===
 
 function Find-WTSettingsPath {
@@ -370,7 +380,7 @@ function Merge-StyleIntoSettings {
                 elseif ([string]::IsNullOrEmpty($effectiveBg)) { 'remove' }
                 else { 'apply' }
 
-    $bgFields = @('backgroundImage', 'backgroundImageOpacity', 'backgroundImageStretchMode', 'backgroundImageAlignment')
+    $bgFields = $script:TStylesBgFields
     foreach ($prop in $theme.PSObject.Properties) {
         $name  = $prop.Name
         $value = $prop.Value
