@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.6.0'
+    ModuleVersion     = '0.6.1'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Themes', 'Color', 'Prompt', 'pwsh')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.6.0: new `tstyles reset [-Target <name>]` subcommand reverts a Windows Terminal profile to its unstyled default -- strips the colors, cursor, font, opacity, and background a style added, removes the orphan color scheme, and restores your own prompt. The inverse of applying a style; writes a settings.json.bak first. Purely additive.'
+            ReleaseNotes = 'v0.6.1: the `tstyles tune` font picker now cycles every installed monospace font (curated favorites first), instead of a fixed allowlist -- your own coding fonts (Maple Mono, MonoLisa, ...) show up automatically. Purely additive.'
         }
     }
 }

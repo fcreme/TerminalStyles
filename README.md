@@ -128,6 +128,9 @@ selects a knob, Left/Right adjusts it, **R** resets colors, **Enter** saves,
 **Esc** reverts. Colors retint instantly; opacity/font follow a beat
 later (one Windows Terminal reload).
 
+The **font face** knob cycles every monospace font installed on your machine
+(curated favorites first), so your own coding fonts show up automatically.
+
 On save you choose **Overwrite** (shadows the theme you tuned) or **Save
 as** a new name. The result lands in your user-styles dir as a full style
 — so it shows up in `tstyles list`, the picker, and tab-completion, and
