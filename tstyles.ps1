@@ -1514,6 +1514,13 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles random')
         }
         [pscustomobject]@{
+            Name = 'reset'; Usage = 'reset [-Target <name>]'; Summary = 'Revert a profile to its unstyled default'
+            Detail = @("Strips the colors, cursor, font, opacity, and background a style added",
+                       "to the target profile, and restores your own prompt. The inverse of",
+                       "applying a style. Writes a settings.json.bak first.")
+            Keys = @(); Examples = @('tstyles reset', "tstyles reset -Target 'Ubuntu'")
+        }
+        [pscustomobject]@{
             Name = 'tune'; Usage = 'tune [name]'; Summary = 'Live-tune a style; save as your own'
             Detail = @("Opens an arrow-key editor for the active style (or [name]). Adjusts",
                        "brightness, saturation, opacity, font face, and font size.",
@@ -1745,6 +1752,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }
+    if ($Arg -eq 'reset')                { Reset-StyleDirect -Target $Target; return }
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
@@ -2158,7 +2166,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('help', 'list', 'current', 'random', 'register', 'tune', 'update', 'uninstall')
+    $subcommands = @('help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.

@@ -17,7 +17,7 @@ Describe 'Get-TerminalStyleHelpData' {
         It 'has a help entry for every dispatched subcommand' {
             # Canonical dispatched subcommands. 'ls' is an alias of 'list' and is
             # NOT a separate topic, so it is intentionally excluded.
-            $dispatched = @('list','current','random','tune','register','update','uninstall','help')
+            $dispatched = @('list','current','random','reset','tune','register','update','uninstall','help')
             $topics = (Get-TerminalStyleHelpData).Name
             foreach ($cmd in $dispatched) { $topics | Should -Contain $cmd }
         }
