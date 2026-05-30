@@ -1095,12 +1095,15 @@ function Test-MonospaceFont {
 
 function Get-MonospaceFontList {
     # Ordered, de-duplicated list of monospace font families to cycle in the
-    # tuner: a curated allowlist intersected with installed fonts, with
-    # $Current guaranteed present and first. -Installed is a test seam; real
-    # callers omit it and we enumerate via System.Drawing.
+    # tuner: current font first, then installed curated favorites (always
+    # trusted), then every OTHER installed monospace font (alphabetical),
+    # Consolas fallback. -Installed and -MonospaceNames are test seams; real
+    # callers omit them and we enumerate (System.Drawing) + measure
+    # (Test-MonospaceFont). Curated favorites never get measured.
     param(
         [string]$Current,
-        [string[]]$Installed
+        [string[]]$Installed,
+        [string[]]$MonospaceNames
     )
     if (-not $Installed) {
         Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
@@ -1110,10 +1113,35 @@ function Get-MonospaceFontList {
             $Installed = @()
         }
     }
+
     $allow = @('Cascadia Mono','Cascadia Code','Consolas','JetBrains Mono',
                'Fira Code','Hack','Source Code Pro','DejaVu Sans Mono',
                'Lucida Console','Courier New')
-    $list = @($allow | Where-Object { $_ -in $Installed })
+    $favorites = @($allow | Where-Object { $_ -in $Installed })
+
+    # $null means "not provided" -> measure. An explicit empty array (tests, or
+    # a host without System.Drawing) means "no monospace beyond favorites".
+    if ($null -eq $MonospaceNames) {
+        $MonospaceNames = @()
+        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+        try {
+            $bmp = [System.Drawing.Bitmap]::new(1, 1)
+            $g   = [System.Drawing.Graphics]::FromImage($bmp)
+            try {
+                # Favorites are always offered, so skip measuring them.
+                $MonospaceNames = @($Installed |
+                    Where-Object { $_ -notin $favorites } |
+                    Where-Object { Test-MonospaceFont -FamilyName $_ -Graphics $g })
+            } finally {
+                $g.Dispose(); $bmp.Dispose()
+            }
+        } catch {
+            $MonospaceNames = @()
+        }
+    }
+
+    $others = @($MonospaceNames | Where-Object { $_ -notin $favorites } | Sort-Object)
+    $list = @($favorites) + @($others)
     if (-not $list) { $list = @('Consolas') }
     if ($Current) {
         $list = @($Current) + @($list | Where-Object { $_ -ne $Current })
