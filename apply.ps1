@@ -5,7 +5,7 @@
 #   pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell"       # non-interactive
 #   pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -BackgroundImage "C:\img.gif"
 #   pwsh -File .\apply.ps1 -Style umbrella -Target defaults           # apply globally
-#   pwsh -File .\apply.ps1 -Style kitty -Target "PowerShell" -NoProfile
+#   pwsh -File .\apply.ps1 -Style kitty -Target "PowerShell" -KeepPrompt
 #
 # Always backs up settings.json (and $PROFILE if overwriting one) before
 # making changes.
@@ -18,7 +18,10 @@ param(
     [string]$Target,
     [string]$BackgroundImage,
     [string]$SettingsPath,
-    [switch]$NoProfile
+    # Apply visuals but not the style's prompt/banner. -NoProfile is the
+    # original name, kept as an alias for back-compat.
+    [Alias('NoProfile')]
+    [switch]$KeepPrompt
 )
 
 $ErrorActionPreference = 'Stop'
@@ -233,7 +236,7 @@ Write-Host "settings.json updated." -ForegroundColor Green
 # --- Install profile.ps1 (if applicable) ---
 $profilePs1 = Join-Path $styleDir 'profile.ps1'
 $hasProfile = Test-Path -LiteralPath $profilePs1
-if ($hasProfile -and -not $NoProfile) {
+if ($hasProfile -and -not $KeepPrompt) {
     $isPwshTarget = $false
     if ($Target -eq 'defaults') {
         $isPwshTarget = $true

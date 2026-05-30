@@ -29,3 +29,13 @@ Describe 'tstyles <name> -KeepPrompt dispatch' {
         }
     }
 }
+
+Describe 'apply.ps1 -KeepPrompt parameter' {
+    It 'exposes -KeepPrompt with -NoProfile as a back-compat alias' {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $cmd = Get-Command (Join-Path $repoRoot 'apply.ps1')
+        $cmd.Parameters.ContainsKey('KeepPrompt') | Should -BeTrue
+        $cmd.Parameters['KeepPrompt'].Aliases | Should -Contain 'NoProfile'
+        $cmd.Parameters.ContainsKey('NoProfile') | Should -BeFalse
+    }
+}
