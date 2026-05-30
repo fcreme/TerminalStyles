@@ -1053,6 +1053,46 @@ function Get-SchemeOscPacket {
     return $sb.ToString()
 }
 
+function Test-MonospaceFont {
+    # True when $FamilyName renders as monospace (fixed advance width), detected
+    # by measuring a narrow vs wide glyph. Pass a reusable $Graphics for speed
+    # when measuring many fonts; omit it and one is created/disposed per call.
+    # Any error (font not constructible, measurement fails) -> $false. Curated
+    # favorites bypass this check entirely, so they're always offered.
+    param(
+        [Parameter(Mandatory)][string]$FamilyName,
+        $Graphics
+    )
+    $ownGraphics = $false
+    $bmp = $null
+    try {
+        if (-not $Graphics) {
+            Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+            $bmp = [System.Drawing.Bitmap]::new(1, 1)
+            $Graphics = [System.Drawing.Graphics]::FromImage($bmp)
+            $ownGraphics = $true
+        }
+        $font = [System.Drawing.Font]::new($FamilyName, 12.0)
+        try {
+            # GenericTypographic avoids layout padding, so the widths reflect the
+            # glyph advance. Equal narrow/wide advance (within tolerance) = mono.
+            $fmt = [System.Drawing.StringFormat]::GenericTypographic
+            $wi = $Graphics.MeasureString('i', $font, [int]::MaxValue, $fmt).Width
+            $ww = $Graphics.MeasureString('W', $font, [int]::MaxValue, $fmt).Width
+            return [Math]::Abs($wi - $ww) -lt 0.5
+        } finally {
+            $font.Dispose()
+        }
+    } catch {
+        return $false
+    } finally {
+        if ($ownGraphics) {
+            if ($Graphics) { $Graphics.Dispose() }
+            if ($bmp)      { $bmp.Dispose() }
+        }
+    }
+}
+
 function Get-MonospaceFontList {
     # Ordered, de-duplicated list of monospace font families to cycle in the
     # tuner: a curated allowlist intersected with installed fonts, with
