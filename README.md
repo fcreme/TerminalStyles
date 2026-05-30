@@ -103,6 +103,7 @@ tstyles umbrella                  # Apply a specific style directly (no picker)
 tstyles list                      # List all themes; '*' marks the active one
 tstyles current                   # Print just the active style name
 tstyles random                    # Pick a random style and apply it
+tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
@@ -149,6 +150,20 @@ The scriptable `apply.ps1` accepts the same flag (`apply.ps1 -KeepPrompt`,
 with `-NoProfile` kept as an alias). Note: a `-KeepPrompt` apply isn't reported
 by `tstyles current` / the `*` in `tstyles list`, because active-style detection
 is prompt-based.
+
+### Resetting a profile
+
+To undo theming and return a profile to Windows Terminal's plain default:
+
+```powershell
+tstyles reset                  # the active profile
+tstyles reset -Target 'Ubuntu' # a specific profile
+```
+
+This strips the colors, cursor, font, opacity, and background a style added,
+removes the now-unused color scheme, and restores your own prompt (open a new
+tab to see it). It's the inverse of applying a style, and writes a
+`settings.json.bak` first. Fields you set on the profile by hand are left alone.
 
 ## Styles
 
