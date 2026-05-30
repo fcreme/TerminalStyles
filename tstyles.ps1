@@ -619,7 +619,10 @@ function Apply-StyleDirect {
         [Parameter(Mandatory)][string]$StyleName,
         [string]$Target,
         [string]$BackgroundImage,
-        [bool]$BackgroundImageProvided = $false
+        [bool]$BackgroundImageProvided = $false,
+        # Apply the visuals but not the style's prompt/banner: clears
+        # current-style.ps1 so the user's own prompt stays in control.
+        [switch]$KeepPrompt
     )
 
     $styleDir = Get-StyleDir -StyleName $StyleName
@@ -682,7 +685,7 @@ function Apply-StyleDirect {
 
     $styleProfile = Join-Path $styleDir 'profile.ps1'
     if ($isPwshTarget) {
-        if (Test-Path -LiteralPath $styleProfile) {
+        if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
             Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
         } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
             Remove-Item -LiteralPath $script:TStylesCurrent -Force
