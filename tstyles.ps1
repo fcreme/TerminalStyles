@@ -1636,7 +1636,10 @@ function Invoke-TerminalStyle {
         [switch]$Update,
         # Used with `tstyles update -Force` to skip the same-SHA optimization
         # and force a full reinstall (e.g., after a botched install).
-        [switch]$Force
+        [switch]$Force,
+        # Apply a style's visuals but keep your own prompt (skip the style's
+        # prompt/banner). Threaded to Apply-StyleDirect for `tstyles <name>`.
+        [switch]$KeepPrompt
     )
 
     $bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
@@ -1656,7 +1659,8 @@ function Invoke-TerminalStyle {
         $styleMatch = Get-AvailableStyles | Where-Object Name -eq $Arg | Select-Object -First 1
         if ($styleMatch) {
             Apply-StyleDirect -StyleName $Arg -Target $Target `
-                -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+                -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided `
+                -KeepPrompt:$KeepPrompt
             return
         }
         # Not a subcommand and not a style name: show help instead of silently
