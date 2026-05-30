@@ -134,6 +134,22 @@ survives updates. It inherits the base theme's background, and a small
 `tune.json` remembers your adjustments so `tstyles tune <name>` resumes
 where you left off.
 
+### Keeping your own prompt (Oh My Posh / Starship)
+
+Applying a style normally also sets that style's prompt and banner. If you run
+a prompt engine like **Oh My Posh** or **Starship**, add `-KeepPrompt` to get
+the style's colors, cursor, font, and background **without** touching your
+prompt:
+
+```powershell
+tstyles eva -KeepPrompt        # eva's look; your prompt stays
+```
+
+The scriptable `apply.ps1` accepts the same flag (`apply.ps1 -KeepPrompt`,
+with `-NoProfile` kept as an alias). Note: a `-KeepPrompt` apply isn't reported
+by `tstyles current` / the `*` in `tstyles list`, because active-style detection
+is prompt-based.
+
 ## Styles
 
 Sixteen themes ship out of the box. Click any name to jump to that style's
