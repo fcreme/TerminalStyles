@@ -30,11 +30,14 @@ writes, drop the now-orphan color scheme, and restore the user's own prompt.
 
 `tstyles reset` (active profile) or `tstyles reset -Target 'Ubuntu'`:
 1. Writes the rolling `settings.json.bak` (same safety net as direct apply).
-2. Strips the TerminalStyles field set from the target profile entry:
-   `colorScheme`, `font`, `opacity`, `cursorShape`, and the four background
-   fields (`backgroundImage`, `backgroundImageOpacity`,
-   `backgroundImageStretchMode`, `backgroundImageAlignment`). Each is removed
-   only if present (absent → no-op).
+2. Strips the TerminalStyles field set from the target profile entry. Verified
+   against all 16 bundled `theme.json` files (identical key set in every one),
+   the complete superset apply writes onto a profile is:
+   `colorScheme`, `tabTitle`, `tabColor`, `cursorShape`, `useAcrylic`,
+   `opacity`, `experimental.retroTerminalEffect`, `font`, `padding`, and the
+   four background fields (`backgroundImage`, `backgroundImageOpacity`,
+   `backgroundImageStretchMode`, `backgroundImageAlignment`) — 13 fields. Each
+   is removed only if present (absent → no-op).
 3. Reads the profile's current `colorScheme` name *before* stripping, then
    removes that named entry from `$Settings.schemes` — unless the name is empty
    or another profile still references it (safe cleanup, no orphan schemes).
@@ -84,20 +87,22 @@ reset share one source of truth and can't drift:
 ```powershell
 $script:TStylesBgFields    = @('backgroundImage','backgroundImageOpacity',
                                'backgroundImageStretchMode','backgroundImageAlignment')
-# The full set of profile fields TerminalStyles writes (and reset strips):
-$script:TStylesThemeFields = @('colorScheme','font','opacity','cursorShape') + $script:TStylesBgFields
+# The full set of profile fields TerminalStyles writes (and reset strips),
+# verified as the union across all 16 bundled theme.json files:
+$script:TStylesThemeFields = @('colorScheme','tabTitle','tabColor','cursorShape',
+                               'useAcrylic','opacity','experimental.retroTerminalEffect',
+                               'font','padding') + $script:TStylesBgFields
 ```
 
 `Merge-StyleIntoSettings` is updated to reference `$script:TStylesBgFields` in
 place of its inline `$bgFields` (behavior-preserving). `Reset-StyleDirect`
 strips `$script:TStylesThemeFields`.
 
-NOTE — verify against the bundled `theme.json` files during implementation: the
-strip set must be the union of every field any bundled `theme.json` writes onto
-a profile entry. The list above (colorScheme/font/opacity/cursorShape + 4 bg) is
-the expected superset; the plan includes a step to grep the `styles/*/theme.json`
-files and widen the constant if any other profile-level field is found (e.g.
-`cursorColor`, `tabColor`), so reset fully inverts apply.
+The field set was confirmed during design: every bundled `styles/*/theme.json`
+writes the identical 13-key set listed above. `experimental.retroTerminalEffect`
+is a single property name containing a dot (not a nested object), so
+`PSObject.Properties.Remove('experimental.retroTerminalEffect')` removes it
+correctly.
 
 ### Dispatch + completer + help
 
