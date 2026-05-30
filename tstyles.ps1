@@ -1624,6 +1624,92 @@ function Test-InWindowsTerminal {
     return [bool]$env:WT_SESSION
 }
 
+function Reset-StyleDirect {
+    # `tstyles reset [-Target <name>]` -- revert a WT profile to its unstyled
+    # default: strip the fields TerminalStyles writes, remove the now-orphan
+    # color scheme, and clear current-style.ps1 (restore the user's prompt).
+    # Inverse of Apply-StyleDirect. Writes a rolling .bak first.
+    param([string]$Target)
+
+    Show-UpdateNoticeIfAvailable
+
+    $settingsPath = Find-WTSettingsPath
+    if (-not $settingsPath) {
+        Write-Error "Could not locate Windows Terminal settings.json."
+        return
+    }
+
+    $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+    $settings = $originalJson | ConvertFrom-Json
+
+    if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settings }
+    if (-not $Target) {
+        Write-Error "Could not auto-detect a Windows Terminal profile to reset. Try: tstyles reset -Target '<name>'"
+        return
+    }
+
+    # Rolling backup (same safety net as Apply-StyleDirect).
+    $bakPath = "$settingsPath.bak"
+    try {
+        Copy-Item -LiteralPath $settingsPath -Destination $bakPath -Force -ErrorAction Stop
+        Write-Host "Backed up settings to: $bakPath" -ForegroundColor Gray
+    } catch {
+        Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
+    }
+
+    # Resolve the profile entry (same resolution as Merge-StyleIntoSettings).
+    $entry = if ($Target -eq 'defaults') {
+        if ($settings.profiles.PSObject.Properties.Match('defaults').Count) { $settings.profiles.defaults } else { $null }
+    } else {
+        $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
+    }
+    if (-not $entry) {
+        Write-Host "Profile '$Target' not found in settings.json -- nothing to reset." -ForegroundColor Yellow
+        return
+    }
+
+    # Capture the scheme name before stripping (for orphan cleanup).
+    $schemeName = if ($entry.PSObject.Properties.Match('colorScheme').Count) { $entry.colorScheme } else { $null }
+
+    # Strip every TerminalStyles field that is present on the entry.
+    $strippedAny = $false
+    foreach ($field in $script:TStylesThemeFields) {
+        if ($entry.PSObject.Properties.Match($field).Count) {
+            $entry.PSObject.Properties.Remove($field)
+            $strippedAny = $true
+        }
+    }
+
+    # Remove the orphan scheme unless another profile still references it.
+    if ($schemeName -and $settings.PSObject.Properties.Match('schemes').Count) {
+        $allProfiles = @()
+        if ($settings.profiles.PSObject.Properties.Match('defaults').Count) { $allProfiles += $settings.profiles.defaults }
+        $allProfiles += @($settings.profiles.list)
+        $stillUsed = @($allProfiles | Where-Object {
+            $_.PSObject.Properties.Match('colorScheme').Count -and $_.colorScheme -eq $schemeName
+        }).Count -gt 0
+        if (-not $stillUsed) {
+            $settings.schemes = @($settings.schemes | Where-Object { $_.name -ne $schemeName })
+        }
+    }
+
+    Write-SettingsFile -Path $settingsPath -Settings $settings
+
+    # Clear the active style's prompt so the user's own prompt returns.
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        Remove-Item -LiteralPath $script:TStylesCurrent -Force
+    }
+
+    Write-Host ""
+    if ($strippedAny) {
+        Write-Host "  Reset '$Target' to its unstyled default." -ForegroundColor Green
+    } else {
+        Write-Host "  '$Target' had no TerminalStyles fields -- already plain." -ForegroundColor Gray
+    }
+    Write-Host "  Open a new tab to restore your default prompt." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
