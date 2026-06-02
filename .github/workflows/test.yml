@@ -8,12 +8,21 @@ on:
 
 jobs:
   pester:
-    name: Pester (Windows / pwsh 7)
+    name: Pester (${{ matrix.name }})
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: pwsh 7
+            shell: pwsh
+          - name: Windows PowerShell 5.1
+            shell: powershell
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Pester 5
+      - name: Install Pester 5 (PSResourceGet)
+        if: matrix.shell == 'pwsh'
         shell: pwsh
         run: |
           # Install-PSResource (PSResourceGet, preinstalled on windows-latest)
@@ -25,9 +34,28 @@ jobs:
           Import-Module Pester
           (Get-Module Pester).Version
 
-      - name: Run Pester tests
-        shell: pwsh
+      - name: Install Pester 5 (Windows PowerShell)
+        if: matrix.shell == 'powershell'
+        shell: powershell
         run: |
+          # Windows PowerShell 5.1 ships Pester 3 in-box and lacks PSResourceGet,
+          # so bootstrap Pester 5 via PowerShellGet v2. Force TLS 1.2 first: on
+          # .NET Framework the default SecurityProtocol can omit it, and PSGallery
+          # hard-refuses TLS < 1.2.
+          [Net.ServicePointManager]::SecurityProtocol = `
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+          Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          Import-Module Pester -MinimumVersion 5.0.0
+          (Get-Module Pester).Version
+
+      - name: Run Pester tests
+        shell: ${{ matrix.shell }}
+        run: |
+          # Pin to Pester 5 explicitly so WinPS 5.1 doesn't auto-load its in-box
+          # Pester 3 (which lacks New-PesterConfiguration).
+          Import-Module Pester -MinimumVersion 5.0.0
           $config = New-PesterConfiguration
           $config.Run.Path = 'tests'
           $config.Run.Exit = $true
