@@ -28,6 +28,71 @@ $ErrorActionPreference = 'Stop'
 $repoRoot  = $PSScriptRoot
 $stylesDir = Join-Path $repoRoot 'styles'
 
+function Remove-JsonComment {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. (apply.ps1 is a
+    # standalone script that doesn't yet dot-source the library.) Strips // and
+    # /* */ comments outside string literals so Windows Terminal's commented
+    # settings.json parses on Windows PowerShell 5.1, whose ConvertFrom-Json
+    # rejects comments.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $sb = [System.Text.StringBuilder]::new($Text.Length)
+    $inString = $false
+    $escaped  = $false
+    $i = 0
+    $n = $Text.Length
+    while ($i -lt $n) {
+        $c = $Text[$i]
+        if ($inString) {
+            [void]$sb.Append($c)
+            if     ($escaped)     { $escaped = $false }
+            elseif ($c -eq '\')   { $escaped = $true }
+            elseif ($c -eq '"')   { $inString = $false }
+            $i++
+            continue
+        }
+        if ($c -eq '"') {
+            $inString = $true
+            [void]$sb.Append($c)
+            $i++
+            continue
+        }
+        if ($c -eq '/' -and ($i + 1) -lt $n) {
+            $next = $Text[$i + 1]
+            if ($next -eq '/') {
+                $i += 2
+                while ($i -lt $n -and $Text[$i] -ne "`n") { $i++ }
+                continue
+            }
+            if ($next -eq '*') {
+                $i += 2
+                while ($i -lt $n -and -not ($Text[$i] -eq '*' -and ($i + 1) -lt $n -and $Text[$i + 1] -eq '/')) { $i++ }
+                $i += 2
+                continue
+            }
+        }
+        [void]$sb.Append($c)
+        $i++
+    }
+    $sb.ToString()
+}
+
+function ConvertFrom-WTJson {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. Parse WT settings.json
+    # tolerating // and /* */ comments; throw one actionable error otherwise.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Json)
+
+    $clean = Remove-JsonComment -Text $Json
+    try {
+        $clean | ConvertFrom-Json
+    } catch {
+        throw ("TerminalStyles: could not parse Windows Terminal settings.json. " +
+               "On Windows PowerShell 5.1, JSON comments other than // and /* */ are not supported -- " +
+               "open WT Settings and Save once, or remove the offending text. " +
+               "Underlying error: $($_.Exception.Message)")
+    }
+}
+
 function Get-AvailableStyles {
     if (-not (Test-Path -LiteralPath $stylesDir)) {
         throw "No styles directory at $stylesDir"
@@ -163,7 +228,7 @@ Write-Host "Settings file: $SettingsPath"
 
 # UTF-8 explicit: Get-Content -Raw in WinPS 5.1 defaults to Windows-1252,
 # which mangles non-ASCII WT profile names (e.g. "Símbolo del sistema").
-$settings = [System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+$settings = ConvertFrom-WTJson ([System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)))
 
 # --- Target profile selection ---
 $profileNames = @('defaults') + @($settings.profiles.list | ForEach-Object { $_.name })

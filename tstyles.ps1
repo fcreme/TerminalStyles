@@ -327,6 +327,77 @@ function Invoke-TerminalStylesUpdate {
     }
 }
 
+function Remove-JsonComment {
+    # Strip // line comments and /* */ block comments from a JSON/JSONC string,
+    # leaving comment-like sequences INSIDE string literals (URLs, globs, paths)
+    # intact. Windows Terminal's default settings.json ships with // comments,
+    # which Windows PowerShell 5.1's ConvertFrom-Json rejects; this normalizes the
+    # text so 5.1 and pwsh 7 parse identically. Round-tripping back through
+    # ConvertTo-Json drops comments anyway, so stripping costs no fidelity.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $sb = [System.Text.StringBuilder]::new($Text.Length)
+    $inString = $false
+    $escaped  = $false
+    $i = 0
+    $n = $Text.Length
+    while ($i -lt $n) {
+        $c = $Text[$i]
+        if ($inString) {
+            [void]$sb.Append($c)
+            if     ($escaped)     { $escaped = $false }
+            elseif ($c -eq '\')   { $escaped = $true }
+            elseif ($c -eq '"')   { $inString = $false }
+            $i++
+            continue
+        }
+        if ($c -eq '"') {
+            $inString = $true
+            [void]$sb.Append($c)
+            $i++
+            continue
+        }
+        if ($c -eq '/' -and ($i + 1) -lt $n) {
+            $next = $Text[$i + 1]
+            if ($next -eq '/') {
+                # Line comment: skip to (but keep) the newline.
+                $i += 2
+                while ($i -lt $n -and $Text[$i] -ne "`n") { $i++ }
+                continue
+            }
+            if ($next -eq '*') {
+                # Block comment: skip through the closing */.
+                $i += 2
+                while ($i -lt $n -and -not ($Text[$i] -eq '*' -and ($i + 1) -lt $n -and $Text[$i + 1] -eq '/')) { $i++ }
+                $i += 2
+                continue
+            }
+        }
+        [void]$sb.Append($c)
+        $i++
+    }
+    $sb.ToString()
+}
+
+function ConvertFrom-WTJson {
+    # Parse a Windows Terminal settings.json string, tolerating the // and /* */
+    # comments WT writes by default. On Windows PowerShell 5.1 ConvertFrom-Json
+    # rejects comments outright, so a fresh WT install would otherwise abort every
+    # mutating command with a raw parse error. Strips comments first, then parses;
+    # throws one actionable message if the text still isn't valid JSON.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Json)
+
+    $clean = Remove-JsonComment -Text $Json
+    try {
+        $clean | ConvertFrom-Json
+    } catch {
+        throw ("TerminalStyles: could not parse Windows Terminal settings.json. " +
+               "On Windows PowerShell 5.1, JSON comments other than // and /* */ are not supported -- " +
+               "open WT Settings and Save once, or remove the offending text. " +
+               "Underlying error: $($_.Exception.Message)")
+    }
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
@@ -650,7 +721,7 @@ function Apply-StyleDirect {
     }
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $settings = $originalJson | ConvertFrom-Json
+    $settings = ConvertFrom-WTJson $originalJson
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settings }
     if (-not $Target) {
@@ -1343,7 +1414,7 @@ function Invoke-TerminalStyleTune {
 
     # --- Target WT profile ---
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $originalSettings = $originalJson | ConvertFrom-Json
+    $originalSettings = ConvertFrom-WTJson $originalJson
     $target = Get-CurrentWTProfileName -Settings $originalSettings
     if (-not $target) {
         Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
@@ -1387,7 +1458,7 @@ function Invoke-TerminalStyleTune {
         [System.IO.File]::WriteAllText((Join-Path $scratchDir 'tune.json'),
             ('{"base":"' + $baseName + '"}'), [System.Text.UTF8Encoding]::new($false))
 
-        $preview = $originalJson | ConvertFrom-Json
+        $preview = ConvertFrom-WTJson $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $scratchDir `
             -TargetName $target -BackgroundImage '' -BackgroundImageProvided $false
         [System.IO.File]::WriteAllText($settingsPath, ($preview | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
@@ -1715,7 +1786,7 @@ function Reset-StyleDirect {
     }
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $settings = $originalJson | ConvertFrom-Json
+    $settings = ConvertFrom-WTJson $originalJson
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settings }
     if (-not $Target) {
@@ -1870,7 +1941,7 @@ function Invoke-TerminalStyle {
     # The mangled string then round-trips through ConvertTo-Json + WriteAllText
     # as UTF-8, doubling the byte count of non-ASCII chars on every call.
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $originalSettings = $originalJson | ConvertFrom-Json
+    $originalSettings = ConvertFrom-WTJson $originalJson
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
     if (-not $Target) {
@@ -1990,7 +2061,7 @@ function Invoke-TerminalStyle {
     $originalTitle = $Host.UI.RawUI.WindowTitle
     try {
         # Apply first preview before showing the menu
-        $preview = $originalJson | ConvertFrom-Json
+        $preview = ConvertFrom-WTJson $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
         $initialJson = $preview | ConvertTo-Json -Depth 32
         [System.IO.File]::WriteAllText($settingsPath, $initialJson, [System.Text.UTF8Encoding]::new($false))
@@ -2083,7 +2154,7 @@ function Invoke-TerminalStyle {
             if ($resolved -and $mergedCache.ContainsKey($i)) {
                 [System.IO.File]::WriteAllText($settingsPath, $mergedCache[$i], [System.Text.UTF8Encoding]::new($false))
             } else {
-                $preview = $originalJson | ConvertFrom-Json
+                $preview = ConvertFrom-WTJson $originalJson
                 $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$i].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
                 $json = $preview | ConvertTo-Json -Depth 32
                 [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
@@ -2159,7 +2230,7 @@ function Invoke-TerminalStyle {
                 break
             }
             if ($nextPrebuild -ge 0) {
-                $pp = $originalJson | ConvertFrom-Json
+                $pp = ConvertFrom-WTJson $originalJson
                 $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
                 $mergedCache[$nextPrebuild] = $pp | ConvertTo-Json -Depth 32
             } else {
