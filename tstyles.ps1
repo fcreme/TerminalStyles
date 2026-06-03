@@ -379,15 +379,62 @@ function Remove-JsonComment {
     $sb.ToString()
 }
 
+function Remove-JsonTrailingComma {
+    # Drop trailing commas (a ',' whose next non-whitespace char is '}' or ']')
+    # OUTSIDE string literals. Windows Terminal and hand edits leave these; pwsh 7
+    # tolerates them but Windows PowerShell 5.1's ConvertFrom-Json rejects them
+    # with "extra trailing ','", crashing every mutating command. Commas inside
+    # string values (e.g. "a,b") are preserved. Run AFTER Remove-JsonComment so a
+    # comment between the comma and the bracket can't hide the trailing comma.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $sb = [System.Text.StringBuilder]::new($Text.Length)
+    $inString = $false
+    $escaped  = $false
+    $i = 0
+    $n = $Text.Length
+    while ($i -lt $n) {
+        $c = $Text[$i]
+        if ($inString) {
+            [void]$sb.Append($c)
+            if     ($escaped)     { $escaped = $false }
+            elseif ($c -eq '\')   { $escaped = $true }
+            elseif ($c -eq '"')   { $inString = $false }
+            $i++
+            continue
+        }
+        if ($c -eq '"') {
+            $inString = $true
+            [void]$sb.Append($c)
+            $i++
+            continue
+        }
+        if ($c -eq ',') {
+            # Peek past whitespace: a comma immediately preceding } or ] is trailing.
+            $j = $i + 1
+            while ($j -lt $n -and [char]::IsWhiteSpace($Text[$j])) { $j++ }
+            if ($j -lt $n -and ($Text[$j] -eq '}' -or $Text[$j] -eq ']')) {
+                $i++   # skip the comma; leave the whitespace/bracket intact
+                continue
+            }
+        }
+        [void]$sb.Append($c)
+        $i++
+    }
+    $sb.ToString()
+}
+
 function ConvertFrom-WTJson {
     # Parse a Windows Terminal settings.json string, tolerating the // and /* */
-    # comments WT writes by default. On Windows PowerShell 5.1 ConvertFrom-Json
-    # rejects comments outright, so a fresh WT install would otherwise abort every
-    # mutating command with a raw parse error. Strips comments first, then parses;
-    # throws one actionable message if the text still isn't valid JSON.
+    # comments and trailing commas WT writes by default. On Windows PowerShell 5.1
+    # ConvertFrom-Json rejects both outright, so a fresh WT install (or a hand edit)
+    # would otherwise abort every mutating command with a raw parse error. Strips
+    # comments first, then trailing commas, then parses; throws one actionable
+    # message if the text still isn't valid JSON.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Json)
 
     $clean = Remove-JsonComment -Text $Json
+    $clean = Remove-JsonTrailingComma -Text $clean
     try {
         $clean | ConvertFrom-Json
     } catch {

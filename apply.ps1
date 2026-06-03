@@ -77,12 +77,57 @@ function Remove-JsonComment {
     $sb.ToString()
 }
 
+function Remove-JsonTrailingComma {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. Drop trailing commas
+    # (a ',' whose next non-whitespace char is '}' or ']') OUTSIDE string literals.
+    # pwsh 7 tolerates them but Windows PowerShell 5.1's ConvertFrom-Json rejects
+    # them ("extra trailing ','"); commas inside string values are preserved. Run
+    # AFTER Remove-JsonComment so a comment can't hide the trailing comma.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+
+    $sb = [System.Text.StringBuilder]::new($Text.Length)
+    $inString = $false
+    $escaped  = $false
+    $i = 0
+    $n = $Text.Length
+    while ($i -lt $n) {
+        $c = $Text[$i]
+        if ($inString) {
+            [void]$sb.Append($c)
+            if     ($escaped)     { $escaped = $false }
+            elseif ($c -eq '\')   { $escaped = $true }
+            elseif ($c -eq '"')   { $inString = $false }
+            $i++
+            continue
+        }
+        if ($c -eq '"') {
+            $inString = $true
+            [void]$sb.Append($c)
+            $i++
+            continue
+        }
+        if ($c -eq ',') {
+            $j = $i + 1
+            while ($j -lt $n -and [char]::IsWhiteSpace($Text[$j])) { $j++ }
+            if ($j -lt $n -and ($Text[$j] -eq '}' -or $Text[$j] -eq ']')) {
+                $i++
+                continue
+            }
+        }
+        [void]$sb.Append($c)
+        $i++
+    }
+    $sb.ToString()
+}
+
 function ConvertFrom-WTJson {
     # NOTE: duplicated from tstyles.ps1 -- keep in sync. Parse WT settings.json
-    # tolerating // and /* */ comments; throw one actionable error otherwise.
+    # tolerating // and /* */ comments and trailing commas; throw one actionable
+    # error otherwise.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Json)
 
     $clean = Remove-JsonComment -Text $Json
+    $clean = Remove-JsonTrailingComma -Text $clean
     try {
         $clean | ConvertFrom-Json
     } catch {

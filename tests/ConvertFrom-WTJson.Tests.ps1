@@ -60,6 +60,54 @@ Describe 'Remove-JsonComment' {
     }
 }
 
+Describe 'Remove-JsonTrailingComma' {
+    # Windows Terminal (and humans hand-editing settings.json) leave trailing
+    # commas before } and ]. pwsh 7's ConvertFrom-Json tolerates them; Windows
+    # PowerShell 5.1's does NOT ("extra trailing ','"), so a WT install or a
+    # manual edit would crash every mutating command on 5.1 -- the same failure
+    # class as comments. Strip trailing commas OUTSIDE string literals only,
+    # leaving commas inside string values (e.g. "a,b") untouched.
+    InModuleScope TerminalStyles {
+        It 'leaves comma-free JSON unchanged' {
+            $json = '{"a":1,"b":[2,3]}'
+            Remove-JsonTrailingComma -Text $json | Should -Be $json
+        }
+        It 'drops a trailing comma before a closing brace' {
+            $out = Remove-JsonTrailingComma -Text '{"a":1,}'
+            $out | Should -Be '{"a":1}'
+            ($out | ConvertFrom-Json).a | Should -Be 1
+        }
+        It 'drops a trailing comma before a closing bracket' {
+            Remove-JsonTrailingComma -Text '{"list":[1,2,]}' | Should -Be '{"list":[1,2]}'
+        }
+        It 'drops a trailing comma separated from the bracket by whitespace/newline' {
+            $in  = "{`n  `"a`": 1,`n}"
+            $out = Remove-JsonTrailingComma -Text $in
+            ($out | ConvertFrom-Json).a | Should -Be 1
+        }
+        It 'drops nested trailing commas (array inside object, both trailing)' {
+            Remove-JsonTrailingComma -Text '{"a":[1,],"b":2,}' | Should -Be '{"a":[1],"b":2}'
+        }
+        It 'preserves a comma inside a string value' {
+            $in  = '{"a":"x,","b":2}'
+            $out = Remove-JsonTrailingComma -Text $in
+            ($out | ConvertFrom-Json).a | Should -Be 'x,'
+            ($out | ConvertFrom-Json).b | Should -Be 2
+        }
+        It 'preserves a string value that ends in a comma right before a brace' {
+            # The comma is INSIDE the value, not a trailing structural comma.
+            (Remove-JsonTrailingComma -Text '{"a":"trailing,"}' | ConvertFrom-Json).a |
+                Should -Be 'trailing,'
+        }
+        It 'respects escaped quotes when tracking string boundaries' {
+            $in  = '{"a":"he said \"hi,\"","b":2,}'
+            $out = Remove-JsonTrailingComma -Text $in
+            ($out | ConvertFrom-Json).a | Should -Be 'he said "hi,"'
+            ($out | ConvertFrom-Json).b | Should -Be 2
+        }
+    }
+}
+
 Describe 'ConvertFrom-WTJson' {
     InModuleScope TerminalStyles {
         It 'parses Windows-Terminal-style JSON that contains // comments' {
@@ -80,5 +128,68 @@ Describe 'ConvertFrom-WTJson' {
         It 'throws an actionable error mentioning settings.json on invalid input' {
             { ConvertFrom-WTJson -Json '{ not json' } | Should -Throw '*settings.json*'
         }
+        It 'parses JSON with a trailing comma (which WinPS 5.1 rejects natively)' {
+            (ConvertFrom-WTJson -Json '{"a":1,}').a | Should -Be 1
+        }
+        It 'parses WT-style JSON with BOTH comments and trailing commas' {
+            $json = @'
+{
+    // header comment
+    "profiles": {
+        "list": [
+            { "name": "PowerShell" },
+            { "name": "cmd" },
+        ],
+    },
+}
+'@
+            $obj = ConvertFrom-WTJson -Json $json
+            $obj.profiles.list.Count | Should -Be 2
+            $obj.profiles.list[1].name | Should -Be 'cmd'
+        }
+        It 'does not strip a comma inside a string value' {
+            $obj = ConvertFrom-WTJson -Json '{"note":"a,b","n":2}'
+            $obj.note | Should -Be 'a,b'
+            $obj.n    | Should -Be 2
+        }
+    }
+}
+
+Describe 'apply.ps1 JSONC parity' {
+    # apply.ps1 carries its own copy of these functions (it is a standalone script
+    # that does not dot-source the module) and reads settings.json through them,
+    # so it must tolerate the same JSONC as the module or it crashes on WinPS 5.1.
+    # We extract the function sources (without running apply.ps1's body) and
+    # exercise them directly.
+    BeforeAll {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $applySrc = Get-Content -Raw (Join-Path $repoRoot 'apply.ps1')
+        $acc = [System.Text.StringBuilder]::new()
+        foreach ($fn in 'Remove-JsonComment','Remove-JsonTrailingComma','ConvertFrom-WTJson') {
+            $m = [regex]::Match($applySrc, "(?ms)^function\s+$([regex]::Escape($fn))\s*\{.*?^\}")
+            if ($m.Success) { [void]$acc.AppendLine($m.Value) }
+        }
+        $script:applyFns = $acc.ToString()
+    }
+    It 'apply.ps1 defines Remove-JsonTrailingComma (kept in sync with the module)' {
+        $script:applyFns | Should -Match 'function\s+Remove-JsonTrailingComma'
+    }
+    It 'apply.ps1 Remove-JsonTrailingComma drops trailing commas but keeps in-string commas' {
+        . ([scriptblock]::Create($script:applyFns))
+        Remove-JsonTrailingComma -Text '{"a":1,}' | Should -Be '{"a":1}'
+        (Remove-JsonTrailingComma -Text '{"a":"x,","b":2}' | ConvertFrom-Json).a | Should -Be 'x,'
+    }
+    It 'apply.ps1 ConvertFrom-WTJson tolerates comments AND trailing commas together' {
+        . ([scriptblock]::Create($script:applyFns))
+        $json = @'
+{
+    // header
+    "a": 1,
+    "list": [ 1, 2, ],
+}
+'@
+        $obj = ConvertFrom-WTJson -Json $json
+        $obj.a          | Should -Be 1
+        $obj.list.Count | Should -Be 2
     }
 }
