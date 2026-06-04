@@ -55,6 +55,17 @@ function Get-CurrentWTProfileName {
     return $null
 }
 
+function Get-StyleCacheDir {
+    # The per-user, WRITABLE cache dir for a style's lazily-fetched background.
+    # Single source of truth shared by Get-StyleBundledBackground, Test-StyleResolved,
+    # and the picker's prefetch job so the writer and the readers can never drift.
+    # The prefetch job runs in a separate runspace without $script: scope, so it
+    # re-derives the same path from $env:LOCALAPPDATA -- keep this formula in sync
+    # with that derivation (Join-Path $DataRoot "cache\<name>").
+    param([Parameter(Mandatory)][string]$StyleName)
+    Join-Path $script:TStylesDataRoot "cache\$StyleName"
+}
+
 function Get-StyleBundledBackground {
     # Three-tier resolution:
     #   1. Bundled file under $StyleDir (module root, read-only-ish on PSGallery)
@@ -72,7 +83,7 @@ function Get-StyleBundledBackground {
     }
 
     $styleName = Split-Path -Leaf $StyleDir
-    $cacheDir  = Join-Path $script:TStylesDataRoot "cache\$styleName"
+    $cacheDir  = Get-StyleCacheDir -StyleName $styleName
 
     # 2. Cached (under data root)
     foreach ($ext in 'gif','png','jpg','jpeg') {
@@ -132,12 +143,15 @@ function Invoke-TerminalStylesStateMigration {
     $marker = Join-Path $script:TStylesDataRoot '.migrated-0.2.0'
     if (Test-Path -LiteralPath $marker) { return }
 
+    # Claim the migration immediately (before the move loop) so a second shell
+    # importing the module concurrently -- e.g. several WT tabs opened at once --
+    # sees the marker and bails instead of racing the same Move-Item calls. The
+    # moves are best-effort and self-healing (a background missed here re-fetches
+    # into the cache dir on demand), so claiming up front is the safe trade.
+    try { New-Item -ItemType File -Path $marker -Force | Out-Null } catch { }
+
     $stylesDir = Join-Path $script:TStylesModuleRoot 'styles'
-    if (-not (Test-Path -LiteralPath $stylesDir)) {
-        # No styles dir to migrate from. Mark done so we don't re-check.
-        try { New-Item -ItemType File -Path $marker -Force | Out-Null } catch { }
-        return
-    }
+    if (-not (Test-Path -LiteralPath $stylesDir)) { return }
 
     foreach ($styleDir in Get-ChildItem -LiteralPath $stylesDir -Directory) {
         $styleName = $styleDir.Name
@@ -172,8 +186,7 @@ function Invoke-TerminalStylesStateMigration {
             } catch { }
         }
     }
-
-    try { New-Item -ItemType File -Path $marker -Force | Out-Null } catch { }
+    # Marker was already written at the top (claim-before-work); nothing to do here.
 }
 
 function Get-TerminalStylesInstallKind {
@@ -456,6 +469,16 @@ function Merge-StyleIntoSettings {
 
     $scheme = [System.IO.File]::ReadAllText((Join-Path $StyleDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
+    # Resolve / validate the target FIRST. A non-existent named profile must not
+    # cause us to inject the color scheme -- that would leave an orphan scheme in
+    # settings.json that Reset's cleanup can never remove (no profile references
+    # it). 'defaults' is created lazily below, only when there's a theme to write.
+    $namedEntry = $null
+    if ($TargetName -ne 'defaults') {
+        $namedEntry = $Settings.profiles.list | Where-Object name -eq $TargetName | Select-Object -First 1
+        if (-not $namedEntry) { return $Settings }   # missing named target: leave settings untouched
+    }
+
     if (-not $Settings.PSObject.Properties.Match('schemes').Count) {
         $Settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
     }
@@ -471,7 +494,7 @@ function Merge-StyleIntoSettings {
         }
         $Settings.profiles.defaults
     } else {
-        $Settings.profiles.list | Where-Object name -eq $TargetName | Select-Object -First 1
+        $namedEntry
     }
     if (-not $entry) { return $Settings }
 
@@ -527,10 +550,39 @@ function Merge-StyleIntoSettings {
     return $Settings
 }
 
+function Write-SettingsAtomic {
+    # Write settings.json durably: serialize to a sibling temp file, then
+    # atomically replace the live file. WriteAllText truncates-then-writes, so a
+    # crash/kill or a concurrent reader (Windows Terminal watches settings.json
+    # and reloads on change) can observe a half-written/empty file. A same-volume
+    # rename is atomic on NTFS, so the live file is only ever the old bytes or the
+    # complete new bytes -- never a truncated middle. Falls back to a direct copy
+    # if Replace/Move is unsupported (e.g. an odd filesystem). UTF-8 no BOM.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyString()][string]$Json)
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $tmp = "$Path.tstmp"
+    [System.IO.File]::WriteAllText($tmp, $Json, $enc)
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            # backupFileName = $null: replace in place without keeping a copy.
+            [System.IO.File]::Replace($tmp, $Path, $null)
+        } else {
+            [System.IO.File]::Move($tmp, $Path)
+        }
+    } catch {
+        # Best-effort fallback (cross-volume temp, Replace unsupported, etc.).
+        [System.IO.File]::WriteAllText($Path, $Json, $enc)
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
 function Write-SettingsFile {
     param([string]$Path, $Settings)
-    $json = $Settings | ConvertTo-Json -Depth 32
-    [System.IO.File]::WriteAllText($Path, $json, [System.Text.UTF8Encoding]::new($false))
+    # Depth 100 (the JSON max) rather than 32: a deeply-nested user settings.json
+    # over depth 32 is silently stringified (corrupted) by ConvertTo-Json --
+    # without warning on Windows PowerShell 5.1.
+    $json = $Settings | ConvertTo-Json -Depth 100
+    Write-SettingsAtomic -Path $Path -Json $json
 }
 
 function Get-StyleDir {
@@ -600,7 +652,7 @@ function Test-StyleResolved {
         if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
     }
     $styleName = Split-Path -Leaf $StyleDir
-    $cacheDir = Join-Path $script:TStylesDataRoot "cache\$styleName"
+    $cacheDir = Get-StyleCacheDir -StyleName $styleName
     foreach ($ext in 'gif','png','jpg','jpeg') {
         if (Test-Path -LiteralPath (Join-Path $cacheDir "background.$ext")) { return $true }
     }
@@ -1171,6 +1223,18 @@ function Get-SchemeOscPacket {
     return $sb.ToString()
 }
 
+function Get-OscResetPacket {
+    # Returns OSC sequences that RESET the terminal's dynamic colors back to the
+    # profile defaults: the full palette (OSC 104, no params) plus foreground
+    # (110), background (111), cursor (112), and selection (117). The picker and
+    # tuner retint live via Get-SchemeOscPacket; on Esc/cancel those overrides
+    # would otherwise persist over the reverted settings.json, so we emit this to
+    # hand color control back to Windows Terminal's configured scheme.
+    $BEL = [char]7
+    $E   = [char]27
+    return "$E]104$BEL" + "$E]110$BEL" + "$E]111$BEL" + "$E]112$BEL" + "$E]117$BEL"
+}
+
 function Test-MonospaceFont {
     # True when $FamilyName renders as monospace (fixed advance width), detected
     # by measuring a narrow vs wide glyph. Pass a reusable $Graphics for speed
@@ -1378,6 +1442,69 @@ function Get-TunedBaseBackground {
     return Get-StyleBundledBackground -StyleDir $baseDir -NoInherit
 }
 
+function Resolve-TuneSeed {
+    # Computes the working base style + the initial knob values for `tstyles tune`.
+    # Extracted from Invoke-TerminalStyleTune so the seeding rules are unit-testable.
+    #
+    # Rules:
+    #   * A tuned style (tune.json with a base that still resolves) seeds the base
+    #     dir + the recorded deltas, so re-deriving never double-applies onto the
+    #     already-baked scheme.
+    #   * Otherwise (a plain style, OR a tuned style whose recorded base was
+    #     deleted/renamed) the working base is the style itself, and opacity/font
+    #     seed from that style's OWN theme.json -- so re-tuning preserves the saved
+    #     values instead of snapping back to the hardcoded defaults.
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir
+    )
+
+    $seed = [pscustomobject]@{
+        BaseName = $StyleName; BaseDir = $StyleDir
+        Brightness = 0; Saturation = 0; Opacity = 100; FontFace = $null; FontSize = 12
+    }
+    $seededFromTune = $false
+
+    $tuneFile = Join-Path $StyleDir 'tune.json'
+    if (Test-Path -LiteralPath $tuneFile) {
+        try {
+            $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            if ($tune.base) {
+                $resolvedBaseDir = Get-StyleDir -StyleName $tune.base
+                if ($resolvedBaseDir) {
+                    $seed.BaseName   = $tune.base
+                    $seed.BaseDir    = $resolvedBaseDir
+                    $seed.Brightness = [int]$tune.brightness
+                    $seed.Saturation = [int]$tune.saturation
+                    $seed.Opacity    = [int]$tune.opacity
+                    $seed.FontFace   = [string]$tune.fontFace
+                    $seed.FontSize   = [int]$tune.fontSize
+                    $seededFromTune  = $true
+                }
+            }
+        } catch { }
+    }
+
+    # When NOT seeded from a resolvable tune, take opacity/font from the working
+    # base's own theme.json (the base for a plain style; the style itself for a
+    # tuned style whose base vanished).
+    if (-not $seededFromTune) {
+        $baseThemePath = Join-Path $seed.BaseDir 'theme.json'
+        if (Test-Path -LiteralPath $baseThemePath) {
+            try {
+                $baseTheme = [System.IO.File]::ReadAllText($baseThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                if ($baseTheme.PSObject.Properties.Match('opacity').Count) { $seed.Opacity = [int]$baseTheme.opacity }
+                if ($baseTheme.PSObject.Properties.Match('font').Count) {
+                    if ($baseTheme.font.PSObject.Properties.Match('face').Count) { $seed.FontFace = [string]$baseTheme.font.face }
+                    if ($baseTheme.font.PSObject.Properties.Match('size').Count) { $seed.FontSize = [int]$baseTheme.font.size }
+                }
+            } catch { }
+        }
+    }
+
+    return $seed
+}
+
 function Invoke-TerminalStyleTune {
     # `tstyles tune [name]` -- interactive live tuning of a style's brightness,
     # saturation, opacity, font face, and font size. Colors retint instantly
@@ -1414,46 +1541,16 @@ function Invoke-TerminalStyleTune {
     # is its recorded base's PRISTINE scheme, and knobs seed from the deltas
     # (so re-deriving never double-applies onto the baked file). Otherwise the
     # working base is this style's own scheme with neutral knobs.
-    $brightness = 0; $saturation = 0
-    $opacity = 100; $fontFace = $null; $fontSize = 12
-    $baseName = $StyleName
-    $baseDir  = $styleDir
-
-    $tuneFile = Join-Path $styleDir 'tune.json'
-    if (Test-Path -LiteralPath $tuneFile) {
-        try {
-            $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            if ($tune.base) {
-                $resolvedBaseDir = Get-StyleDir -StyleName $tune.base
-                if ($resolvedBaseDir) {
-                    $baseName = $tune.base
-                    $baseDir  = $resolvedBaseDir
-                    $brightness = [int]$tune.brightness
-                    $saturation = [int]$tune.saturation
-                    $opacity    = [int]$tune.opacity
-                    $fontFace   = [string]$tune.fontFace
-                    $fontSize   = [int]$tune.fontSize
-                }
-            }
-        } catch { }
-    }
+    $seed = Resolve-TuneSeed -StyleName $StyleName -StyleDir $styleDir
+    $baseName   = $seed.BaseName
+    $baseDir    = $seed.BaseDir
+    $brightness = $seed.Brightness
+    $saturation = $seed.Saturation
+    $opacity    = $seed.Opacity
+    $fontFace   = $seed.FontFace
+    $fontSize   = $seed.FontSize
 
     $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-
-    # Seed font/opacity from the base theme.json when not already set from tune.json.
-    $baseThemePath = Join-Path $baseDir 'theme.json'
-    $baseTheme = if (Test-Path -LiteralPath $baseThemePath) {
-        [System.IO.File]::ReadAllText($baseThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-    } else { $null }
-    if (-not (Test-Path -LiteralPath $tuneFile)) {
-        if ($baseTheme) {
-            if ($baseTheme.PSObject.Properties.Match('opacity').Count) { $opacity = [int]$baseTheme.opacity }
-            if ($baseTheme.PSObject.Properties.Match('font').Count) {
-                if ($baseTheme.font.PSObject.Properties.Match('face').Count) { $fontFace = [string]$baseTheme.font.face }
-                if ($baseTheme.font.PSObject.Properties.Match('size').Count) { $fontSize = [int]$baseTheme.font.size }
-            }
-        }
-    }
 
     $fontList = Get-MonospaceFontList -Current $fontFace
     if (-not $fontFace) { $fontFace = $fontList[0] }
@@ -1508,7 +1605,7 @@ function Invoke-TerminalStyleTune {
         $preview = ConvertFrom-WTJson $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $scratchDir `
             -TargetName $target -BackgroundImage '' -BackgroundImageProvided $false
-        [System.IO.File]::WriteAllText($settingsPath, ($preview | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+        Write-SettingsAtomic -Path $settingsPath -Json ($preview | ConvertTo-Json -Depth 100)
     }
 
     $bar = {
@@ -1545,6 +1642,11 @@ function Invoke-TerminalStyleTune {
         Write-Host (Get-SchemeSwatch -Scheme $adjusted)
         Write-Host ""
     }
+
+    # On-disk rolling backup before any preview write, so a hard kill mid-tune
+    # leaves a recoverable copy (the in-memory $originalJson snapshot dies with
+    # the process). Same rolling .bak the direct-apply/reset paths write.
+    try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { }
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
@@ -1601,7 +1703,10 @@ function Invoke-TerminalStyleTune {
                     }
                     'Enter'  { if ($pendingApply) { & $writePreview; $pendingApply = $false }; $confirmed = $true; continue }
                     'Escape' {
-                        [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+                        Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+                        # Hand color control back to WT's configured scheme: the
+                        # live OSC retint would otherwise linger over the reverted file.
+                        [Console]::Out.Write((Get-OscResetPacket))
                         Clear-Host
                         Write-Host "Reverted." -ForegroundColor Yellow
                         return
@@ -1644,7 +1749,8 @@ function Invoke-TerminalStyleTune {
 
         if (-not $saveName) {
             # Treat an aborted save like a cancel: revert and exit.
-            [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+            Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+            [Console]::Out.Write((Get-OscResetPacket))
             Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
             return
         }
@@ -1657,7 +1763,7 @@ function Invoke-TerminalStyleTune {
             -Brightness $brightness -Saturation $saturation -Opacity $opacity `
             -FontFace $fontFace -FontSize $fontSize | Out-Null
 
-        [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+        Write-SettingsAtomic -Path $settingsPath -Json $originalJson
         Apply-StyleDirect -StyleName $saveName -Target $target
         $applied = $true
     } finally {
@@ -1666,7 +1772,8 @@ function Invoke-TerminalStyleTune {
             # Safety net: restore settings.json + title unless a saved style was
             # applied. Esc / aborted-save already reverted explicitly; this also
             # covers an exception thrown mid-session (the key loop is not tested).
-            [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+            Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+            [Console]::Out.Write((Get-OscResetPacket))
             $Host.UI.RawUI.WindowTitle = $originalTitle
         }
         if (Test-Path -LiteralPath $scratchDir) {
@@ -2069,14 +2176,25 @@ function Invoke-TerminalStyle {
             'Start-Job'
         }
         $prefetchJob = & $jobStarter -ScriptBlock {
-            param($Paths)
+            param($Paths, $DataRoot)
             $ProgressPreference = 'SilentlyContinue'
             foreach ($styleDir in $Paths) {
                 $styleName = Split-Path -Leaf $styleDir
+                # Write into the per-user CACHE dir -- the same location
+                # Get-StyleBundledBackground/Test-StyleResolved read from. The job
+                # runs in a separate runspace without $script: scope, so the cache
+                # path is re-derived from the $DataRoot passed via -ArgumentList
+                # (kept in sync with Get-StyleCacheDir). Writing into $styleDir
+                # instead would be a no-op on read-only PSGallery installs and would
+                # strand the .no-background marker where no reader looks.
+                $cacheDir = Join-Path $DataRoot "cache\$styleName"
+                if (-not (Test-Path -LiteralPath $cacheDir)) {
+                    try { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null } catch { continue }
+                }
                 $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
                 $success = $false
                 foreach ($ext in 'gif','png','jpg','jpeg') {
-                    $local = Join-Path $styleDir "background.$ext"
+                    $local = Join-Path $cacheDir "background.$ext"
                     try {
                         Invoke-WebRequest -Uri "$remoteBase.$ext" -OutFile $local `
                             -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
@@ -2091,10 +2209,10 @@ function Invoke-TerminalStyle {
                     }
                 }
                 if (-not $success) {
-                    try { New-Item -ItemType File -Path (Join-Path $styleDir '.no-background') -Force | Out-Null } catch { }
+                    try { New-Item -ItemType File -Path (Join-Path $cacheDir '.no-background') -Force | Out-Null } catch { }
                 }
             }
-        } -ArgumentList (,$missingPaths)
+        } -ArgumentList $missingPaths, $script:TStylesDataRoot
     }
 
     # Memoization: cache the final JSON string per style index. Only cache
@@ -2104,14 +2222,20 @@ function Invoke-TerminalStyle {
     # skips ConvertFrom-Json + Merge + ConvertTo-Json (~100ms per cycle).
     $mergedCache = @{}
 
+    # On-disk rolling backup before any preview write. The picker reverts in
+    # memory on Esc, but a hard kill mid-preview would otherwise leave the
+    # last-previewed theme with no recoverable original; this .bak (same one the
+    # direct-apply/reset paths roll) is that recovery copy.
+    try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { }
+
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
     try {
         # Apply first preview before showing the menu
         $preview = ConvertFrom-WTJson $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-        $initialJson = $preview | ConvertTo-Json -Depth 32
-        [System.IO.File]::WriteAllText($settingsPath, $initialJson, [System.Text.UTF8Encoding]::new($false))
+        $initialJson = $preview | ConvertTo-Json -Depth 100
+        Write-SettingsAtomic -Path $settingsPath -Json $initialJson
         if (Test-StyleResolved -StyleDir $styles[$idx].FullName) {
             $mergedCache[$idx] = $initialJson
         }
@@ -2199,12 +2323,12 @@ function Invoke-TerminalStyle {
             param([int]$i)
             $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
             if ($resolved -and $mergedCache.ContainsKey($i)) {
-                [System.IO.File]::WriteAllText($settingsPath, $mergedCache[$i], [System.Text.UTF8Encoding]::new($false))
+                Write-SettingsAtomic -Path $settingsPath -Json $mergedCache[$i]
             } else {
                 $preview = ConvertFrom-WTJson $originalJson
                 $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$i].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                $json = $preview | ConvertTo-Json -Depth 32
-                [System.IO.File]::WriteAllText($settingsPath, $json, [System.Text.UTF8Encoding]::new($false))
+                $json = $preview | ConvertTo-Json -Depth 100
+                Write-SettingsAtomic -Path $settingsPath -Json $json
                 if ($resolved) { $mergedCache[$i] = $json }
             }
             if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
@@ -2244,7 +2368,10 @@ function Invoke-TerminalStyle {
                         $confirmed = $true
                     }
                     'Escape' {
-                        [System.IO.File]::WriteAllText($settingsPath, $originalJson, [System.Text.UTF8Encoding]::new($false))
+                        Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+                        # Reset the live OSC retint so the cancelled preview's
+                        # colors don't linger over the reverted settings.json.
+                        [Console]::Out.Write((Get-OscResetPacket))
                         Clear-Host
                         Write-Host "Reverted." -ForegroundColor Yellow
                         return
@@ -2279,7 +2406,7 @@ function Invoke-TerminalStyle {
             if ($nextPrebuild -ge 0) {
                 $pp = ConvertFrom-WTJson $originalJson
                 $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                $mergedCache[$nextPrebuild] = $pp | ConvertTo-Json -Depth 32
+                $mergedCache[$nextPrebuild] = $pp | ConvertTo-Json -Depth 100
             } else {
                 Start-Sleep -Milliseconds 50
             }
