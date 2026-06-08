@@ -24,7 +24,7 @@ if (Get-Module -ListAvailable PSReadLine) {
         Operator  = '#E8D4B8'
         Variable  = '#88A8B8'
         Type      = '#A08098'
-        Keyword   = '#3A6890'
+        Keyword   = '#44739B'
         Member    = '#E8D4B8'
         Default   = '#E8D4B8'
         Error     = '#C46850'

@@ -13,7 +13,7 @@ $Host.UI.RawUI.WindowTitle = 'GITBASH // MINGW64'
 function global:prompt {
     $Esc     = [char]27
     $Green   = "$Esc[38;2;0;128;0m"
-    $Yellow  = "$Esc[38;2;166;160;0m"
+    $Yellow  = "$Esc[38;2;155;150;29m"
     $Cyan    = "$Esc[38;2;0;119;119m"
     $Magenta = "$Esc[38;2;187;0;187m"
     $Gray    = "$Esc[38;2;56;56;56m"
