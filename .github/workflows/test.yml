@@ -50,11 +50,28 @@ jobs:
           Import-Module Pester -MinimumVersion 5.0.0
           (Get-Module Pester).Version
 
-      - name: Run Pester tests
-        shell: ${{ matrix.shell }}
+      # NOTE: do NOT collapse these two steps into one with `shell: ${{ matrix.shell }}`.
+      # The `matrix` context is not available in a step's `shell:` key, so GitHub
+      # rejects it at workflow-parse time -- a startup_failure that kills the ENTIRE
+      # workflow (no jobs run, both legs show red). `matrix` IS allowed in `if:`, so
+      # branch on the shell there instead.
+      - name: Run Pester tests (pwsh 7)
+        if: matrix.shell == 'pwsh'
+        shell: pwsh
         run: |
           # Pin to Pester 5 explicitly so WinPS 5.1 doesn't auto-load its in-box
           # Pester 3 (which lacks New-PesterConfiguration).
+          Import-Module Pester -MinimumVersion 5.0.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
+
+      - name: Run Pester tests (Windows PowerShell 5.1)
+        if: matrix.shell == 'powershell'
+        shell: powershell
+        run: |
           Import-Module Pester -MinimumVersion 5.0.0
           $config = New-PesterConfiguration
           $config.Run.Path = 'tests'
