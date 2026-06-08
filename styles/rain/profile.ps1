@@ -53,7 +53,7 @@ if (Get-Module -ListAvailable PSReadLine) {
         Keyword   = '#9CA0CC'
         Member    = '#C8C5DC'
         Default   = '#C8C5DC'
-        Error     = '#A85850'
+        Error     = '#A26D66'
         Selection = "$Esc[48;2;60;64;96m"
     }
     try {
