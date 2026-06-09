@@ -36,6 +36,14 @@ $script:TStylesThemeFields = @('colorScheme', 'tabTitle', 'tabColor', 'cursorSha
 # === Internals ===
 
 function Find-WTSettingsPath {
+    # Prefer the settings.json of the Windows Terminal build hosting THIS session.
+    # WT sets $env:WT_SETTINGS_PATH to its live file, so honoring it makes a user
+    # on WT Preview (with Stable also installed) edit Preview's file -- not
+    # Stable's, which the static list below would otherwise win. Falls back to the
+    # candidate list (Stable > Preview > unpackaged) when the env var is absent.
+    if ($env:WT_SETTINGS_PATH -and (Test-Path -LiteralPath $env:WT_SETTINGS_PATH)) {
+        return $env:WT_SETTINGS_PATH
+    }
     $candidates = @(
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
@@ -1471,7 +1479,13 @@ function Resolve-TuneSeed {
             $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
             if ($tune.base) {
                 $resolvedBaseDir = Get-StyleDir -StyleName $tune.base
-                if ($resolvedBaseDir) {
+                # Guard against a self-referential base (an Overwrite save writes
+                # the baked scheme back onto the base name and records base = that
+                # name). Re-seeding the deltas here would re-apply them on top of
+                # the already-baked scheme -- color drift on every re-tune. Fall
+                # through to own-theme.json seeding (neutral brightness/saturation)
+                # instead. Mirrors the self-reference guard in Get-TunedBaseBackground.
+                if ($resolvedBaseDir -and $resolvedBaseDir -ne $StyleDir) {
                     $seed.BaseName   = $tune.base
                     $seed.BaseDir    = $resolvedBaseDir
                     $seed.Brightness = [int]$tune.brightness

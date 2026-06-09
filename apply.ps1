@@ -190,6 +190,12 @@ function Get-StyleBundledBackground {
 }
 
 function Find-SettingsPath {
+    # Prefer the live WT build's settings.json ($env:WT_SETTINGS_PATH) before the
+    # static Stable > Preview > unpackaged list -- otherwise a user on WT Preview
+    # silently edits Stable's file. NOTE: mirrors tstyles.ps1 Find-WTSettingsPath.
+    if ($env:WT_SETTINGS_PATH -and (Test-Path -LiteralPath $env:WT_SETTINGS_PATH)) {
+        return $env:WT_SETTINGS_PATH
+    }
     $candidates = @(
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
         "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
@@ -247,6 +253,40 @@ function Merge-ThemeIntoEntry {
         }
     }
 }
+
+function Write-WTSettingsFile {
+    # Serialize + write Windows Terminal settings.json durably.
+    # NOTE: mirrors tstyles.ps1's Write-SettingsFile/Write-SettingsAtomic -- keep
+    # in sync. (apply.ps1 is standalone and doesn't dot-source the library.)
+    #   * Depth 100 (the JSON max), NOT 32: a user settings.json nested deeper
+    #     than 32 is silently stringified (corrupted) by ConvertTo-Json -- with no
+    #     warning at all on Windows PowerShell 5.1.
+    #   * Atomic replace via a sibling temp file: WriteAllText truncates-then-
+    #     writes, so a crash/kill or a concurrent Windows Terminal reload can
+    #     observe a half-written/empty settings.json. A same-volume rename is
+    #     atomic on NTFS. Falls back to a direct write if Replace/Move is
+    #     unsupported. UTF-8 no BOM.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Settings)
+    $json = $Settings | ConvertTo-Json -Depth 100
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $tmp = "$Path.tstmp"
+    [System.IO.File]::WriteAllText($tmp, $json, $enc)
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            [System.IO.File]::Replace($tmp, $Path, $null)
+        } else {
+            [System.IO.File]::Move($tmp, $Path)
+        }
+    } catch {
+        [System.IO.File]::WriteAllText($Path, $json, $enc)
+        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+    }
+}
+
+# Main flow. Guarded so tests can dot-source this script for its functions
+# (set $TStylesApplyNoRun = $true before dot-sourcing) without running the
+# installer. A normal `pwsh -File apply.ps1` run never sets the var, so main runs.
+if (-not $TStylesApplyNoRun) {
 
 # --- Banner ---
 Write-Host ""
@@ -338,9 +378,8 @@ if ($theme) {
     }
 }
 
-# --- Save settings.json (UTF-8 no BOM) ---
-$json = $settings | ConvertTo-Json -Depth 32
-[System.IO.File]::WriteAllText($SettingsPath, $json, [System.Text.UTF8Encoding]::new($false))
+# --- Save settings.json (UTF-8 no BOM, atomic, full depth) ---
+Write-WTSettingsFile -Path $SettingsPath -Settings $settings
 Write-Host "settings.json updated." -ForegroundColor Green
 
 # --- Install profile.ps1 (if applicable) ---
@@ -400,3 +439,5 @@ if ($hasProfile -and -not $KeepPrompt) {
 
 Write-Host ""
 Write-Host "Done. Open a new '$Target' tab in Windows Terminal to see the result." -ForegroundColor Cyan
+
+}

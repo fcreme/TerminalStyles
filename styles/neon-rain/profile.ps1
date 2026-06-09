@@ -21,7 +21,7 @@ Write-Host ""
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host "${D}|  ${Y}DISTRICT-05 // NIGHT SECTOR${W}                 ${D}|${X}"
 Write-Host "${D}|  ${W}RAIN PROTOCOL ACTIVE  ::  STATUS: ${G}ONLINE${W}      ${D}|${X}"
-Write-Host "${D}|  ${Y}\"The neon never sleeps.\"${W}                    ${D}|${X}"
+Write-Host "${D}|  ${Y}`"The neon never sleeps.`"${W}                    ${D}|${X}"
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host ""
 

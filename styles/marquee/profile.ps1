@@ -21,7 +21,7 @@ Write-Host ""
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host "${D}|  ${M}>>> MARQUEE // EXT3 <<<${W}                     ${D}|${X}"
 Write-Host "${D}|  ${Y}NIGHT GALLERY${W}  ::  ${B}SIGNAL: STRONG${W}             ${D}|${X}"
-Write-Host "${D}|  ${M}\"Through the glass, after hours.\"${W}           ${D}|${X}"
+Write-Host "${D}|  ${M}`"Through the glass, after hours.`"${W}           ${D}|${X}"
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host ""
 

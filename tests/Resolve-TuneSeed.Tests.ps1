@@ -81,5 +81,29 @@ Describe 'Resolve-TuneSeed' {
             $seed.FontFace | Should -Be 'Consolas'  # from own theme.json, NOT default/$null
             $seed.FontSize | Should -Be 12
         }
+
+        It 'does not re-seed baked deltas when a style was overwrite-saved onto itself (base == self)' {
+            # An Overwrite save writes the ADJUSTED (baked) scheme back onto the
+            # base name and records tune.base = that same name. On re-tune,
+            # tune.base resolves to the style's OWN dir, whose scheme.json is
+            # already baked. Seeding the recorded brightness/saturation here would
+            # re-apply them on top of the baked scheme, drifting the colors further
+            # on every re-tune. So a self-referential base must fall through to the
+            # own-theme.json seeding with NEUTRAL brightness/saturation.
+            $dir = Join-Path $script:TStylesDataRoot 'styles\eva'
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'), '{"name":"eva","background":"#101010"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'theme.json'),  '{"colorScheme":"eva","opacity":90,"font":{"face":"Hack","size":14}}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'tune.json'),   '{"schemaVersion":1,"base":"eva","brightness":20,"saturation":15,"opacity":90,"fontFace":"Hack","fontSize":14}', $script:enc)
+
+            $seed = Resolve-TuneSeed -StyleName 'eva' -StyleDir $dir
+            $seed.BaseName   | Should -Be 'eva'
+            $seed.BaseDir    | Should -Be $dir
+            $seed.Brightness | Should -Be 0    # NOT 20 -- baked deltas must not re-apply
+            $seed.Saturation | Should -Be 0    # NOT 15
+            $seed.Opacity    | Should -Be 90   # from own theme.json
+            $seed.FontFace   | Should -Be 'Hack'
+            $seed.FontSize   | Should -Be 14
+        }
     }
 }
