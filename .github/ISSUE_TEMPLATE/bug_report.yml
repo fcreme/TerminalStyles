@@ -1,0 +1,60 @@
+name: Bug report
+description: Something broke — wrong colors, a crash, a mangled settings.json
+labels: [bug]
+body:
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect instead?
+      description: Include the exact error text if there was any.
+      placeholder: Ran `tstyles eva`, expected eva's colors — got a parse error instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro-steps
+    attributes:
+      label: Steps to reproduce
+      description: The shortest sequence of commands that triggers it.
+      placeholder: |
+        1. Open a fresh Windows Terminal tab
+        2. tstyles eva
+        3. ...
+    validations:
+      required: true
+  - type: input
+    id: wt-version
+    attributes:
+      label: Windows Terminal version
+      description: Windows Terminal → Settings → About. Say so if you're on Preview.
+      placeholder: 1.22.10731.0
+  - type: input
+    id: ps-version
+    attributes:
+      label: PowerShell engine and version
+      description: Paste the output of `$PSVersionTable.PSVersion`, and say whether it's pwsh 7 or Windows PowerShell 5.1 — bugs are often engine-specific.
+      placeholder: 7.4.6 (pwsh) / 5.1.26100.2161 (Windows PowerShell)
+    validations:
+      required: true
+  - type: dropdown
+    id: install-kind
+    attributes:
+      label: How did you install TerminalStyles?
+      description: Whichever your $PROFILE loads is the one that's active.
+      options:
+        - PSGallery (Install-PSResource)
+        - Bootstrap one-liner (iwr | iex)
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: module-version
+    attributes:
+      label: Module version
+      description: "`Get-Module TerminalStyles` shows it after import."
+      placeholder: 0.6.1
+  - type: textarea
+    id: settings-snippet
+    attributes:
+      label: Relevant settings.json snippet
+      description: Optional. The profile entry or `schemes` block involved, from `%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json`. Strip anything personal.
+      render: json

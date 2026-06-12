@@ -1,0 +1,24 @@
+name: Feature request
+description: Propose an improvement — picker, tuner, subcommands, anything
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: Describe the situation that's annoying or impossible today — the problem is often more useful than the feature.
+      placeholder: With 30 saved styles, finding one in the picker means arrow-keying through the whole list.
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: What you'd like to happen. Rough is fine — a command sketch or example output helps.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Optional. Other approaches you thought about, or workarounds you use today.

@@ -1,0 +1,64 @@
+name: Theme idea
+description: Pitch a theme before building it — get a yes/no on bundling first
+labels: [theme]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Anyone can submit a theme, and pitching here first is encouraged — bundling is at
+        the maintainer's discretion, so a quick yes/no on the idea saves you building
+        something that won't land. Themes that aren't bundled still work as local user
+        styles. The full rules live in the theme checklist in
+        [CONTRIBUTING.md](https://github.com/fcreme/TerminalStyles/blob/main/CONTRIBUTING.md).
+  - type: input
+    id: theme-name
+    attributes:
+      label: Theme name
+      description: Lowercase, hyphens for spaces, unique against the bundled catalog (see the README).
+      placeholder: paper-morning
+    validations:
+      required: true
+  - type: textarea
+    id: mood
+    attributes:
+      label: Mood / inspiration
+      description: What's the vibe? A film, a place, a time of day — whatever the theme is channeling.
+      placeholder: Early-morning workshop — warm paper tones, pencil-graphite text, one teal accent.
+    validations:
+      required: true
+  - type: textarea
+    id: palette
+    attributes:
+      label: Palette sketch
+      description: Rough 6-digit hex values are enough — this is a sketch, not the final scheme.json.
+      placeholder: |
+        background: #f4ecd8
+        foreground: #3b3228
+        cursor:     #00736f
+        accents:    #a5222f, #4d6b2f, #0f4d8c
+  - type: dropdown
+    id: light-or-dark
+    attributes:
+      label: Light or dark?
+      description: Light themes are especially wanted — only 1 of the 16 bundled themes is light.
+      options:
+        - Dark
+        - Light
+    validations:
+      required: true
+  - type: dropdown
+    id: ships-background
+    attributes:
+      label: Ships a background image?
+      description: Images go flat-named on the `gifs` branch, never on `main`. Keep it under ~2 MB, and only use images you have the right to redistribute.
+      options:
+        - "Yes"
+        - "No"
+    validations:
+      required: true
+  - type: checkboxes
+    id: read-checklist
+    attributes:
+      label: Before you build
+      options:
+        - label: I've read the theme checklist in [CONTRIBUTING.md](https://github.com/fcreme/TerminalStyles/blob/main/CONTRIBUTING.md)
