@@ -481,15 +481,10 @@ If you drop in a folder with the same name as a bundled theme (e.g.
 `eva/`), your version wins — useful for tweaking a bundled theme's
 prompt or palette without forking the repo.
 
-For contributing back:
-
-1. Fork the repo, add the code-only folder (scheme.json / theme.json /
-   profile.ps1 / README.md — no background) under `styles/<name>/` on
-   `main`, and open a PR.
-2. If your theme ships a background, also switch to the `gifs` branch
-   and drop the file at the root as `<name>.<ext>` (flat naming, no
-   subfolder). `main` stays code-only; `tstyles` lazy-fetches the
-   background on first use of your style.
+To contribute your theme back to the bundled catalog, see
+[CONTRIBUTING.md](CONTRIBUTING.md) — short version: code-only folder
+under `styles/<name>/` on `main`, background image (if any) flat-named
+on the `gifs` branch, and the maintainer curates what gets bundled.
 
 - **scheme.json** must contain a unique `name`. See
   [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
@@ -547,6 +542,13 @@ takes one PNG of the WT window, then restores your original theme.
   silently. To clean up: `tstyles uninstall` removes whichever is
   currently loaded; run it twice (switching shells between runs if
   needed) to clean both.
+
+## Contributing
+
+Bug reports, feature ideas, and new themes are all welcome — see
+[CONTRIBUTING.md](CONTRIBUTING.md). Themes are the easiest way in:
+pitch one with a [theme idea issue](https://github.com/fcreme/TerminalStyles/issues/new/choose),
+or grab a [`good first issue`](https://github.com/fcreme/TerminalStyles/labels/good%20first%20issue).
 
 ## License
 
