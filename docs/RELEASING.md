@@ -31,7 +31,13 @@ How to publish a new version of TerminalStyles.
    with a 1-3 line summary of what's in this release. PSGallery shows
    this on the version's page.
 
-3. **Commit the version bump** and push:
+3. **Update `CHANGELOG.md`**: retitle `## [Unreleased]` to
+   `## [<new-version>] - <YYYY-MM-DD>`, start a fresh empty
+   `## [Unreleased]` above it, and update the reference links at the
+   bottom (point `[Unreleased]` at `v<new-version>...HEAD`, add a
+   compare link for the new version).
+
+4. **Commit the version bump** and push:
 
    ```powershell
    git add TerminalStyles.psd1
@@ -39,7 +45,7 @@ How to publish a new version of TerminalStyles.
    git push origin main
    ```
 
-4. **Dry-run the publish script** first (stages files + runs
+5. **Dry-run the publish script** first (stages files + runs
    `Test-ModuleManifest`, no upload):
 
    ```powershell
@@ -49,24 +55,24 @@ How to publish a new version of TerminalStyles.
    Eyeball the printed stage dir — `Get-ChildItem -Recurse .\out\TerminalStyles`
    should show exactly the allowlist contents.
 
-5. **Run the real publish.** The script prompts for your API key
+6. **Run the real publish.** The script prompts for your API key
    (input hidden, never written to disk):
 
    ```powershell
    pwsh -File .\scripts\publish.ps1
    ```
 
-6. **Tag the release** for traceability:
+7. **Tag the release** for traceability:
 
    ```powershell
    git tag v<new-version>
    git push --tags
    ```
 
-7. **Verify** within ~1 minute at
+8. **Verify** within ~1 minute at
    https://www.powershellgallery.com/packages/TerminalStyles/
 
-8. **Smoke-test the install** in a clean shell (no module already
+9. **Smoke-test the install** in a clean shell (no module already
    loaded):
 
    ```powershell
