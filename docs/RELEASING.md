@@ -40,8 +40,8 @@ How to publish a new version of TerminalStyles.
 4. **Commit the version bump** and push:
 
    ```powershell
-   git add TerminalStyles.psd1
-   git commit -m "Bump version to <new-version>"
+   git add TerminalStyles.psd1 CHANGELOG.md
+   git commit -m "Bump version to <new-version> + update changelog"
    git push origin main
    ```
 
