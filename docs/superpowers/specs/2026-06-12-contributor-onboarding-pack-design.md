@@ -58,6 +58,15 @@ likely contribution):
   will run on the PR** (contrast floor, no-binaries-on-main) and how to test locally;
   screenshot regeneration via `scripts/capture-screenshots.ps1` (noting the maintainer
   can do this step for contributors without Windows Terminal access).
+  - **Curation model (explicit):** anyone may submit a theme, including one derived
+    from a bundled theme via `tstyles tune` (the tuner's saved folder in
+    `%LOCALAPPDATA%\TerminalStyles\styles\<name>\` is exactly the submittable format);
+    inclusion in the bundled catalog is at the maintainer's discretion. Stated
+    acceptance criteria: passes the CI checks, visually distinct from existing
+    bundled themes, image redistribution rights confirmed, and the maintainer likes
+    it — opening a `theme idea` issue first is encouraged to get a yes/no before
+    doing the work. Themes not accepted for bundling still work as local user styles
+    and can be shared from the contributor's own fork.
 - **Contributing code** — dev setup (clone, import from checkout, Pester 5 install
   per engine, `Invoke-Pester -Path .\tests`); the PS 5.1 compatibility rules; test
   conventions (one concern per file, `<FunctionName>.Tests.ps1` naming with
