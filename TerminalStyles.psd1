@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.6.1'
+    ModuleVersion     = '0.6.2'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Themes', 'Color', 'Prompt', 'pwsh')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.6.1: the `tstyles tune` font picker now cycles every installed monospace font (curated favorites first), instead of a fixed allowlist -- your own coding fonts (Maple Mono, MonoLisa, ...) show up automatically. Purely additive.'
+            ReleaseNotes = 'v0.6.2: reliability release. settings.json writes are now atomic with a .bak rollback before live preview; fixes a Windows PowerShell 5.1 crash on settings with JSONC comments/trailing commas; fixes background images never appearing on PowerShell Gallery installs; and lifts six themes to a 3:1 contrast floor for legible syntax. No new commands.'
         }
     }
 }
