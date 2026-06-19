@@ -16,3 +16,47 @@ Describe 'install.ps1 test seam' {
         Get-Command Resolve-ExecutionPolicy  -CommandType Function -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
 }
+
+Describe 'Assert-ValidArchive' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+        Add-Type -AssemblyName System.IO.Compression.FileSystem
+
+        function script:New-ZipFrom {
+            param([string[]]$Entries, [string]$ZipPath)
+            $src = Join-Path $TestDrive ('src-' + [guid]::NewGuid().Guid.Substring(0,8))
+            foreach ($e in $Entries) {
+                $full = Join-Path $src $e
+                New-Item -ItemType Directory -Force -Path (Split-Path $full -Parent) | Out-Null
+                Set-Content -LiteralPath $full -Value 'x' -NoNewline
+            }
+            [System.IO.Compression.ZipFile]::CreateFromDirectory($src, $ZipPath)
+        }
+    }
+
+    It 'passes for a valid archive containing the manifest' {
+        $zip = Join-Path $TestDrive 'good.zip'
+        New-ZipFrom -Entries @('TerminalStyles-main/TerminalStyles.psd1') -ZipPath $zip
+        { Assert-ValidArchive -Path $zip } | Should -Not -Throw
+    }
+
+    It 'throws for a zero-byte file' {
+        $empty = Join-Path $TestDrive 'empty.zip'
+        New-Item -ItemType File -Path $empty | Out-Null
+        { Assert-ValidArchive -Path $empty } | Should -Throw -ExpectedMessage '*empty*'
+    }
+
+    It 'throws for a non-ZIP file' {
+        $bogus = Join-Path $TestDrive 'bogus.zip'
+        Set-Content -LiteralPath $bogus -Value '<html>404: Not Found</html>'
+        { Assert-ValidArchive -Path $bogus } | Should -Throw -ExpectedMessage '*not a valid ZIP*'
+    }
+
+    It 'throws for a ZIP without the module manifest' {
+        $zip = Join-Path $TestDrive 'nomanifest.zip'
+        New-ZipFrom -Entries @('TerminalStyles-main/README.md') -ZipPath $zip
+        { Assert-ValidArchive -Path $zip } | Should -Throw -ExpectedMessage '*does not look like TerminalStyles*'
+    }
+}

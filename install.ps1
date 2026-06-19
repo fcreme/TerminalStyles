@@ -233,6 +233,31 @@ function Register-LoaderInProfile {
     [System.IO.File]::WriteAllText($ProfilePath, $final, [System.Text.UTF8Encoding]::new($false))
 }
 
+# --- Validate a downloaded archive before extracting ---
+function Assert-ValidArchive {
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path) -or ((Get-Item -LiteralPath $Path).Length -eq 0)) {
+        throw "Download was empty or missing. This is usually a transient network issue -- re-run the installer."
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = $null
+    try {
+        $zip = [System.IO.Compression.ZipFile]::OpenRead($Path)
+    } catch {
+        throw "Downloaded file is not a valid ZIP archive (partial download or network error) -- re-run the installer."
+    }
+    try {
+        $hasManifest = @($zip.Entries | Where-Object { $_.FullName -match 'TerminalStyles\.psd1$' }).Count -gt 0
+    } finally {
+        $zip.Dispose()
+    }
+    if (-not $hasManifest) {
+        throw "Downloaded archive does not look like TerminalStyles (module manifest not found) -- re-run the installer."
+    }
+}
+
 # --- Helper: offer to fix Restricted/AllSigned execution policy for an engine ---
 # Takes the already-queried policy value to avoid a second shell launch.
 function Resolve-ExecutionPolicy {
