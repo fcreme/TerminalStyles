@@ -118,3 +118,48 @@ Describe 'Write-TextFileAtomic' {
         @(Get-ChildItem -LiteralPath $dir -Filter '*.tmp-*' -Force).Count | Should -Be 0
     }
 }
+
+Describe 'Register-LoaderInProfile backup rule' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+        $script:begin = '# ===== TerminalStyles BEGIN ====='
+        $script:end   = '# ===== TerminalStyles END ====='
+        $script:body  = "$script:begin`r`nImport-Module `"`$env:LOCALAPPDATA\TerminalStyles\TerminalStyles.psd1`" -DisableNameChecking`r`n$script:end"
+    }
+    BeforeEach {
+        # Fresh per-test install fixture with an empty styles dir (no migration match)
+        $script:fixture = Join-Path $TestDrive ('inst-' + [guid]::NewGuid().Guid.Substring(0,8))
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:fixture 'styles') | Out-Null
+        $script:profileDir = Join-Path $script:fixture 'profile'
+        New-Item -ItemType Directory -Force -Path $script:profileDir | Out-Null
+        $script:profilePath = Join-Path $script:profileDir 'Microsoft.PowerShell_profile.ps1'
+    }
+    function script:CountBaks {
+        @(Get-ChildItem -LiteralPath $script:profileDir -Filter '*.ps1.bak-*' -Force).Count
+    }
+
+    It 'creates no backup for a fresh (nonexistent) profile' {
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
+        Test-Path -LiteralPath $script:profilePath | Should -BeTrue
+        CountBaks | Should -Be 0
+    }
+
+    It 'backs up once when touching a profile with pre-existing user content' {
+        Set-Content -LiteralPath $script:profilePath -Value "# my custom prompt`r`nSet-Alias ll Get-ChildItem"
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
+        CountBaks | Should -Be 1
+        $bak = Get-ChildItem -LiteralPath $script:profileDir -Filter '*.ps1.bak-*' -Force | Select-Object -First 1
+        (Get-Content -LiteralPath $bak.FullName -Raw) | Should -Match 'my custom prompt'
+    }
+
+    It 'makes no new backup when a loader block is already present' {
+        Set-Content -LiteralPath $script:profilePath -Value "# existing`r`n`r`n$script:body`r`n"
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
+        CountBaks | Should -Be 0
+    }
+}

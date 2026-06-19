@@ -226,9 +226,15 @@ function Register-LoaderInProfile {
     $existing = if (Test-Path -LiteralPath $ProfilePath) {
         [System.IO.File]::ReadAllText($ProfilePath, [System.Text.UTF8Encoding]::new($false))
     } else { '' }
+    $originalContent = $existing
 
+    $escBegin = [regex]::Escape($LoaderBegin)
+    $escEnd   = [regex]::Escape($LoaderEnd)
+    $blockPattern = "(?ms)$escBegin.*?$escEnd\r?\n?"
+
+    $migrated = $false
     if ($existing.Trim().Length -gt 0) {
-        $styleDirs = Get-ChildItem -LiteralPath (Join-Path $InstallDir 'styles') -Directory
+        $styleDirs = Get-ChildItem -LiteralPath (Join-Path $InstallDir 'styles') -Directory -ErrorAction SilentlyContinue
         foreach ($s in $styleDirs) {
             $sp = Join-Path $s.FullName 'profile.ps1'
             if (Test-Path -LiteralPath $sp) {
@@ -240,21 +246,29 @@ function Register-LoaderInProfile {
                     Write-Host "  Original profile backed up to: $bak" -ForegroundColor Gray
                     Copy-Item -LiteralPath $sp -Destination (Join-Path $InstallDir 'current-style.ps1') -Force
                     $existing = ''
+                    $migrated = $true
                     break
                 }
             }
         }
     }
 
-    $escBegin = [regex]::Escape($LoaderBegin)
-    $escEnd   = [regex]::Escape($LoaderEnd)
-    $blockPattern = "(?ms)$escBegin.*?$escEnd\r?\n?"
+    # First-touch backup: the first time we add our loader to a profile that
+    # has pre-existing user content and no loader block yet, preserve it.
+    # Skip when we already migrated (that path backed up) or when our block
+    # is already present (a re-register only swaps our own block).
+    if (-not $migrated -and $originalContent.Trim().Length -gt 0 -and ($originalContent -notmatch $blockPattern)) {
+        $bak = "$ProfilePath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Copy-Item -LiteralPath $ProfilePath -Destination $bak -Force
+        Write-Host "  Backed up your existing $Label profile to: $bak" -ForegroundColor Gray
+    }
+
     if ($existing -match $blockPattern) {
         $existing = [regex]::Replace($existing, $blockPattern, '')
     }
 
     $final = ($existing.TrimEnd() + "`r`n`r`n" + $LoaderBody + "`r`n").TrimStart()
-    [System.IO.File]::WriteAllText($ProfilePath, $final, [System.Text.UTF8Encoding]::new($false))
+    Write-TextFileAtomic -Path $ProfilePath -Content $final
 }
 
 # --- Validate a downloaded archive before extracting ---
