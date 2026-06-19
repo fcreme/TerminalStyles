@@ -194,7 +194,7 @@ function Write-TextFileAtomic {
     [System.IO.File]::WriteAllText($tmp, $Content, $enc)
     try {
         if (Test-Path -LiteralPath $Path) {
-            [System.IO.File]::Replace($tmp, $Path, $null)   # atomic; consumes $tmp
+            [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)   # atomic; consumes $tmp
         } else {
             [System.IO.File]::Move($tmp, $Path)
         }
