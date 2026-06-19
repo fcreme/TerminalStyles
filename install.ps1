@@ -307,8 +307,14 @@ function Assert-InstallLanded {
     }
 }
 
-# --- Helper: offer to fix Restricted/AllSigned execution policy for an engine ---
-# Takes the already-queried policy value to avoid a second shell launch.
+# --- Pure decision: does this effective policy permit the loader to run? ---
+function Test-PolicyResolved {
+    param([string]$Policy)
+    return (-not [string]::IsNullOrWhiteSpace($Policy)) -and
+           ($Policy.Trim() -notin @('Restricted', 'AllSigned'))
+}
+
+# --- Offer to fix Restricted/AllSigned execution policy for an engine ---
 function Resolve-ExecutionPolicy {
     param(
         [Parameter(Mandatory)][string]$Exe,
@@ -317,15 +323,18 @@ function Resolve-ExecutionPolicy {
     )
     $cmd = Get-Command -Name $Exe -ErrorAction SilentlyContinue
     if (-not $cmd) { return }
-
-    if ([string]::IsNullOrWhiteSpace($EffectivePolicy)) { return }
-    $eff = $EffectivePolicy.Trim()
-
-    if ($eff -notin @('Restricted', 'AllSigned')) { return }
+    if (Test-PolicyResolved -Policy $EffectivePolicy) { return }   # already fine
 
     Write-Host ""
-    Write-Host "  ! Script execution is disabled for $Label (effective policy: $eff)." -ForegroundColor Yellow
+    Write-Host "  ! Script execution is disabled for $Label (effective policy: $($EffectivePolicy.Trim()))." -ForegroundColor Yellow
     Write-Host "    Without changing this, the TerminalStyles loader cannot run on shell startup." -ForegroundColor Yellow
+
+    if (-not [Environment]::UserInteractive) {
+        Write-Host "    Non-interactive session -- skipping the prompt. To fix, run in ${Label}:" -ForegroundColor DarkGray
+        Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Cyan
+        return
+    }
+
     $ans = Read-Host "    Set CurrentUser policy to RemoteSigned for $Label? [Y/n]"
     if (-not ([string]::IsNullOrWhiteSpace($ans) -or $ans -match '^(?i)y')) {
         Write-Host "    Skipped. To fix later, run in ${Label}:" -ForegroundColor DarkGray
@@ -334,8 +343,18 @@ function Resolve-ExecutionPolicy {
     }
 
     try {
-        & $cmd.Source -NoProfile -NonInteractive -Command 'Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force'
-        Write-Host "    Done. CurrentUser policy is now RemoteSigned for $Label." -ForegroundColor Green
+        # Set + re-query in one launch; the last non-empty line is the new policy.
+        $out = & $cmd.Source -NoProfile -NonInteractive -Command `
+            'Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force; Get-ExecutionPolicy -Scope CurrentUser'
+        $newPolicy = @($out | Where-Object { "$_".Trim() } | Select-Object -Last 1)[0]
+        if (Test-PolicyResolved -Policy "$newPolicy") {
+            Write-Host "    Done. CurrentUser policy is now $("$newPolicy".Trim()) for $Label." -ForegroundColor Green
+        } else {
+            Write-Host "    The policy did not change (still '$("$newPolicy".Trim())')." -ForegroundColor Red
+            Write-Host "    A machine-wide policy (LocalMachine / GPO) may be blocking CurrentUser overrides." -ForegroundColor Yellow
+            Write-Host "    Run this manually, elevated if needed:" -ForegroundColor Yellow
+            Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Cyan
+        }
     } catch {
         Write-Host "    Could not set policy automatically: $_" -ForegroundColor Red
         Write-Host "    A machine-wide policy (LocalMachine / GPO) may be blocking CurrentUser overrides." -ForegroundColor Yellow

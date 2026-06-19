@@ -163,3 +163,29 @@ Describe 'Register-LoaderInProfile backup rule' {
         CountBaks | Should -Be 0
     }
 }
+
+Describe 'Test-PolicyResolved' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+    }
+
+    It 'returns true for policies that allow scripts' {
+        foreach ($p in 'RemoteSigned','Bypass','Unrestricted') {
+            Test-PolicyResolved -Policy $p | Should -BeTrue
+        }
+    }
+
+    It 'returns false for blocking or empty policies' {
+        foreach ($p in 'Restricted','AllSigned','') {
+            Test-PolicyResolved -Policy $p | Should -BeFalse
+        }
+        Test-PolicyResolved -Policy $null | Should -BeFalse
+    }
+
+    It 'tolerates surrounding whitespace' {
+        Test-PolicyResolved -Policy "  RemoteSigned `r`n" | Should -BeTrue
+        Test-PolicyResolved -Policy "  Restricted  "       | Should -BeFalse
+    }
+}
