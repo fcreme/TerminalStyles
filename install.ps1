@@ -383,6 +383,7 @@ if (-not $TStylesInstallNoRun) {
     # --- Download ---
     Write-InstallStep "Downloading"
     Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
+    Assert-ValidArchive -Path $tempZip
     Write-InstallStep "Downloading" -Check
 
     # --- Extract ---
@@ -423,8 +424,14 @@ if (-not $TStylesInstallNoRun) {
 
     if (Test-Path -LiteralPath $installDir) {
         Remove-Item -LiteralPath $installDir -Recurse -Force
+        if (Test-Path -LiteralPath $installDir) {
+            throw ("Could not fully remove the previous install at '$installDir' (a file lock may " +
+                   "be held by another PowerShell tab, OneDrive, or antivirus). Close other " +
+                   "PowerShell windows and re-run the installer.")
+        }
     }
     Move-Item -LiteralPath $extractedRoot.FullName -Destination $installDir
+    Assert-InstallLanded -InstallDir $installDir
 
     if ($preservedBytes) {
         [System.IO.File]::WriteAllBytes((Join-Path $installDir 'current-style.ps1'), $preservedBytes)
