@@ -148,7 +148,7 @@ Describe 'Register-LoaderInProfile backup rule' {
     }
 
     It 'backs up once when touching a profile with pre-existing user content' {
-        Set-Content -LiteralPath $script:profilePath -Value "# my custom prompt`r`nSet-Alias ll Get-ChildItem"
+        [System.IO.File]::WriteAllText($script:profilePath, "# my custom prompt`r`nSet-Alias ll Get-ChildItem", [System.Text.UTF8Encoding]::new($false))
         Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
             -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
         CountBaks | Should -Be 1
@@ -157,7 +157,7 @@ Describe 'Register-LoaderInProfile backup rule' {
     }
 
     It 'makes no new backup when a loader block is already present' {
-        Set-Content -LiteralPath $script:profilePath -Value "# existing`r`n`r`n$script:body`r`n"
+        [System.IO.File]::WriteAllText($script:profilePath, "# existing`r`n`r`n$script:body`r`n", [System.Text.UTF8Encoding]::new($false))
         Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
             -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
         CountBaks | Should -Be 0
