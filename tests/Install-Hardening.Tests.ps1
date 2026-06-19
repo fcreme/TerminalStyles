@@ -60,3 +60,24 @@ Describe 'Assert-ValidArchive' {
         { Assert-ValidArchive -Path $zip } | Should -Throw -ExpectedMessage '*does not look like TerminalStyles*'
     }
 }
+
+Describe 'Assert-InstallLanded' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+    }
+
+    It 'passes when the manifest is present' {
+        $dir = Join-Path $TestDrive 'landed'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        Set-Content -LiteralPath (Join-Path $dir 'TerminalStyles.psd1') -Value '@{}'
+        { Assert-InstallLanded -InstallDir $dir } | Should -Not -Throw
+    }
+
+    It 'throws when the manifest is missing (nested/broken install)' {
+        $dir = Join-Path $TestDrive 'broken'
+        New-Item -ItemType Directory -Force -Path (Join-Path $dir 'TerminalStyles-main') | Out-Null
+        { Assert-InstallLanded -InstallDir $dir } | Should -Throw -ExpectedMessage '*did not complete*'
+    }
+}

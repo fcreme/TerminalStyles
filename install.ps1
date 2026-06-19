@@ -258,6 +258,17 @@ function Assert-ValidArchive {
     }
 }
 
+# --- Assert the module actually landed after the install move ---
+function Assert-InstallLanded {
+    param([Parameter(Mandatory)][string]$InstallDir)
+    $manifest = Join-Path $InstallDir 'TerminalStyles.psd1'
+    if (-not (Test-Path -LiteralPath $manifest)) {
+        throw ("Install did not complete: '$manifest' is missing. A leftover file lock on " +
+               "'$InstallDir' (another PowerShell tab, OneDrive, or antivirus) may have blocked " +
+               "the update. Close other PowerShell windows and re-run the installer.")
+    }
+}
+
 # --- Helper: offer to fix Restricted/AllSigned execution policy for an engine ---
 # Takes the already-queried policy value to avoid a second shell launch.
 function Resolve-ExecutionPolicy {
