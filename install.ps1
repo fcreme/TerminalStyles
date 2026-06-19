@@ -13,21 +13,6 @@
 
 #Requires -Version 5.1
 
-# Force UTF-8 console output as defense-in-depth. The installer's own
-# output is pure 7-bit ASCII (so it renders identically in any codepage,
-# including WinPS 5.1's CP437 default where Unicode mid-process encoding
-# changes are unreliable). These settings still apply for any downstream
-# code that emits Unicode -- harmless if not needed.
-$null = & chcp 65001 2>&1
-[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
-
-$ErrorActionPreference = 'Stop'
-# Suppress the IWR / Expand-Archive progress UI. On Windows PowerShell 5.1
-# this is the dominant cost of the install -- the progress-bar rendering
-# can make a ~10MB download take 30+ seconds. Silencing it gives 5-10x
-# speedups. Doesn't affect pwsh 7 noticeably but doesn't hurt either.
-$ProgressPreference = 'SilentlyContinue'
-
 $repo       = 'fcreme/TerminalStyles'
 $branch     = 'main'
 $installDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
@@ -167,89 +152,6 @@ function Write-InstallPanel {
     }
 }
 
-Write-InstallBanner
-
-# --- Download ---
-Write-InstallStep "Downloading"
-Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
-Write-InstallStep "Downloading" -Check
-
-# --- Extract ---
-Write-InstallStep "Extracting"
-if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force }
-Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
-Write-InstallStep "Extracting" -Check
-
-$extractedRoot = Get-ChildItem -LiteralPath $tempDir -Directory | Select-Object -First 1
-if (-not $extractedRoot) { throw "Failed to locate extracted folder under $tempDir" }
-
-# --- Install to %LOCALAPPDATA% (preserve current-style.ps1 + cached GIFs across reinstalls) ---
-$preservedCurrentStyle = Join-Path $installDir 'current-style.ps1'
-$preservedBytes = $null
-if (Test-Path -LiteralPath $preservedCurrentStyle) {
-    $preservedBytes = [System.IO.File]::ReadAllBytes($preservedCurrentStyle)
-}
-
-# Preserve any previously-fetched background images so they don't have to be
-# re-downloaded from the gifs branch on every update.
-$preservedBackgrounds = @()
-$existingStylesDir = Join-Path $installDir 'styles'
-if (Test-Path -LiteralPath $existingStylesDir) {
-    foreach ($styleFolder in Get-ChildItem -LiteralPath $existingStylesDir -Directory) {
-        foreach ($ext in 'gif','png','jpg','jpeg') {
-            $bg = Join-Path $styleFolder.FullName "background.$ext"
-            if (Test-Path -LiteralPath $bg) {
-                $preservedBackgrounds += [pscustomobject]@{
-                    StyleName = $styleFolder.Name
-                    Ext       = $ext
-                    Bytes     = [System.IO.File]::ReadAllBytes($bg)
-                }
-                break  # at most one background per style
-            }
-        }
-    }
-}
-
-if (Test-Path -LiteralPath $installDir) {
-    Remove-Item -LiteralPath $installDir -Recurse -Force
-}
-Move-Item -LiteralPath $extractedRoot.FullName -Destination $installDir
-
-if ($preservedBytes) {
-    [System.IO.File]::WriteAllBytes((Join-Path $installDir 'current-style.ps1'), $preservedBytes)
-    Write-InstallStep "Preserved your active style" -Check
-}
-
-if ($preservedBackgrounds) {
-    foreach ($p in $preservedBackgrounds) {
-        $destDir = Join-Path $installDir "styles\$($p.StyleName)"
-        if (Test-Path -LiteralPath $destDir) {
-            [System.IO.File]::WriteAllBytes((Join-Path $destDir "background.$($p.Ext)"), $p.Bytes)
-        }
-    }
-    Write-InstallStep ("Preserved {0} cached background(s)" -f $preservedBackgrounds.Count) -Check
-}
-
-# Cleanup temp
-Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
-Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
-
-# --- Record install SHA for the update checker ---
-try {
-    # GitHub's API documents User-Agent as required for unauthenticated requests.
-    $commitInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/$branch" `
-                                    -Headers @{ 'User-Agent' = 'TerminalStyles-Installer' } `
-                                    -TimeoutSec 5 -ErrorAction Stop
-    if ($commitInfo.sha) {
-        [System.IO.File]::WriteAllText(
-            (Join-Path $installDir '.installed-sha'),
-            $commitInfo.sha,
-            [System.Text.UTF8Encoding]::new($false))
-    }
-} catch {
-    Write-Host "Note: couldn't record install SHA (network?); update checker will be disabled." -ForegroundColor DarkGray
-}
-
 # --- Helper: get a shell's $PROFILE + execution policy in ONE launch ---
 # Each shell launch (pwsh.exe / powershell.exe) costs ~500ms on cold start.
 # We previously launched each shell twice (once for $PROFILE, once for
@@ -368,43 +270,142 @@ function Resolve-ExecutionPolicy {
     }
 }
 
-# --- Register loader in every detected shell ---
-$shells = @(
-    @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
-    @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
-)
+# Main flow. Guarded so tests can dot-source this script for its functions
+# (set $TStylesInstallNoRun = $true) without running the installer. A normal
+# `iwr | iex` run never sets the var, so main runs.
+if (-not $TStylesInstallNoRun) {
 
-$registered = @()
-foreach ($s in $shells) {
-    $info = Get-ShellInfo -Exe $s.Exe -Label $s.Label
-    if (-not $info) { continue }
-    Register-LoaderInProfile -ProfilePath $info.ProfilePath -Label $s.Label -InstallDir $installDir `
-        -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
-    Resolve-ExecutionPolicy -Exe $s.Exe -Label $s.Label -EffectivePolicy $info.Policy
-    Write-InstallStep "Registered loader: $($s.Label)" -Check
-    $registered += $s.Label
-}
+    # Force UTF-8 console output as defense-in-depth (see header note).
+    $null = & chcp 65001 2>&1
+    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+    $ErrorActionPreference = 'Stop'
+    # Suppress the IWR / Expand-Archive progress UI. On Windows PowerShell 5.1
+    # this is the dominant cost of the install -- the progress-bar rendering
+    # can make a ~10MB download take 30+ seconds. Silencing it gives 5-10x
+    # speedups. Doesn't affect pwsh 7 noticeably but doesn't hurt either.
+    $ProgressPreference = 'SilentlyContinue'
 
-if (-not $registered) {
-    throw "Neither pwsh.exe nor powershell.exe was found on PATH. Cannot register TerminalStyles loader."
-}
+    Write-InstallBanner
 
-# Gather the bundled theme names for the "Ready" panel
-$themeNames = @(
-    Get-ChildItem -LiteralPath (Join-Path $installDir 'styles') -Directory |
-        Where-Object { Test-Path (Join-Path $_.FullName 'scheme.json') } |
-        Sort-Object Name |
-        ForEach-Object Name
-)
+    # --- Download ---
+    Write-InstallStep "Downloading"
+    Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
+    Write-InstallStep "Downloading" -Check
 
-Write-InstallPanel -ThemeNames $themeNames -RegisteredEngines $registered
+    # --- Extract ---
+    Write-InstallStep "Extracting"
+    if (Test-Path -LiteralPath $tempDir) { Remove-Item -LiteralPath $tempDir -Recurse -Force }
+    Expand-Archive -Path $tempZip -DestinationPath $tempDir -Force
+    Write-InstallStep "Extracting" -Check
 
-# --- Same-tab handoff ---
-# Import the freshly-installed module into the GLOBAL scope (not the
-# script's child scope) so the `tstyles` command is available in the
-# caller's session immediately. Without -Global, the import would be
-# scoped to this script and disappear when install.ps1 returns.
-$installedManifest = Join-Path $installDir 'TerminalStyles.psd1'
-if (Test-Path -LiteralPath $installedManifest) {
-    Import-Module $installedManifest -Force -Global -DisableNameChecking *> $null
+    $extractedRoot = Get-ChildItem -LiteralPath $tempDir -Directory | Select-Object -First 1
+    if (-not $extractedRoot) { throw "Failed to locate extracted folder under $tempDir" }
+
+    # --- Install to %LOCALAPPDATA% (preserve current-style.ps1 + cached GIFs across reinstalls) ---
+    $preservedCurrentStyle = Join-Path $installDir 'current-style.ps1'
+    $preservedBytes = $null
+    if (Test-Path -LiteralPath $preservedCurrentStyle) {
+        $preservedBytes = [System.IO.File]::ReadAllBytes($preservedCurrentStyle)
+    }
+
+    # Preserve any previously-fetched background images so they don't have to be
+    # re-downloaded from the gifs branch on every update.
+    $preservedBackgrounds = @()
+    $existingStylesDir = Join-Path $installDir 'styles'
+    if (Test-Path -LiteralPath $existingStylesDir) {
+        foreach ($styleFolder in Get-ChildItem -LiteralPath $existingStylesDir -Directory) {
+            foreach ($ext in 'gif','png','jpg','jpeg') {
+                $bg = Join-Path $styleFolder.FullName "background.$ext"
+                if (Test-Path -LiteralPath $bg) {
+                    $preservedBackgrounds += [pscustomobject]@{
+                        StyleName = $styleFolder.Name
+                        Ext       = $ext
+                        Bytes     = [System.IO.File]::ReadAllBytes($bg)
+                    }
+                    break  # at most one background per style
+                }
+            }
+        }
+    }
+
+    if (Test-Path -LiteralPath $installDir) {
+        Remove-Item -LiteralPath $installDir -Recurse -Force
+    }
+    Move-Item -LiteralPath $extractedRoot.FullName -Destination $installDir
+
+    if ($preservedBytes) {
+        [System.IO.File]::WriteAllBytes((Join-Path $installDir 'current-style.ps1'), $preservedBytes)
+        Write-InstallStep "Preserved your active style" -Check
+    }
+
+    if ($preservedBackgrounds) {
+        foreach ($p in $preservedBackgrounds) {
+            $destDir = Join-Path $installDir "styles\$($p.StyleName)"
+            if (Test-Path -LiteralPath $destDir) {
+                [System.IO.File]::WriteAllBytes((Join-Path $destDir "background.$($p.Ext)"), $p.Bytes)
+            }
+        }
+        Write-InstallStep ("Preserved {0} cached background(s)" -f $preservedBackgrounds.Count) -Check
+    }
+
+    # Cleanup temp
+    Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
+
+    # --- Record install SHA for the update checker ---
+    try {
+        # GitHub's API documents User-Agent as required for unauthenticated requests.
+        $commitInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/$branch" `
+                                        -Headers @{ 'User-Agent' = 'TerminalStyles-Installer' } `
+                                        -TimeoutSec 5 -ErrorAction Stop
+        if ($commitInfo.sha) {
+            [System.IO.File]::WriteAllText(
+                (Join-Path $installDir '.installed-sha'),
+                $commitInfo.sha,
+                [System.Text.UTF8Encoding]::new($false))
+        }
+    } catch {
+        Write-Host "Note: couldn't record install SHA (network?); update checker will be disabled." -ForegroundColor DarkGray
+    }
+
+    # --- Register loader in every detected shell ---
+    $shells = @(
+        @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
+        @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
+    )
+
+    $registered = @()
+    foreach ($s in $shells) {
+        $info = Get-ShellInfo -Exe $s.Exe -Label $s.Label
+        if (-not $info) { continue }
+        Register-LoaderInProfile -ProfilePath $info.ProfilePath -Label $s.Label -InstallDir $installDir `
+            -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
+        Resolve-ExecutionPolicy -Exe $s.Exe -Label $s.Label -EffectivePolicy $info.Policy
+        Write-InstallStep "Registered loader: $($s.Label)" -Check
+        $registered += $s.Label
+    }
+
+    if (-not $registered) {
+        throw "Neither pwsh.exe nor powershell.exe was found on PATH. Cannot register TerminalStyles loader."
+    }
+
+    # Gather the bundled theme names for the "Ready" panel
+    $themeNames = @(
+        Get-ChildItem -LiteralPath (Join-Path $installDir 'styles') -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'scheme.json') } |
+            Sort-Object Name |
+            ForEach-Object Name
+    )
+
+    Write-InstallPanel -ThemeNames $themeNames -RegisteredEngines $registered
+
+    # --- Same-tab handoff ---
+    # Import the freshly-installed module into the GLOBAL scope (not the
+    # script's child scope) so the `tstyles` command is available in the
+    # caller's session immediately. Without -Global, the import would be
+    # scoped to this script and disappear when install.ps1 returns.
+    $installedManifest = Join-Path $installDir 'TerminalStyles.psd1'
+    if (Test-Path -LiteralPath $installedManifest) {
+        Import-Module $installedManifest -Force -Global -DisableNameChecking *> $null
+    }
 }
