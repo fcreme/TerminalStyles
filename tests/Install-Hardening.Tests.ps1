@@ -81,3 +81,40 @@ Describe 'Assert-InstallLanded' {
         { Assert-InstallLanded -InstallDir $dir } | Should -Throw -ExpectedMessage '*did not complete*'
     }
 }
+
+Describe 'Write-TextFileAtomic' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+        $script:enc = [System.Text.UTF8Encoding]::new($false)
+    }
+
+    It 'writes the exact content to a new file' {
+        $p = Join-Path $TestDrive 'new.txt'
+        Write-TextFileAtomic -Path $p -Content "hello`r`nworld"
+        [System.IO.File]::ReadAllText($p, $script:enc) | Should -Be "hello`r`nworld"
+    }
+
+    It 'writes UTF-8 with no BOM' {
+        $p = Join-Path $TestDrive 'nobom.txt'
+        Write-TextFileAtomic -Path $p -Content 'abc'
+        $bytes = [System.IO.File]::ReadAllBytes($p)
+        ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF) | Should -BeFalse
+    }
+
+    It 'overwrites an existing file' {
+        $p = Join-Path $TestDrive 'over.txt'
+        Set-Content -LiteralPath $p -Value 'old'
+        Write-TextFileAtomic -Path $p -Content 'new'
+        [System.IO.File]::ReadAllText($p, $script:enc) | Should -Be 'new'
+    }
+
+    It 'leaves no temp file behind' {
+        $dir = Join-Path $TestDrive 'tmpcheck'
+        New-Item -ItemType Directory -Force -Path $dir | Out-Null
+        $p = Join-Path $dir 'f.txt'
+        Write-TextFileAtomic -Path $p -Content 'data'
+        @(Get-ChildItem -LiteralPath $dir -Filter '*.tmp-*' -Force).Count | Should -Be 0
+    }
+}

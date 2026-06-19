@@ -182,6 +182,30 @@ function Get-ShellInfo {
     }
 }
 
+# --- Atomic UTF-8 (no BOM) text write: temp sibling + replace ---
+function Write-TextFileAtomic {
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$Content
+    )
+    $enc = [System.Text.UTF8Encoding]::new($false)
+    $dir = Split-Path -Parent $Path
+    $tmp = Join-Path $dir ('.' + (Split-Path -Leaf $Path) + '.tmp-' + ([guid]::NewGuid().Guid.Substring(0,8)))
+    [System.IO.File]::WriteAllText($tmp, $Content, $enc)
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            [System.IO.File]::Replace($tmp, $Path, $null)   # atomic; consumes $tmp
+        } else {
+            [System.IO.File]::Move($tmp, $Path)
+        }
+    } catch {
+        # Fallback: best-effort direct write (non-atomic). Surface once.
+        Write-Host "  Note: atomic write unavailable on this volume; writing directly." -ForegroundColor DarkGray
+        [System.IO.File]::WriteAllText($Path, $Content, $enc)
+        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+    }
+}
+
 # --- Helper: write the loader block into a profile, migrating bundled-style content if matched ---
 function Register-LoaderInProfile {
     param(
