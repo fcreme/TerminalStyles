@@ -273,7 +273,10 @@ function Write-WTSettingsFile {
     [System.IO.File]::WriteAllText($tmp, $json, $enc)
     try {
         if (Test-Path -LiteralPath $Path) {
-            [System.IO.File]::Replace($tmp, $Path, $null)
+            # [NullString]::Value, not $null: a bare $null is coerced to '' and
+            # makes Replace throw "path is empty" on PS7, silently degrading to
+            # the non-atomic in-place write in the catch below.
+            [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
         } else {
             [System.IO.File]::Move($tmp, $Path)
         }

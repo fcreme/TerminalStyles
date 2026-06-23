@@ -51,4 +51,24 @@ Describe 'apply.ps1 Write-WTSettingsFile' {
         $reloaded.PSObject.Properties.Name | Should -Not -Contain 'old'
         (Test-Path -LiteralPath "$path.tstmp") | Should -BeFalse
     }
+
+    It 'replaces an existing file atomically (swaps in a new file, never rewrites in place)' {
+        # Regression: File.Replace's backupFileName arg must be a real null.
+        # Passing $null makes PowerShell coerce it to '' -> Replace throws
+        # "path is empty" -> the catch silently degrades to a non-atomic
+        # in-place WriteAllText. Hard-link the destination's underlying file
+        # before the write: an atomic Replace swaps in a brand-new file, so the
+        # original file (still reachable through the hard link) keeps its OLD
+        # bytes. A non-atomic in-place rewrite would write through the shared
+        # file and the hard link would observe the NEW bytes instead.
+        $path = Join-Path $TestDrive 'atomic-replace.json'
+        $link = Join-Path $TestDrive 'atomic-replace.hardlink.json'
+        [System.IO.File]::WriteAllText($path, '{"v":"OLD"}', $script:enc)
+        New-Item -ItemType HardLink -Path $link -Target $path | Out-Null
+
+        Write-WTSettingsFile -Path $path -Settings ([pscustomobject]@{ v = 'NEW' })
+
+        ([System.IO.File]::ReadAllText($path, $script:enc) | ConvertFrom-Json).v | Should -Be 'NEW'
+        ([System.IO.File]::ReadAllText($link, $script:enc) | ConvertFrom-Json).v | Should -Be 'OLD'
+    }
 }

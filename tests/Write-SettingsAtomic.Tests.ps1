@@ -36,5 +36,27 @@ Describe 'Write-SettingsAtomic' {
             Write-SettingsAtomic -Path $f -Json '{"a":1}'
             Test-Path -LiteralPath "$f.tstmp" | Should -BeFalse
         }
+
+        It 'replaces an existing file atomically (swaps in a new file, never rewrites in place)' {
+            # Regression: File.Replace's 3rd arg (backupFileName) must be a real
+            # null. Passing $null makes PowerShell coerce it to '' -> Replace
+            # throws "path is empty" -> the catch silently degrades to a
+            # non-atomic in-place WriteAllText. We force the atomic path to be
+            # observable: hard-link the destination's underlying file before the
+            # write. An atomic Replace swaps in a brand-new file, so the original
+            # file -- still reachable through the hard link -- keeps its OLD
+            # bytes. A non-atomic in-place rewrite writes through the shared
+            # file, so the hard link would instead observe the NEW bytes.
+            $enc  = [System.Text.UTF8Encoding]::new($false)
+            $f    = Join-Path $TestDrive 'settings.json'
+            $link = Join-Path $TestDrive 'settings.hardlink.json'
+            [System.IO.File]::WriteAllText($f, '{"v":"OLD"}', $enc)
+            New-Item -ItemType HardLink -Path $link -Target $f | Out-Null
+
+            Write-SettingsAtomic -Path $f -Json '{"v":"NEW"}'
+
+            [System.IO.File]::ReadAllText($f, $enc)    | Should -Be '{"v":"NEW"}'
+            [System.IO.File]::ReadAllText($link, $enc) | Should -Be '{"v":"OLD"}'
+        }
     }
 }

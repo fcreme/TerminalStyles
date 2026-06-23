@@ -572,8 +572,12 @@ function Write-SettingsAtomic {
     [System.IO.File]::WriteAllText($tmp, $Json, $enc)
     try {
         if (Test-Path -LiteralPath $Path) {
-            # backupFileName = $null: replace in place without keeping a copy.
-            [System.IO.File]::Replace($tmp, $Path, $null)
+            # backupFileName = [NullString]::Value: replace without keeping a
+            # copy. A bare $null is coerced by PowerShell to '' here, which makes
+            # Replace throw "path is empty" on PS7 and silently fall back to the
+            # non-atomic in-place write below; [NullString]::Value passes a true
+            # null so the atomic same-volume rename actually runs.
+            [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
         } else {
             [System.IO.File]::Move($tmp, $Path)
         }
