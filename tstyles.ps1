@@ -2388,6 +2388,53 @@ function Invoke-StylePickerLoop {
     }
 }
 
+function Test-ShouldPromptFonts {
+    # Pure gate: only prompt on an interactive session that hasn't been prompted.
+    param(
+        [Parameter(Mandatory)][bool]$MarkerPresent,
+        [Parameter(Mandatory)][bool]$Interactive
+    )
+    return (-not $MarkerPresent) -and $Interactive
+}
+
+function Invoke-FontFirstRunPrompt {
+    # One-time opt-in: offer to install the recommended font set. Marker-gated so
+    # it never repeats; silent in non-interactive sessions.
+    $marker = Join-Path $script:TStylesDataRoot '.fonts-prompted'
+    $markerPresent = Test-Path -LiteralPath $marker
+    if (-not (Test-ShouldPromptFonts -MarkerPresent $markerPresent -Interactive ([Environment]::UserInteractive))) {
+        return
+    }
+
+    $ans = Read-Host "Install a set of recommended coding fonts now? [y/N]"
+    if ($ans -match '^(?i)y') {
+        try {
+            $catalog = @(Get-FontCatalog)
+            foreach ($f in $catalog) {
+                if (Test-FontInstalled -Family $f.family) { continue }
+                Write-Host "  Installing $($f.name)..." -ForegroundColor Cyan
+                try {
+                    $files = Resolve-FontPackage -Font $f
+                    [void](Install-Font -FontFiles $files)
+                } catch {
+                    Write-Host "    Skipped $($f.name): $_" -ForegroundColor DarkGray
+                }
+            }
+            Write-Host "Done. Pick fonts anytime with 'tstyles tune' or 'tstyles font'." -ForegroundColor Green
+        } catch {
+            Write-Host "Font setup failed: $_" -ForegroundColor Red
+        }
+    }
+
+    # Always record that we've prompted, regardless of the answer.
+    try {
+        if (-not (Test-Path -LiteralPath $script:TStylesDataRoot)) {
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllText($marker, '', [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
@@ -2447,6 +2494,10 @@ function Invoke-TerminalStyle {
         Write-Host "To target a Windows Terminal profile, use: tstyles -Target '<name>'" -ForegroundColor DarkGray
         return
     }
+
+    # One-time opt-in font prompt (fires only in interactive sessions, never for
+    # subcommands — they all `return` above before reaching this point).
+    Invoke-FontFirstRunPrompt
 
     # Update-notice path runs on every passive invocation (picker included),
     # but Test-UpdateAvailable short-circuits inside the 24h throttle window.
