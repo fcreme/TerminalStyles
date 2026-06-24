@@ -1343,6 +1343,26 @@ function Get-MonospaceFontList {
     return @($list | Select-Object -Unique)
 }
 
+function Get-FontCatalog {
+    # Parse the bundled font catalog (fonts.json). Returns the array of font
+    # entries, skipping any that lack a required field. Throws on missing file
+    # or invalid JSON.
+    param([string]$Path = (Join-Path $PSScriptRoot 'fonts.json'))
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Font catalog not found: $Path"
+    }
+    $json = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    $data = $json | ConvertFrom-Json   # throws on malformed JSON
+    $entries = @($data.fonts)
+    $valid = foreach ($e in $entries) {
+        if (-not $e) { continue }
+        if (-not $e.name -or -not $e.family -or -not $e.url -or -not $e.sha256) { continue }
+        $e
+    }
+    return @($valid)
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
