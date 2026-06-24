@@ -1546,6 +1546,77 @@ function Set-ProfileFont {
     return $true
 }
 
+function Show-FontList {
+    # List the font catalog with an installed/installable marker. -Catalog and
+    # -Installed are test seams; real callers omit them.
+    param(
+        [object[]]$Catalog,
+        [string[]]$Installed
+    )
+    if (-not $Catalog) { $Catalog = @(Get-FontCatalog) }
+    Write-Host ""
+    Write-Host "  Available coding fonts ([+] installed, [ ] installable):" -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($f in $Catalog) {
+        $isIn = if ($PSBoundParameters.ContainsKey('Installed')) {
+            Test-FontInstalled -Family $f.family -Installed $Installed
+        } else {
+            Test-FontInstalled -Family $f.family
+        }
+        $mark = if ($isIn) { '[+]' } else { '[ ]' }
+        Write-Host ("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license)
+    }
+    Write-Host ""
+    Write-Host "  Install + apply one with: tstyles font <name>" -ForegroundColor DarkGray
+}
+
+function Invoke-TerminalStyleFont {
+    # `tstyles font` (list) / `tstyles font <name>` (install if needed + apply).
+    param(
+        [string]$Name,
+        [string]$Target
+    )
+    if (-not $Name) { Show-FontList; return }
+
+    $catalog = @(Get-FontCatalog)
+    $font = $catalog | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+    if (-not $font) {
+        Write-Host "Unknown font: '$Name'" -ForegroundColor Yellow
+        Write-Host "Available: $(@($catalog | ForEach-Object name) -join ', ')" -ForegroundColor DarkGray
+        return
+    }
+
+    if (Test-FontInstalled -Family $font.family) {
+        Write-Host "'$($font.family)' is already installed." -ForegroundColor Green
+    } else {
+        Write-Host "Installing '$($font.name)'..." -ForegroundColor Cyan
+        try {
+            $files = Resolve-FontPackage -Font $font
+            $n = Install-Font -FontFiles $files
+            Write-Host "  Installed $n file(s) for '$($font.family)'." -ForegroundColor Green
+        } catch {
+            Write-Host "Font install failed: $_" -ForegroundColor Red
+            return
+        }
+    }
+
+    # Apply to the active profile.
+    $settingsPath = Find-WTSettingsPath
+    if (-not $settingsPath) { Write-Host "Could not locate Windows Terminal settings.json." -ForegroundColor Red; return }
+    if (-not $Target) {
+        $json = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+        $Target = Get-CurrentWTProfileName -Settings (ConvertFrom-WTJson $json)
+    }
+    if (-not $Target) { Write-Host "Could not detect the current profile; pass -Target '<name>'." -ForegroundColor Yellow; return }
+
+    try { [System.IO.File]::WriteAllText("$settingsPath.bak", [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false)), [System.Text.UTF8Encoding]::new($false)) } catch { }
+    if (Set-ProfileFont -SettingsPath $settingsPath -TargetName $Target -Family $font.family) {
+        Write-Host "  Applied '$($font.family)' to '$Target'. Open a new tab to see it." -ForegroundColor Green
+    } else {
+        Write-Host "Profile '$Target' not found in settings.json." -ForegroundColor Yellow
+    }
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
@@ -2066,6 +2137,13 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
         }
         [pscustomobject]@{
+            Name = 'font'; Usage = 'font [name]'; Summary = 'Install a curated coding font (if needed) and apply it to your active profile'
+            Detail = @("With no argument, lists available coding fonts with installed/installable",
+                       "markers. With a font name, installs it (if not already present) and",
+                       "applies it to the active Windows Terminal profile.")
+            Keys = @(); Examples = @('tstyles font', 'tstyles font ''JetBrains Mono''')
+        }
+        [pscustomobject]@{
             Name = 'help'; Usage = 'help [command]'; Summary = 'Show all commands, or details for one'
             Detail = @("With no argument, lists every command. With a command name, shows",
                        "detailed help for that command.")
@@ -2342,6 +2420,7 @@ function Invoke-TerminalStyle {
 
     # --- Subcommand dispatch ---
     if ($Update -or $Arg -eq 'update')   { Invoke-TerminalStylesUpdate -Force:$Force; return }
+    if ($Arg -eq 'font')                 { Invoke-TerminalStyleFont -Name $SubArg -Target $Target; return }
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }
@@ -2752,7 +2831,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
+    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.
