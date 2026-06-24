@@ -1510,6 +1510,42 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint M
     return $count
 }
 
+function Set-ProfileFont {
+    # Set $Family as the font.face on the target Windows Terminal profile (or
+    # profiles.defaults). Returns $true if applied, $false if a named target
+    # doesn't exist (file left untouched). Uses the atomic settings writer.
+    param(
+        [Parameter(Mandatory)][string]$SettingsPath,
+        [Parameter(Mandatory)][string]$TargetName,
+        [Parameter(Mandatory)][string]$Family
+    )
+    $json = [System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false))
+    $settings = ConvertFrom-WTJson $json
+
+    $entry = $null
+    if ($TargetName -eq 'defaults') {
+        if (-not $settings.profiles.PSObject.Properties.Match('defaults').Count) {
+            $settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
+        }
+        $entry = $settings.profiles.defaults
+    } else {
+        $entry = $settings.profiles.list | Where-Object name -eq $TargetName | Select-Object -First 1
+        if (-not $entry) { return $false }
+    }
+
+    if (-not $entry.PSObject.Properties.Match('font').Count) {
+        $entry | Add-Member -NotePropertyName font -NotePropertyValue ([pscustomobject]@{})
+    }
+    if ($entry.font.PSObject.Properties.Match('face').Count) {
+        $entry.font.face = $Family
+    } else {
+        $entry.font | Add-Member -NotePropertyName face -NotePropertyValue $Family -Force
+    }
+
+    Write-SettingsAtomic -Path $SettingsPath -Json ($settings | ConvertTo-Json -Depth 100)
+    return $true
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
