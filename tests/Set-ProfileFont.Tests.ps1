@@ -31,5 +31,23 @@ Describe 'Set-ProfileFont' {
             $ok | Should -BeFalse
             [System.IO.File]::ReadAllText($script:settings, $script:enc) | Should -Be $before
         }
+
+        It 'sets font.face on the defaults target, creating it if absent' {
+            $ok = Set-ProfileFont -SettingsPath $script:settings -TargetName 'defaults' -Family 'Hack'
+            $ok | Should -BeTrue
+            $s = [System.IO.File]::ReadAllText($script:settings, $script:enc) | ConvertFrom-Json
+            $s.profiles.defaults.font.face | Should -Be 'Hack'
+        }
+
+        It 'preserves existing font sub-properties when setting face' {
+            [System.IO.File]::WriteAllText($script:settings,
+                '{"profiles":{"list":[{"name":"PowerShell","guid":"{g}","font":{"size":14}}]}}', $script:enc)
+            $ok = Set-ProfileFont -SettingsPath $script:settings -TargetName 'PowerShell' -Family 'Hack'
+            $ok | Should -BeTrue
+            $entry = (([System.IO.File]::ReadAllText($script:settings, $script:enc) | ConvertFrom-Json).profiles.list |
+                      Where-Object name -eq 'PowerShell')
+            $entry.font.face | Should -Be 'Hack'
+            $entry.font.size | Should -Be 14
+        }
     }
 }
