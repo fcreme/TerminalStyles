@@ -1,10 +1,15 @@
 # TerminalStyles
 
 [![Tests](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg)](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml)
+[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery)](https://www.powershellgallery.com/packages/TerminalStyles)
 
-Themed styles for **PowerShell** (5.1 and 7+) in **Windows Terminal**.
-Install once, then run `tstyles` to switch arrow keys preview each style
-live in your current tab, Enter keeps it, Esc cancels.
+**Switch Windows Terminal themes live.** Run `tstyles`, arrow through 16 themes
+previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
+exactly how it looked before. Color scheme, cursor, font, opacity, and animated
+background, all in one command, all non-destructive.
+
+Works on PowerShell 7 and Windows PowerShell 5.1. Keep your own prompt
+(Oh My Posh / Starship) with `tstyles <name> -KeepPrompt`.
 
 <table>
   <tr>
