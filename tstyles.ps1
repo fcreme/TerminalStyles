@@ -2118,6 +2118,13 @@ function Get-TerminalStyleHelpData {
             Examples = @('tstyles tune', 'tstyles tune eva')
         }
         [pscustomobject]@{
+            Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font and apply it to the active profile'
+            Detail = @("With no argument, lists available coding fonts with installed/installable",
+                       "markers. With a font name, installs it (if not already present) and",
+                       "applies it to the active Windows Terminal profile.")
+            Keys = @(); Examples = @('tstyles font', 'tstyles font ''JetBrains Mono''')
+        }
+        [pscustomobject]@{
             Name = 'register'; Usage = 'register'; Summary = 'Add the loader to your $PROFILE'
             Detail = @("Adds the Import-Module loader to both PowerShell 7 and Windows",
                        "PowerShell 5.1 `$PROFILE files (with a confirm prompt) so tstyles",
@@ -2135,13 +2142,6 @@ function Get-TerminalStyleHelpData {
             Detail = @("Removes the module and strips the `$PROFILE loader. Your saved",
                        "styles and state are preserved unless you pass -DeleteData.")
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
-        }
-        [pscustomobject]@{
-            Name = 'font'; Usage = 'font [name]'; Summary = 'Install a curated coding font (if needed) and apply it to your active profile'
-            Detail = @("With no argument, lists available coding fonts with installed/installable",
-                       "markers. With a font name, installs it (if not already present) and",
-                       "applies it to the active Windows Terminal profile.")
-            Keys = @(); Examples = @('tstyles font', 'tstyles font ''JetBrains Mono''')
         }
         [pscustomobject]@{
             Name = 'help'; Usage = 'help [command]'; Summary = 'Show all commands, or details for one'
