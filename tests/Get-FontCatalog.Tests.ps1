@@ -32,7 +32,12 @@ Describe 'Get-FontCatalog' {
         }
 
         It 'throws when the manifest file is missing' {
-            { Get-FontCatalog -Path (Join-Path $TestDrive 'nope.json') } | Should -Throw
+            { Get-FontCatalog -Path (Join-Path $TestDrive 'nope.json') } | Should -Throw -ExpectedMessage '*Font catalog not found*'
+        }
+
+        It 'throws on malformed JSON' {
+            [System.IO.File]::WriteAllText($script:manifest, 'not valid json { ][', $script:enc)
+            { Get-FontCatalog -Path $script:manifest } | Should -Throw
         }
 
         It 'skips entries missing a required field' {

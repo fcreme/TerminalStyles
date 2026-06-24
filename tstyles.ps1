@@ -1354,6 +1354,7 @@ function Get-FontCatalog {
     }
     $json = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
     $data = $json | ConvertFrom-Json   # throws on malformed JSON
+    # @($data.fonts) is @() in PS7 but @($null) (one null element) in WinPS 5.1 when 'fonts' is absent/null; the per-entry null check below covers both.
     $entries = @($data.fonts)
     $valid = foreach ($e in $entries) {
         if (-not $e) { continue }
