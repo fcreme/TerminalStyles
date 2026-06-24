@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.3] - 2026-06-24
+
+### Changed
+
+- PowerShell Gallery listing metadata refreshed for discoverability: a clearer, keyword-rich description and an expanded tag set (adds `Terminal`, `ColorScheme`, `Cursor`, `Background`, `Customization`, `Console`, `Dotfiles`, plus the `PSEdition_Core` / `PSEdition_Desktop` / `Windows` platform tags so the package shows up in the Gallery's search filters)
+
 ### Fixed
 
 - on PowerShell 7, a direct style apply (`tstyles <name>`) or the picker/tuner could leave a half-written or empty Windows Terminal settings.json if interrupted mid-write — the atomic temp-file replace silently degraded to a non-atomic in-place write because `File.Replace`'s backup argument was a bare `$null` (which PS7 coerces to an empty string and rejects). Both settings writers now pass `[NullString]::Value`, so the atomic same-volume rename runs as intended
@@ -134,7 +140,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.6.2...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.6.3...HEAD
+[0.6.3]: https://github.com/fcreme/TerminalStyles/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/fcreme/TerminalStyles/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/fcreme/TerminalStyles/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/fcreme/TerminalStyles/compare/v0.5.0...v0.6.0
