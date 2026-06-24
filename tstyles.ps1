@@ -2394,6 +2394,7 @@ function Invoke-TerminalStyle {
         }
 
         $drawMenu = {
+            param($idx)
             [Console]::SetCursorPosition(0, $renderHomeY)
             Write-Host ""
             Write-Host "  Choose a style for " -NoNewline
@@ -2431,68 +2432,20 @@ function Invoke-TerminalStyle {
             if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
         }
 
-        $needsRedraw = $true
-        $pendingApply = -1
+        # Per-keystroke instant retint (OSC color packet). The deferred
+        # settings.json write is $applyTheme, passed as -OnPreview.
+        $onRetint = { param($i) [Console]::Out.Write($oscPackets[$i]) }
 
-        while (-not $confirmed) {
-            if ($needsRedraw) {
-                & $drawMenu
-                $needsRedraw = $false
-            }
+        # Esc: restore the byte-exact original settings.json and clear the live
+        # OSC retint so the cancelled preview's colors don't linger.
+        $onRevert = {
+            Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+            [Console]::Out.Write((Get-OscResetPacket))
+        }
 
-            if ([Console]::KeyAvailable) {
-                $key = [Console]::ReadKey($true)
-                switch ($key.Key) {
-                    'UpArrow' {
-                        if ($idx -gt 0) {
-                            $idx--; $needsRedraw = $true; $pendingApply = $idx
-                            [Console]::Out.Write($oscPackets[$idx])
-                        }
-                    }
-                    'DownArrow' {
-                        if ($idx -lt $styles.Count - 1) {
-                            $idx++; $needsRedraw = $true; $pendingApply = $idx
-                            [Console]::Out.Write($oscPackets[$idx])
-                        }
-                    }
-                    'Enter' {
-                        # Drain any pending apply so the confirmed theme
-                        # is in settings.json before we copy profile.ps1.
-                        if ($pendingApply -ge 0) {
-                            & $applyTheme $pendingApply
-                            $pendingApply = -1
-                        }
-                        $confirmed = $true
-                    }
-                    'Escape' {
-                        Write-SettingsAtomic -Path $settingsPath -Json $originalJson
-                        # Reset the live OSC retint so the cancelled preview's
-                        # colors don't linger over the reverted settings.json.
-                        [Console]::Out.Write((Get-OscResetPacket))
-                        Clear-Host
-                        Write-Host "Reverted." -ForegroundColor Yellow
-                        return
-                    }
-                }
-                continue
-            }
-
-            # Keypress queue empty. Apply the latest pending theme (if
-            # any) before doing anything else. This is the "debounce
-            # tail" -- only the final position from a mash sequence
-            # actually gets written to settings.json.
-            if ($pendingApply -ge 0) {
-                $applyIdx = $pendingApply
-                $pendingApply = -1
-                & $applyTheme $applyIdx
-                continue
-            }
-
-            # Truly idle. Prebuild the next uncached resolved theme.
-            # Skips themes whose backgrounds haven't been fetched yet
-            # (the prefetch job is still downloading them) -- those
-            # cache lazily once resolved, or via on-demand merge if
-            # the user arrows there first.
+        # Idle slice: prebuild the next uncached resolved theme's merged JSON,
+        # else sleep briefly. (Verbatim from the old idle branch.)
+        $onIdle = {
             $nextPrebuild = -1
             for ($j = 0; $j -lt $styles.Count; $j++) {
                 if ($mergedCache.ContainsKey($j)) { continue }
@@ -2508,6 +2461,22 @@ function Invoke-TerminalStyle {
                 Start-Sleep -Milliseconds 50
             }
         }
+
+        # Real input seam: read a key if one is queued, else $null.
+        $readKey = { if ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null } }
+
+        $result = Invoke-StylePickerLoop -StyleCount $styles.Count -StartIndex $idx `
+            -ReadKey $readKey -OnPreview $applyTheme -OnRevert $onRevert `
+            -OnDraw $drawMenu -OnRetint $onRetint -OnIdle $onIdle
+
+        if ($result.Outcome -eq 'cancelled') {
+            Clear-Host
+            Write-Host "Reverted." -ForegroundColor Yellow
+            return
+        }
+
+        $idx       = $result.Index
+        $confirmed = $true
 
         # Confirmed -- maybe install profile.ps1
         $selectedStyle = $styles[$idx]
