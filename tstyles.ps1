@@ -1364,6 +1364,46 @@ function Get-FontCatalog {
     return @($valid)
 }
 
+function Test-FontInstalled {
+    # True when $Family is among installed font families (case-insensitive).
+    # -Installed is a test seam; real callers omit it and we enumerate.
+    param(
+        [Parameter(Mandatory)][string]$Family,
+        [string[]]$Installed
+    )
+    if (-not $PSBoundParameters.ContainsKey('Installed')) {
+        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+        try {
+            $Installed = [System.Drawing.Text.InstalledFontCollection]::new().Families.Name
+        } catch {
+            $Installed = @()
+        }
+    }
+    return @($Installed | Where-Object { $_ -and $_.Trim().ToLowerInvariant() -eq $Family.Trim().ToLowerInvariant() }).Count -gt 0
+}
+
+function Get-UserFontInstallPlan {
+    # Pure: map font files to their per-user install destinations + HKCU registry
+    # value names. No filesystem/registry writes happen here.
+    param(
+        [Parameter(Mandatory)][string[]]$FontFiles,
+        [string]$FontsDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts')
+    )
+    foreach ($f in $FontFiles) {
+        $leaf = Split-Path -Leaf $f
+        $ext  = [System.IO.Path]::GetExtension($leaf).ToLowerInvariant()
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
+        $kind = if ($ext -eq '.otf') { 'OpenType' } else { 'TrueType' }
+        $dest = [System.IO.Path]::Combine($FontsDir, $leaf)
+        [pscustomobject]@{
+            Source    = $f
+            Dest      = $dest
+            ValueName = "$base ($kind)"
+            ValueData = $dest
+        }
+    }
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
