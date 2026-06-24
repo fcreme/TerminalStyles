@@ -1465,6 +1465,51 @@ function Resolve-FontPackage {
     return ,$out
 }
 
+function Install-Font {
+    # Install font files for the current user (no admin): copy to the per-user
+    # Fonts dir, register under HKCU, then activate in the current session via
+    # AddFontResource + a WM_FONTCHANGE broadcast so new processes (and WT on
+    # reload) see them. -FontsDir / -RegistryRoot are test seams.
+    param(
+        [Parameter(Mandatory)][string[]]$FontFiles,
+        [string]$FontsDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'),
+        [string]$RegistryRoot = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    )
+    if (-not (Test-Path -LiteralPath $FontsDir)) {
+        New-Item -ItemType Directory -Path $FontsDir -Force | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $RegistryRoot)) {
+        New-Item -Path $RegistryRoot -Force | Out-Null
+    }
+
+    $plan = Get-UserFontInstallPlan -FontFiles $FontFiles -FontsDir $FontsDir
+    $count = 0
+    foreach ($p in $plan) {
+        Copy-Item -LiteralPath $p.Source -Destination $p.Dest -Force
+        New-ItemProperty -Path $RegistryRoot -Name $p.ValueName -Value $p.ValueData -PropertyType String -Force | Out-Null
+        $count++
+    }
+
+    # Activate in this session (best effort; the file+registry install is the
+    # durable part, so failures here are non-fatal).
+    try {
+        if (-not ('TStylesFontApi' -as [type])) {
+            Add-Type -Namespace '' -Name 'TStylesFontApi' -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("gdi32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern int AddFontResource(string lpFileName);
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Auto)]
+public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.IntPtr result);
+'@
+        }
+        foreach ($p in $plan) { [void][TStylesFontApi]::AddFontResource($p.Dest) }
+        $HWND_BROADCAST = [System.IntPtr]0xffff; $WM_FONTCHANGE = 0x001D
+        $res = [System.IntPtr]::Zero
+        [void][TStylesFontApi]::SendMessageTimeout($HWND_BROADCAST, $WM_FONTCHANGE, [System.IntPtr]::Zero, [System.IntPtr]::Zero, 0, 1000, [ref]$res)
+    } catch { }
+
+    return $count
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
