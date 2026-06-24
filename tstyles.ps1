@@ -1404,6 +1404,63 @@ function Get-UserFontInstallPlan {
     }
 }
 
+function Resolve-FontPackage {
+    # Download (or use -DownloadPath), verify SHA-256, and extract the listed
+    # font files into the cache. Returns the extracted file paths. Throws on a
+    # missing/empty download, a hash mismatch, or a listed file absent from the
+    # archive -- never leaves a partially-installed state.
+    param(
+        [Parameter(Mandatory)]$Font,
+        [string]$CacheRoot = (Join-Path $script:TStylesDataRoot 'fonts'),
+        [string]$DownloadPath
+    )
+    $cacheDir = Join-Path $CacheRoot $Font.name
+    $extractDir = Join-Path $cacheDir 'files'
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+
+    $archive = $DownloadPath
+    if (-not $archive) {
+        $archive = Join-Path $cacheDir 'download.bin'
+        $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -Uri $Font.url -OutFile $archive -UseBasicParsing -ErrorAction Stop
+        } finally { $ProgressPreference = $prev }
+    }
+    if (-not (Test-Path -LiteralPath $archive) -or (Get-Item -LiteralPath $archive).Length -eq 0) {
+        throw "Font download for '$($Font.name)' was empty or missing."
+    }
+
+    $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne ("$($Font.sha256)").ToLowerInvariant()) {
+        throw "SHA-256 mismatch for '$($Font.name)' (expected $($Font.sha256), got $actual). Refusing to install."
+    }
+
+    # A direct .ttf/.otf download (no 'files') -- copy it through as-is.
+    $ext = [System.IO.Path]::GetExtension($archive).ToLowerInvariant()
+    if ((-not $Font.files -or @($Font.files).Count -eq 0) -and ($ext -in '.ttf','.otf','.ttc')) {
+        $dest = Join-Path $extractDir (Split-Path -Leaf $Font.url)
+        Copy-Item -LiteralPath $archive -Destination $dest -Force
+        return ,[string[]]@($dest)
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+    [string[]]$out = @()
+    try {
+        foreach ($want in @($Font.files)) {
+            $norm = $want -replace '\\','/'
+            $entry = $zip.Entries | Where-Object { ($_.FullName -replace '\\','/') -eq $norm } | Select-Object -First 1
+            if (-not $entry) { throw "Archive for '$($Font.name)' has no entry '$want'." }
+            $dest = Join-Path $extractDir (Split-Path -Leaf $norm)
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
+            $out += $dest
+        }
+    } finally {
+        $zip.Dispose()
+    }
+    return ,$out
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
