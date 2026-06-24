@@ -54,6 +54,7 @@ Describe 'Invoke-StylePickerLoop' {
                 $r = Invoke-StylePickerLoop -StyleCount 3 -StartIndex 2 `
                     -ReadKey $keys -OnPreview { param($i) } -OnRevert { }
                 $r.Index | Should -Be 2
+                $r.Outcome | Should -Be 'confirmed'
             }
 
             It 'collapses a key-mash to a single apply at the final index' {
@@ -72,14 +73,16 @@ Describe 'Invoke-StylePickerLoop' {
 
             It 'confirms at the start index with no apply when Enter is pressed first' {
                 $applied = [System.Collections.Generic.List[int]]::new()
+                $reverts = @{ n = 0 }
                 $keys = New-KeyStub @([ConsoleKey]::Enter)
                 $r = Invoke-StylePickerLoop -StyleCount 3 -StartIndex 1 `
                     -ReadKey $keys `
                     -OnPreview { param($i) $applied.Add($i) } `
-                    -OnRevert  { }
+                    -OnRevert  { $reverts.n++ }
                 $r.Outcome     | Should -Be 'confirmed'
                 $r.Index       | Should -Be 1
                 $applied.Count | Should -Be 0
+                $reverts.n | Should -Be 0
             }
 
             It 'Esc cancels: reverts once and applies nothing' {
