@@ -122,6 +122,7 @@ Describe 'Invoke-StylePickerLoop' {
                 # Non-ASCII target profile name to lock the UTF-8/no-BOM round-trip.
                 $script:target = 'Símbolo del sistema'
                 $script:settingsPath = Join-Path $TestDrive 'settings.json'
+                # Baseline has no 'schemes' key -- Merge-StyleIntoSettings must create it.
                 $original = '{"profiles":{"list":[{"name":"Símbolo del sistema","guid":"{abc}"}]}}'
                 [System.IO.File]::WriteAllText($script:settingsPath, $original, $enc)
                 # Read back exactly as the picker does (UTF-8, no BOM).

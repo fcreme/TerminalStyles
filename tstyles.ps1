@@ -2462,7 +2462,11 @@ function Invoke-TerminalStyle {
             }
         }
 
-        # Real input seam: read a key if one is queued, else $null.
+        # Real-console input adapter -- the one seam not under automated test.
+        # Contract: the engine's switch dispatches on string key names
+        # ('UpArrow'/'DownArrow'/'Enter'/'Escape'); [Console]::ReadKey($true).Key
+        # is a [ConsoleKey] that PowerShell's switch matches by string. Preserve
+        # that .Key shape if this adapter ever changes.
         $readKey = { if ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null } }
 
         $result = Invoke-StylePickerLoop -StyleCount $styles.Count -StartIndex $idx `
