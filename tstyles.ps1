@@ -2028,6 +2028,85 @@ function Reset-StyleDirect {
     Write-Host ""
 }
 
+function Invoke-StylePickerLoop {
+    # The interactive picker's selection loop, with all I/O / rendering / input
+    # injected as seams so it can be driven by tests. Owns ONLY the highlight
+    # index, the pendingApply debounce, and key dispatch. Returns the outcome:
+    #   @{ Outcome = 'confirmed' | 'cancelled'; Index = <int> }
+    #
+    # Seams:
+    #   ReadKey   -> a key object with a .Key ([ConsoleKey]), or $null when the
+    #                input queue is momentarily empty (drives the debounce tail).
+    #   OnPreview -> & $OnPreview $index : the debounced settings.json write.
+    #   OnRevert  -> & $OnRevert         : Esc -- restore original settings (+OSC reset).
+    #   OnDraw    -> & $OnDraw $index    : render the menu at $index.
+    #   OnRetint  -> & $OnRetint $index  : instant per-keystroke OSC color packet.
+    #   OnIdle    -> & $OnIdle           : idle slice (prebuild / sleep).
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$StyleCount,
+        [int]$StartIndex = 0,
+        [Parameter(Mandatory)][scriptblock]$ReadKey,
+        [Parameter(Mandatory)][scriptblock]$OnPreview,
+        [Parameter(Mandatory)][scriptblock]$OnRevert,
+        [scriptblock]$OnDraw   = {},
+        [scriptblock]$OnRetint = {},
+        [scriptblock]$OnIdle   = {}
+    )
+
+    $idx          = $StartIndex
+    $pendingApply = -1
+    $needsRedraw  = $true
+
+    while ($true) {
+        if ($needsRedraw) {
+            & $OnDraw $idx
+            $needsRedraw = $false
+        }
+
+        $key = & $ReadKey
+        if ($null -ne $key) {
+            switch ($key.Key) {
+                'UpArrow' {
+                    if ($idx -gt 0) {
+                        $idx--; $needsRedraw = $true; $pendingApply = $idx
+                        & $OnRetint $idx
+                    }
+                }
+                'DownArrow' {
+                    if ($idx -lt $StyleCount - 1) {
+                        $idx++; $needsRedraw = $true; $pendingApply = $idx
+                        & $OnRetint $idx
+                    }
+                }
+                'Enter' {
+                    if ($pendingApply -ge 0) {
+                        & $OnPreview $pendingApply
+                        $pendingApply = -1
+                    }
+                    return @{ Outcome = 'confirmed'; Index = $idx }
+                }
+                'Escape' {
+                    & $OnRevert
+                    return @{ Outcome = 'cancelled'; Index = $idx }
+                }
+            }
+            continue
+        }
+
+        # Queue empty -- debounce tail: apply the latest pending preview once.
+        if ($pendingApply -ge 0) {
+            $applyIdx = $pendingApply
+            $pendingApply = -1
+            & $OnPreview $applyIdx
+            continue
+        }
+
+        # Truly idle.
+        & $OnIdle
+    }
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
