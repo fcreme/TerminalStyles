@@ -1415,11 +1415,10 @@ function Resolve-FontPackage {
         [string]$DownloadPath
     )
     $cacheDir = Join-Path $CacheRoot $Font.name
-    $extractDir = Join-Path $cacheDir 'files'
-    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
 
     $archive = $DownloadPath
     if (-not $archive) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
         $archive = Join-Path $cacheDir 'download.bin'
         $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
         try {
@@ -1435,12 +1434,17 @@ function Resolve-FontPackage {
         throw "SHA-256 mismatch for '$($Font.name)' (expected $($Font.sha256), got $actual). Refusing to install."
     }
 
+    # Hash gate passed -- safe to create the extract directory now.
+    $extractDir = Join-Path $cacheDir 'files'
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+
     # A direct .ttf/.otf download (no 'files') -- copy it through as-is.
     $ext = [System.IO.Path]::GetExtension($archive).ToLowerInvariant()
     if ((-not $Font.files -or @($Font.files).Count -eq 0) -and ($ext -in '.ttf','.otf','.ttc')) {
         $dest = Join-Path $extractDir (Split-Path -Leaf $Font.url)
         Copy-Item -LiteralPath $archive -Destination $dest -Force
-        return ,[string[]]@($dest)
+        [string[]]$out = @($dest)
+        return ,$out
     }
 
     Add-Type -AssemblyName System.IO.Compression.FileSystem

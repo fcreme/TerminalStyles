@@ -41,5 +41,15 @@ Describe 'Resolve-FontPackage' {
             $font = [pscustomobject]@{ name='Fake'; url='https://x/pkg.zip'; sha256=$script:zipHash; files=@('ttf/Missing.ttf') }
             { Resolve-FontPackage -Font $font -CacheRoot $script:cache -DownloadPath $script:zip } | Should -Throw
         }
+
+        It 'passes through a direct .ttf download (no files list)' {
+            $ttf = Join-Path $TestDrive 'Direct-Regular.ttf'
+            [System.IO.File]::WriteAllText($ttf, 'DIRECTFONT')
+            $h = (Get-FileHash -Path $ttf -Algorithm SHA256).Hash.ToLowerInvariant()
+            $font = [pscustomobject]@{ name='Direct'; url='https://x/Direct-Regular.ttf'; sha256=$h; files=@() }
+            $out = Resolve-FontPackage -Font $font -CacheRoot (Join-Path $TestDrive 'cache2') -DownloadPath $ttf
+            @($out).Count | Should -Be 1
+            (Split-Path -Leaf $out[0]) | Should -Be 'Direct-Regular.ttf'
+        }
     }
 }
