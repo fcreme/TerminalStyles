@@ -1,0 +1,76 @@
+{
+  "fonts": [
+    {
+      "name": "JetBrains Mono",
+      "family": "JetBrains Mono",
+      "license": "OFL-1.1",
+      "version": "v2.304",
+      "url": "https://github.com/JetBrains/JetBrainsMono/releases/download/v2.304/JetBrainsMono-2.304.zip",
+      "sha256": "6f6376c6ed2960ea8a963cd7387ec9d76e3f629125bc33d1fdcd7eb7012f7bbf",
+      "files": [
+        "fonts/ttf/JetBrainsMono-Regular.ttf",
+        "fonts/ttf/JetBrainsMono-Bold.ttf"
+      ]
+    },
+    {
+      "name": "Fira Code",
+      "family": "Fira Code",
+      "license": "OFL-1.1",
+      "version": "6.2",
+      "url": "https://github.com/tonsky/FiraCode/releases/download/6.2/Fira_Code_v6.2.zip",
+      "sha256": "0949915ba8eb24d89fd93d10a7ff623f42830d7c5ffc3ecbf960e4ecad3e3e79",
+      "files": [
+        "ttf/FiraCode-Regular.ttf",
+        "ttf/FiraCode-Bold.ttf"
+      ]
+    },
+    {
+      "name": "Cascadia Code",
+      "family": "Cascadia Code",
+      "license": "OFL-1.1",
+      "version": "v2407.24",
+      "url": "https://github.com/microsoft/cascadia-code/releases/download/v2407.24/CascadiaCode-2407.24.zip",
+      "sha256": "e67a68ee3386db63f48b9054bd196ea752bc6a4ebb4df35adce6733da50c8474",
+      "files": [
+        "ttf/static/CascadiaCode-Regular.ttf",
+        "ttf/static/CascadiaCode-Bold.ttf"
+      ]
+    },
+    {
+      "name": "Hack",
+      "family": "Hack",
+      "license": "MIT",
+      "version": "v3.003",
+      "url": "https://github.com/source-foundry/Hack/releases/download/v3.003/Hack-v3.003-ttf.zip",
+      "sha256": "0c2604631b1f055041c68a0e09ae4801acab6c5072ba2db6a822f53c3f8290ac",
+      "files": [
+        "ttf/Hack-Regular.ttf",
+        "ttf/Hack-Bold.ttf"
+      ]
+    },
+    {
+      "name": "Source Code Pro",
+      "family": "Source Code Pro",
+      "license": "OFL-1.1",
+      "version": "2.042R-u/1.062R-i/1.026R-vf",
+      "url": "https://github.com/adobe-fonts/source-code-pro/releases/download/2.042R-u/1.062R-i/1.026R-vf/TTF-source-code-pro-2.042R-u_1.062R-i.zip",
+      "sha256": "0c85bac90d15c040b82939aa92bc8404420fccc02e37bbcb9c93a7f21abb52c6",
+      "files": [
+        "TTF/SourceCodePro-Regular.ttf",
+        "TTF/SourceCodePro-Bold.ttf"
+      ]
+    },
+    {
+      "name": "IBM Plex Mono",
+      "family": "IBM Plex Mono",
+      "license": "OFL-1.1",
+      "version": "@ibm/plex-mono@2.5.0",
+      "url": "https://github.com/IBM/plex/releases/download/%40ibm/plex-mono%402.5.0/ibm-plex-mono.zip",
+      "sha256": "6d23f01257663d8cc49a0d64c22ced630b79e0e2a0ac08a0da86e9a38bbc481c",
+      "files": [
+        "ibm-plex-mono/fonts/complete/ttf/IBMPlexMono-Regular.ttf",
+        "ibm-plex-mono/fonts/complete/ttf/IBMPlexMono-Bold.ttf"
+      ]
+    }
+  ]
+}
