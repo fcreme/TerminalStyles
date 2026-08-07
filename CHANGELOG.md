@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-07
+
 ### Added
 
 - `tstyles font` — install curated coding fonts (JetBrains Mono, Fira Code, Cascadia Code, Hack, Source Code Pro, IBM Plex Mono) from their official sources (SHA-256 verified) and apply them to the active profile. A one-time opt-in prompt offers to install the set on first run. Installed fonts appear automatically in `tstyles tune`.
+
+### Fixed
+
+- the published PowerShell Gallery package no longer carries background-image binaries. The publish script copied the whole `styles/` tree from the working directory, so any background GIF the release machine had lazily fetched got swept into the package — making the upload both bloated and dependent on which themes that machine happened to have previewed. Staging is now driven by `git ls-files`, so the package is exactly the committed tree and byte-identical from any checkout (this release: 252 KB instead of 3.0 MB)
 
 ## [0.6.3] - 2026-06-24
 
@@ -144,7 +150,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/fcreme/TerminalStyles/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/fcreme/TerminalStyles/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/fcreme/TerminalStyles/compare/v0.6.1...v0.6.2
 [0.6.1]: https://github.com/fcreme/TerminalStyles/compare/v0.6.0...v0.6.1
