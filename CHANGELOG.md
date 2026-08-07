@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-08-07
+
 ### Fixed
 
 - switching to a style that ships no background image no longer leaves the previous style's background showing through it. Every `theme.json` declares the background fields, but a style with nothing to put there used to skip them entirely — so applying `sober` after `forest` kept forest's GIF behind sober's colors, in the picker and on a direct apply alike. A background TerminalStyles installed is now cleared when the next style has none; one you set yourself (your own image, or Windows Terminal's `desktopWallpaper`) is still left alone
@@ -154,7 +156,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/fcreme/TerminalStyles/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fcreme/TerminalStyles/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/fcreme/TerminalStyles/compare/v0.6.2...v0.6.3
 [0.6.2]: https://github.com/fcreme/TerminalStyles/compare/v0.6.1...v0.6.2
