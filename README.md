@@ -110,6 +110,7 @@ tstyles current                   # Print just the active style name
 tstyles random                    # Pick a random style and apply it
 tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
+tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
@@ -142,6 +143,29 @@ as** a new name. The result lands in your user-styles dir as a full style
 survives updates. It inherits the base theme's background, and a small
 `tune.json` remembers your adjustments so `tstyles tune <name>` resumes
 where you left off.
+
+### Installing a coding font
+
+```powershell
+tstyles font                      # list the catalog, with installed/installable markers
+tstyles font 'JetBrains Mono'     # install it (if needed) and apply it to the active profile
+```
+
+Six curated fonts are available — **JetBrains Mono**, **Fira Code**,
+**Cascadia Code**, **Hack**, **Source Code Pro**, and **IBM Plex Mono**.
+Each is downloaded from its official GitHub release, checked against a
+**pinned SHA-256** before anything is unpacked, and installed **per-user**
+into `%LOCALAPPDATA%\Microsoft\Windows\Fonts` — no administrator rights
+needed, and nothing is written outside your profile.
+
+Already-installed fonts are detected and skipped, so re-running the
+command is cheap. Once a font is installed it also shows up in the
+`tstyles tune` font-face knob and in the picker, alongside the monospace
+fonts you already had.
+
+The first time you run `tstyles`, a one-time prompt offers to install the
+whole set. Decline it and you're never asked again — `tstyles font` is
+always there if you change your mind.
 
 ### Keeping your own prompt (Oh My Posh / Starship)
 
