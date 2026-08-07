@@ -466,6 +466,41 @@ function ConvertFrom-WTJson {
     }
 }
 
+function Test-ManagedBackgroundPath {
+    # True when a profile's backgroundImage points at a file TerminalStyles put
+    # there itself: a bundled styles\<name>\background.* under the module root,
+    # or a lazily-fetched copy under the data root's cache\. Anything else --
+    # the user's own image, or Windows Terminal keywords like
+    # 'desktopWallpaper' -- is theirs, and the merge leaves it alone.
+    #
+    # This is what lets a bundle-less style clear the PREVIOUS style's
+    # background without also clobbering a background the user chose.
+    param([string]$Path)
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+
+    foreach ($root in @($script:TStylesModuleRoot, $script:TStylesDataRoot)) {
+        if ([string]::IsNullOrWhiteSpace($root)) { continue }
+        try {
+            # GetFullPath normalises separators/casing-insensitive comparison and
+            # resolves any '..'; it does not require the file to exist. A WT
+            # keyword like 'desktopWallpaper' resolves against the CWD and so
+            # never lands under one of our roots.
+            $full     = [System.IO.Path]::GetFullPath($Path)
+            $fullRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\', '/') +
+                        [System.IO.Path]::DirectorySeparatorChar
+        } catch {
+            continue   # unparseable path (invalid chars) -- treat as not ours
+        }
+        # Compare against the root WITH a trailing separator so a sibling like
+        # 'TerminalStylesEvil\x.gif' can't match the 'TerminalStyles' root.
+        if ($full.StartsWith($fullRoot, [StringComparison]::OrdinalIgnoreCase)) {
+            return $true
+        }
+    }
+    return $false
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
@@ -525,9 +560,21 @@ function Merge-StyleIntoSettings {
     #   skip   : don't touch them
     #   remove : strip them from the profile (explicit empty path => disable)
     #   apply  : substitute the placeholder and write all bg fields
-    $bgAction = if (-not $applyBg) { 'skip' }
-                elseif ([string]::IsNullOrEmpty($effectiveBg)) { 'remove' }
-                else { 'apply' }
+    #
+    # When the new style ships no background, what happens depends on WHOSE
+    # background is currently on the profile. One we wrote for the previously
+    # applied style gets cleared -- otherwise it bleeds through and the new
+    # style is shown behind the old style's GIF. A background the user set
+    # themselves is left alone, which is what the skip is for.
+    $existingBg = if ($entry.PSObject.Properties.Match('backgroundImage').Count -gt 0) {
+        [string]$entry.backgroundImage
+    } else { $null }
+
+    $bgAction = if ($applyBg) {
+                    if ([string]::IsNullOrEmpty($effectiveBg)) { 'remove' } else { 'apply' }
+                }
+                elseif (Test-ManagedBackgroundPath -Path $existingBg) { 'remove' }
+                else { 'skip' }
 
     $bgFields = $script:TStylesBgFields
     foreach ($prop in $theme.PSObject.Properties) {
