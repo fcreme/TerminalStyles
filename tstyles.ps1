@@ -479,7 +479,22 @@ function Test-ManagedBackgroundPath {
 
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
 
-    foreach ($root in @($script:TStylesModuleRoot, $script:TStylesDataRoot)) {
+    $roots = [System.Collections.Generic.List[string]]::new()
+    foreach ($r in @($script:TStylesModuleRoot, $script:TStylesDataRoot)) {
+        if (-not [string]::IsNullOrWhiteSpace($r)) { $roots.Add($r) }
+    }
+    # PSResourceGet installs each version to its own sibling dir
+    # (...\Modules\TerminalStyles\<version>\), so a background written by an
+    # earlier version sits OUTSIDE the current module root. Treat the whole
+    # ...\Modules\TerminalStyles\ tree as ours -- but only when the parent is
+    # literally named TerminalStyles, so this can't swallow a neighbouring
+    # module's files.
+    $parent = Split-Path $script:TStylesModuleRoot -Parent
+    if ($parent -and (Split-Path $parent -Leaf) -eq 'TerminalStyles') {
+        $roots.Add($parent)
+    }
+
+    foreach ($root in $roots) {
         if ([string]::IsNullOrWhiteSpace($root)) { continue }
         try {
             # GetFullPath normalises separators/casing-insensitive comparison and

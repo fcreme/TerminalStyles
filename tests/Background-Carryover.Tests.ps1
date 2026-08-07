@@ -90,6 +90,21 @@ Describe 'Background carryover between styles' {
                 Test-ManagedBackgroundPath -Path ''    | Should -BeFalse
                 Test-ManagedBackgroundPath -Path $null | Should -BeFalse
             }
+            It 'is true for a background left by a PREVIOUS module version' {
+                # PSResourceGet installs each version to a sibling dir, so a
+                # background written by 0.6.3 sits outside 0.7.0's module root.
+                # Those users are exactly the ones upgrading with a stale GIF
+                # (0.6.2/0.6.3 shipped bundled backgrounds by accident).
+                $modules = Join-Path $TestDrive 'Modules\TerminalStyles'
+                $script:TStylesModuleRoot = Join-Path $modules '0.7.0'
+                $old = Join-Path $modules '0.6.3\styles\forest\background.gif'
+                Test-ManagedBackgroundPath -Path $old | Should -BeTrue
+            }
+            It 'is false for a same-depth path under a differently named module' {
+                $script:TStylesModuleRoot = Join-Path $TestDrive 'Modules\TerminalStyles\0.7.0'
+                $other = Join-Path $TestDrive 'Modules\SomeOtherModule\1.0.0\background.gif'
+                Test-ManagedBackgroundPath -Path $other | Should -BeFalse
+            }
             It 'is false for a sibling directory that merely shares a name prefix' {
                 # "<dataroot>Evil\x.gif" must not count as living under "<dataroot>".
                 Test-ManagedBackgroundPath -Path ($script:TStylesDataRoot + "Evil\x.gif") | Should -BeFalse
