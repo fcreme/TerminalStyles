@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- switching to a style that ships no background image no longer leaves the previous style's background showing through it. Every `theme.json` declares the background fields, but a style with nothing to put there used to skip them entirely — so applying `sober` after `forest` kept forest's GIF behind sober's colors, in the picker and on a direct apply alike. A background TerminalStyles installed is now cleared when the next style has none; one you set yourself (your own image, or Windows Terminal's `desktopWallpaper`) is still left alone
+
 ## [0.7.0] - 2026-08-07
 
 ### Added

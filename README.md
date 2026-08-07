@@ -361,8 +361,10 @@ To disable backgrounds for this style:
 tstyles -BackgroundImage ""
 ```
 
-Styles without a bundled image leave your existing background untouched
-unless you pass `-BackgroundImage`.
+Switching to a style that has no bundled image clears the previous
+style's background rather than leaving it showing through. A background
+**you** set — your own image, or Windows Terminal's `desktopWallpaper` —
+is never touched: only images TerminalStyles itself installed are cleared.
 
 ## Requirements
 
@@ -545,11 +547,6 @@ takes one PNG of the WT window, then restores your original theme.
 - **One `$PROFILE` per host.** Confirming a style with a custom prompt
   replaces `current-style.ps1`. Switching styles changes the prompt
   globally — there's no per-tab prompt configuration.
-- **Preview carryover for bundle-less styles.** Arrow-keying from a style
-  with a bundled `background.*` onto a style without one leaves the
-  previous GIF visible (the bundle-less path doesn't touch background
-  fields). Pass `-BackgroundImage ""` to clear, or just confirm the
-  selection.
 - **Repo size grows with styles.** Bundled GIFs are committed binaries;
   contributors should keep each under ~2 MB and only submit images they
   have the right to redistribute.
