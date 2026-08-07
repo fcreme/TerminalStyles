@@ -30,6 +30,7 @@ $allowlist = @(
     'apply.ps1',
     'README.md',
     'LICENSE',
+    'fonts.json',
     'styles',                              # whole tree, 16 themes
     'scripts\capture-screenshots.ps1'      # useful for theme authors
 )

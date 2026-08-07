@@ -1343,6 +1343,280 @@ function Get-MonospaceFontList {
     return @($list | Select-Object -Unique)
 }
 
+function Get-FontCatalog {
+    # Parse the bundled font catalog (fonts.json). Returns the array of font
+    # entries, skipping any that lack a required field. Throws on missing file
+    # or invalid JSON.
+    param([string]$Path = (Join-Path $PSScriptRoot 'fonts.json'))
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        throw "Font catalog not found: $Path"
+    }
+    $json = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    $data = $json | ConvertFrom-Json   # throws on malformed JSON
+    # @($data.fonts) is @() in PS7 but @($null) (one null element) in WinPS 5.1 when 'fonts' is absent/null; the per-entry null check below covers both.
+    $entries = @($data.fonts)
+    $valid = foreach ($e in $entries) {
+        if (-not $e) { continue }
+        if (-not $e.name -or -not $e.family -or -not $e.url -or -not $e.sha256) { continue }
+        $e
+    }
+    return @($valid)
+}
+
+function Test-FontInstalled {
+    # True when $Family is among installed font families (case-insensitive).
+    # -Installed is a test seam; real callers omit it and we enumerate.
+    param(
+        [Parameter(Mandatory)][string]$Family,
+        [string[]]$Installed
+    )
+    if (-not $PSBoundParameters.ContainsKey('Installed')) {
+        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+        try {
+            $Installed = [System.Drawing.Text.InstalledFontCollection]::new().Families.Name
+        } catch {
+            $Installed = @()
+        }
+    }
+    return @($Installed | Where-Object { $_ -and $_.Trim().ToLowerInvariant() -eq $Family.Trim().ToLowerInvariant() }).Count -gt 0
+}
+
+function Get-UserFontInstallPlan {
+    # Pure: map font files to their per-user install destinations + HKCU registry
+    # value names. No filesystem/registry writes happen here.
+    param(
+        [Parameter(Mandatory)][string[]]$FontFiles,
+        [string]$FontsDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts')
+    )
+    foreach ($f in $FontFiles) {
+        $leaf = Split-Path -Leaf $f
+        $ext  = [System.IO.Path]::GetExtension($leaf).ToLowerInvariant()
+        $base = [System.IO.Path]::GetFileNameWithoutExtension($leaf)
+        $kind = if ($ext -eq '.otf') { 'OpenType' } else { 'TrueType' }
+        $dest = [System.IO.Path]::Combine($FontsDir, $leaf)
+        [pscustomobject]@{
+            Source    = $f
+            Dest      = $dest
+            ValueName = "$base ($kind)"
+            ValueData = $dest
+        }
+    }
+}
+
+function Resolve-FontPackage {
+    # Download (or use -DownloadPath), verify SHA-256, and extract the listed
+    # font files into the cache. Returns the extracted file paths. Throws on a
+    # missing/empty download, a hash mismatch, or a listed file absent from the
+    # archive -- never leaves a partially-installed state.
+    param(
+        [Parameter(Mandatory)]$Font,
+        [string]$CacheRoot = (Join-Path $script:TStylesDataRoot 'fonts'),
+        [string]$DownloadPath
+    )
+    $cacheDir = Join-Path $CacheRoot $Font.name
+
+    $archive = $DownloadPath
+    if (-not $archive) {
+        New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
+        $archive = Join-Path $cacheDir 'download.bin'
+        $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
+        try {
+            Invoke-WebRequest -Uri $Font.url -OutFile $archive -UseBasicParsing -ErrorAction Stop
+        } finally { $ProgressPreference = $prev }
+    }
+    if (-not (Test-Path -LiteralPath $archive) -or (Get-Item -LiteralPath $archive).Length -eq 0) {
+        throw "Font download for '$($Font.name)' was empty or missing."
+    }
+
+    $actual = (Get-FileHash -Path $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne ("$($Font.sha256)").ToLowerInvariant()) {
+        throw "SHA-256 mismatch for '$($Font.name)' (expected $($Font.sha256), got $actual). Refusing to install."
+    }
+
+    # Hash gate passed -- safe to create the extract directory now.
+    $extractDir = Join-Path $cacheDir 'files'
+    New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+
+    # A direct .ttf/.otf download (no 'files') -- copy it through as-is.
+    $ext = [System.IO.Path]::GetExtension($archive).ToLowerInvariant()
+    if ((-not $Font.files -or @($Font.files).Count -eq 0) -and ($ext -in '.ttf','.otf','.ttc')) {
+        $dest = Join-Path $extractDir (Split-Path -Leaf $Font.url)
+        Copy-Item -LiteralPath $archive -Destination $dest -Force
+        [string[]]$out = @($dest)
+        return ,$out
+    }
+
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [System.IO.Compression.ZipFile]::OpenRead($archive)
+    [string[]]$out = @()
+    try {
+        foreach ($want in @($Font.files)) {
+            $norm = $want -replace '\\','/'
+            $entry = $zip.Entries | Where-Object { ($_.FullName -replace '\\','/') -eq $norm } | Select-Object -First 1
+            if (-not $entry) { throw "Archive for '$($Font.name)' has no entry '$want'." }
+            $dest = Join-Path $extractDir (Split-Path -Leaf $norm)
+            [System.IO.Compression.ZipFileExtensions]::ExtractToFile($entry, $dest, $true)
+            $out += $dest
+        }
+    } finally {
+        $zip.Dispose()
+    }
+    return ,$out
+}
+
+function Install-Font {
+    # Install font files for the current user (no admin): copy to the per-user
+    # Fonts dir, register under HKCU, then activate in the current session via
+    # AddFontResource + a WM_FONTCHANGE broadcast so new processes (and WT on
+    # reload) see them. -FontsDir / -RegistryRoot are test seams.
+    param(
+        [Parameter(Mandatory)][string[]]$FontFiles,
+        [string]$FontsDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'),
+        [string]$RegistryRoot = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
+    )
+    if (-not (Test-Path -LiteralPath $FontsDir)) {
+        New-Item -ItemType Directory -Path $FontsDir -Force | Out-Null
+    }
+    if (-not (Test-Path -LiteralPath $RegistryRoot)) {
+        New-Item -Path $RegistryRoot -Force | Out-Null
+    }
+
+    $plan = Get-UserFontInstallPlan -FontFiles $FontFiles -FontsDir $FontsDir
+    $count = 0
+    foreach ($p in $plan) {
+        Copy-Item -LiteralPath $p.Source -Destination $p.Dest -Force
+        New-ItemProperty -Path $RegistryRoot -Name $p.ValueName -Value $p.ValueData -PropertyType String -Force | Out-Null
+        $count++
+    }
+
+    # Activate in this session (best effort; the file+registry install is the
+    # durable part, so failures here are non-fatal).
+    try {
+        if (-not ('TStylesFontApi' -as [type])) {
+            Add-Type -Namespace '' -Name 'TStylesFontApi' -MemberDefinition @'
+[System.Runtime.InteropServices.DllImport("gdi32.dll", CharSet=System.Runtime.InteropServices.CharSet.Unicode)]
+public static extern int AddFontResource(string lpFileName);
+[System.Runtime.InteropServices.DllImport("user32.dll", CharSet=System.Runtime.InteropServices.CharSet.Auto)]
+public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint Msg, System.IntPtr wParam, System.IntPtr lParam, uint flags, uint timeout, out System.IntPtr result);
+'@
+        }
+        foreach ($p in $plan) { [void][TStylesFontApi]::AddFontResource($p.Dest) }
+        $HWND_BROADCAST = [System.IntPtr]0xffff; $WM_FONTCHANGE = 0x001D
+        $res = [System.IntPtr]::Zero
+        [void][TStylesFontApi]::SendMessageTimeout($HWND_BROADCAST, $WM_FONTCHANGE, [System.IntPtr]::Zero, [System.IntPtr]::Zero, 0, 1000, [ref]$res)
+    } catch { }
+
+    return $count
+}
+
+function Set-ProfileFont {
+    # Set $Family as the font.face on the target Windows Terminal profile (or
+    # profiles.defaults). Returns $true if applied, $false if a named target
+    # doesn't exist (file left untouched). Uses the atomic settings writer.
+    param(
+        [Parameter(Mandatory)][string]$SettingsPath,
+        [Parameter(Mandatory)][string]$TargetName,
+        [Parameter(Mandatory)][string]$Family
+    )
+    $json = [System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false))
+    $settings = ConvertFrom-WTJson $json
+
+    $entry = $null
+    if ($TargetName -eq 'defaults') {
+        if (-not $settings.profiles.PSObject.Properties.Match('defaults').Count) {
+            $settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
+        }
+        $entry = $settings.profiles.defaults
+    } else {
+        $entry = $settings.profiles.list | Where-Object name -eq $TargetName | Select-Object -First 1
+        if (-not $entry) { return $false }
+    }
+
+    if (-not $entry.PSObject.Properties.Match('font').Count) {
+        $entry | Add-Member -NotePropertyName font -NotePropertyValue ([pscustomobject]@{})
+    }
+    if ($entry.font.PSObject.Properties.Match('face').Count) {
+        $entry.font.face = $Family
+    } else {
+        $entry.font | Add-Member -NotePropertyName face -NotePropertyValue $Family -Force
+    }
+
+    Write-SettingsAtomic -Path $SettingsPath -Json ($settings | ConvertTo-Json -Depth 100)
+    return $true
+}
+
+function Show-FontList {
+    # List the font catalog with an installed/installable marker. -Catalog and
+    # -Installed are test seams; real callers omit them.
+    param(
+        [object[]]$Catalog,
+        [string[]]$Installed
+    )
+    if (-not $Catalog) { $Catalog = @(Get-FontCatalog) }
+    Write-Host ""
+    Write-Host "  Available coding fonts ([+] installed, [ ] installable):" -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($f in $Catalog) {
+        $isIn = if ($PSBoundParameters.ContainsKey('Installed')) {
+            Test-FontInstalled -Family $f.family -Installed $Installed
+        } else {
+            Test-FontInstalled -Family $f.family
+        }
+        $mark = if ($isIn) { '[+]' } else { '[ ]' }
+        Write-Host ("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license)
+    }
+    Write-Host ""
+    Write-Host "  Install + apply one with: tstyles font <name>" -ForegroundColor DarkGray
+}
+
+function Invoke-TerminalStyleFont {
+    # `tstyles font` (list) / `tstyles font <name>` (install if needed + apply).
+    param(
+        [string]$Name,
+        [string]$Target
+    )
+    if (-not $Name) { Show-FontList; return }
+
+    $catalog = @(Get-FontCatalog)
+    $font = $catalog | Where-Object { $_.name -eq $Name } | Select-Object -First 1
+    if (-not $font) {
+        Write-Host "Unknown font: '$Name'" -ForegroundColor Yellow
+        Write-Host "Available: $(@($catalog | ForEach-Object name) -join ', ')" -ForegroundColor DarkGray
+        return
+    }
+
+    if (Test-FontInstalled -Family $font.family) {
+        Write-Host "'$($font.family)' is already installed." -ForegroundColor Green
+    } else {
+        Write-Host "Installing '$($font.name)'..." -ForegroundColor Cyan
+        try {
+            $files = Resolve-FontPackage -Font $font
+            $n = Install-Font -FontFiles $files
+            Write-Host "  Installed $n file(s) for '$($font.family)'." -ForegroundColor Green
+        } catch {
+            Write-Host "Font install failed: $_" -ForegroundColor Red
+            return
+        }
+    }
+
+    # Apply to the active profile.
+    $settingsPath = Find-WTSettingsPath
+    if (-not $settingsPath) { Write-Host "Could not locate Windows Terminal settings.json." -ForegroundColor Red; return }
+    if (-not $Target) {
+        $json = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+        $Target = Get-CurrentWTProfileName -Settings (ConvertFrom-WTJson $json)
+    }
+    if (-not $Target) { Write-Host "Could not detect the current profile; pass -Target '<name>'." -ForegroundColor Yellow; return }
+
+    try { [System.IO.File]::WriteAllText("$settingsPath.bak", [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false)), [System.Text.UTF8Encoding]::new($false)) } catch { }
+    if (Set-ProfileFont -SettingsPath $settingsPath -TargetName $Target -Family $font.family) {
+        Write-Host "  Applied '$($font.family)' to '$Target'. Open a new tab to see it." -ForegroundColor Green
+    } else {
+        Write-Host "Profile '$Target' not found in settings.json." -ForegroundColor Yellow
+    }
+}
+
 function New-TunedThemeObject {
     # Builds the theme.json object for a tuned style: base theme.json (or {})
     # with colorScheme/opacity/font overridden. Preserves font.weight and the
@@ -1844,6 +2118,13 @@ function Get-TerminalStyleHelpData {
             Examples = @('tstyles tune', 'tstyles tune eva')
         }
         [pscustomobject]@{
+            Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font and apply it to the active profile'
+            Detail = @("With no argument, lists available coding fonts with installed/installable",
+                       "markers. With a font name, installs it (if not already present) and",
+                       "applies it to the active Windows Terminal profile.")
+            Keys = @(); Examples = @('tstyles font', 'tstyles font ''JetBrains Mono''')
+        }
+        [pscustomobject]@{
             Name = 'register'; Usage = 'register'; Summary = 'Add the loader to your $PROFILE'
             Detail = @("Adds the Import-Module loader to both PowerShell 7 and Windows",
                        "PowerShell 5.1 `$PROFILE files (with a confirm prompt) so tstyles",
@@ -2107,6 +2388,53 @@ function Invoke-StylePickerLoop {
     }
 }
 
+function Test-ShouldPromptFonts {
+    # Pure gate: only prompt on an interactive session that hasn't been prompted.
+    param(
+        [Parameter(Mandatory)][bool]$MarkerPresent,
+        [Parameter(Mandatory)][bool]$Interactive
+    )
+    return (-not $MarkerPresent) -and $Interactive
+}
+
+function Invoke-FontFirstRunPrompt {
+    # One-time opt-in: offer to install the recommended font set. Marker-gated so
+    # it never repeats; silent in non-interactive sessions.
+    $marker = Join-Path $script:TStylesDataRoot '.fonts-prompted'
+    $markerPresent = Test-Path -LiteralPath $marker
+    if (-not (Test-ShouldPromptFonts -MarkerPresent $markerPresent -Interactive ([Environment]::UserInteractive))) {
+        return
+    }
+
+    $ans = Read-Host "Install a set of recommended coding fonts now? [y/N]"
+    if ($ans -match '^(?i)y') {
+        try {
+            $catalog = @(Get-FontCatalog)
+            foreach ($f in $catalog) {
+                if (Test-FontInstalled -Family $f.family) { continue }
+                Write-Host "  Installing $($f.name)..." -ForegroundColor Cyan
+                try {
+                    $files = Resolve-FontPackage -Font $f
+                    [void](Install-Font -FontFiles $files)
+                } catch {
+                    Write-Host "    Skipped $($f.name): $_" -ForegroundColor DarkGray
+                }
+            }
+            Write-Host "Done. Pick fonts anytime with 'tstyles tune' or 'tstyles font'." -ForegroundColor Green
+        } catch {
+            Write-Host "Font setup failed: $_" -ForegroundColor Red
+        }
+    }
+
+    # Always record that we've prompted, regardless of the answer.
+    try {
+        if (-not (Test-Path -LiteralPath $script:TStylesDataRoot)) {
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+        }
+        [System.IO.File]::WriteAllText($marker, '', [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
 # === Public command ===
 
 function Invoke-TerminalStyle {
@@ -2139,6 +2467,7 @@ function Invoke-TerminalStyle {
 
     # --- Subcommand dispatch ---
     if ($Update -or $Arg -eq 'update')   { Invoke-TerminalStylesUpdate -Force:$Force; return }
+    if ($Arg -eq 'font')                 { Invoke-TerminalStyleFont -Name $SubArg -Target $Target; return }
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }
@@ -2165,6 +2494,10 @@ function Invoke-TerminalStyle {
         Write-Host "To target a Windows Terminal profile, use: tstyles -Target '<name>'" -ForegroundColor DarkGray
         return
     }
+
+    # One-time opt-in font prompt (fires only in interactive sessions, never for
+    # subcommands — they all `return` above before reaching this point).
+    Invoke-FontFirstRunPrompt
 
     # Update-notice path runs on every passive invocation (picker included),
     # but Test-UpdateAvailable short-circuits inside the 24h throttle window.
@@ -2549,7 +2882,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
+    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.

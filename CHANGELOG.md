@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tstyles font` — install curated coding fonts (JetBrains Mono, Fira Code, Cascadia Code, Hack, Source Code Pro, IBM Plex Mono) from their official sources (SHA-256 verified) and apply them to the active profile. A one-time opt-in prompt offers to install the set on first run. Installed fonts appear automatically in `tstyles tune`.
+
 ## [0.6.3] - 2026-06-24
 
 ### Changed
