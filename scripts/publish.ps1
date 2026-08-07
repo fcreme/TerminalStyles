@@ -20,7 +20,10 @@ if (Test-Path -LiteralPath $stageRoot) {
 }
 New-Item -ItemType Directory -Path $stageRoot -Force -WhatIf:$false | Out-Null
 
-# Allowlist: every item here must exist in the repo root (relative path).
+# Allowlist: every item here must exist in the repo root (relative path) AND be
+# tracked by git -- the plan below resolves each entry through `git ls-files`, so
+# gitignored runtime cache inside an allowlisted directory (styles/*/background.*,
+# .no-background markers) never reaches the package.
 # Excluded by definition: docs/, tests/, .github/, install.ps1, .git/,
 # .gitignore, out/ itself, any runtime state files.
 $allowlist = @(
@@ -35,19 +38,19 @@ $allowlist = @(
     'scripts\capture-screenshots.ps1'      # useful for theme authors
 )
 
-foreach ($item in $allowlist) {
-    $src = Join-Path $repoRoot $item
-    if (-not (Test-Path -LiteralPath $src)) {
-        throw "Allowlist item missing from repo: $item"
-    }
-    # Preserve the relative structure (e.g. scripts\capture-screenshots.ps1
-    # lands under scripts\ inside the stage dir).
-    $dest = Join-Path $stageRoot $item
+. (Join-Path $PSScriptRoot 'Get-PublishStagePlan.ps1')
+$plan = Get-PublishStagePlan -RepoRoot $repoRoot -Allowlist $allowlist
+
+foreach ($relPath in $plan) {
+    # $relPath is forward-slashed and repo-relative; preserve that structure
+    # (e.g. scripts/capture-screenshots.ps1 lands under scripts\ in the stage dir).
+    $src  = Join-Path $repoRoot $relPath
+    $dest = Join-Path $stageRoot $relPath
     $destDir = Split-Path -Parent $dest
     if ($destDir -and -not (Test-Path -LiteralPath $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force -WhatIf:$false | Out-Null
     }
-    Copy-Item -LiteralPath $src -Destination $dest -Recurse -Force -WhatIf:$false
+    Copy-Item -LiteralPath $src -Destination $dest -Force -WhatIf:$false
 }
 
 # --- 2. Sanity-check the staged manifest BEFORE asking for the key ---

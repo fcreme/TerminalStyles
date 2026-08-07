@@ -99,6 +99,7 @@ The `scripts/publish.ps1` allowlist controls what ships. Currently:
 - `TerminalStyles.psd1`, `TerminalStyles.psm1`
 - `tstyles.ps1`, `apply.ps1`
 - `styles/` (all 16 themes)
+- `fonts.json` (coding-font catalog for `tstyles font`)
 - `README.md`, `LICENSE`
 - `scripts/capture-screenshots.ps1`
 
