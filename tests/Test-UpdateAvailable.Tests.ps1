@@ -39,8 +39,12 @@ Describe 'Test-UpdateAvailable' {
             Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
             $stampFile = Join-Path $TestDrive '.last-update-check'
             $shaFile   = Join-Path $TestDrive '.installed-sha'
-            Remove-Item $stampFile -ErrorAction SilentlyContinue
-            Remove-Item $shaFile   -ErrorAction SilentlyContinue
+            # -Force is required, not optional: both names start with a dot, and
+            # on macOS/Linux a dotfile is hidden -- Remove-Item skips hidden items
+            # unless forced. Without it the previous test's throttle stamp would
+            # survive into this one and suppress the API call under test.
+            Remove-Item $stampFile -Force -ErrorAction SilentlyContinue
+            Remove-Item $shaFile   -Force -ErrorAction SilentlyContinue
         }
 
         It 'returns $null and skips the API when the stamp is fresh (< 24h)' {

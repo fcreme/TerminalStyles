@@ -33,7 +33,11 @@ Describe 'Reset-StyleDirect' {
             [System.IO.File]::WriteAllText($script:fakeSettings,
                 ($settingsObj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
 
+            # Pin the terminal to Windows Terminal: these assertions are about the
+            # settings.json merge path, which only runs on WT. Without this the
+            # suite would take the OSC branch whenever it runs on macOS/Linux.
             Mock Find-WTSettingsPath          { $script:fakeSettings }
+            Mock Get-TerminalKind { 'WindowsTerminal' }
             Mock Show-UpdateNoticeIfAvailable {}
             Mock Get-CurrentWTProfileName     { 'PowerShell' }
             Mock Write-SettingsFile           { param($Path, $Settings) $script:written = $Settings }

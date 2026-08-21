@@ -13,11 +13,85 @@ $script:TStylesModuleRoot = $PSScriptRoot
 if (-not $script:TStylesModuleRoot) {
     $script:TStylesModuleRoot = Split-Path $MyInvocation.MyCommand.Path -Parent
 }
-# Stable per-user data dir. Survives module version upgrades (PSResourceGet
-# installs a new version to a sibling dir; state stays here). For bootstrap-
-# installed users, this happens to equal $script:TStylesModuleRoot --
-# backward-compatible by design.
-$script:TStylesDataRoot = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+function Get-TStylesPlatform {
+    # 'Windows' | 'MacOS' | 'Linux'. The automatic $IsWindows/$IsMacOS/$IsLinux
+    # variables only exist on PowerShell 6+; Windows PowerShell 5.1 predates
+    # them and is Windows by definition, so branch on the major version first.
+    # (Referencing $IsWindows under 5.1 would silently yield $null, not $true.)
+    if ($PSVersionTable.PSVersion.Major -lt 6) { return 'Windows' }
+    if ($IsWindows) { return 'Windows' }
+    if ($IsMacOS)   { return 'MacOS' }
+    return 'Linux'
+}
+
+function Get-TStylesDataRoot {
+    # Stable per-user data dir. Survives module version upgrades (PSResourceGet
+    # installs a new version to a sibling dir; state stays here). For bootstrap-
+    # installed Windows users this happens to equal $script:TStylesModuleRoot --
+    # backward-compatible by design, which is why Windows keeps %LOCALAPPDATA%
+    # verbatim rather than moving to a new cross-platform location.
+    #
+    # -Platform / -HomeDir are test seams; real callers omit them.
+    param(
+        [string]$Platform = (Get-TStylesPlatform),
+        [string]$HomeDir  = $HOME
+    )
+    switch ($Platform) {
+        'Windows' {
+            # $env:LOCALAPPDATA is the historical location. Fall back to the
+            # profile-relative path if the var is somehow unset (bare service
+            # accounts, stripped environments) so we never Join-Path a $null.
+            $base = $env:LOCALAPPDATA
+            if (-not $base) { $base = Join-Path $HomeDir 'AppData\Local' }
+            return Join-Path $base 'TerminalStyles'
+        }
+        'MacOS' {
+            return Join-Path (Join-Path $HomeDir 'Library/Application Support') 'TerminalStyles'
+        }
+        default {
+            # XDG Base Directory spec: honour $XDG_DATA_HOME, else ~/.local/share.
+            $base = $env:XDG_DATA_HOME
+            if (-not $base) { $base = Join-Path (Join-Path $HomeDir '.local') 'share' }
+            return Join-Path $base 'TerminalStyles'
+        }
+    }
+}
+
+function Get-TStylesFontDir {
+    # Per-user font directory -- the one a font can be dropped into WITHOUT
+    # admin/root. Platform differences run deeper than the path:
+    #   Windows: copy + an HKCU registry value + a GDI AddFontResource broadcast
+    #   macOS:   copy alone is enough; CoreText picks up ~/Library/Fonts live
+    #   Linux:   copy alone, though fontconfig may need `fc-cache` to notice
+    # Install-Font branches on Get-TStylesPlatform for those extra steps.
+    #
+    # -Platform / -HomeDir are test seams; real callers omit them.
+    param(
+        [string]$Platform = (Get-TStylesPlatform),
+        [string]$HomeDir  = $HOME
+    )
+    switch ($Platform) {
+        'Windows' {
+            $base = $env:LOCALAPPDATA
+            if (-not $base) { $base = Join-Path $HomeDir 'AppData\Local' }
+            return Join-Path $base 'Microsoft\Windows\Fonts'
+        }
+        'MacOS' { return Join-Path (Join-Path $HomeDir 'Library') 'Fonts' }
+        default {
+            $base = $env:XDG_DATA_HOME
+            if (-not $base) { $base = Join-Path (Join-Path $HomeDir '.local') 'share' }
+            return Join-Path $base 'fonts'
+        }
+    }
+}
+
+# Terminal detection + capability model. Dot-sourced (not a nested module) so
+# it shares $script: scope with everything below -- Get-TerminalCapability reads
+# $script:TStylesCapabilityNames, and the adapters need $script:TStylesDataRoot.
+. (Join-Path $script:TStylesModuleRoot 'terminals.ps1')
+
+$script:TStylesPlatform = Get-TStylesPlatform
+$script:TStylesDataRoot = Get-TStylesDataRoot
 if (-not (Test-Path -LiteralPath $script:TStylesDataRoot)) {
     New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
 }
@@ -68,10 +142,15 @@ function Get-StyleCacheDir {
     # Single source of truth shared by Get-StyleBundledBackground, Test-StyleResolved,
     # and the picker's prefetch job so the writer and the readers can never drift.
     # The prefetch job runs in a separate runspace without $script: scope, so it
-    # re-derives the same path from $env:LOCALAPPDATA -- keep this formula in sync
-    # with that derivation (Join-Path $DataRoot "cache\<name>").
+    # re-derives the same path from the data root -- keep this formula in sync
+    # with that derivation (Join-Path (Join-Path $DataRoot 'cache') <name>).
+    #
+    # Nested Join-Path, NOT "cache\$StyleName": the 3-argument Join-Path is
+    # PowerShell 6+ only (WinPS 5.1 takes two positional paths), and a literal
+    # backslash is not a separator on macOS/Linux -- it would produce a single
+    # file named "cache\eva" instead of the cache/eva directory.
     param([Parameter(Mandatory)][string]$StyleName)
-    Join-Path $script:TStylesDataRoot "cache\$StyleName"
+    Join-Path (Join-Path $script:TStylesDataRoot 'cache') $StyleName
 }
 
 function Get-StyleBundledBackground {
@@ -163,7 +242,7 @@ function Invoke-TerminalStylesStateMigration {
 
     foreach ($styleDir in Get-ChildItem -LiteralPath $stylesDir -Directory) {
         $styleName = $styleDir.Name
-        $cacheDir = Join-Path $script:TStylesDataRoot "cache\$styleName"
+        $cacheDir = Join-Path (Join-Path $script:TStylesDataRoot 'cache') $styleName
 
         # Move cached background files
         foreach ($ext in 'gif','png','jpg','jpeg') {
@@ -207,7 +286,7 @@ function Get-TerminalStylesInstallKind {
     # Note: $script:TStylesModuleRoot is set during module load. For installs
     # made before the dual-root refactor (sub-project C), the variable still
     # has the right value because the init block sets it from $PSScriptRoot.
-    $bootstrapDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+    $bootstrapDir = Get-TStylesDataRoot
     if ($script:TStylesModuleRoot -eq $bootstrapDir) { return 'Bootstrap' }
     return 'PSResourceGet'
 }
@@ -667,10 +746,10 @@ function Get-StyleDir {
     # union-and-dedup precedence.
     param([Parameter(Mandatory)][string]$StyleName)
 
-    $userDir = Join-Path $script:TStylesDataRoot "styles\$StyleName"
+    $userDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
     if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) { return $userDir }
 
-    $bundledDir = Join-Path $script:TStylesModuleRoot "styles\$StyleName"
+    $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $StyleName
     if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) { return $bundledDir }
 
     return $null
@@ -706,14 +785,25 @@ function Get-CurrentStyleName {
     # Detects which bundled style is currently active by byte-comparing
     # current-style.ps1 against each style's profile.ps1. Returns $null
     # if nothing matches (custom profile, no current style, etc).
-    if (-not (Test-Path -LiteralPath $script:TStylesCurrent)) { return $null }
-    $current = [System.IO.File]::ReadAllText($script:TStylesCurrent, [System.Text.UTF8Encoding]::new($false))
-    foreach ($style in (Get-AvailableStyles)) {
-        $sp = Join-Path $style.FullName 'profile.ps1'
-        if (-not (Test-Path -LiteralPath $sp)) { continue }
-        $styleContent = [System.IO.File]::ReadAllText($sp, [System.Text.UTF8Encoding]::new($false))
-        if ($current -eq $styleContent) { return $style.Name }
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        $current = [System.IO.File]::ReadAllText($script:TStylesCurrent, [System.Text.UTF8Encoding]::new($false))
+        foreach ($style in (Get-AvailableStyles)) {
+            $sp = Join-Path $style.FullName 'profile.ps1'
+            if (-not (Test-Path -LiteralPath $sp)) { continue }
+            $styleContent = [System.IO.File]::ReadAllText($sp, [System.Text.UTF8Encoding]::new($false))
+            if ($current -eq $styleContent) { return $style.Name }
+        }
     }
+
+    # Fall back to the recorded style. The byte-compare above can't see a style
+    # applied with -KeepPrompt (which deliberately leaves current-style.ps1
+    # absent) -- on OSC-driven terminals that would report "no style" while the
+    # colors are plainly applied. The record knows regardless of the prompt.
+    $record = Get-CurrentStyleRecord
+    if ($record -and $record.name) {
+        if (Get-StyleDir -StyleName $record.name) { return $record.name }
+    }
+
     return $null
 }
 
@@ -864,11 +954,97 @@ function Invoke-RandomStyle {
     Apply-StyleDirect -StyleName $pick.Name
 }
 
+function Apply-StyleNonWT {
+    # Apply a style on a terminal that is not Windows Terminal.
+    #
+    # There is no settings.json to merge into, so the work splits in two:
+    #   * colors    -- emitted as an OSC packet, which retints the CURRENT tab
+    #                  instantly. Recorded in current-style.json so the startup
+    #                  block at the bottom of this file can re-emit it into
+    #                  every future tab.
+    #   * prompt    -- the style's profile.ps1 is copied to current-style.ps1
+    #                  and dot-sourced, exactly as on Windows Terminal. That
+    #                  file is plain PowerShell + ANSI and is already portable.
+    #
+    # Fields the host terminal cannot honour (a background image on Terminal.app,
+    # a tab accent color anywhere but WT) are reported rather than silently
+    # dropped, so the user knows why the style looks plainer than its screenshot.
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [switch]$KeepPrompt
+    )
+
+    $kind = Get-TerminalKind
+    $caps = Get-TerminalCapability -Kind $kind
+
+    $schemePath = Join-Path $StyleDir 'scheme.json'
+    if (-not (Test-Path -LiteralPath $schemePath)) {
+        Write-Error "Style '$StyleName' has no scheme.json."
+        return
+    }
+    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+
+    $applied = Invoke-TerminalStyleOscApply -Scheme $scheme -Kind $kind
+    Set-CurrentStyleRecord -StyleName $StyleName -Kind $kind
+
+    # Prompt/banner: same contract as the Windows Terminal path.
+    $styleProfile = Join-Path $StyleDir 'profile.ps1'
+    if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
+        Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
+    } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
+        Remove-Item -LiteralPath $script:TStylesCurrent -Force
+    }
+
+    Write-Host ""
+    Write-Host "  Style applied: " -NoNewline
+    Write-Host $StyleName -ForegroundColor Green
+    Write-Host "  Terminal:      " -NoNewline
+    Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan
+
+    if (-not $applied) {
+        Write-Host ""
+        Write-Host "  Note: this terminal did not accept live color changes, so only the prompt was applied." -ForegroundColor Yellow
+    }
+
+    # Tell the user which parts of the style this terminal cannot show, once,
+    # rather than letting them wonder why it doesn't match the screenshot.
+    $unsupported = @()
+    $theme = $null
+    $themePath = Join-Path $StyleDir 'theme.json'
+    if (Test-Path -LiteralPath $themePath) {
+        try {
+            $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        } catch { $theme = $null }
+    }
+    if ($theme) {
+        if ((Get-StyleBundledBackground -StyleDir $StyleDir) -and -not $caps.BackgroundImage) {
+            $unsupported += 'background image'
+        }
+        if ($theme.PSObject.Properties.Match('tabColor').Count -gt 0 -and -not $caps.TabColor) {
+            $unsupported += 'tab color'
+        }
+    }
+    if ($unsupported.Count -gt 0) {
+        Write-Host ""
+        Write-Host ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $kind), ($unsupported -join ', ')) -ForegroundColor DarkGray
+    }
+    Write-Host ""
+
+    # Live reload of the prompt in THIS shell (matches the WT confirm path).
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        . $script:TStylesCurrent
+    }
+}
+
 function Apply-StyleDirect {
     # Apply a style directly (no picker UI). Used by `tstyles <name>` and
     # `tstyles random`. Mirrors the picker's confirm path -- merge into
     # settings.json, copy profile.ps1 to current-style.ps1, dot-source for
     # live reload.
+    #
+    # Off Windows Terminal the settings.json half does not exist; Apply-StyleNonWT
+    # takes over with the OSC + current-style.json path instead.
     param(
         [Parameter(Mandatory)][string]$StyleName,
         [string]$Target,
@@ -886,6 +1062,12 @@ function Apply-StyleDirect {
     }
 
     Show-UpdateNoticeIfAvailable
+
+    # Non-WT hosts have no settings.json; hand off before we go looking for one.
+    if ((Get-TerminalKind) -ne 'WindowsTerminal') {
+        Apply-StyleNonWT -StyleName $StyleName -StyleDir $styleDir -KeepPrompt:$KeepPrompt
+        return
+    }
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) {
@@ -1096,7 +1278,7 @@ function Invoke-TerminalStylesUninstall {
         [switch]$DeleteData    # also remove %LOCALAPPDATA%\TerminalStyles\ (user state)
     )
 
-    $dataDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+    $dataDir = Get-TStylesDataRoot
     $kind = Get-TerminalStylesInstallKind
 
     Write-Host ""
@@ -1449,7 +1631,7 @@ function Get-UserFontInstallPlan {
     # value names. No filesystem/registry writes happen here.
     param(
         [Parameter(Mandatory)][string[]]$FontFiles,
-        [string]$FontsDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts')
+        [string]$FontsDir = (Get-TStylesFontDir)
     )
     foreach ($f in $FontFiles) {
         $leaf = Split-Path -Leaf $f
@@ -1534,13 +1716,19 @@ function Install-Font {
     # reload) see them. -FontsDir / -RegistryRoot are test seams.
     param(
         [Parameter(Mandatory)][string[]]$FontFiles,
-        [string]$FontsDir = (Join-Path $env:LOCALAPPDATA 'Microsoft\Windows\Fonts'),
+        [string]$FontsDir = (Get-TStylesFontDir),
         [string]$RegistryRoot = 'HKCU:\Software\Microsoft\Windows NT\CurrentVersion\Fonts'
     )
     if (-not (Test-Path -LiteralPath $FontsDir)) {
         New-Item -ItemType Directory -Path $FontsDir -Force | Out-Null
     }
-    if (-not (Test-Path -LiteralPath $RegistryRoot)) {
+
+    # Registration is a Windows-only concept. On macOS, CoreText scans
+    # ~/Library/Fonts and picks up a dropped file immediately -- no registry, no
+    # broadcast. On Linux, fontconfig indexes the dir (fc-cache below nudges it).
+    $isWindows = (Get-TStylesPlatform) -eq 'Windows'
+
+    if ($isWindows -and -not (Test-Path -LiteralPath $RegistryRoot)) {
         New-Item -Path $RegistryRoot -Force | Out-Null
     }
 
@@ -1548,8 +1736,23 @@ function Install-Font {
     $count = 0
     foreach ($p in $plan) {
         Copy-Item -LiteralPath $p.Source -Destination $p.Dest -Force
-        New-ItemProperty -Path $RegistryRoot -Name $p.ValueName -Value $p.ValueData -PropertyType String -Force | Out-Null
+        if ($isWindows) {
+            New-ItemProperty -Path $RegistryRoot -Name $p.ValueName -Value $p.ValueData -PropertyType String -Force | Out-Null
+        }
         $count++
+    }
+
+    if (-not $isWindows) {
+        # Best-effort cache refresh for fontconfig (Linux, and macOS setups that
+        # have it via Homebrew). Absent on a stock Mac, where it isn't needed.
+        if ((Get-TStylesPlatform) -eq 'Linux') {
+            try {
+                if (Get-Command fc-cache -ErrorAction SilentlyContinue) {
+                    & fc-cache -f $FontsDir *> $null
+                }
+            } catch { }
+        }
+        return $count
     }
 
     # Activate in this session (best effort; the file+registry install is the
@@ -1720,7 +1923,7 @@ function Save-TunedStyle {
         [int]$Brightness, [int]$Saturation, [int]$Opacity,
         [string]$FontFace, [int]$FontSize
     )
-    $destDir = Join-Path $script:TStylesDataRoot "styles\$SaveName"
+    $destDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $SaveName
     if (-not (Test-Path -LiteralPath $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
@@ -1923,7 +2126,7 @@ function Invoke-TerminalStyleTune {
     }
 
     # --- Scratch dir for the debounced settings.json preview (reuses Merge) ---
-    $scratchDir = Join-Path $script:TStylesDataRoot ".tune-preview\$baseName"
+    $scratchDir = Join-Path (Join-Path $script:TStylesDataRoot '.tune-preview') $baseName
     if (-not (Test-Path -LiteralPath $scratchDir)) {
         New-Item -ItemType Directory -Path $scratchDir -Force | Out-Null
     }
@@ -2092,7 +2295,7 @@ function Invoke-TerminalStyleTune {
                     Write-Host "  Use letters, digits, dot, underscore, or hyphen only." -ForegroundColor Yellow
                     continue
                 }
-                $bundledDir = Join-Path $script:TStylesModuleRoot "styles\$candidate"
+                $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $candidate
                 if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) {
                     $warn = (Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]").Trim()
                     if ($warn -notmatch '^(?i)y') { continue }
@@ -2285,14 +2488,50 @@ function Test-InWindowsTerminal {
     return [bool]$env:WT_SESSION
 }
 
+function Reset-StyleNonWT {
+    # `tstyles reset` off Windows Terminal.
+    #
+    # Nothing was written to a settings file, so there is nothing to strip --
+    # the applied colors live entirely in the terminal's dynamic-color state.
+    # OSC 104/110/111/112/117 hands that state back to the terminal's own
+    # configured profile, which is exactly what "unstyled default" means here.
+    $kind = Get-TerminalKind
+
+    [void](Invoke-TerminalStyleOscReset -Kind $kind)
+    Clear-CurrentStyleRecord
+
+    # Restore the user's own prompt by removing the style's loader target. The
+    # prompt function already installed in THIS session stays until the shell
+    # restarts -- same behaviour as the Windows Terminal path.
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        Remove-Item -LiteralPath $script:TStylesCurrent -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host ""
+    Write-Host "  Reset " -NoNewline
+    Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan -NoNewline
+    Write-Host " to its unstyled default."
+    Write-Host "  Open a new tab to restore your default prompt."
+    Write-Host ""
+}
+
 function Reset-StyleDirect {
     # `tstyles reset [-Target <name>]` -- revert a WT profile to its unstyled
     # default: strip the fields TerminalStyles writes, remove the now-orphan
     # color scheme, and clear current-style.ps1 (restore the user's prompt).
     # Inverse of Apply-StyleDirect. Writes a rolling .bak first.
+    #
+    # Off Windows Terminal there is no settings.json to strip: the reset is an
+    # OSC 104/110-117 packet that hands color control back to the terminal's own
+    # profile, plus dropping the style record and current-style.ps1.
     param([string]$Target)
 
     Show-UpdateNoticeIfAvailable
+
+    if ((Get-TerminalKind) -ne 'WindowsTerminal') {
+        Reset-StyleNonWT
+        return
+    }
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) {
@@ -2565,10 +2804,21 @@ function Invoke-TerminalStyle {
     # but Test-UpdateAvailable short-circuits inside the 24h throttle window.
     Show-UpdateNoticeIfAvailable
 
-    $settingsPath = Find-WTSettingsPath
-    if (-not $settingsPath) {
-        Write-Error "Could not locate Windows Terminal settings.json."
-        return
+    # Windows Terminal previews a style by writing settings.json and letting WT
+    # reload; every other terminal previews purely through the OSC packet the
+    # render loop already emits. So settings.json handling is conditional from
+    # here down: $useSettingsFile gates the read, the snapshot, the per-arrow
+    # writes, and the Esc revert.
+    $termKind        = Get-TerminalKind
+    $useSettingsFile = ($termKind -eq 'WindowsTerminal')
+
+    $settingsPath = $null
+    if ($useSettingsFile) {
+        $settingsPath = Find-WTSettingsPath
+        if (-not $settingsPath) {
+            Write-Error "Could not locate Windows Terminal settings.json."
+            return
+        }
     }
 
     # Enumerate via the shared helper so the picker shows user + tuned styles
@@ -2586,19 +2836,38 @@ function Invoke-TerminalStyle {
     # which mangles non-ASCII profile names (e.g. "Símbolo del sistema").
     # The mangled string then round-trips through ConvertTo-Json + WriteAllText
     # as UTF-8, doubling the byte count of non-ASCII chars on every call.
-    $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $originalSettings = ConvertFrom-WTJson $originalJson
+    $originalJson     = $null
+    $originalSettings = $null
+    if ($useSettingsFile) {
+        $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+        $originalSettings = ConvertFrom-WTJson $originalJson
 
-    if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
-    if (-not $Target) {
-        Write-Host "Could not auto-detect the current Windows Terminal profile."
-        Write-Host "Available: $((@('defaults') + @($originalSettings.profiles.list.name)) -join ', ')"
-        $Target = (Read-Host "Target profile").Trim()
-        if (-not $Target) { return }
+        if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
+        if (-not $Target) {
+            Write-Host "Could not auto-detect the current Windows Terminal profile."
+            Write-Host "Available: $((@('defaults') + @($originalSettings.profiles.list.name)) -join ', ')"
+            $Target = (Read-Host "Target profile").Trim()
+            if (-not $Target) { return }
+        }
     }
 
-    if (-not (Test-InWindowsTerminal)) {
-        Write-Host "Note: color scheme + background only render in Windows Terminal; this host shows a plain prompt." -ForegroundColor Yellow
+    # Single choke point for every settings.json write in the picker. Off
+    # Windows Terminal this is a no-op, so the loop below reads the same in
+    # both worlds instead of repeating the guard at each call site.
+    $writeSettings = {
+        param([string]$Json)
+        if ($useSettingsFile -and $Json) {
+            Write-SettingsAtomic -Path $settingsPath -Json $Json
+        }
+    }
+
+    if (-not (Test-StyledHost -Kind $termKind)) {
+        Write-Host "Note: this host doesn't render colors; you'll get the prompt but not the palette." -ForegroundColor Yellow
+    } elseif (-not $useSettingsFile) {
+        $caps = Get-TerminalCapability -Kind $termKind
+        if (-not $caps.BackgroundImage) {
+            Write-Host ("Note: {0} renders the palette but not background images." -f (Get-TerminalDisplayName -Kind $termKind)) -ForegroundColor DarkGray
+        }
     }
 
     # Start on the currently active style if we can detect one -- opening
@@ -2679,7 +2948,7 @@ function Invoke-TerminalStyle {
                 # (kept in sync with Get-StyleCacheDir). Writing into $styleDir
                 # instead would be a no-op on read-only PSGallery installs and would
                 # strand the .no-background marker where no reader looks.
-                $cacheDir = Join-Path $DataRoot "cache\$styleName"
+                $cacheDir = Join-Path (Join-Path $DataRoot 'cache') $styleName
                 if (-not (Test-Path -LiteralPath $cacheDir)) {
                     try { New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null } catch { continue }
                 }
@@ -2718,18 +2987,25 @@ function Invoke-TerminalStyle {
     # memory on Esc, but a hard kill mid-preview would otherwise leave the
     # last-previewed theme with no recoverable original; this .bak (same one the
     # direct-apply/reset paths roll) is that recovery copy.
-    try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { }
+    # Crash-recovery copy -- only meaningful when a settings.json exists.
+    if ($useSettingsFile) { try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { } }
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
     try {
-        # Apply first preview before showing the menu
-        $preview = ConvertFrom-WTJson $originalJson
-        $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-        $initialJson = $preview | ConvertTo-Json -Depth 100
-        Write-SettingsAtomic -Path $settingsPath -Json $initialJson
-        if (Test-StyleResolved -StyleDir $styles[$idx].FullName) {
-            $mergedCache[$idx] = $initialJson
+        # Apply first preview before showing the menu. The merge is skipped
+        # entirely off Windows Terminal: there is no $originalJson to merge into,
+        # and the OSC packet emitted by the render loop is the whole preview.
+        if ($useSettingsFile) {
+            $preview = ConvertFrom-WTJson $originalJson
+            $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+            $initialJson = $preview | ConvertTo-Json -Depth 100
+            & $writeSettings $initialJson
+            if (Test-StyleResolved -StyleDir $styles[$idx].FullName) {
+                $mergedCache[$idx] = $initialJson
+            }
+        } else {
+            Write-HostOscPacket -Packet $oscPackets[$idx]
         }
         if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
 
@@ -2814,14 +3090,20 @@ function Invoke-TerminalStyle {
 
         $applyTheme = {
             param([int]$i)
+            # Off Windows Terminal the OSC retint in $onRetint already did the
+            # whole preview -- there is no deferred settings.json write to make.
+            if (-not $useSettingsFile) {
+                if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
+                return
+            }
             $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
             if ($resolved -and $mergedCache.ContainsKey($i)) {
-                Write-SettingsAtomic -Path $settingsPath -Json $mergedCache[$i]
+                & $writeSettings $mergedCache[$i]
             } else {
                 $preview = ConvertFrom-WTJson $originalJson
                 $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$i].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
                 $json = $preview | ConvertTo-Json -Depth 100
-                Write-SettingsAtomic -Path $settingsPath -Json $json
+                & $writeSettings $json
                 if ($resolved) { $mergedCache[$i] = $json }
             }
             if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
@@ -2834,7 +3116,7 @@ function Invoke-TerminalStyle {
         # Esc: restore the byte-exact original settings.json and clear the live
         # OSC retint so the cancelled preview's colors don't linger.
         $onRevert = {
-            Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+            & $writeSettings $originalJson
             [Console]::Out.Write((Get-OscResetPacket))
         }
 
@@ -2848,6 +3130,8 @@ function Invoke-TerminalStyle {
                 $nextPrebuild = $j
                 break
             }
+            # Nothing to prebuild when no settings.json is being written.
+            if (-not $useSettingsFile) { Start-Sleep -Milliseconds 50; return }
             if ($nextPrebuild -ge 0) {
                 $pp = ConvertFrom-WTJson $originalJson
                 $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
@@ -2881,18 +3165,29 @@ function Invoke-TerminalStyle {
         $selectedStyle = $styles[$idx]
         $styleProfile  = Join-Path $selectedStyle.FullName 'profile.ps1'
 
-        $isPwshTarget = $false
-        if ($Target -eq 'defaults') {
-            $isPwshTarget = $true
-        } else {
-            $entry = $originalSettings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
-            $cmd = "$($entry.commandline)"
-            $src = "$($entry.source)"
-            if ($src -eq 'Windows.Terminal.PowershellCore' -or
-                $cmd -match '(?i)\bpwsh\.exe\b' -or
-                $cmd -match '(?i)\bpowershell\.exe\b') {
+        # "Is the target a PowerShell profile?" is a Windows Terminal question:
+        # it decides whether writing a PowerShell prompt into that WT profile
+        # makes sense. Off WT there are no profiles to disambiguate -- this shell
+        # IS PowerShell, so the prompt always applies.
+        $isPwshTarget = $true
+        if ($useSettingsFile) {
+            $isPwshTarget = $false
+            if ($Target -eq 'defaults') {
                 $isPwshTarget = $true
+            } else {
+                $entry = $originalSettings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
+                $cmd = "$($entry.commandline)"
+                $src = "$($entry.source)"
+                if ($src -eq 'Windows.Terminal.PowershellCore' -or
+                    $cmd -match '(?i)\bpwsh\.exe\b' -or
+                    $cmd -match '(?i)\bpowershell\.exe\b') {
+                    $isPwshTarget = $true
+                }
             }
+        } else {
+            # Record the confirmed style so a new tab comes up in it -- the OSC
+            # preview alone would die with this tab.
+            Set-CurrentStyleRecord -StyleName $styles[$idx].Name -Kind $termKind
         }
 
         if ($isPwshTarget) {
@@ -2959,10 +3254,42 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg 
 # Idempotent; gated by a marker file.
 Invoke-TerminalStylesStateMigration
 
-# === Auto-load the currently selected style's profile.ps1 (Windows Terminal only) ===
-# Skipped outside WT: other hosts (VS Code, Visual Studio, conhost) don't render
-# the style's colors/background, so loading the prompt/banner there would be a
-# half-themed look. Module functions are already imported regardless.
-if ((Test-InWindowsTerminal) -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
-    . $script:TStylesCurrent
+# === Auto-load the currently selected style at shell startup ===
+# Gated on Test-StyledHost rather than Test-InWindowsTerminal: hosts that cannot
+# render a style (a plain pipe, a dumb console) would show a half-themed look --
+# banner and prompt glyphs with none of the colors. Every terminal that CAN take
+# an OSC palette or a written config qualifies. Module functions import
+# regardless of the gate.
+if (Test-StyledHost) {
+
+    # Windows Terminal reads its colors from settings.json, which the apply
+    # already wrote, so the palette is live before this shell even starts.
+    # OSC-driven terminals have no such persistence: the escape sequences only
+    # ever touched the tab they were emitted into. Re-emit them here so a new
+    # tab/window/split comes up in the applied style instead of the terminal's
+    # own default.
+    #
+    # Skipped on WT to avoid fighting its own scheme, and skipped when the
+    # terminal can persist a real config AND we wrote one (that path handles
+    # itself). Failures are swallowed inside Write-HostOscPacket -- a missing
+    # color is never worth blocking a shell from starting.
+    if ((Get-TerminalKind) -ne 'WindowsTerminal') {
+        try {
+            $record = Get-CurrentStyleRecord
+            if ($record -and $record.name) {
+                $styleDir = Get-StyleDir -StyleName $record.name
+                if ($styleDir) {
+                    $schemePath = Join-Path $styleDir 'scheme.json'
+                    if (Test-Path -LiteralPath $schemePath) {
+                        $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                        [void](Invoke-TerminalStyleOscApply -Scheme $scheme)
+                    }
+                }
+            }
+        } catch { }
+    }
+
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        . $script:TStylesCurrent
+    }
 }

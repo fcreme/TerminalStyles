@@ -13,23 +13,67 @@
 
 #Requires -Version 5.1
 
+function Get-TStylesPlatform {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. (install.ps1 is the
+    # bootstrap entry point, fetched and piped to iex before the module exists,
+    # so it cannot dot-source the library.)
+    if ($PSVersionTable.PSVersion.Major -lt 6) { return 'Windows' }
+    if ($IsWindows) { return 'Windows' }
+    if ($IsMacOS)   { return 'MacOS' }
+    return 'Linux'
+}
+
+function Get-TStylesDataRoot {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync.
+    param(
+        [string]$Platform = (Get-TStylesPlatform),
+        [string]$HomeDir  = $HOME
+    )
+    switch ($Platform) {
+        'Windows' {
+            $base = $env:LOCALAPPDATA
+            if (-not $base) { $base = Join-Path $HomeDir 'AppData\Local' }
+            return Join-Path $base 'TerminalStyles'
+        }
+        'MacOS' {
+            return Join-Path (Join-Path $HomeDir 'Library/Application Support') 'TerminalStyles'
+        }
+        default {
+            $base = $env:XDG_DATA_HOME
+            if (-not $base) { $base = Join-Path (Join-Path $HomeDir '.local') 'share' }
+            return Join-Path $base 'TerminalStyles'
+        }
+    }
+}
+
 $repo       = 'fcreme/TerminalStyles'
 $branch     = 'main'
-$installDir = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+$installDir = Get-TStylesDataRoot
 $zipUrl     = "https://github.com/$repo/archive/refs/heads/$branch.zip"
 # GUID-suffix both temp paths so back-to-back runs (or a crashed prior
 # run leaving a locked file behind) never collide. AV scanners and
-# OneDrive sync can hold transient locks on $env:TEMP files; a fresh
+# OneDrive sync can hold transient locks on temp files; a fresh
 # name per invocation sidesteps that entirely.
+# GetTempPath(), not $env:TEMP: the var is Windows-only -- on macOS/Linux it is
+# unset, and Join-Path would throw on a null path before the installer ran.
 $runId      = [guid]::NewGuid().Guid.Substring(0,8)
-$tempZip    = Join-Path $env:TEMP "TerminalStyles-$branch-$runId.zip"
-$tempDir    = Join-Path $env:TEMP "TerminalStyles-extract-$runId"
+$tempRoot   = [System.IO.Path]::GetTempPath()
+$tempZip    = Join-Path $tempRoot "TerminalStyles-$branch-$runId.zip"
+$tempDir    = Join-Path $tempRoot "TerminalStyles-extract-$runId"
 
 $loaderBegin = '# ===== TerminalStyles BEGIN ====='
 $loaderEnd   = '# ===== TerminalStyles END ====='
+# Windows keeps the %LOCALAPPDATA%-relative form it has always written, so
+# existing profiles see no diff on reinstall. Elsewhere there is no equivalent
+# env var, so bake in the resolved absolute path.
+$loaderImport = if ((Get-TStylesPlatform) -eq 'Windows') {
+    'Import-Module "$env:LOCALAPPDATA\TerminalStyles\TerminalStyles.psd1" -DisableNameChecking'
+} else {
+    'Import-Module "{0}" -DisableNameChecking' -f (Join-Path $installDir 'TerminalStyles.psd1')
+}
 $loaderBody  = @"
 $loaderBegin
-Import-Module "`$env:LOCALAPPDATA\TerminalStyles\TerminalStyles.psd1" -DisableNameChecking
+$loaderImport
 $loaderEnd
 "@
 

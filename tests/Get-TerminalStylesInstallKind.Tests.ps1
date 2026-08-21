@@ -26,19 +26,35 @@ BeforeAll {
 
 Describe 'Get-TerminalStylesInstallKind' {
     InModuleScope TerminalStyles {
-        It "returns 'Bootstrap' when ModuleRoot equals %LOCALAPPDATA%\TerminalStyles" {
-            $script:TStylesModuleRoot = Join-Path $env:LOCALAPPDATA 'TerminalStyles'
+        # The bootstrap dir is wherever Get-TStylesDataRoot resolves to on THIS
+        # platform (%LOCALAPPDATA%\TerminalStyles on Windows, ~/Library/Application
+        # Support/TerminalStyles on macOS, $XDG_DATA_HOME/TerminalStyles on Linux).
+        # Deriving it from the same helper the function uses keeps the test
+        # meaningful everywhere instead of pinning it to Windows env vars, which
+        # are null off Windows.
+        BeforeAll {
+            $script:OriginalModuleRoot = $script:TStylesModuleRoot
+        }
+        AfterAll {
+            # Restore: $script:TStylesModuleRoot is module-wide state, and leaving
+            # a bogus value behind would leak into later tests in this run.
+            $script:TStylesModuleRoot = $script:OriginalModuleRoot
+        }
+
+        It "returns 'Bootstrap' when ModuleRoot equals the per-user data root" {
+            $script:TStylesModuleRoot = Get-TStylesDataRoot
             Get-TerminalStylesInstallKind | Should -Be 'Bootstrap'
         }
 
         It "returns 'PSResourceGet' when ModuleRoot is under a PSModulePath dir" {
             # Simulate a typical PSResourceGet install path
-            $script:TStylesModuleRoot = Join-Path $env:USERPROFILE 'Documents\PowerShell\Modules\TerminalStyles\0.2.0'
+            $script:TStylesModuleRoot =
+                Join-Path (Join-Path $HOME 'Documents/PowerShell/Modules/TerminalStyles') '0.2.0'
             Get-TerminalStylesInstallKind | Should -Be 'PSResourceGet'
         }
 
         It "returns 'PSResourceGet' when ModuleRoot is any path that isn't the bootstrap dir" {
-            $script:TStylesModuleRoot = 'C:\arbitrary\unrelated\path'
+            $script:TStylesModuleRoot = Join-Path $TestDrive 'arbitrary/unrelated/path'
             Get-TerminalStylesInstallKind | Should -Be 'PSResourceGet'
         }
     }
