@@ -14,6 +14,14 @@ BeforeAll {
 
 Describe 'Invoke-TerminalStyleTune guards' {
     InModuleScope TerminalStyles {
+        BeforeEach {
+            # The tuner writes opacity and font into settings.json, so it is
+            # Windows-Terminal-only and returns early elsewhere with an
+            # explanation. These tests are about the guards PAST that point, so
+            # pin the terminal -- otherwise they assert nothing on macOS/Linux.
+            Mock Get-TerminalKind { 'WindowsTerminal' }
+        }
+
         It 'errors when no style name is given and no active style exists' {
             Mock Get-CurrentStyleName { $null }
             Mock Show-UpdateNoticeIfAvailable {}
@@ -41,6 +49,23 @@ Describe 'Invoke-TerminalStyleTune guards' {
             [System.IO.File]::WriteAllText((Join-Path $TestDrive 'scheme.json'), '{"name":"x"}', [System.Text.UTF8Encoding]::new($false))
             Invoke-TerminalStyleTune -StyleName 'x'
             Should -Invoke Write-Error -Times 1 -ParameterFilter { "$Message" -match 'settings.json' }
+        }
+    }
+}
+
+Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
+    InModuleScope TerminalStyles {
+        It 'explains why instead of failing to find a settings.json' {
+            # The old behaviour surfaced "Could not locate Windows Terminal
+            # settings.json" on a Mac -- an error about a file the user was
+            # never going to have, and no hint that the command simply does not
+            # apply there.
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Find-WTSettingsPath { throw 'must not look for a settings.json off Windows Terminal' }
+            Mock Write-Host {}
+            { Invoke-TerminalStyleTune -StyleName 'eva' } | Should -Not -Throw
+            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'needs Windows Terminal' }
         }
     }
 }

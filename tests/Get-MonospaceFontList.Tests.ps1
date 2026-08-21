@@ -32,9 +32,18 @@ Describe 'Get-MonospaceFontList' {
             $list[0] | Should -Be 'My Custom Mono'
             $list    | Should -Contain 'Consolas'
         }
-        It 'falls back to Consolas when nothing intersects' {
+        It 'falls back to a font that exists on this platform when nothing intersects' {
+            # The fallback has to be a font the host actually ships. Consolas is
+            # Windows-only -- naming it on a Mac would set the terminal to a
+            # family that does not resolve, which renders as the system default
+            # and looks like the setting was ignored.
+            $expected = switch (Get-TStylesPlatform) {
+                'MacOS' { 'Menlo' }
+                'Linux' { 'DejaVu Sans Mono' }
+                default { 'Consolas' }
+            }
             $list = Get-MonospaceFontList -Current '' -Installed @('Arial') -MonospaceNames @()
-            $list | Should -Be @('Consolas')
+            $list | Should -Be @($expected)
         }
         It 'includes installed monospace fonts beyond the favorites' {
             $list = Get-MonospaceFontList -Current 'Consolas' `
