@@ -30,11 +30,13 @@ $allowlist = @(
     'TerminalStyles.psd1',
     'TerminalStyles.psm1',
     'tstyles.ps1',
+    'terminals.ps1',                       # dot-sourced by tstyles.ps1 -- import fails without it
     'apply.ps1',
     'README.md',
     'LICENSE',
     'fonts.json',
-    'styles',                              # whole tree, 16 themes
+    'styles',                              # whole tree, 16 themes + their shell prompts
+    'shell',                               # zsh/bash runtime staged by `tstyles shell-init`
     'scripts\capture-screenshots.ps1'      # useful for theme authors
 )
 

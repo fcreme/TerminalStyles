@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-21
+
 ### Added
 
 - **macOS and Linux support.** A style now applies outside Windows Terminal. Colors go out as OSC escape sequences — which Terminal.app, iTerm2, Ghostty, WezTerm, kitty and Alacritty all understand — so `tstyles <name>` retints the window immediately, and the choice is recorded so later tabs come up styled too. Applying a style reports what the host terminal cannot show (Terminal.app has no background images, nothing but Windows Terminal has tab accent colors) rather than dropping those fields silently
@@ -171,7 +173,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/fcreme/TerminalStyles/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/fcreme/TerminalStyles/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fcreme/TerminalStyles/compare/v0.6.3...v0.7.0
 [0.6.3]: https://github.com/fcreme/TerminalStyles/compare/v0.6.2...v0.6.3
