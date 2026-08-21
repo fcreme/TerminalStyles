@@ -988,6 +988,11 @@ function Apply-StyleNonWT {
     $applied = Invoke-TerminalStyleOscApply -Scheme $scheme -Kind $kind
     Set-CurrentStyleRecord -StyleName $StyleName -Kind $kind
 
+    # Stage the zsh/bash side too. The user's login shell is probably not
+    # PowerShell, and the colors belong to the terminal rather than to any one
+    # shell -- so a zsh tab opened after this should come up styled as well.
+    Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
+
     # Prompt/banner: same contract as the Windows Terminal path.
     $styleProfile = Join-Path $StyleDir 'profile.ps1'
     if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
@@ -2397,6 +2402,24 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles register')
         }
         [pscustomobject]@{
+            Name = 'shell-init'; Usage = 'shell-init'; Summary = 'Style zsh/bash too, not just PowerShell'
+            Detail = @("Adds a loader to your ~/.zshrc, ~/.bashrc and ~/.bash_profile so a zsh",
+                       "or bash tab comes up in the applied style -- colors, prompt, and banner.",
+                       "Also defines a 'tstyles' command for those shells.",
+                       "",
+                       "Colors belong to the terminal rather than to any one shell, so without",
+                       "this a zsh user still sees the palette but keeps their own prompt.",
+                       "Re-run it any time; it refreshes the block instead of adding a second.")
+            Keys = @(); Examples = @('tstyles shell-init')
+        }
+        [pscustomobject]@{
+            Name = 'shell-remove'; Usage = 'shell-remove'; Summary = 'Remove the zsh/bash loader'
+            Detail = @("Strips the loader block from your shell rc files and clears the staged",
+                       "prompt. Your own prompt returns in the next tab. The inverse of",
+                       "shell-init; leaves the PowerShell side untouched.")
+            Keys = @(); Examples = @('tstyles shell-remove')
+        }
+        [pscustomobject]@{
             Name = 'update'; Usage = 'update'; Summary = 'Update to the latest version'
             Detail = @("Updates TerminalStyles. PSGallery installs run Update-PSResource;",
                        "bootstrap installs re-run the installer.")
@@ -2499,6 +2522,7 @@ function Reset-StyleNonWT {
 
     [void](Invoke-TerminalStyleOscReset -Kind $kind)
     Clear-CurrentStyleRecord
+    Clear-ShellStyleState
 
     # Restore the user's own prompt by removing the style's loader target. The
     # prompt function already installed in THIS session stays until the shell
@@ -2776,6 +2800,8 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
+    if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
+    if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall;  return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
@@ -3239,7 +3265,8 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
+    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset',
+                     'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.
@@ -3260,7 +3287,7 @@ Invoke-TerminalStylesStateMigration
 # banner and prompt glyphs with none of the colors. Every terminal that CAN take
 # an OSC palette or a written config qualifies. Module functions import
 # regardless of the gate.
-if (Test-StyledHost) {
+if ((Test-StyledHost) -and (Test-HostOutputVisible)) {
 
     # Windows Terminal reads its colors from settings.json, which the apply
     # already wrote, so the palette is live before this shell even starts.
