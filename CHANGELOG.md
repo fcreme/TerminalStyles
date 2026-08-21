@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-21
+
+### Fixed
+
+- the interactive picker crashed the moment it opened on any terminal that is not Windows Terminal: `Cannot index into a null array` at the first paint. The initial preview indexed the per-keystroke OSC cache, which is built about fifty lines further down and was still `$null`. The starting style's packet is now built directly from the loaded scheme. This shipped in 0.8.0 with all four CI legs green -- the picker is a keyboard UI, so its non-Windows branch had no automated coverage at all
+- the picker downloaded a background image for every style even on terminals that cannot display one, showing `...fetching background` beside each entry while pulling megabytes from the `gifs` branch for images that would never be drawn. Prefetch is now skipped entirely when the host terminal has no background-image capability
+- the picker header read `Choose a style for ''` off Windows Terminal, where there is no profile to name. It now names the terminal being styled -- `Choose a style for Terminal.app`
+- running `tstyles` with stdin redirected (a pipe, a shell that detaches stdin, a CI step) drew the whole menu and then died on `[Console]::KeyAvailable` with "Cannot see if a key has been pressed ... Try Console.In.Peek". It now detects that up front, explains that the picker needs an interactive terminal, points at `tstyles <name>`, and returns without clearing the screen
+- `terminals.ps1` and `shell/` were missing from the publish allowlist. Both are new in 0.8.0 and both are load-bearing -- `tstyles.ps1` dot-sources `terminals.ps1` -- so this was caught during 0.8.0's preflight, but the allowlist is now verified by importing the staged package standalone rather than by eye
+
 ## [0.8.0] - 2026-08-21
 
 ### Added
@@ -173,7 +183,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/fcreme/TerminalStyles/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/fcreme/TerminalStyles/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/fcreme/TerminalStyles/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/fcreme/TerminalStyles/compare/v0.6.3...v0.7.0

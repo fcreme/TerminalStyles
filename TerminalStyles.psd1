@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.0'
+    ModuleVersion     = '0.8.1'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.0: TerminalStyles now runs on macOS and Linux, not just Windows Terminal. Colors are applied as OSC escape sequences, which Terminal.app, iTerm2, Ghostty, WezTerm, kitty and Alacritty all understand, so a style applies to the window you are in and to every tab you open afterwards. Applying a style reports what the host terminal cannot show rather than dropping it silently. "tstyles shell-init" styles zsh and bash too -- palette, window title, banner and prompt -- and gives those shells a "tstyles" command of their own; each style ships a prompt.sh ported from its profile.ps1. Fixes: the module could not be imported at all off Windows (the data dir was built from $env:LOCALAPPDATA, which is null there); font detection reported every font as missing on macOS/Linux (System.Drawing is Windows-only from .NET 6 on); and importing the module wrote the style''s escape sequences and banner into REDIRECTED output, corrupting anything that captured it. Windows behaviour is unchanged.'
+            ReleaseNotes = 'v0.8.1: fixes the interactive picker on macOS and Linux. In 0.8.0 it crashed the moment it opened ("Cannot index into a null array") on any terminal that is not Windows Terminal -- the first paint reached for an OSC cache that had not been built yet. Also: the picker no longer downloads background images for terminals that cannot display them, its header names the terminal instead of reading "Choose a style for ''", and running tstyles with stdin redirected now explains that the picker needs an interactive terminal instead of failing with a .NET console error after drawing the whole menu. --- v0.8.0: TerminalStyles runs on macOS and Linux, not just Windows Terminal. Colors are applied as OSC escape sequences, which Terminal.app, iTerm2, Ghostty, WezTerm, kitty and Alacritty all understand. "tstyles shell-init" styles zsh and bash too -- palette, window title, banner and prompt.'
         }
     }
 }

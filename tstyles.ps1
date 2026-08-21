@@ -3051,6 +3051,32 @@ function Invoke-TerminalStyle {
         }
     }
 
+    # What the picker header names as the thing being styled. On Windows
+    # Terminal that is the profile the style gets written to. Elsewhere there is
+    # no profile at all, and $Target is empty -- the header read "Choose a style
+    # for ''", which looks like a bug. Name the terminal instead, since that is
+    # what actually changes.
+    # The picker is a keyboard-driven UI: it polls [Console]::KeyAvailable, which
+    # throws outright when stdin is not a console -- piped input, a redirect, a
+    # CI step, or a tool that runs commands with stdin detached. The raw failure
+    # is ".NET: Cannot see if a key has been pressed ... Try Console.In.Peek",
+    # thrown AFTER the menu has been drawn, which reads like the picker broke
+    # rather than like it needs a terminal. Check up front and say so.
+    if ([Console]::IsInputRedirected) {
+        Write-Host ""
+        Write-Host "  The style picker needs an interactive terminal." -ForegroundColor Yellow
+        Write-Host "  This session's input is redirected, so there are no keystrokes to read."
+        Write-Host ""
+        Write-Host "  Apply a style directly instead:" -ForegroundColor DarkGray
+        Write-Host "    tstyles <name>     " -NoNewline -ForegroundColor DarkGray
+        Write-Host "(tstyles list shows them all)" -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    $pickerTargetLabel = if ($useSettingsFile) { "'$Target'" }
+                         else { Get-TerminalDisplayName -Kind $termKind }
+
     if (-not (Test-StyledHost -Kind $termKind)) {
         Write-Host "Note: this host doesn't render colors; you'll get the prompt but not the palette." -ForegroundColor Yellow
     } elseif (-not $useSettingsFile) {
@@ -3110,10 +3136,19 @@ function Invoke-TerminalStyle {
     # are usually already cached locally. Worst case: the user reaches a
     # style before its GIF arrives -- the synchronous fetch in
     # Get-StyleBundledBackground handles it (same code path as today).
+    #
+    # Skipped entirely when the terminal cannot show a background image. On
+    # Terminal.app the picker was downloading a GIF per style from the gifs
+    # branch -- megabytes over the network, and a "...fetching background" row
+    # next to every entry -- for an image that can never be drawn.
+    $wantsBackgrounds = (Get-TerminalCapability -Kind $termKind).BackgroundImage
+
     $missingPaths = @()
-    foreach ($s in $styles) {
-        if (-not (Test-StyleResolved -StyleDir $s.FullName)) {
-            $missingPaths += $s.FullName
+    if ($wantsBackgrounds) {
+        foreach ($s in $styles) {
+            if (-not (Test-StyleResolved -StyleDir $s.FullName)) {
+                $missingPaths += $s.FullName
+            }
         }
     }
     $prefetchJob = $null
@@ -3195,7 +3230,13 @@ function Invoke-TerminalStyle {
                 $mergedCache[$idx] = $initialJson
             }
         } else {
-            Write-HostOscPacket -Packet $oscPackets[$idx]
+            # Paint the starting style, which on Windows Terminal the
+            # settings.json write above would have done. Built from $schemes
+            # rather than the $oscPackets cache: that cache is populated further
+            # down, for the per-keystroke path, and is still $null here --
+            # indexing it threw "Cannot index into a null array" and took the
+            # picker down before it drew a single row.
+            Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$idx])
         }
         if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
 
@@ -3259,13 +3300,18 @@ function Invoke-TerminalStyle {
             [Console]::SetCursorPosition(0, $renderHomeY)
             Write-Host ""
             Write-Host "  Choose a style for " -NoNewline
-            Write-Host "'$Target'" -ForegroundColor Cyan
+            Write-Host $pickerTargetLabel -ForegroundColor Cyan
             Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
             Write-Host "$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
             Write-Host ""
             for ($i = 0; $i -lt $styles.Count; $i++) {
                 $name = $styles[$i].Name
-                $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
+                # "Resolved" means the style's background image is on disk. That
+                # only gates the swatch when a background can actually be shown;
+                # where it cannot, every style is ready the moment it is listed,
+                # and reporting "...fetching background" would be describing work
+                # that is deliberately never done.
+                $resolved = (-not $wantsBackgrounds) -or (Test-StyleResolved -StyleDir $styles[$i].FullName)
                 $color = if ($i -eq $idx) { 'Yellow' } else { 'Gray' }
                 $prefix = if ($i -eq $idx) { '   > ' } else { '     ' }
                 Write-Host ($prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
