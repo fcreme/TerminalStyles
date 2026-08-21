@@ -988,6 +988,11 @@ function Apply-StyleNonWT {
     $applied = Invoke-TerminalStyleOscApply -Scheme $scheme -Kind $kind
     Set-CurrentStyleRecord -StyleName $StyleName -Kind $kind
 
+    # Stage the zsh/bash side too. The user's login shell is probably not
+    # PowerShell, and the colors belong to the terminal rather than to any one
+    # shell -- so a zsh tab opened after this should come up styled as well.
+    Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
+
     # Prompt/banner: same contract as the Windows Terminal path.
     $styleProfile = Join-Path $StyleDir 'profile.ps1'
     if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
@@ -1544,43 +1549,75 @@ function Get-MonospaceFontList {
         [string[]]$MonospaceNames
     )
     if (-not $Installed) {
-        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
-        try {
-            $Installed = [System.Drawing.Text.InstalledFontCollection]::new().Families.Name
-        } catch {
-            $Installed = @()
-        }
+        $Installed = Get-InstalledFontFamily
     }
 
+    $platform = Get-TStylesPlatform
+
+    # Curated favorites, always offered when present and never measured.
+    # Extended off Windows with the monospace families those systems ship, so
+    # the tuner has something to cycle on a Mac that has none of the Windows
+    # fonts installed.
     $allow = @('Cascadia Mono','Cascadia Code','Consolas','JetBrains Mono',
                'Fira Code','Hack','Source Code Pro','DejaVu Sans Mono',
                'Lucida Console','Courier New')
-    $favorites = @($allow | Where-Object { $_ -in $Installed })
+    if ($platform -eq 'MacOS') {
+        $allow += @('SF Mono','Menlo','Monaco','Andale Mono','PT Mono','Courier')
+    } elseif ($platform -eq 'Linux') {
+        $allow += @('Liberation Mono','Ubuntu Mono','Noto Sans Mono','FreeMono')
+    }
+    $installedKeys = @{}
+    foreach ($i in $Installed) {
+        if ($i) { $installedKeys[(Get-FontComparisonKey -Name $i)] = $i }
+    }
+    # Match on the normalized key: off Windows the installed names come from
+    # filenames, so "PT Mono" may have been recovered as "PTMono".
+    $favorites = @($allow | Where-Object { $installedKeys.ContainsKey((Get-FontComparisonKey -Name $_)) })
 
-    # $null means "not provided" -> measure. An explicit empty array (tests, or
-    # a host without System.Drawing) means "no monospace beyond favorites".
+    # $null means "not provided" -> work it out. An explicit empty array (tests)
+    # means "no monospace beyond favorites".
     if ($null -eq $MonospaceNames) {
         $MonospaceNames = @()
-        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
-        try {
-            $bmp = [System.Drawing.Bitmap]::new(1, 1)
-            $g   = [System.Drawing.Graphics]::FromImage($bmp)
+        if ($platform -eq 'Windows') {
+            Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
             try {
-                # Favorites are always offered, so skip measuring them.
-                $MonospaceNames = @($Installed |
-                    Where-Object { $_ -notin $favorites } |
-                    Where-Object { Test-MonospaceFont -FamilyName $_ -Graphics $g })
-            } finally {
-                $g.Dispose(); $bmp.Dispose()
+                $bmp = [System.Drawing.Bitmap]::new(1, 1)
+                $g   = [System.Drawing.Graphics]::FromImage($bmp)
+                try {
+                    # Favorites are always offered, so skip measuring them.
+                    $MonospaceNames = @($Installed |
+                        Where-Object { $_ -notin $favorites } |
+                        Where-Object { Test-MonospaceFont -FamilyName $_ -Graphics $g })
+                } finally {
+                    $g.Dispose(); $bmp.Dispose()
+                }
+            } catch {
+                $MonospaceNames = @()
             }
-        } catch {
-            $MonospaceNames = @()
+        } else {
+            # No glyph measurement off Windows: Test-MonospaceFont needs GDI+,
+            # which System.Drawing.Common no longer provides there. Rather than
+            # offer all 369 installed families and let the user find the fixed-
+            # width ones by trial, offer the curated set plus anything whose
+            # name says it is monospace -- the near-universal convention for a
+            # coding font. A mono font named otherwise is missed, which is a
+            # smaller cost than filling the tuner with proportional faces.
+            $MonospaceNames = @($Installed | Where-Object {
+                $_ -and $_ -notin $favorites -and $_ -match '(?i)\b(mono|mononoki|code)\b'
+            })
         }
     }
 
     $others = @($MonospaceNames | Where-Object { $_ -notin $favorites } | Sort-Object)
     $list = @($favorites) + @($others)
-    if (-not $list) { $list = @('Consolas') }
+    if (-not $list) {
+        # Last resort differs by platform: Consolas does not exist on a Mac.
+        $list = switch ($platform) {
+            'MacOS' { @('Menlo') }
+            'Linux' { @('DejaVu Sans Mono') }
+            default { @('Consolas') }
+        }
+    }
     if ($Current) {
         $list = @($Current) + @($list | Where-Object { $_ -ne $Current })
     }
@@ -1608,22 +1645,136 @@ function Get-FontCatalog {
     return @($valid)
 }
 
+# Canonical display names for families TerminalStyles knows about, keyed by
+# Get-FontComparisonKey. Used to turn a scanned filename back into the name the
+# terminal expects -- "JetBrainsMono-Regular.ttf" is the family "JetBrains Mono",
+# and setting a font to "Jet Brains Mono" would simply not resolve.
+$script:TStylesKnownFontNames = @{}
+foreach ($n in @(
+        'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Cascadia Mono', 'Hack',
+        'Source Code Pro', 'IBM Plex Mono', 'DejaVu Sans Mono', 'Liberation Mono',
+        'Ubuntu Mono', 'Noto Sans Mono', 'Consolas', 'Lucida Console',
+        'Courier New', 'Courier', 'Menlo', 'Monaco', 'SF Mono', 'Andale Mono',
+        'PT Mono', 'MonoLisa', 'Iosevka', 'Victor Mono', 'Cousine')) {
+    $script:TStylesKnownFontNames[(($n -replace '[^A-Za-z0-9]', '').ToLowerInvariant())] = $n
+}
+
+function Get-FontSearchPath {
+    # Directories a font can be installed into for the current user, most
+    # specific first. -Platform / -HomeDir are test seams.
+    param(
+        [string]$Platform = (Get-TStylesPlatform),
+        [string]$HomeDir  = $HOME
+    )
+    switch ($Platform) {
+        'MacOS' {
+            @(
+                (Join-Path (Join-Path $HomeDir 'Library') 'Fonts')
+                '/Library/Fonts'
+                '/System/Library/Fonts'
+                '/System/Library/Fonts/Supplemental'
+            )
+        }
+        'Linux' {
+            $xdg = $env:XDG_DATA_HOME
+            if (-not $xdg) { $xdg = Join-Path (Join-Path $HomeDir '.local') 'share' }
+            @(
+                (Join-Path $xdg 'fonts')
+                (Join-Path $HomeDir '.fonts')
+                '/usr/local/share/fonts'
+                '/usr/share/fonts'
+            )
+        }
+        default { @((Get-TStylesFontDir -Platform $Platform -HomeDir $HomeDir)) }
+    }
+}
+
+function Get-FontComparisonKey {
+    # Normalize a family name or font filename to a comparison key: lowercase,
+    # letters and digits only. "JetBrains Mono" and "JetBrainsMono-Regular"
+    # both reduce to a key one can prefix-match, which is what lets the
+    # directory scan below recognize a family without parsing the font's
+    # internal name table.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Name)
+    return ($Name -replace '[^A-Za-z0-9]', '').ToLowerInvariant()
+}
+
+function Get-InstalledFontFamily {
+    # Installed font family names.
+    #
+    # Windows enumerates through GDI+. Everywhere else that is not available:
+    # System.Drawing.Common is Windows-only from .NET 6 onward, and constructing
+    # an InstalledFontCollection on macOS throws a PInvokeGdiPlus type-initializer
+    # error. The previous code caught that and fell back to an empty list, so
+    # every font silently reported as "not installed" -- `tstyles font` showed
+    # the whole catalogue as installable even right after installing one.
+    #
+    # The fallback scans the font directories and derives family names from
+    # filenames. That cannot recover a family whose file is named unlike its
+    # family (Apple's SFNSMono.ttf is "SF Mono"), which is why the curated
+    # catalogue is matched by normalized key rather than by exact display name.
+    param(
+        [string]$Platform = (Get-TStylesPlatform),
+        [string[]]$SearchPath
+    )
+    if ($Platform -eq 'Windows') {
+        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
+        try {
+            return @([System.Drawing.Text.InstalledFontCollection]::new().Families.Name)
+        } catch {
+            return @()
+        }
+    }
+
+    if (-not $SearchPath) { $SearchPath = Get-FontSearchPath -Platform $Platform }
+
+    $names = New-Object System.Collections.Generic.List[string]
+    foreach ($dir in $SearchPath) {
+        if (-not (Test-Path -LiteralPath $dir)) { continue }
+        try {
+            $files = Get-ChildItem -LiteralPath $dir -File -Recurse -ErrorAction SilentlyContinue |
+                Where-Object { $_.Extension -match '(?i)^\.(ttf|otf|ttc|otc)$' }
+        } catch { continue }
+        foreach ($f in $files) {
+            $base = [System.IO.Path]::GetFileNameWithoutExtension($f.Name)
+            # Drop a trailing style suffix: "JetBrainsMono-Regular" -> "JetBrainsMono".
+            $base = $base -replace '-(Regular|Italic|Bold|BoldItalic|Light|Medium|SemiBold|ExtraBold|Thin|Black|Oblique)$', ''
+
+            # Prefer the family's real name when we know it. A filename cannot
+            # be split back into words unambiguously -- "JetBrainsMono" is just
+            # as readable as "Jet Brains Mono" to a splitter -- so canonicalize
+            # against the names we do know before falling back to guessing.
+            $key = Get-FontComparisonKey -Name $base
+            if ($script:TStylesKnownFontNames.ContainsKey($key)) {
+                $names.Add($script:TStylesKnownFontNames[$key])
+                continue
+            }
+            # Unknown family: split camel case, which is right more often than
+            # not for font filenames, and only affects how the name is displayed.
+            $display = ($base -creplace '(?<=[a-z0-9])(?=[A-Z])', ' ').Trim()
+            if ($display) { $names.Add($display) }
+        }
+    }
+    return @($names | Sort-Object -Unique)
+}
+
 function Test-FontInstalled {
-    # True when $Family is among installed font families (case-insensitive).
+    # True when $Family is among installed font families.
     # -Installed is a test seam; real callers omit it and we enumerate.
     param(
         [Parameter(Mandatory)][string]$Family,
         [string[]]$Installed
     )
     if (-not $PSBoundParameters.ContainsKey('Installed')) {
-        Add-Type -AssemblyName System.Drawing -ErrorAction SilentlyContinue
-        try {
-            $Installed = [System.Drawing.Text.InstalledFontCollection]::new().Families.Name
-        } catch {
-            $Installed = @()
-        }
+        $Installed = Get-InstalledFontFamily
     }
-    return @($Installed | Where-Object { $_ -and $_.Trim().ToLowerInvariant() -eq $Family.Trim().ToLowerInvariant() }).Count -gt 0
+    # Compare on the normalized key, not the raw string: off Windows the
+    # "installed" names come from filenames, so "JetBrains Mono" has to match
+    # a family recovered as "JetBrains Mono" from JetBrainsMono-Regular.ttf --
+    # equal only once spaces and case are taken out.
+    $want = Get-FontComparisonKey -Name $Family
+    if (-not $want) { return $false }
+    return @($Installed | Where-Object { $_ -and (Get-FontComparisonKey -Name $_) -eq $want }).Count -gt 0
 }
 
 function Get-UserFontInstallPlan {
@@ -2073,6 +2224,24 @@ function Invoke-TerminalStyleTune {
 
     Show-UpdateNoticeIfAvailable
 
+    # The tuner's whole model is "merge a scratch style into settings.json and
+    # let the terminal reload" -- it tunes opacity, font face and font size as
+    # well as colors, and none of those can be expressed as an escape sequence.
+    # Off Windows Terminal there is nothing to write, so say that plainly rather
+    # than letting Find-WTSettingsPath fail with a message about a file the user
+    # was never going to have.
+    $tuneKind = Get-TerminalKind
+    if ($tuneKind -ne 'WindowsTerminal') {
+        Write-Host ""
+        Write-Host ("  tstyles tune needs Windows Terminal; this is {0}." -f (Get-TerminalDisplayName -Kind $tuneKind)) -ForegroundColor Yellow
+        Write-Host "  Tuning adjusts opacity and font as well as color, and those are"
+        Write-Host "  written to a terminal config file rather than sent as escape codes."
+        Write-Host ""
+        Write-Host "  You can still switch styles here: tstyles <name>, or tstyles for the picker." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
     # --- Resolve the style (all guards run BEFORE any console interaction) ---
     if (-not $StyleName) {
         $StyleName = Get-CurrentStyleName
@@ -2397,6 +2566,24 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles register')
         }
         [pscustomobject]@{
+            Name = 'shell-init'; Usage = 'shell-init'; Summary = 'Style zsh/bash too, not just PowerShell'
+            Detail = @("Adds a loader to your ~/.zshrc, ~/.bashrc and ~/.bash_profile so a zsh",
+                       "or bash tab comes up in the applied style -- colors, prompt, and banner.",
+                       "Also defines a 'tstyles' command for those shells.",
+                       "",
+                       "Colors belong to the terminal rather than to any one shell, so without",
+                       "this a zsh user still sees the palette but keeps their own prompt.",
+                       "Re-run it any time; it refreshes the block instead of adding a second.")
+            Keys = @(); Examples = @('tstyles shell-init')
+        }
+        [pscustomobject]@{
+            Name = 'shell-remove'; Usage = 'shell-remove'; Summary = 'Remove the zsh/bash loader'
+            Detail = @("Strips the loader block from your shell rc files and clears the staged",
+                       "prompt. Your own prompt returns in the next tab. The inverse of",
+                       "shell-init; leaves the PowerShell side untouched.")
+            Keys = @(); Examples = @('tstyles shell-remove')
+        }
+        [pscustomobject]@{
             Name = 'update'; Usage = 'update'; Summary = 'Update to the latest version'
             Detail = @("Updates TerminalStyles. PSGallery installs run Update-PSResource;",
                        "bootstrap installs re-run the installer.")
@@ -2499,6 +2686,7 @@ function Reset-StyleNonWT {
 
     [void](Invoke-TerminalStyleOscReset -Kind $kind)
     Clear-CurrentStyleRecord
+    Clear-ShellStyleState
 
     # Restore the user's own prompt by removing the style's loader target. The
     # prompt function already installed in THIS session stays until the shell
@@ -2776,6 +2964,8 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
+    if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
+    if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall;  return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
@@ -3239,7 +3429,8 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset', 'tune', 'update', 'uninstall')
+    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset',
+                     'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.
@@ -3260,7 +3451,7 @@ Invoke-TerminalStylesStateMigration
 # banner and prompt glyphs with none of the colors. Every terminal that CAN take
 # an OSC palette or a written config qualifies. Module functions import
 # regardless of the gate.
-if (Test-StyledHost) {
+if ((Test-StyledHost) -and (Test-HostOutputVisible)) {
 
     # Windows Terminal reads its colors from settings.json, which the apply
     # already wrote, so the palette is live before this shell even starts.

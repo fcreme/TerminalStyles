@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **macOS and Linux support.** A style now applies outside Windows Terminal. Colors go out as OSC escape sequences — which Terminal.app, iTerm2, Ghostty, WezTerm, kitty and Alacritty all understand — so `tstyles <name>` retints the window immediately, and the choice is recorded so later tabs come up styled too. Applying a style reports what the host terminal cannot show (Terminal.app has no background images, nothing but Windows Terminal has tab accent colors) rather than dropping those fields silently
+- **zsh and bash styling.** `tstyles shell-init` registers a loader in `~/.zshrc`, `~/.bashrc` and `~/.bash_profile`, so a non-PowerShell shell comes up with the style's palette, window title, banner and prompt — and gets a `tstyles` command of its own. Each style ships a `prompt.sh` ported from its `profile.ps1`. The loader reads only precomputed files, so it never starts PowerShell at shell startup, and it emits nothing in a non-interactive shell (`ssh host command`, `scp` and `rsync` are unaffected). `tstyles shell-remove` reverses it. PSReadLine's syntax-highlighting colors have no zsh/bash equivalent and are not ported
+- `terminals.ps1`: terminal detection and a capability model. `Get-TerminalKind` identifies the host from its environment markers; `Get-TerminalCapability` reports which style fields it can honour, so callers degrade against a capability record instead of writing settings nothing will read
+- CI now runs the suite on macOS and Ubuntu alongside the two Windows legs
+
+### Fixed
+
+- the module could not be imported at all off Windows: the per-user data dir was built with `Join-Path $env:LOCALAPPDATA`, and that variable is null on macOS/Linux, so loading threw before defining a single function. State now resolves per platform — `%LOCALAPPDATA%` on Windows (unchanged, so existing installs are untouched), `~/Library/Application Support` on macOS, `$XDG_DATA_HOME` on Linux
+- five path joins embedded a literal `\` separator (`"cache\$name"`). A backslash is an ordinary filename character off Windows, so these produced single files with backslashes in their names instead of the intended subdirectories
+- font detection reported every font as missing on macOS/Linux. Both the installed-font check and the tuner's font list enumerated through `System.Drawing`, which is Windows-only from .NET 6 onward -- constructing an `InstalledFontCollection` throws there, and the error was caught into an empty list. `tstyles font` therefore listed the whole catalogue as installable even straight after installing one, and the tuner had no fonts to cycle. Off Windows the font directories are scanned instead, and families are matched on a normalized key so a family recovered from `JetBrainsMono-Regular.ttf` matches "JetBrains Mono"
+- `tstyles tune` failed off Windows Terminal with "Could not locate Windows Terminal settings.json" -- an error about a file the user was never going to have. Tuning adjusts opacity and font as well as color, none of which can be sent as an escape sequence, so it now says plainly that it needs Windows Terminal and points at `tstyles <name>` instead
+- importing the module wrote the applied style's OSC palette, and its banner, into **redirected** output. A `$PROFILE` that imports TerminalStyles would prepend ~280 bytes of escape sequences plus a banner to the output of any `pwsh -c '...' > file.txt`, quietly corrupting it. Both are now suppressed when stdout is not a terminal
+
 ## [0.7.1] - 2026-08-07
 
 ### Fixed

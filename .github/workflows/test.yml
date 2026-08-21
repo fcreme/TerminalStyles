@@ -78,3 +78,49 @@ jobs:
           $config.Run.Exit = $true
           $config.Output.Verbosity = 'Detailed'
           Invoke-Pester -Configuration $config
+
+  # macOS and Linux legs. Windows Terminal does not exist here, so these
+  # exercise the OSC/current-style.json apply path, the platform-specific data
+  # and font directories, and the zsh/bash prompt files -- all of which the
+  # Windows legs above skip entirely.
+  #
+  # A separate job rather than another matrix entry on `pester`: that job is
+  # pinned to windows-latest and splits its steps by shell (see the note above),
+  # and folding a non-Windows runner into it would mean guarding every step
+  # twice over.
+  pester-unix:
+    name: Pester (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      # zsh is preinstalled on the macOS runners but not on the Ubuntu ones.
+      # Shell-Prompt.Tests.ps1 skips whichever shell is absent, so this only
+      # widens coverage -- it never turns a skip into a failure.
+      - name: Install zsh (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y zsh
+
+      - name: Install Pester 5
+        shell: pwsh
+        run: |
+          # -Repository PSGallery explicitly: the runner images register
+          # additional repositories, and resolution against the wrong one fails
+          # with a bare "package: Not Found".
+          Install-PSResource -Name Pester -Version '[5.0.0,)' -Repository PSGallery -TrustRepository -Reinstall
+          Import-Module Pester
+          (Get-Module Pester).Version
+
+      - name: Run Pester tests
+        shell: pwsh
+        run: |
+          Import-Module Pester -MinimumVersion 5.0.0
+          $config = New-PesterConfiguration
+          $config.Run.Path = 'tests'
+          $config.Run.Exit = $true
+          $config.Output.Verbosity = 'Detailed'
+          Invoke-Pester -Configuration $config
