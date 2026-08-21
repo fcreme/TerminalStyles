@@ -972,7 +972,12 @@ function Apply-StyleNonWT {
     param(
         [Parameter(Mandatory)][string]$StyleName,
         [Parameter(Mandatory)][string]$StyleDir,
-        [switch]$KeepPrompt
+        [switch]$KeepPrompt,
+        # Open a new window carrying the FULL style, background image included.
+        # Needed because an image can only reach Terminal.app through a profile,
+        # and a profile only takes effect on a new window -- unlike colors,
+        # which the OSC packet applies to the window you are already in.
+        [switch]$NewWindow
     )
 
     $kind = Get-TerminalKind
@@ -1009,7 +1014,18 @@ function Apply-StyleNonWT {
 
     if (-not $applied) {
         Write-Host ""
-        Write-Host "  Note: this terminal did not accept live color changes, so only the prompt was applied." -ForegroundColor Yellow
+        if ([Console]::IsOutputRedirected) {
+            # The style IS recorded and staged -- a new tab will come up in it.
+            # What could not happen is repainting THIS session, because its
+            # output does not go to a terminal. Say that precisely: the
+            # alternative is a user watching an unchanged window after being
+            # told the style was applied.
+            Write-Host "  Colors were not applied to this session: its output is redirected," -ForegroundColor Yellow
+            Write-Host "  so there is no terminal to repaint. The style is saved -- open a new" -ForegroundColor Yellow
+            Write-Host "  tab, or run tstyles directly in your terminal, to see it." -ForegroundColor Yellow
+        } else {
+            Write-Host "  Note: this terminal did not accept live color changes, so only the prompt was applied." -ForegroundColor Yellow
+        }
     }
 
     # Tell the user which parts of the style this terminal cannot show, once,
@@ -1034,6 +1050,29 @@ function Apply-StyleNonWT {
         Write-Host ""
         Write-Host ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $kind), ($unsupported -join ', ')) -ForegroundColor DarkGray
     }
+
+    # Background image. It cannot be pushed into this window -- only a profile
+    # carries one, and a profile only applies to a new window -- so the profile
+    # is written either way and opened only when asked. Silently spawning a
+    # window on every apply would be a worse surprise than not showing the image.
+    $bundledBg = Get-StyleBundledBackground -StyleDir $StyleDir
+    if ($caps.BackgroundImage -and $bundledBg -and $kind -eq 'AppleTerminal') {
+        $profilePath = New-AppleTerminalProfile -StyleName $StyleName -Scheme $scheme -BackgroundImage $bundledBg
+        if ($profilePath) {
+            if ($NewWindow) {
+                Write-Host ""
+                Write-Host "  Opening a new window with the background image..." -ForegroundColor DarkGray
+                try { & open $profilePath } catch {
+                    Write-Host "  Could not open the profile: $_" -ForegroundColor Yellow
+                }
+            } else {
+                Write-Host ""
+                Write-Host "  This style ships a background image, which Terminal.app can only show" -ForegroundColor DarkGray
+                Write-Host "  in a new window. To get it:" -ForegroundColor DarkGray
+                Write-Host "    tstyles $StyleName -NewWindow" -ForegroundColor Cyan
+            }
+        }
+    }
     Write-Host ""
 
     # Live reload of the prompt in THIS shell (matches the WT confirm path).
@@ -1057,7 +1096,10 @@ function Apply-StyleDirect {
         [bool]$BackgroundImageProvided = $false,
         # Apply the visuals but not the style's prompt/banner: clears
         # current-style.ps1 so the user's own prompt stays in control.
-        [switch]$KeepPrompt
+        [switch]$KeepPrompt,
+        # Off Windows Terminal: also open a new window carrying the style's
+        # background image (see Apply-StyleNonWT).
+        [switch]$NewWindow
     )
 
     $styleDir = Get-StyleDir -StyleName $StyleName
@@ -1070,7 +1112,7 @@ function Apply-StyleDirect {
 
     # Non-WT hosts have no settings.json; hand off before we go looking for one.
     if ((Get-TerminalKind) -ne 'WindowsTerminal') {
-        Apply-StyleNonWT -StyleName $StyleName -StyleDir $styleDir -KeepPrompt:$KeepPrompt
+        Apply-StyleNonWT -StyleName $StyleName -StyleDir $styleDir -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
         return
     }
 
@@ -2949,7 +2991,10 @@ function Invoke-TerminalStyle {
         [switch]$Force,
         # Apply a style's visuals but keep your own prompt (skip the style's
         # prompt/banner). Threaded to Apply-StyleDirect for `tstyles <name>`.
-        [switch]$KeepPrompt
+        [switch]$KeepPrompt,
+        # Terminal.app only: open a new window carrying the style's background
+        # image, which no escape sequence can deliver to the current one.
+        [switch]$NewWindow
     )
 
     $bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
@@ -2974,7 +3019,7 @@ function Invoke-TerminalStyle {
         if ($styleMatch) {
             Apply-StyleDirect -StyleName $Arg -Target $Target `
                 -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided `
-                -KeepPrompt:$KeepPrompt
+                -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
             return
         }
         # Not a subcommand and not a style name: show help instead of silently

@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-21
+
+### Added
+
+- **background images on Terminal.app.** `tstyles <name> -NewWindow` opens a window carrying the style's background image along with its palette and prompt. Terminal.app does support background images -- 0.8.0 and 0.8.1 said it did not, which was simply wrong -- but only through a profile, and a profile only takes effect on a new window, so there is no way to push an image into the window you are already sitting in. The generated profile is kept under `~/Library/Application Support/TerminalStyles/profiles/` and can be opened from Finder or set as your Terminal.app default
+- `shell/appleterminal.js`, a JXA helper that builds the Cocoa objects a `.terminal` profile needs. Terminal stores each color as an `NSKeyedArchiver` archive of an `NSColor`, and the background image as an archive of an `NSMutableData` holding a security-scoped bookmark. Hand Terminal a bare bookmark, or a color that is not archived, and it rejects the whole profile as "corrupt" without naming the offending key
+
+### Fixed
+
+- the capability table claimed Terminal.app could not show a background image, so styles that ship one reported it as unsupported. It can; that entry, the runtime message, and the README table were all wrong
+- `tstyles <name>` reported "Style applied" even when it had painted nothing. The emit function returned no value and the caller reported the terminal's *capability* rather than the actual outcome, so anything running tstyles through a pipe or with stdout redirected saw a success message and an unchanged window. It now says the colors could not be applied and why
+
 ## [0.8.1] - 2026-08-21
 
 ### Fixed
@@ -183,7 +195,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.1...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.2...HEAD
+[0.8.2]: https://github.com/fcreme/TerminalStyles/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/fcreme/TerminalStyles/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/fcreme/TerminalStyles/compare/v0.7.1...v0.8.0
 [0.7.1]: https://github.com/fcreme/TerminalStyles/compare/v0.7.0...v0.7.1

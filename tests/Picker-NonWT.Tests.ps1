@@ -50,7 +50,10 @@ Describe 'picker background handling off Windows Terminal' {
             # The picker was downloading a GIF per style from the gifs branch --
             # megabytes over the network, and a "...fetching background" row next
             # to every entry -- for an image Terminal.app can never draw.
-            (Get-TerminalCapability -Kind 'AppleTerminal').BackgroundImage | Should -BeFalse
+            # Terminal.app CAN show a background image, but only through a
+            # profile -- never in the window the picker is previewing in. The
+            # picker still must not prefetch GIFs it cannot paint mid-preview.
+            (Get-TerminalCapability -Kind 'VSCode').BackgroundImage | Should -BeFalse
             (Get-TerminalCapability -Kind 'WindowsTerminal').BackgroundImage | Should -BeTrue
         }
     }
@@ -81,6 +84,53 @@ Describe 'OSC packet is available before the picker paints' {
             $packet = Get-SchemeOscPacket -Scheme $scheme
             $packet | Should -Not -BeNullOrEmpty
             $packet | Should -Match ([regex]::Escape("$([char]27)]11;"))
+        }
+    }
+}
+
+Describe 'Terminal.app profile generation' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:HasOsascript = ($script:TStylesPlatform -eq 'MacOS') -and
+                                   [bool](Get-Command osascript -ErrorAction SilentlyContinue)
+        }
+
+        It 'builds NSColor archives Terminal can unarchive' -Skip:(-not $script:HasOsascript) {
+            # Each color must be an NSKeyedArchiver archive of an NSColor. A bare
+            # value here makes Terminal reject the ENTIRE profile as "corrupt",
+            # naming no key -- so this is worth pinning.
+            $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            $data = Get-AppleTerminalProfileData -Scheme $scheme
+            $data | Should -Not -BeNullOrEmpty
+            $data.ContainsKey('BackgroundColor') | Should -BeTrue
+            # Decodes as a plist whose archiver is NSKeyedArchiver.
+            $bytes = [Convert]::FromBase64String($data['BackgroundColor'])
+            $bytes.Length | Should -BeGreaterThan 100
+            [System.Text.Encoding]::ASCII.GetString($bytes) | Should -Match 'NSKeyedArchiver'
+        }
+
+        It 'maps the scheme purple slot to Terminal magenta' {
+            # scheme.json calls it "purple"; Terminal calls it ANSIMagentaColor.
+            # Getting this wrong swaps two palette entries silently.
+            $script:TStylesAppleColorMap['purple']       | Should -Be 'ANSIMagentaColor'
+            $script:TStylesAppleColorMap['brightPurple'] | Should -Be 'ANSIBrightMagentaColor'
+        }
+
+        It 'covers all 16 ANSI slots plus fg/bg/cursor/selection' {
+            @($script:TStylesAppleColorMap.Keys).Count | Should -Be 20
+        }
+
+        It 'writes a valid plist profile' -Skip:(-not $script:HasOsascript) {
+            $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            $out = Join-Path $TestDrive 'test.terminal'
+            $p = New-AppleTerminalProfile -StyleName 'test' -Scheme $scheme -OutPath $out
+            $p | Should -Not -BeNullOrEmpty
+            $content = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
+            # 'Window Settings' is what marks it importable; without it Terminal
+            # opens the file as a document instead of applying it.
+            $content | Should -Match '<key>type</key>'
+            $content | Should -Match 'Window Settings'
+            $content | Should -Match '<data>'
         }
     }
 }

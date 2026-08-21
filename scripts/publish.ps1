@@ -36,7 +36,7 @@ $allowlist = @(
     'LICENSE',
     'fonts.json',
     'styles',                              # whole tree, 16 themes + their shell prompts
-    'shell',                               # zsh/bash runtime staged by `tstyles shell-init`
+    'shell',                               # zsh/bash runtime + the Terminal.app profile helper
     'scripts\capture-screenshots.ps1'      # useful for theme authors
 )
 

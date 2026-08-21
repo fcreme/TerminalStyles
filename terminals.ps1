@@ -110,9 +110,15 @@ function Get-TerminalCapability {
             $caps.Padding         = $true
         }
         'AppleTerminal' {
-            # Persistence goes through a .terminal profile plist. Terminal.app
-            # has no background-image support at all, and no per-profile tab
-            # accent color.
+            # Persistence goes through a .terminal profile plist. No per-profile
+            # tab accent color.
+            #
+            # BackgroundImage is $true, but it is the one capability here that
+            # cannot be delivered to the CURRENT window: there is no escape
+            # sequence for an image, so it can only arrive as part of a profile,
+            # which means a new window. New-AppleTerminalProfile builds that
+            # profile; Apply-StyleNonWT stages it and tells the user how to open
+            # it rather than seizing the screen on every apply.
             #
             # OscPalette is $true on the strength of a round-trip probe against
             # Terminal.app 470 (macOS 26): OSC 4/10/11/12 all answered their
@@ -121,12 +127,13 @@ function Get-TerminalCapability {
             # picker's live preview and its Esc revert both work here with the
             # same escape packets Windows Terminal uses -- no AppleScript needed
             # on the hot path.
-            $caps.OscPalette  = $true
-            $caps.Persist     = $true
-            $caps.Font        = $true
-            $caps.Opacity     = $true
-            $caps.CursorShape = $true
-            $caps.TabTitle    = $true
+            $caps.OscPalette      = $true
+            $caps.Persist         = $true
+            $caps.Font            = $true
+            $caps.Opacity         = $true
+            $caps.CursorShape     = $true
+            $caps.TabTitle        = $true
+            $caps.BackgroundImage = $true
         }
         'Ghostty' {
             $caps.OscPalette  = $true
@@ -307,8 +314,12 @@ function Write-HostOscPacket {
     # where the terminal is listening. Flush so the repaint happens now rather
     # than whenever the buffer next drains -- the picker depends on that
     # immediacy for per-keystroke preview.
+    # Returns $true when the bytes actually reached a terminal, $false when
+    # there was none to reach. Callers MUST NOT assume success: an apply that
+    # silently painted nothing and still reported "Style applied" is exactly the
+    # confusion this return value exists to prevent.
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Packet)
-    if (-not $Packet) { return }
+    if (-not $Packet) { return $false }
 
     # Never write escape bytes into a redirected stream. The module re-emits the
     # applied style's palette when it loads, and a $PROFILE that imports it turns
@@ -317,19 +328,21 @@ function Write-HostOscPacket {
     # means nothing is listening for escape sequences, so there is nothing to
     # lose by staying quiet. (The shell loader makes the same check via $-.)
     try {
-        if ([Console]::IsOutputRedirected) { return }
+        if ([Console]::IsOutputRedirected) { return $false }
     } catch {
         # No console at all (a runspace, a hosted app): also nothing to paint.
-        return
+        return $false
     }
 
     try {
         [Console]::Out.Write($Packet)
         [Console]::Out.Flush()
+        return $true
     } catch {
         # A redirected/absent console (CI, a job runspace) has nothing to paint.
         # Silent by design: colors are cosmetic, and throwing here would abort an
         # otherwise-successful apply.
+        return $false
     }
 }
 
@@ -341,16 +354,18 @@ function Invoke-TerminalStyleOscApply {
         [string]$Kind = (Get-TerminalKind)
     )
     if (-not (Get-TerminalCapability -Kind $Kind).OscPalette) { return $false }
-    Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $Scheme)
-    return $true
+    # Return what actually happened, not what the terminal is capable of. The
+    # two differ whenever stdout is redirected -- a pipe, a file, an agent shell
+    # -- and reporting capability there made `tstyles <name>` claim success
+    # while changing nothing on screen.
+    return (Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $Scheme))
 }
 
 function Invoke-TerminalStyleOscReset {
     # Hand color control back to the terminal's own configured scheme.
     param([string]$Kind = (Get-TerminalKind))
     if (-not (Get-TerminalCapability -Kind $Kind).OscPalette) { return $false }
-    Write-HostOscPacket -Packet (Get-OscResetPacket)
-    return $true
+    return (Write-HostOscPacket -Packet (Get-OscResetPacket))
 }
 
 # === zsh / bash support ====================================================
@@ -609,4 +624,143 @@ function Invoke-TerminalStylesShellInit {
     Write-Host ""
     Write-Host "  Open a new tab, or run:  source ~/.zshrc" -ForegroundColor DarkGray
     Write-Host ""
+}
+
+# === Terminal.app profiles (colors + background image) =====================
+#
+# OSC escape sequences cover colors, but there is no escape sequence for a
+# background image -- an image can only reach Terminal.app through a profile.
+# So a style that ships one is applied by writing a .terminal profile and
+# opening it, which gives a new window carrying the whole style.
+#
+# The profile format is unforgiving: colors are NSKeyedArchiver archives of
+# NSColor, and the image is an archive of an NSMutableData holding a
+# security-scoped bookmark. Get any of that wrong and Terminal rejects the file
+# wholesale as "corrupt", naming no key. shell/appleterminal.js builds those
+# blobs; this half assembles them into a plist.
+
+# scheme.json field -> Terminal.app profile key. Terminal names the magenta slot
+# "Magenta" where a Windows Terminal scheme calls it "purple".
+$script:TStylesAppleColorMap = [ordered]@{
+    background          = 'BackgroundColor'
+    foreground          = 'TextColor'
+    cursorColor         = 'CursorColor'
+    selectionBackground = 'SelectionColor'
+    black               = 'ANSIBlackColor'
+    red                 = 'ANSIRedColor'
+    green               = 'ANSIGreenColor'
+    yellow              = 'ANSIYellowColor'
+    blue                = 'ANSIBlueColor'
+    purple              = 'ANSIMagentaColor'
+    cyan                = 'ANSICyanColor'
+    white               = 'ANSIWhiteColor'
+    brightBlack         = 'ANSIBrightBlackColor'
+    brightRed           = 'ANSIBrightRedColor'
+    brightGreen         = 'ANSIBrightGreenColor'
+    brightYellow        = 'ANSIBrightYellowColor'
+    brightBlue          = 'ANSIBrightBlueColor'
+    brightPurple        = 'ANSIBrightMagentaColor'
+    brightCyan          = 'ANSIBrightCyanColor'
+    brightWhite         = 'ANSIBrightWhiteColor'
+}
+
+function Get-AppleTerminalProfileData {
+    # Run the JXA helper over a scheme (+ optional image) and return a hashtable
+    # of Terminal profile key -> base64 archive. Returns $null when the helper
+    # is missing or fails; callers fall back to the OSC-only path.
+    param(
+        [Parameter(Mandatory)]$Scheme,
+        [string]$BackgroundImage
+    )
+    $helper = Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'appleterminal.js'
+    if (-not (Test-Path -LiteralPath $helper)) { return $null }
+
+    $colors = [ordered]@{}
+    foreach ($field in $script:TStylesAppleColorMap.Keys) {
+        $hex = $Scheme.$field
+        if ($hex) { $colors[$script:TStylesAppleColorMap[$field]] = [string]$hex }
+    }
+
+    $tmpRoot  = [System.IO.Path]::GetTempPath()
+    $runId    = [guid]::NewGuid().Guid.Substring(0, 8)
+    $specPath = Join-Path $tmpRoot "tstyles-spec-$runId.json"
+    $outPath  = Join-Path $tmpRoot "tstyles-out-$runId.json"
+    $enc      = [System.Text.UTF8Encoding]::new($false)
+
+    try {
+        $spec = [pscustomobject]@{
+            colors = $colors
+            image  = if ($BackgroundImage) { $BackgroundImage } else { '' }
+        }
+        [System.IO.File]::WriteAllText($specPath, ($spec | ConvertTo-Json -Depth 5), $enc)
+
+        & osascript -l JavaScript $helper $specPath $outPath *> $null
+        if (-not (Test-Path -LiteralPath $outPath)) { return $null }
+
+        $json = [System.IO.File]::ReadAllText($outPath, $enc)
+        if (-not $json.Trim()) { return $null }
+
+        $result = @{}
+        foreach ($p in ($json | ConvertFrom-Json).PSObject.Properties) {
+            $result[$p.Name] = [string]$p.Value
+        }
+        if ($result.Count -eq 0) { return $null }
+        return $result
+    } catch {
+        return $null
+    } finally {
+        foreach ($f in @($specPath, $outPath)) {
+            if (Test-Path -LiteralPath $f) { Remove-Item -LiteralPath $f -Force -ErrorAction SilentlyContinue }
+        }
+    }
+}
+
+function New-AppleTerminalProfile {
+    # Write a .terminal profile for $StyleName and return its path.
+    #
+    # Emitted as an XML plist rather than binary: the values that must be binary
+    # are already base64 <data>, and XML keeps the file inspectable when
+    # something goes wrong -- which, given how silently Terminal rejects a bad
+    # profile, matters more here than the few hundred bytes it costs.
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)]$Scheme,
+        [string]$BackgroundImage,
+        [string]$ProfileName,
+        [string]$OutPath
+    )
+    if (-not $ProfileName) { $ProfileName = "TerminalStyles $StyleName" }
+    if (-not $OutPath) {
+        $dir = Join-Path $script:TStylesDataRoot 'profiles'
+        if (-not (Test-Path -LiteralPath $dir)) {
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        }
+        $OutPath = Join-Path $dir "$StyleName.terminal"
+    }
+
+    $data = Get-AppleTerminalProfileData -Scheme $Scheme -BackgroundImage $BackgroundImage
+    if (-not $data) { return $null }
+
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine('<?xml version="1.0" encoding="UTF-8"?>')
+    [void]$sb.AppendLine('<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">')
+    [void]$sb.AppendLine('<plist version="1.0">')
+    [void]$sb.AppendLine('<dict>')
+    # type + ProfileCurrentVersion are what mark this as an importable window
+    # setting; without them Terminal opens the file as a document instead.
+    [void]$sb.AppendLine('	<key>name</key>')
+    [void]$sb.AppendLine("	<string>$([System.Security.SecurityElement]::Escape($ProfileName))</string>")
+    [void]$sb.AppendLine('	<key>type</key>')
+    [void]$sb.AppendLine('	<string>Window Settings</string>')
+    [void]$sb.AppendLine('	<key>ProfileCurrentVersion</key>')
+    [void]$sb.AppendLine('	<real>2.0699999999999998</real>')
+    foreach ($key in ($data.Keys | Sort-Object)) {
+        [void]$sb.AppendLine("	<key>$key</key>")
+        [void]$sb.AppendLine("	<data>$($data[$key])</data>")
+    }
+    [void]$sb.AppendLine('</dict>')
+    [void]$sb.AppendLine('</plist>')
+
+    [System.IO.File]::WriteAllText($OutPath, $sb.ToString(), [System.Text.UTF8Encoding]::new($false))
+    return $OutPath
 }

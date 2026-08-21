@@ -390,12 +390,27 @@ unaffected.
 |---|---|---|---|---|---|---|
 | Windows Terminal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | iTerm2 | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Terminal.app | ✅ | ✅ | ✅ | ✅ | — | — |
+| Terminal.app | ✅ | ✅ | ✅ | ✅ | ✅ (new window) | — |
 | Ghostty / WezTerm / kitty / Alacritty | ✅ | ✅ | ✅ | ✅ | WezTerm only | — |
 | VS Code terminal | ✅ | — | — | — | — | — |
 
 Applying a style reports which parts the current terminal cannot show, so a
 plainer result is never a mystery.
+
+### Background images on Terminal.app
+
+Colors reach your current window as escape sequences, instantly. An image
+cannot — Terminal.app only takes one through a *profile*, and a profile only
+applies to a new window. So a style that ships a background gives you:
+
+```powershell
+tstyles eva              # colors + prompt, right here, right now
+tstyles eva -NewWindow   # a new window with the background image as well
+```
+
+The profile is written either way, under
+`~/Library/Application Support/TerminalStyles/profiles/`, so you can also open
+it from Finder or set it as your Terminal.app default.
 
 ## Background image
 
@@ -614,11 +629,13 @@ takes one PNG of the WT window, then restores your original theme.
   have the right to redistribute.
 - **Not every terminal can show every part of a style.** Windows Terminal reads
   the whole `theme.json` field set from its `settings.json`. Everywhere else the
-  colors are applied as OSC escape sequences, which no terminal extends to
-  background images or tab accent colors — Terminal.app has neither feature at
-  all. An apply says which parts the current terminal cannot show rather than
-  dropping them silently. Hosts that render nothing (VS Code's integrated
-  terminal, conhost) stay plain by design.
+  colors are applied as OSC escape sequences, and no escape sequence carries a
+  background image or a tab accent color. On Terminal.app the image is instead
+  delivered through a generated `.terminal` profile, which means a new window
+  (`tstyles <name> -NewWindow`); tab accent color has no equivalent anywhere but
+  Windows Terminal. An apply says which parts the current terminal cannot show
+  rather than dropping them silently. Hosts that render nothing (VS Code's
+  integrated terminal, conhost) stay plain by design.
 - **zsh/bash styling covers the prompt, not the syntax highlighting.** The
   PowerShell profiles carry a PSReadLine color block; zsh and bash have no
   equivalent, so `prompt.sh` ports the title, banner, and prompt only.

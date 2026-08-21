@@ -60,10 +60,11 @@ Describe 'Get-TerminalCapability' {
             }
         }
 
-        It 'never claims Terminal.app can show a background image' {
-            # Terminal.app genuinely has no background-image feature. Claiming it
-            # would report "applied" for something the user can never see.
-            (Get-TerminalCapability -Kind 'AppleTerminal').BackgroundImage | Should -BeFalse
+        It 'claims Terminal.app can show a background image' {
+            # Terminal.app DOES support one, via the BackgroundImageBookmark key
+            # in a .terminal profile. This was wrong in 0.8.0/0.8.1, which told
+            # users the feature did not exist.
+            (Get-TerminalCapability -Kind 'AppleTerminal').BackgroundImage | Should -BeTrue
         }
 
         It 'claims OSC palette support for Terminal.app' {
@@ -99,7 +100,9 @@ Describe 'Test-TerminalCapability' {
 
         It 'agrees with the underlying capability record' {
             Test-TerminalCapability -Capability 'BackgroundImage' -Kind 'WindowsTerminal' | Should -BeTrue
-            Test-TerminalCapability -Capability 'BackgroundImage' -Kind 'AppleTerminal'   | Should -BeFalse
+            # VS Code's integrated terminal genuinely cannot show one; Terminal.app
+            # can, through a profile, so it is no longer the negative case here.
+            Test-TerminalCapability -Capability 'BackgroundImage' -Kind 'VSCode'          | Should -BeFalse
         }
 
         It 'throws on an unknown capability name instead of returning false' {

@@ -78,7 +78,11 @@ Describe 'Invoke-TerminalStyleOscApply / Reset' {
     InModuleScope TerminalStyles {
         BeforeEach {
             $script:emitted = @()
-            Mock Write-HostOscPacket { param($Packet) $script:emitted += $Packet }
+            # Returns $true: Write-HostOscPacket's contract is "did the bytes
+            # reach a terminal?", and callers propagate that to decide whether
+            # to tell the user the colors did not land. A mock returning nothing
+            # would model a console that is never there.
+            Mock Write-HostOscPacket { param($Packet) $script:emitted += $Packet; $true }
         }
 
         It 'emits a packet on a terminal that supports OSC' {
@@ -198,6 +202,34 @@ Describe 'Reset-StyleNonWT' {
 
         It 'is safe to run when no style was ever applied' {
             { Reset-StyleNonWT } | Should -Not -Throw
+        }
+    }
+}
+
+Describe 'Write-HostOscPacket reports whether it painted' {
+    InModuleScope TerminalStyles {
+        It 'reports failure when output is redirected' {
+            # The bug this guards: `tstyles <name>` printed "Style applied" and
+            # recorded the style while painting nothing, because the emit
+            # function returned void and the caller reported the terminal's
+            # CAPABILITY instead of the actual outcome. Anything running tstyles
+            # through a pipe or an agent shell saw a success message and an
+            # unchanged window.
+            if ([Console]::IsOutputRedirected) {
+                Write-HostOscPacket -Packet "test" | Should -BeFalse
+                Invoke-TerminalStyleOscApply -Scheme ([pscustomobject]@{ background = '#000000' }) `
+                    -Kind 'AppleTerminal' | Should -BeFalse
+            } else {
+                Set-ItResult -Skipped -Because 'this run has a real console attached'
+            }
+        }
+
+        It 'reports failure for an empty packet' {
+            Write-HostOscPacket -Packet '' | Should -BeFalse
+        }
+
+        It 'returns a real boolean' {
+            Write-HostOscPacket -Packet '' | Should -BeOfType [bool]
         }
     }
 }
