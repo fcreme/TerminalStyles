@@ -22,8 +22,14 @@ BeforeDiscovery {
             ForEach-Object { $_.Name } | Sort-Object
     )
 
-    $script:HasZsh  = [bool](Get-Command zsh  -ErrorAction SilentlyContinue)
-    $script:HasBash = [bool](Get-Command bash -ErrorAction SilentlyContinue)
+    # Unix only. Presence of a `bash` on PATH is NOT sufficient: the Windows CI
+    # runners ship Git Bash, which would pick these up and then fail on the
+    # Windows-shaped paths this harness passes it (a single-quoted C:\a\b is a
+    # string of escapes to bash). The zsh/bash loader is a macOS/Linux feature;
+    # Git Bash is not a supported host for it.
+    $script:IsUnixHost = ($PSVersionTable.PSVersion.Major -ge 6) -and -not $IsWindows
+    $script:HasZsh  = $script:IsUnixHost -and [bool](Get-Command zsh  -ErrorAction SilentlyContinue)
+    $script:HasBash = $script:IsUnixHost -and [bool](Get-Command bash -ErrorAction SilentlyContinue)
 }
 
 BeforeAll {
