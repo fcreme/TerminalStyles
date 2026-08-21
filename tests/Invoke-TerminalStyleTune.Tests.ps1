@@ -30,7 +30,11 @@ Describe 'Invoke-TerminalStyleTune guards' {
         }
         It 'errors when settings.json cannot be located' {
             Mock Get-StyleDir { $TestDrive }
+            # Pin the terminal to Windows Terminal: these assertions are about the
+            # settings.json merge path, which only runs on WT. Without this the
+            # suite would take the OSC branch whenever it runs on macOS/Linux.
             Mock Find-WTSettingsPath { $null }
+            Mock Get-TerminalKind { 'WindowsTerminal' }
             Mock Show-UpdateNoticeIfAvailable {}
             Mock Write-Error {}
             # Provide a scheme.json so the base load would succeed past resolution.

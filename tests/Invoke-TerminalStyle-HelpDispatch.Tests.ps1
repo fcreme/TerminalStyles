@@ -44,7 +44,11 @@ Describe 'tstyles unknown-arg fallback' {
             Mock Show-TerminalStyleHelp {}
             Mock Show-UpdateNoticeIfAvailable {}
             Mock Get-AvailableStyles { @() }   # nothing matches the arg
+            # Pin the terminal to Windows Terminal: these assertions are about the
+            # settings.json merge path, which only runs on WT. Without this the
+            # suite would take the OSC branch whenever it runs on macOS/Linux.
             Mock Find-WTSettingsPath { throw 'picker path must not be reached' }
+            Mock Get-TerminalKind { 'WindowsTerminal' }
             { Invoke-TerminalStyle -Arg 'definitely-not-a-real-thing' } | Should -Not -Throw
             Should -Invoke Show-TerminalStyleHelp -Times 1
             Should -Not -Invoke Find-WTSettingsPath
