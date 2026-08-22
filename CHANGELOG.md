@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - choosing a style in the interactive picker applied its colors but not its prompt or banner, on every terminal except Windows Terminal. The style's `profile.ps1` was copied into place and then not dot-sourced, so the prompt only appeared in the next tab you opened -- while `tstyles <name>` on the very same terminal painted it immediately. The live-reload was gated on a Windows Terminal check left over from before there was any non-Windows-Terminal path for it to be wrong about
 
+### Added
+
+- `scripts/demo.ps1` and `docs/DEMO.md`: a harness for recording a short demo of live theme switching. It snapshots style state, parks personal tuned styles so the picker lists only the bundled ones, and either prints a cue card or drives the real picker through a pty with fixed timings so takes are comparable. `-Restore` puts everything back
+
 ## [0.8.4] - 2026-08-21
 
 ### Fixed
