@@ -2952,6 +2952,26 @@ function Invoke-StylePickerLoop {
     }
 }
 
+function Test-ShouldLiveReloadPrompt {
+    # Pure gate: after the picker confirms, should THIS session dot-source the
+    # newly installed current-style.ps1?
+    #
+    # Yes whenever a prompt was actually installed for this shell. The gate
+    # used to also require Test-InWindowsTerminal, which made the picker
+    # install a style's prompt off Windows Terminal and then decline to load
+    # it -- so on the same macOS terminal `tstyles eva` painted the banner and
+    # themed prompt while picking eva from the picker painted neither, until
+    # the user opened a new tab. Apply-StyleNonWT has always dot-sourced
+    # unconditionally at the end of the direct-apply path; this is the picker
+    # catching up to it. The WT check was left over from before there was any
+    # non-WT path for it to be wrong about.
+    param(
+        [Parameter(Mandatory)][bool]$IsPwshTarget,
+        [Parameter(Mandatory)][bool]$ProfilePresent
+    )
+    return $IsPwshTarget -and $ProfilePresent
+}
+
 function Test-ShouldPromptFonts {
     # Pure gate: only prompt on an interactive session that hasn't been prompted.
     param(
@@ -3523,7 +3543,8 @@ function Invoke-TerminalStyle {
         # without requiring the user to open a new tab. Each theme's
         # profile.ps1 uses `function global:prompt` so the binding escapes
         # this function's scope.
-        if ($isPwshTarget -and (Test-InWindowsTerminal) -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+        if (Test-ShouldLiveReloadPrompt -IsPwshTarget $isPwshTarget `
+                -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent)) {
             . $script:TStylesCurrent
         }
     } finally {
