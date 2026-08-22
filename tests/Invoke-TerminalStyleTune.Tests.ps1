@@ -55,17 +55,36 @@ Describe 'Invoke-TerminalStyleTune guards' {
 
 Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
     InModuleScope TerminalStyles {
-        It 'explains why instead of failing to find a settings.json' {
-            # The old behaviour surfaced "Could not locate Windows Terminal
-            # settings.json" on a Mac -- an error about a file the user was
-            # never going to have, and no hint that the command simply does not
-            # apply there.
+        It 'never looks for a settings.json it cannot have' {
+            # It used to fail here with "Could not locate Windows Terminal
+            # settings.json" -- an error about a file the user was never going
+            # to have. Then it refused outright, which was more conservative
+            # than the facts warranted: the color knobs preview fine over OSC.
+            # What must stay true is that no settings.json is touched.
             Mock Get-TerminalKind { 'AppleTerminal' }
             Mock Show-UpdateNoticeIfAvailable {}
             Mock Find-WTSettingsPath { throw 'must not look for a settings.json off Windows Terminal' }
+            Mock Write-SettingsAtomic { throw 'must not write a settings.json off Windows Terminal' }
             Mock Write-Host {}
-            { Invoke-TerminalStyleTune -StyleName 'eva' } | Should -Not -Throw
-            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'needs Windows Terminal' }
+            Mock Start-Sleep {}
+            # Fails on the console read rather than on settings.json -- there is
+            # no keyboard in a test run. Any settings.json access would throw
+            # from the mocks above instead, which is what is under test.
+            try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
+            Should -Invoke Find-WTSettingsPath -Times 0
+            Should -Invoke Write-SettingsAtomic -Times 0
+        }
+
+        It 'warns that opacity and font will not preview' {
+            # Setting expectations matters more here than usual: two of the five
+            # knobs move on screen and three do not, and a user who does not know
+            # that will read the stillness as the tuner being broken.
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Write-Host {}
+            Mock Start-Sleep {}
+            try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
+            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'only a new window shows them' }
         }
     }
 }

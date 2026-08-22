@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `tstyles tune` now runs outside Windows Terminal. It previously refused, on the grounds that opacity and font need a config file the terminal does not expose -- true when that message was written, and no longer true once 0.8.2 started generating `.terminal` profiles. Brightness and saturation preview live over OSC exactly as on Windows Terminal; opacity and font are saved with the style and take effect when it is applied to a new window. The tuner says which knobs will not move before it takes over the screen, so the stillness is not read as a bug
+
 ## [0.8.3] - 2026-08-21
 
 ### Fixed

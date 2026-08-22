@@ -2266,23 +2266,19 @@ function Invoke-TerminalStyleTune {
 
     Show-UpdateNoticeIfAvailable
 
-    # The tuner's whole model is "merge a scratch style into settings.json and
-    # let the terminal reload" -- it tunes opacity, font face and font size as
-    # well as colors, and none of those can be expressed as an escape sequence.
-    # Off Windows Terminal there is nothing to write, so say that plainly rather
-    # than letting Find-WTSettingsPath fail with a message about a file the user
-    # was never going to have.
-    $tuneKind = Get-TerminalKind
-    if ($tuneKind -ne 'WindowsTerminal') {
-        Write-Host ""
-        Write-Host ("  tstyles tune needs Windows Terminal; this is {0}." -f (Get-TerminalDisplayName -Kind $tuneKind)) -ForegroundColor Yellow
-        Write-Host "  Tuning adjusts opacity and font as well as color, and those are"
-        Write-Host "  written to a terminal config file rather than sent as escape codes."
-        Write-Host ""
-        Write-Host "  You can still switch styles here: tstyles <name>, or tstyles for the picker." -ForegroundColor DarkGray
-        Write-Host ""
-        return
-    }
+    # Windows Terminal previews every knob live, by merging a scratch style into
+    # settings.json and letting WT reload. Elsewhere only the color knobs can be
+    # previewed -- brightness and saturation ride the OSC packet, while opacity
+    # and font can reach the terminal only through a profile, which applies to a
+    # new window rather than this one.
+    #
+    # That is a reduced tuner, not a broken one: the color work is the part
+    # people actually sit and adjust, and the font/opacity values are still
+    # saved with the style. So run it, and say up front which knobs will not
+    # move on screen -- earlier versions refused outright here, which was more
+    # conservative than the facts warranted.
+    $tuneKind        = Get-TerminalKind
+    $tuneUsesSettings = ($tuneKind -eq 'WindowsTerminal')
 
     # --- Resolve the style (all guards run BEFORE any console interaction) ---
     if (-not $StyleName) {
@@ -2298,10 +2294,13 @@ function Invoke-TerminalStyleTune {
         return
     }
 
-    $settingsPath = Find-WTSettingsPath
-    if (-not $settingsPath) {
-        Write-Error "Could not locate Windows Terminal settings.json."
-        return
+    $settingsPath = $null
+    if ($tuneUsesSettings) {
+        $settingsPath = Find-WTSettingsPath
+        if (-not $settingsPath) {
+            Write-Error "Could not locate Windows Terminal settings.json."
+            return
+        }
     }
 
     # --- Establish working base scheme + seed knob values ---
@@ -2325,15 +2324,28 @@ function Invoke-TerminalStyleTune {
     $fontIdx = [Math]::Max(0, [array]::IndexOf($fontList, $fontFace))
 
     # --- Target WT profile ---
-    $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $originalSettings = ConvertFrom-WTJson $originalJson
-    $target = Get-CurrentWTProfileName -Settings $originalSettings
-    if (-not $target) {
-        Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
-        return
-    }
-    if (-not $env:WT_SESSION) {
-        Write-Host "Note: live preview is only visible inside Windows Terminal." -ForegroundColor Yellow
+    $originalJson = $null
+    $target = $null
+    if ($tuneUsesSettings) {
+        $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+        $originalSettings = ConvertFrom-WTJson $originalJson
+        $target = Get-CurrentWTProfileName -Settings $originalSettings
+        if (-not $target) {
+            Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
+            return
+        }
+        if (-not $env:WT_SESSION) {
+            Write-Host "Note: live preview is only visible inside Windows Terminal." -ForegroundColor Yellow
+        }
+    } else {
+        # Set expectations before the screen is taken over: the two color knobs
+        # move on screen, the other three are recorded and take effect when the
+        # saved style is applied to a new window.
+        Write-Host ""
+        Write-Host ("  Tuning on {0}: brightness and saturation preview live." -f (Get-TerminalDisplayName -Kind $tuneKind)) -ForegroundColor DarkGray
+        Write-Host "  Opacity and font are saved with the style, but only a new window shows them." -ForegroundColor DarkGray
+        Write-Host ""
+        Start-Sleep -Milliseconds 900
     }
 
     # --- Scratch dir for the debounced settings.json preview (reuses Merge) ---
@@ -2369,6 +2381,10 @@ function Invoke-TerminalStyleTune {
         # tune.json so background inheritance resolves the base GIF in preview.
         [System.IO.File]::WriteAllText((Join-Path $scratchDir 'tune.json'),
             ('{"base":"' + $baseName + '"}'), [System.Text.UTF8Encoding]::new($false))
+
+        # The scratch style above is written either way -- Save-TunedStyle reads
+        # it on Enter. Only the settings.json merge is Windows-Terminal-only.
+        if (-not $tuneUsesSettings) { return }
 
         $preview = ConvertFrom-WTJson $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $scratchDir `
@@ -2414,7 +2430,8 @@ function Invoke-TerminalStyleTune {
     # On-disk rolling backup before any preview write, so a hard kill mid-tune
     # leaves a recoverable copy (the in-memory $originalJson snapshot dies with
     # the process). Same rolling .bak the direct-apply/reset paths write.
-    try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { }
+    # Crash-recovery copy -- only meaningful where a settings.json is written.
+    if ($tuneUsesSettings) { try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { } }
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
@@ -2471,7 +2488,7 @@ function Invoke-TerminalStyleTune {
                     }
                     'Enter'  { if ($pendingApply) { & $writePreview; $pendingApply = $false }; $confirmed = $true; continue }
                     'Escape' {
-                        Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+                        if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
                         # Hand color control back to WT's configured scheme: the
                         # live OSC retint would otherwise linger over the reverted file.
                         [Console]::Out.Write((Get-OscResetPacket))
@@ -2517,7 +2534,7 @@ function Invoke-TerminalStyleTune {
 
         if (-not $saveName) {
             # Treat an aborted save like a cancel: revert and exit.
-            Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+            if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
             [Console]::Out.Write((Get-OscResetPacket))
             Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
             return
@@ -2531,8 +2548,11 @@ function Invoke-TerminalStyleTune {
             -Brightness $brightness -Saturation $saturation -Opacity $opacity `
             -FontFace $fontFace -FontSize $fontSize | Out-Null
 
-        Write-SettingsAtomic -Path $settingsPath -Json $originalJson
-        Apply-StyleDirect -StyleName $saveName -Target $target
+        if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
+        # -Target is a Windows Terminal profile name; off WT it is $null and the
+        # apply resolves the host terminal itself.
+        if ($tuneUsesSettings) { Apply-StyleDirect -StyleName $saveName -Target $target }
+        else { Apply-StyleDirect -StyleName $saveName }
         $applied = $true
     } finally {
         [Console]::CursorVisible = $true
@@ -2540,7 +2560,7 @@ function Invoke-TerminalStyleTune {
             # Safety net: restore settings.json + title unless a saved style was
             # applied. Esc / aborted-save already reverted explicitly; this also
             # covers an exception thrown mid-session (the key loop is not tested).
-            Write-SettingsAtomic -Path $settingsPath -Json $originalJson
+            if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
             [Console]::Out.Write((Get-OscResetPacket))
             $Host.UI.RawUI.WindowTitle = $originalTitle
         }
@@ -2585,7 +2605,11 @@ function Get-TerminalStyleHelpData {
             Name = 'tune'; Usage = 'tune [name]'; Summary = 'Live-tune a style; save as your own'
             Detail = @("Opens an arrow-key editor for the active style (or [name]). Adjusts",
                        "brightness, saturation, opacity, font face, and font size.",
-                       "Saved styles land in your user dir and show up in 'tstyles list'.")
+                       "Saved styles land in your user dir and show up in 'tstyles list'.",
+                       "",
+                       "Outside Windows Terminal, brightness and saturation preview live;",
+                       "opacity and font are saved with the style but need a new window to",
+                       "show, because no escape sequence carries them.")
             Keys = @('Up/Down      select a knob',
                      'Left/Right   adjust it',
                      'R            reset color',
