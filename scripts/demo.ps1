@@ -92,7 +92,20 @@ param(
 
     # Write the generated expect script and print its path instead of running
     # it. Use this to hand-tune a timing without editing this file.
-    [switch]$DryRun
+    [switch]$DryRun,
+
+    # Record the take to a .mov with macOS's own screencapture, cropped to the
+    # terminal window, so a take needs no screen recorder and no trimming.
+    # -Mode Auto only: it works by knowing exactly how long the take runs,
+    # which is only true when the script is driving the keys.
+    #
+    # Needs Screen Recording permission for the app running this (System
+    # Settings > Privacy & Security > Screen Recording). Without it
+    # screencapture writes nothing and says so, which this reports rather than
+    # leaving you with a 0-byte file.
+    [switch]$Record,
+
+    [string]$RecordPath
 )
 
 Set-StrictMode -Version Latest
@@ -375,6 +388,82 @@ function Invoke-Guided {
 
 # --- auto ------------------------------------------------------------------
 
+function Get-RecordRect {
+    # "x,y,w,h" for the terminal window, in screen points, for screencapture
+    # -R. Returns $null to mean "record the whole display" -- a full-screen
+    # take is worth having; a failed one is not.
+    #
+    # Terminal.app is asked directly because it answers with window bounds and
+    # cannot be confused about which window is which. Anything else goes
+    # through System Events, which reports position and size for the frontmost
+    # app's front window whatever that app is.
+    if (-not $IsMacOS) { return $null }
+    try {
+        if ($env:TERM_PROGRAM -eq 'Apple_Terminal') {
+            $raw = & osascript -e 'tell application "Terminal" to get bounds of front window' 2>$null
+            if ($raw) {
+                $n = @($raw -split ',' | ForEach-Object { [int]($_.Trim()) })
+                # bounds are {left, top, right, bottom}; -R wants width/height.
+                if ($n.Count -eq 4) { return '{0},{1},{2},{3}' -f $n[0], $n[1], ($n[2] - $n[0]), ($n[3] - $n[1]) }
+            }
+        }
+        $raw = & osascript -e 'tell application "System Events" to tell (first process whose frontmost is true) to get {position, size} of front window' 2>$null
+        if ($raw) {
+            $n = @($raw -split ',' | ForEach-Object { [int]($_.Trim()) })
+            if ($n.Count -eq 4) { return '{0},{1},{2},{3}' -f $n[0], $n[1], $n[2], $n[3] }
+        }
+    } catch { }
+    return $null
+}
+
+function Start-TakeRecording {
+    # screencapture -V records for a fixed number of seconds and exits on its
+    # own, which is what makes this unattended: there is no stop signal to get
+    # wrong, and the file is finalised whether or not the take behaved.
+    #
+    # Deliberately no -C: that would burn the mouse pointer into the frame.
+    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][int]$Seconds, [string]$Rect)
+
+    $args = @('-v', '-V', "$Seconds")
+    if ($Rect) { $args += @('-R', $Rect) }
+    $args += $Path
+
+    $errFile = Join-Path ([System.IO.Path]::GetTempPath()) "tstyles-rec-$PID.err"
+    $proc = Start-Process -FilePath 'screencapture' -ArgumentList $args -PassThru -NoNewWindow `
+                          -RedirectStandardError $errFile
+    return [pscustomobject]@{ Process = $proc; ErrFile = $errFile }
+}
+
+function Stop-TakeRecording {
+    param([Parameter(Mandatory)]$Rec, [Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][int]$Seconds)
+
+    # Give it the recording window plus a little, then stop waiting. A hung
+    # screencapture should not hold the session open.
+    if (-not $Rec.Process.WaitForExit(($Seconds + 15) * 1000)) {
+        try { $Rec.Process.Kill() } catch { }
+    }
+    $err = ''
+    if (Test-Path -LiteralPath $Rec.ErrFile) {
+        $err = (Get-Content -LiteralPath $Rec.ErrFile -Raw -ErrorAction SilentlyContinue)
+        Remove-Item -LiteralPath $Rec.ErrFile -Force -ErrorAction SilentlyContinue
+    }
+
+    Write-Host ""
+    $file = Get-Item -LiteralPath $Path -ErrorAction SilentlyContinue
+    if ($file -and $file.Length -gt 0) {
+        Write-Good ("Recorded {0:N1} MB -> {1}" -f ($file.Length / 1MB), $Path)
+        return
+    }
+
+    # No file, or an empty one. Overwhelmingly this is the permission, so say
+    # that first instead of printing a bare failure.
+    Write-Warn "No recording was produced."
+    if ($err.Trim()) { Write-Step ($err.Trim() -split "`n")[0] }
+    Write-Step "Most likely Screen Recording permission. Grant it to the app running"
+    Write-Step "this (Terminal, iTerm2, ...) in System Settings > Privacy & Security >"
+    Write-Step "Screen Recording, then restart that app and run the take again."
+}
+
 function ConvertTo-ExpectLiteral {
     # Escape a string for interpolation into an expect (Tcl) double-quoted
     # word. Tcl expands backslashes, [command substitution], and $variables
@@ -443,10 +532,28 @@ function Invoke-Auto {
     [void]$sb.AppendLine("foreach ch [split `"$(ConvertTo-ExpectLiteral $FinalCommand)`" `"`"] { send -- `$ch; sleep 0.04 }")
     [void]$sb.AppendLine('sleep 0.3')
     [void]$sb.AppendLine('send -- "\r"')
-    [void]$sb.AppendLine('sleep 2.6')             # final frame holds for the end card
-    # Hand the session back rather than killing it, so the last frame stays up
-    # while you stop the recorder. Ctrl-D closes it.
-    [void]$sb.AppendLine('interact')
+
+    # How long the visible take runs, from the first keystroke to the end of
+    # the closing hold. Every number here is a sleep emitted above, so the two
+    # cannot drift: the typing rates, the picker beat, the sweep, and the pause
+    # after the confirm.
+    $takeSeconds = 1.0 + ('tstyles'.Length * 0.055) + 0.35 + 0.9 +
+                   (($plan | Measure-Object -Property Ms -Sum).Sum / 1000.0) +
+                   1.4 + ($FinalCommand.Length * 0.04) + 0.3
+
+    if ($Record) {
+        # Hold the last frame well past the point the recorder stops, so the
+        # take never ends on the shell prompt reappearing. Nothing waits on
+        # this -- screencapture -V decides when the file closes.
+        [void]$sb.AppendLine('sleep 8')
+        $takeSeconds += 2.6
+    } else {
+        [void]$sb.AppendLine('sleep 2.6')         # final frame holds for the end card
+        $takeSeconds += 2.6
+        # Hand the session back rather than killing it, so the last frame stays
+        # up while you stop the recorder. Ctrl-D closes it.
+        [void]$sb.AppendLine('interact')
+    }
 
     $expectFile = Join-Path ([System.IO.Path]::GetTempPath()) "tstyles-demo-$PID.exp"
     [System.IO.File]::WriteAllText($expectFile, $sb.ToString())
@@ -455,24 +562,85 @@ function Invoke-Auto {
         Write-Host ""
         Write-Good "Expect script written (not run):"
         Write-Host "  $expectFile" -ForegroundColor Cyan
+        Write-Host ("  Take runs {0:N1}s." -f $takeSeconds) -ForegroundColor DarkGray
         Write-Host ""
         return
     }
 
+    if (-not $Record) {
+        Write-Host ""
+        Write-Host ("  Start your recorder now. The take begins in 3 seconds and runs ~{0:N0}s." -f $takeSeconds) -ForegroundColor Cyan
+        Write-Host "  Ctrl-D at the end to close the demo shell." -ForegroundColor DarkGray
+        Start-Sleep -Milliseconds 3000
+        Clear-Host
+
+        try   { & $expectBin.Source -f $expectFile }
+        finally { Remove-Item -LiteralPath $expectFile -Force -ErrorAction SilentlyContinue }
+        return
+    }
+
+    # --- recorded take -----------------------------------------------------
+    $rect = Get-RecordRect
+    # Allowance for pwsh starting inside the pty before the first keystroke.
+    # The screen is already cleared by then, so those frames open on an empty
+    # terminal, which is the shot the take wants to start on anyway.
+    $seconds = [int][math]::Ceiling($takeSeconds + 3)
+
     Write-Host ""
-    Write-Host "  Start your recorder now. The take begins in 3 seconds and runs ~15s." -ForegroundColor Cyan
-    Write-Host "  Ctrl-D at the end to close the demo shell." -ForegroundColor DarkGray
+    Write-Host ("  Recording {0}s to:" -f $seconds) -ForegroundColor Cyan
+    Write-Host "  $RecordPath" -ForegroundColor White
+    if ($rect) {
+        Write-Step "Cropped to this window ($rect)."
+    } else {
+        Write-Warn "Could not read the window bounds -- recording the whole display."
+    }
+    Write-Step "Starting in 3 seconds. Do not click away: the crop follows this window."
     Start-Sleep -Milliseconds 3000
+
+    # Clear before the recorder starts so the opening frames are an empty
+    # terminal rather than this message.
     Clear-Host
+    $rec = Start-TakeRecording -Path $RecordPath -Seconds $seconds -Rect $rect
 
     try   { & $expectBin.Source -f $expectFile }
-    finally { Remove-Item -LiteralPath $expectFile -Force -ErrorAction SilentlyContinue }
-
+    finally {
+        Remove-Item -LiteralPath $expectFile -Force -ErrorAction SilentlyContinue
+        Stop-TakeRecording -Rec $rec -Path $RecordPath -Seconds $seconds
+    }
 }
 
 # --- entry -----------------------------------------------------------------
 
 if ($Restore) { Restore-DemoState; return }
+
+if ($Record) {
+    # Refused rather than half-honoured: the recorder is given a fixed
+    # duration, and there is no way to know how long a take lasts when a
+    # person is driving the keys.
+    if ($Mode -ne 'Auto') {
+        Write-Warn "-Record needs -Mode Auto (the recorder is given a fixed duration)."
+        Write-Step "Use: -Mode Auto -Record, or record Guided takes yourself."
+        return
+    }
+    if (-not $IsMacOS) {
+        Write-Warn "-Record uses macOS screencapture and only runs there."
+        return
+    }
+    if (-not $RecordPath) {
+        $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss')
+        $RecordPath = Join-Path ([Environment]::GetFolderPath('Desktop')) "TerminalStyles-demo-$stamp.mov"
+    }
+    # screencapture refuses to overwrite, and fails late if the directory is
+    # missing -- both are better caught before the terminal is cleared.
+    $dir = Split-Path -Parent $RecordPath
+    if ($dir -and -not (Test-Path -LiteralPath $dir)) {
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+    }
+    if (Test-Path -LiteralPath $RecordPath) {
+        Write-Warn "$RecordPath already exists. Pass a different -RecordPath."
+        return
+    }
+}
 
 $names = Invoke-Prep
 if ($Prep) {

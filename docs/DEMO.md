@@ -82,6 +82,34 @@ picker always opens on the first entry.
 Use `-Mode Auto` for the take you ship. Use Guided when you want to explore or
 when a human arrow rhythm looks better than a metronome.
 
+### Recording it for you
+
+```bash
+pwsh -File scripts/demo.ps1 -Mode Auto -Record
+```
+
+Records the take to a `.mov` with macOS's own `screencapture`, cropped to this
+terminal window, and lands it on your Desktop. No screen recorder to start, no
+head or tail to trim: the script knows exactly how long the take runs, so it
+gives the recorder a fixed duration and holds the final frame past the end.
+
+`-RecordPath <file>` puts it somewhere else. It refuses to overwrite an existing
+file rather than silently replacing a good take.
+
+**Grant Screen Recording first**, to the app you are running this from —
+Terminal.app, not PowerShell — in **System Settings › Privacy & Security ›
+Screen Recording**, then restart that app. Without it `screencapture` writes
+nothing and exits silently; the script notices the missing file and says so
+rather than leaving you with a 0-byte `.mov`.
+
+Two things about the crop: don't move or resize the window mid-take, and don't
+click to another app — the rectangle is measured once, at the start. If the
+window bounds can't be read the whole display is recorded instead, and it says
+so before starting.
+
+`-Record` needs `-Mode Auto`. In Guided mode the take lasts as long as you take,
+so there is no duration to hand the recorder.
+
 ## 5. Sequence
 
 Guided mode prints this as a cue card. Auto mode performs it.
@@ -168,6 +196,11 @@ touch anything outside the data root.
   this; if you skipped prep, run `tstyles reset`.
 - **Auto mode exits immediately** — `expect` is missing (preinstalled on macOS,
   `apt install expect` on Linux). It falls back to Guided.
+- **`-Record` produced no file** — Screen Recording permission, almost always.
+  Grant it to the terminal app itself and restart it; the permission is per-app,
+  so granting it to one terminal does nothing for another.
+- **The recording is the wrong region** — the window moved after the take
+  started, or focus went to another app. The crop is measured once, up front.
 - **Colors look washed out in the file** — the recorder is capturing in a
   different color profile. Record in sRGB.
 
