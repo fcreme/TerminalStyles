@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `scripts/demo.ps1` and `docs/DEMO.md`: a harness for recording a short demo of live theme switching. It snapshots style state, parks personal tuned styles so the picker lists only the bundled ones, and either prints a cue card or drives the real picker through a pty with fixed timings so takes are comparable. `-Restore` puts everything back
+
 ## [0.8.4] - 2026-08-21
 
 ### Fixed
