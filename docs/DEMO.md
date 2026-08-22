@@ -82,6 +82,26 @@ picker always opens on the first entry.
 Use `-Mode Auto` for the take you ship. Use Guided when you want to explore or
 when a human arrow rhythm looks better than a metronome.
 
+### Recording with Cmd+Shift+5 (no permission needed)
+
+`Cmd+Shift+5` is Screenshot.app, the system capture UI. It does not need the
+Screen Recording permission a third-party app does, so it works immediately with
+nothing to grant and nothing to restart.
+
+```bash
+pwsh -File scripts/demo.ps1 -Mode Auto -Delay 20
+```
+
+The script clears the screen and then waits, silently, for `-Delay` seconds
+before the take begins. Use that window to press `Cmd+Shift+5`, choose **Record
+Selected Portion**, drag over the terminal, and click **Record**. The command you
+typed to start this is already cleared, so the recording opens on an empty
+terminal. Stop with the menu-bar button when the take ends; the `.mov` lands on
+your Desktop.
+
+20 seconds is a comfortable default for dragging a region. Raise it if you want
+more room.
+
 ### Recording it for you
 
 ```bash

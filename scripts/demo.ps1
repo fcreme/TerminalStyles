@@ -105,7 +105,14 @@ param(
     # leaving you with a 0-byte file.
     [switch]$Record,
 
-    [string]$RecordPath
+    [string]$RecordPath,
+
+    # Seconds of blank terminal before the take starts. The screen is cleared
+    # first and nothing is printed during the wait, so this is dead air you can
+    # start a screen recorder in -- including Cmd+Shift+5, which needs a region
+    # dragged and a button clicked and cannot be done in three seconds.
+    # Whatever you type to launch this is already gone by then.
+    [int]$Delay = 3
 )
 
 Set-StrictMode -Version Latest
@@ -569,10 +576,17 @@ function Invoke-Auto {
 
     if (-not $Record) {
         Write-Host ""
-        Write-Host ("  Start your recorder now. The take begins in 3 seconds and runs ~{0:N0}s." -f $takeSeconds) -ForegroundColor Cyan
+        Write-Host ("  Take runs ~{0:N0}s. Clearing now -- start your recorder during the" -f $takeSeconds) -ForegroundColor Cyan
+        Write-Host ("  {0}s of blank screen that follows (-Delay to change)." -f $Delay) -ForegroundColor Cyan
         Write-Host "  Ctrl-D at the end to close the demo shell." -ForegroundColor DarkGray
-        Start-Sleep -Milliseconds 3000
+        Start-Sleep -Milliseconds 1200
+
+        # Clear BEFORE the wait, not after: the blank screen is the point. It
+        # gives you time to drag a capture region and click Record with nothing
+        # on screen, so the recording opens on an empty terminal instead of on
+        # this message and the command that launched it.
         Clear-Host
+        Start-Sleep -Seconds $Delay
 
         try   { & $expectBin.Source -f $expectFile }
         finally { Remove-Item -LiteralPath $expectFile -Force -ErrorAction SilentlyContinue }
@@ -594,12 +608,13 @@ function Invoke-Auto {
     } else {
         Write-Warn "Could not read the window bounds -- recording the whole display."
     }
-    Write-Step "Starting in 3 seconds. Do not click away: the crop follows this window."
-    Start-Sleep -Milliseconds 3000
+    Write-Step ("Starting in {0}s. Do not click away: the crop follows this window." -f $Delay)
+    Start-Sleep -Milliseconds 1200
 
     # Clear before the recorder starts so the opening frames are an empty
     # terminal rather than this message.
     Clear-Host
+    Start-Sleep -Seconds $Delay
     $rec = Start-TakeRecording -Path $RecordPath -Seconds $seconds -Rect $rect
 
     try   { & $expectBin.Source -f $expectFile }
