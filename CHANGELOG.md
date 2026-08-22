@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-21
+
+### Fixed
+
+- the macOS install instructions named a Homebrew cask that no longer exists. `brew install --cask powershell` fails outright with "No Cask with this name exists" -- PowerShell moved to a Homebrew *formula*, so the command is `brew install powershell`. It was the first step a new macOS user followed, in the README and in the "PowerShell not found" message the zsh/bash wrapper prints
+
 ## [0.8.2] - 2026-08-21
 
 ### Added
@@ -195,7 +201,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.2...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.3...HEAD
+[0.8.3]: https://github.com/fcreme/TerminalStyles/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/fcreme/TerminalStyles/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/fcreme/TerminalStyles/compare/v0.8.0...v0.8.1
 [0.8.0]: https://github.com/fcreme/TerminalStyles/compare/v0.7.1...v0.8.0

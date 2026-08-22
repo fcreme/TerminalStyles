@@ -349,7 +349,7 @@ the window you are sitting in immediately — and, because the choice is recorde
 every tab you open afterwards too.
 
 ```powershell
-brew install --cask powershell          # if you don't have pwsh yet
+brew install powershell                  # if you don't have pwsh yet
 pwsh
 Install-PSResource -Name TerminalStyles
 Import-Module TerminalStyles -DisableNameChecking
@@ -450,7 +450,7 @@ is never touched: only images TerminalStyles itself installed are cleared.
     cannot show.
 - **Either** Windows PowerShell 5.1 (ships with Windows) **or**
   [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`).
-  Both engines work. On macOS: `brew install --cask powershell`.
+  Both engines work. On macOS: `brew install powershell`.
 - For the PSGallery install path (`Install-PSResource`), PowerShell
   7.4+ ships [PSResourceGet](https://learn.microsoft.com/en-us/powershell/module/microsoft.powershell.psresourceget/)
   natively. Older shells can use the bootstrap `iwr | iex` one-liner

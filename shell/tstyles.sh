@@ -165,7 +165,7 @@ tstyles() {
         if command -v "$_ts_c" >/dev/null 2>&1; then _ts_exe="$_ts_c"; break; fi
     done
     if [ -z "$_ts_exe" ]; then
-        printf 'tstyles: PowerShell not found. Install it with: brew install --cask powershell\n' >&2
+        printf 'tstyles: PowerShell not found. Install it with: brew install powershell\n' >&2
         return 127
     fi
     if [ ! -r "$TSTYLES_DATA/tstyles-cli.ps1" ]; then
