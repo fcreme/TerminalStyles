@@ -90,12 +90,16 @@ Describe 'OSC packet is available before the picker paints' {
 
 Describe 'Terminal.app profile generation' {
     InModuleScope TerminalStyles {
-        BeforeAll {
-            $script:HasOsascript = ($script:TStylesPlatform -eq 'MacOS') -and
-                                   [bool](Get-Command osascript -ErrorAction SilentlyContinue)
-        }
-
-        It 'builds NSColor archives Terminal can unarchive' -Skip:(-not $script:HasOsascript) {
+        # The -Skip: conditions here and in the Describe below are spelled out
+        # inline on purpose. A -Skip: is evaluated during discovery, so a flag
+        # assigned in a BeforeAll -- which does not run until the *run* phase --
+        # is still $null when the skip is decided, and the test is skipped on
+        # every platform, macOS included. These four cases sat green-but-never-
+        # run that way from 0.8.2 through 0.8.4, across the whole Terminal.app
+        # feature. Hoisting the flags to BeforeDiscovery is not enough either:
+        # inside InModuleScope a $script: variable resolves against the module's
+        # scope, not this file's.
+        It 'builds NSColor archives Terminal can unarchive' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
             # Each color must be an NSKeyedArchiver archive of an NSColor. A bare
             # value here makes Terminal reject the ENTIRE profile as "corrupt",
             # naming no key -- so this is worth pinning.
@@ -120,7 +124,7 @@ Describe 'Terminal.app profile generation' {
             @($script:TStylesAppleColorMap.Keys).Count | Should -Be 20
         }
 
-        It 'writes a valid plist profile' -Skip:(-not $script:HasOsascript) {
+        It 'writes a valid plist profile' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
             $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
             $out = Join-Path $TestDrive 'test.terminal'
             $p = New-AppleTerminalProfile -StyleName 'test' -Scheme $scheme -OutPath $out
@@ -137,11 +141,8 @@ Describe 'Terminal.app profile generation' {
 
 Describe 'Terminal.app background image format' {
     InModuleScope TerminalStyles {
-        BeforeAll {
-            $script:HasSips = ($script:TStylesPlatform -eq 'MacOS') -and
-                              [bool](Get-Command sips -ErrorAction SilentlyContinue)
-        }
-
+        # Inline -Skip: for the same reason as the Describe above: a BeforeAll
+        # flag is still $null when discovery decides the skip.
         It 'leaves a static image alone' {
             $png = Join-Path $TestDrive 'bg.png'
             [System.IO.File]::WriteAllBytes($png, [byte[]](1,2,3))
@@ -153,7 +154,7 @@ Describe 'Terminal.app background image format' {
             ConvertTo-AppleTerminalBackground -Path $missing | Should -Be $missing
         }
 
-        It 'converts an animated GIF to a still PNG' -Skip:(-not $script:HasSips) {
+        It 'converts an animated GIF to a still PNG' -Skip:(-not ($IsMacOS -and (Get-Command sips -ErrorAction SilentlyContinue))) {
             # Terminal.app renders a still image but NOT an animated GIF -- a
             # profile pointing at one gets a blank background with no error
             # anywhere. Every bundled background in this project is a GIF, so
@@ -171,7 +172,7 @@ Describe 'Terminal.app background image format' {
             Test-Path -LiteralPath $out | Should -BeTrue
         }
 
-        It 'reuses an existing conversion instead of re-running sips' -Skip:(-not $script:HasSips) {
+        It 'reuses an existing conversion instead of re-running sips' -Skip:(-not ($IsMacOS -and (Get-Command sips -ErrorAction SilentlyContinue))) {
             # This runs on every profile build; re-converting a multi-megabyte
             # GIF each time would be a visible pause.
             $src = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs/screenshots/eva.png'
