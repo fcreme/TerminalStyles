@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the capability table promised things no code delivered. iTerm2 was marked as supporting background images, fonts, opacity and cursor shapes on the strength of Dynamic Profiles, and Ghostty / WezTerm / kitty / Alacritty on the strength of their own config files -- but nothing in this module has ever written a config for any of them. Only Windows Terminal's `settings.json` and Terminal.app's `.terminal` profile have writers. On iTerm2 the effect was the failure the table exists to prevent: applying a style with a background reported success, painted no image, said nothing about why, and still had the picker prefetch megabytes of GIFs that could never be drawn. It now reports "can't show: background image" and skips the download. The live OSC retint -- the whole picker preview -- is unchanged on every terminal
+- Terminal.app was likewise marked as supporting fonts, opacity and cursor shapes. The profile this module builds carries colors and a background image and nothing else, so a style's font was dropped in transit with no notice. Terminal.app would honour a font in a profile; this is a gap in the writer, not in the terminal
+
 ## [0.8.4] - 2026-08-21
 
 ### Fixed
