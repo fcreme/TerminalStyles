@@ -134,3 +134,56 @@ Describe 'Terminal.app profile generation' {
         }
     }
 }
+
+Describe 'Terminal.app background image format' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:HasSips = ($script:TStylesPlatform -eq 'MacOS') -and
+                              [bool](Get-Command sips -ErrorAction SilentlyContinue)
+        }
+
+        It 'leaves a static image alone' {
+            $png = Join-Path $TestDrive 'bg.png'
+            [System.IO.File]::WriteAllBytes($png, [byte[]](1,2,3))
+            ConvertTo-AppleTerminalBackground -Path $png | Should -Be $png
+        }
+
+        It 'returns the original when the file does not exist' {
+            $missing = Join-Path $TestDrive 'nope.gif'
+            ConvertTo-AppleTerminalBackground -Path $missing | Should -Be $missing
+        }
+
+        It 'converts an animated GIF to a still PNG' -Skip:(-not $script:HasSips) {
+            # Terminal.app renders a still image but NOT an animated GIF -- a
+            # profile pointing at one gets a blank background with no error
+            # anywhere. Every bundled background in this project is a GIF, so
+            # without this the whole feature silently does nothing.
+            $src = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs/screenshots/eva.png'
+            $gif = Join-Path $TestDrive 'bg.gif'
+            & sips -s format gif $src --out $gif *> $null
+            if (-not (Test-Path -LiteralPath $gif)) {
+                Set-ItResult -Skipped -Because 'could not build a GIF fixture'
+                return
+            }
+            $out = ConvertTo-AppleTerminalBackground -Path $gif
+            $out | Should -Not -Be $gif
+            $out | Should -Match '\.still\.png$'
+            Test-Path -LiteralPath $out | Should -BeTrue
+        }
+
+        It 'reuses an existing conversion instead of re-running sips' -Skip:(-not $script:HasSips) {
+            # This runs on every profile build; re-converting a multi-megabyte
+            # GIF each time would be a visible pause.
+            $src = Join-Path (Split-Path $PSScriptRoot -Parent) 'docs/screenshots/eva.png'
+            $gif = Join-Path $TestDrive 'reuse.gif'
+            & sips -s format gif $src --out $gif *> $null
+            if (-not (Test-Path -LiteralPath $gif)) { Set-ItResult -Skipped -Because 'no GIF fixture'; return }
+            $first  = ConvertTo-AppleTerminalBackground -Path $gif
+            $stamp  = (Get-Item -LiteralPath $first).LastWriteTimeUtc
+            Start-Sleep -Milliseconds 1100
+            $second = ConvertTo-AppleTerminalBackground -Path $gif
+            $second | Should -Be $first
+            (Get-Item -LiteralPath $second).LastWriteTimeUtc | Should -Be $stamp
+        }
+    }
+}

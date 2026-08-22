@@ -412,6 +412,11 @@ The profile is written either way, under
 `~/Library/Application Support/TerminalStyles/profiles/`, so you can also open
 it from Finder or set it as your Terminal.app default.
 
+> Terminal.app renders a **still** background, not an animated one. The bundled
+> backgrounds are animated GIFs, so the first frame is extracted to a PNG and
+> used instead — Windows Terminal animates, Terminal.app shows a still. Pointing
+> a profile at the GIF directly produces a blank background with no error.
+
 ## Background image
 
 Each bundled style has its own animated background, hosted on the

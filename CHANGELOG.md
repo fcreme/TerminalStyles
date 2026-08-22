@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.4] - 2026-08-21
+
+### Fixed
+
+- background images did not appear on Terminal.app at all, which made 0.8.2's headline feature look like it did nothing. Terminal.app renders a still image but not an animated GIF, and every bundled background is a GIF -- a profile pointing at one gets a blank background with no error logged anywhere. The first frame is now extracted to a PNG (via `sips`) and cached beside the original, so Windows Terminal animates and Terminal.app shows a still
+- a style saved by `tstyles tune` carried no `prompt.sh`, so tuning anything left a zsh or bash user with the style's colors and none of its prompt or banner. Shell prompts arrived in 0.8.2 and `Save-TunedStyle` was never taught to copy one
+
 ### Added
 
 - `tstyles tune` now runs outside Windows Terminal. It previously refused, on the grounds that opacity and font need a config file the terminal does not expose -- true when that message was written, and no longer true once 0.8.2 started generating `.terminal` profiles. Brightness and saturation preview live over OSC exactly as on Windows Terminal; opacity and font are saved with the style and take effect when it is applied to a new window. The tuner says which knobs will not move before it takes over the screen, so the stillness is not read as a bug
@@ -205,7 +212,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.3...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.4...HEAD
+[0.8.4]: https://github.com/fcreme/TerminalStyles/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/fcreme/TerminalStyles/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/fcreme/TerminalStyles/compare/v0.8.1...v0.8.2
 [0.8.1]: https://github.com/fcreme/TerminalStyles/compare/v0.8.0...v0.8.1

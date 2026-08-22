@@ -99,3 +99,29 @@ Describe 'Save-TunedStyle' {
         }
     }
 }
+
+Describe 'Save-TunedStyle carries the shell prompt' {
+    InModuleScope TerminalStyles {
+        It "copies the base style's prompt.sh alongside profile.ps1" {
+            # Regression: tuned styles shipped profile.ps1 but not prompt.sh, so
+            # a zsh user who tuned anything kept the colors and silently lost the
+            # banner and prompt -- with nothing to indicate why.
+            $script:TStylesDataRoot = $TestDrive
+            $base = Join-Path $TestDrive 'base'
+            New-Item -ItemType Directory -Force -Path $base | Out-Null
+            foreach ($f in 'scheme.json','theme.json') {
+                [System.IO.File]::WriteAllText((Join-Path $base $f), '{}', [System.Text.UTF8Encoding]::new($false))
+            }
+            [System.IO.File]::WriteAllText((Join-Path $base 'profile.ps1'), '# ps',  [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $base 'prompt.sh'),  '# sh',  [System.Text.UTF8Encoding]::new($false))
+
+            $scheme = [pscustomobject]@{ name = 'base'; background = '#000000' }
+            Save-TunedStyle -AdjustedScheme $scheme -SaveName 'tuned' -BaseName 'base' -BaseStyleDir $base `
+                -Brightness 0 -Saturation 0 -Opacity 100 -FontFace 'Menlo' -FontSize 12
+
+            $dest = Join-Path (Join-Path $TestDrive 'styles') 'tuned'
+            Test-Path -LiteralPath (Join-Path $dest 'profile.ps1') | Should -BeTrue
+            Test-Path -LiteralPath (Join-Path $dest 'prompt.sh')   | Should -BeTrue
+        }
+    }
+}

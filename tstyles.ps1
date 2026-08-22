@@ -2151,6 +2151,15 @@ function Save-TunedStyle {
             [System.Text.UTF8Encoding]::new($false))
     }
 
+    # The zsh/bash prompt, copied verbatim. It needs no per-style marker: unlike
+    # profile.ps1, nothing byte-compares it to identify the active style. Without
+    # this a tuned style has no shell prompt at all, so a zsh user who tunes
+    # anything silently loses the banner and prompt while keeping the colors.
+    $promptSrc = Join-Path $BaseStyleDir 'prompt.sh'
+    if (Test-Path -LiteralPath $promptSrc) {
+        Copy-Item -LiteralPath $promptSrc -Destination (Join-Path $destDir 'prompt.sh') -Force
+    }
+
     $tune = [pscustomobject]@{
         schemaVersion = 1
         base          = $BaseName

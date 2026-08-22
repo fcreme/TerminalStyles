@@ -715,6 +715,42 @@ function Get-AppleTerminalProfileData {
     }
 }
 
+function ConvertTo-AppleTerminalBackground {
+    # Terminal.app renders a still image but NOT an animated GIF: a profile
+    # pointing at one gets a blank background, with no error anywhere. Every
+    # bundled background in this project is a GIF, so without this the feature
+    # appears to do nothing at all -- which is exactly how it was first reported.
+    #
+    # Converts a GIF to a static PNG (sips takes the first frame) and caches the
+    # result beside the original. Anything already static is returned unchanged.
+    # On failure the original path is returned: a background that silently does
+    # not render is no worse than the state before, and is not worth failing an
+    # apply over.
+    param([Parameter(Mandatory)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) { return $Path }
+    if ([System.IO.Path]::GetExtension($Path).ToLowerInvariant() -ne '.gif') { return $Path }
+
+    $still = [System.IO.Path]::ChangeExtension($Path, '.still.png')
+    # Reuse a previous conversion unless the source has since changed.
+    if (Test-Path -LiteralPath $still) {
+        try {
+            if ((Get-Item -LiteralPath $still).LastWriteTimeUtc -ge (Get-Item -LiteralPath $Path).LastWriteTimeUtc) {
+                return $still
+            }
+        } catch { }
+    }
+
+    if (-not (Get-Command sips -ErrorAction SilentlyContinue)) { return $Path }
+    try {
+        & sips -s format png $Path --out $still *> $null
+        if ((Test-Path -LiteralPath $still) -and (Get-Item -LiteralPath $still).Length -gt 0) {
+            return $still
+        }
+    } catch { }
+    return $Path
+}
+
 function New-AppleTerminalProfile {
     # Write a .terminal profile for $StyleName and return its path.
     #
@@ -736,6 +772,11 @@ function New-AppleTerminalProfile {
             New-Item -ItemType Directory -Path $dir -Force | Out-Null
         }
         $OutPath = Join-Path $dir "$StyleName.terminal"
+    }
+
+    # Animated GIFs do not render in Terminal.app; hand the profile a still.
+    if ($BackgroundImage) {
+        $BackgroundImage = ConvertTo-AppleTerminalBackground -Path $BackgroundImage
     }
 
     $data = Get-AppleTerminalProfileData -Scheme $Scheme -BackgroundImage $BackgroundImage
