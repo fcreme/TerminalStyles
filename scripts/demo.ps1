@@ -513,7 +513,17 @@ function Invoke-Auto {
     [void]$sb.AppendLine('set timeout 60')
     [void]$sb.AppendLine("set stty_init `"rows $rows cols $cols`"")
     # -NoProfile so the user's own prompt/aliases never appear on camera.
-    $initCmd = "Import-Module '$RepoRoot/TerminalStyles.psd1' -Force -DisableNameChecking; Set-Location '$RepoRoot'; function global:prompt { `"PS `" + (Split-Path -Leaf `$PWD) + `"> `" }; Clear-Host"
+    #
+    # PredictionSource None matters more than it looks. PSReadLine's inline
+    # prediction draws a suggestion from your shell history straight onto the
+    # line as you type, so whatever you last ran shows up greyed out behind the
+    # demo's own keystrokes -- and if that history is damaged, what lands on
+    # camera is mojibake sitting where the command should be. It also makes the
+    # typed line depend on which machine is recording, which is the opposite of
+    # what this script is for. SaveNothing keeps the take out of your history
+    # afterwards. Wrapped because PSReadLine is not guaranteed to be loaded.
+    $psrl = "try { Set-PSReadLineOption -PredictionSource None -HistorySaveStyle SaveNothing -ErrorAction Stop } catch { }"
+    $initCmd = "Import-Module '$RepoRoot/TerminalStyles.psd1' -Force -DisableNameChecking; Set-Location '$RepoRoot'; $psrl; function global:prompt { `"PS `" + (Split-Path -Leaf `$PWD) + `"> `" }; Clear-Host"
     [void]$sb.AppendLine("spawn -noecho `"$pwshExe`" -NoProfile -NoLogo -NoExit -Command `"$(ConvertTo-ExpectLiteral $initCmd)`"")
     [void]$sb.AppendLine('expect { "> " {} timeout { exit 2 } }')
     [void]$sb.AppendLine('sleep 1.0')
