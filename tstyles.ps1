@@ -24,6 +24,35 @@ function Get-TStylesPlatform {
     return 'Linux'
 }
 
+function Get-PowerShellEngineCandidate {
+    # The PowerShell engines to look for when registering or removing the
+    # $PROFILE loader, in probe order.
+    #
+    # Windows ships .exe names and has two engines. Everywhere else the binary
+    # is `pwsh` with no extension, and Windows PowerShell does not exist at all.
+    # Probing only the .exe names made `tstyles register` and `tstyles uninstall`
+    # silent no-ops on macOS and Linux -- "Neither pwsh.exe nor powershell.exe
+    # was found on PATH. Nothing to do." -- on the very platforms 0.8.0 added
+    # support for, and while the README tells those users to run register.
+    #
+    # -Platform is a test seam; real callers omit it.
+    param([string]$Platform = (Get-TStylesPlatform))
+
+    if ($Platform -eq 'Windows') {
+        return @(
+            [pscustomobject]@{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
+            [pscustomobject]@{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
+        )
+    }
+
+    # pwsh-preview is listed because it is what some macOS machines have INSTEAD
+    # of pwsh, not merely alongside it -- Homebrew's stable cask went away.
+    return @(
+        [pscustomobject]@{ Exe = 'pwsh';         Label = 'PowerShell 7' },
+        [pscustomobject]@{ Exe = 'pwsh-preview'; Label = 'PowerShell 7 (preview)' }
+    )
+}
+
 function Get-TStylesDataRoot {
     # Stable per-user data dir. Survives module version upgrades (PSResourceGet
     # installs a new version to a sibling dir; state stays here). For bootstrap-
@@ -1340,10 +1369,7 @@ $loaderEnd
 
     if (-not $Targets) {
         # Discover both engines, get $PROFILE per engine
-        $shells = @(
-            @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
-            @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
-        )
+        $shells = @(Get-PowerShellEngineCandidate)
         $targets = @()
         foreach ($s in $shells) {
             $cmd = Get-Command -Name $s.Exe -ErrorAction SilentlyContinue
@@ -1371,7 +1397,8 @@ $loaderEnd
 
     if (-not $targets) {
         Write-Host ""
-        Write-Host "Neither pwsh.exe nor powershell.exe was found on PATH. Nothing to do." -ForegroundColor Yellow
+        Write-Host ("No PowerShell engine found on PATH (looked for: {0}). Nothing to do." -f
+                    ((Get-PowerShellEngineCandidate).Exe -join ', ')) -ForegroundColor Yellow
         return
     }
 
@@ -1504,7 +1531,7 @@ function Invoke-TerminalStylesUninstall {
     }
 
     # 2. Strip the loader from both PowerShell engines' $PROFILE
-    foreach ($exe in 'pwsh.exe', 'powershell.exe') {
+    foreach ($exe in (Get-PowerShellEngineCandidate).Exe) {
         $cmd = Get-Command -Name $exe -ErrorAction SilentlyContinue
         if (-not $cmd) { continue }
         $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null

@@ -23,6 +23,34 @@ function Get-TStylesPlatform {
     return 'Linux'
 }
 
+function Get-PowerShellEngineCandidate {
+    # The PowerShell engines to look for when registering the $PROFILE loader.
+    #
+    # NOTE: mirrors the function of the same name in tstyles.ps1. This script is
+    # the bootstrap -- it runs via `iwr | iex` BEFORE the module exists on disk,
+    # so it cannot dot-source the library the way apply.ps1 now does. Keep the
+    # two in step.
+    #
+    # Windows ships .exe names and two engines; everywhere else the binary is
+    # `pwsh` with no extension and Windows PowerShell does not exist. Probing
+    # only the .exe names meant this script downloaded, installed, and THEN
+    # threw "Neither pwsh.exe nor powershell.exe was found on PATH" on macOS and
+    # Linux -- leaving the files in place with no loader registered.
+    param([string]$Platform = (Get-TStylesPlatform))
+
+    if ($Platform -eq 'Windows') {
+        return @(
+            @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
+            @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
+        )
+    }
+    # pwsh-preview is what some macOS machines have INSTEAD of pwsh.
+    return @(
+        @{ Exe = 'pwsh';         Label = 'PowerShell 7' },
+        @{ Exe = 'pwsh-preview'; Label = 'PowerShell 7 (preview)' }
+    )
+}
+
 function Get-TStylesDataRoot {
     # NOTE: duplicated from tstyles.ps1 -- keep in sync.
     param(
@@ -515,10 +543,7 @@ if (-not $TStylesInstallNoRun) {
     }
 
     # --- Register loader in every detected shell ---
-    $shells = @(
-        @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
-        @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
-    )
+    $shells = @(Get-PowerShellEngineCandidate)
 
     $registered = @()
     foreach ($s in $shells) {
@@ -532,7 +557,16 @@ if (-not $TStylesInstallNoRun) {
     }
 
     if (-not $registered) {
-        throw "Neither pwsh.exe nor powershell.exe was found on PATH. Cannot register TerminalStyles loader."
+        # Not a throw: the files are already installed by this point, so failing
+        # here left the user installed-but-unloaded with a stack trace. Tell them
+        # the one line that fixes it instead.
+        Write-Host ""
+        Write-Host ("No PowerShell engine found on PATH (looked for: {0})." -f
+                    ((Get-PowerShellEngineCandidate).Exe -join ', ')) -ForegroundColor Yellow
+        Write-Host "TerminalStyles is installed at $installDir, but no `$PROFILE loader was registered." -ForegroundColor Yellow
+        Write-Host "Add this line to your PowerShell profile to load it:" -ForegroundColor Yellow
+        Write-Host "    Import-Module TerminalStyles -DisableNameChecking" -ForegroundColor Cyan
+        Write-Host ""
     }
 
     # Gather the bundled theme names for the "Ready" panel

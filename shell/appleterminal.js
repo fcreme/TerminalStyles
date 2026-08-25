@@ -41,6 +41,13 @@ function archivedColor(hex) {
     // would bloat a 20-color profile to 100 KB. The calibrated form is 245
     // bytes and is what Terminal writes itself.
     var h = hex.replace('#', '');
+    // Validate BEFORE parseInt. parseInt('zz', 16) is NaN, NSColor accepts NaN
+    // components without complaint, and the archive then carries
+    // NSRGB = "nan nan nan" -- which Terminal rejects as a corrupt profile,
+    // naming no key. The caller's try/catch cannot help, because nothing throws.
+    if (!/^[0-9a-fA-F]{6}$/.test(h)) {
+        throw new Error('not a 6-digit hex color: ' + hex);
+    }
     var r = parseInt(h.substr(0, 2), 16) / 255;
     var g = parseInt(h.substr(2, 2), 16) / 255;
     var b = parseInt(h.substr(4, 2), 16) / 255;
@@ -60,7 +67,14 @@ function archivedBookmark(path) {
     var err = Ref();
     var bookmark = url.bookmarkDataWithOptionsIncludingResourceValuesForKeysRelativeToURLError(
         0, $(), $(), err);
-    if (!bookmark || bookmark.length === 0) { return null; }
+    // isNil(), not !bookmark: a nil ObjC return arrives in JXA as a truthy
+    // wrapper object, so `!bookmark` is false and `bookmark.length` is
+    // undefined -- both halves of the old guard passed a nil straight through,
+    // and the profile then carried a BackgroundImageBookmark archiving nothing.
+    // That is exactly the malformed shape this file's header warns Terminal
+    // rejects as "corrupt" without naming the offending key.
+    if (!bookmark || (bookmark.isNil && bookmark.isNil())) { return null; }
+    if (bookmark.length === 0) { return null; }
     var mdata = $.NSMutableData.dataWithData(bookmark);
     return $.NSKeyedArchiver.archivedDataWithRootObject(mdata)
         .base64EncodedStringWithOptions(0).js;

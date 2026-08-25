@@ -188,3 +188,48 @@ Describe 'Terminal.app background image format' {
         }
     }
 }
+
+Describe 'appleterminal.js guards' {
+    # Both guards in this file used to be inert, and both produced the one shape
+    # its own header warns Terminal rejects as "corrupt" while naming no key.
+    #
+    # -Skip: spelled out inline for the reason documented above: a flag assigned
+    # in BeforeAll is still $null when discovery decides the skip.
+    InModuleScope TerminalStyles {
+
+        It 'rejects a malformed hex instead of archiving NaN components' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
+            # parseInt('zz', 16) is NaN, NSColor accepts NaN without complaint,
+            # and the archive then carries NSRGB = "nan nan nan". Nothing threw,
+            # so the caller's "skip a bad color, keep the rest" catch never fired
+            # and the bad color went into the profile.
+            $scheme = [pscustomobject]@{ background = '#zzzzzz'; foreground = '#ffe8e8' }
+            $data = Get-AppleTerminalProfileData -Scheme $scheme
+            if ($data -and $data.ContainsKey('BackgroundColor')) {
+                $bytes = [Convert]::FromBase64String($data['BackgroundColor'])
+                [System.Text.Encoding]::ASCII.GetString($bytes) | Should -Not -Match 'nan'
+            }
+            # A valid sibling must still come through.
+            $data.ContainsKey('TextColor') | Should -BeTrue
+        }
+
+        It 'still archives a valid color unharmed' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
+            $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            $data = Get-AppleTerminalProfileData -Scheme $scheme
+            $bytes = [Convert]::FromBase64String($data['BackgroundColor'])
+            [System.Text.Encoding]::ASCII.GetString($bytes) | Should -Match 'NSKeyedArchiver'
+            [System.Text.Encoding]::ASCII.GetString($bytes) | Should -Not -Match 'nan'
+        }
+
+        It 'omits the bookmark entirely when the image is missing' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
+            # A nil ObjC return arrives in JXA as a TRUTHY wrapper, so `!bookmark`
+            # was false and `bookmark.length` was undefined -- both halves of the
+            # old guard passed nil straight through, and the profile carried a
+            # BackgroundImageBookmark archiving nothing.
+            $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            $missing = Join-Path $TestDrive 'definitely-not-here.gif'
+            $data = Get-AppleTerminalProfileData -Scheme $scheme -BackgroundImage $missing
+            $data | Should -Not -BeNullOrEmpty
+            $data.ContainsKey('BackgroundImageBookmark') | Should -BeFalse
+        }
+    }
+}
