@@ -51,7 +51,13 @@ Describe 'Background carryover between styles' {
                     [System.IO.File]::WriteAllText((Join-Path $dir 'background.gif'), 'GIFDATA', $script:enc)
                 } else {
                     # Negative-cache marker: resolution stops here, no network.
-                    New-Item -ItemType File -Force -Path (Join-Path (Get-StyleCacheDir -StyleName $Name) '.no-background') | Out-Null
+                    # Negative-cache marker: resolution stops here, no network.
+                    # It must be DATED -- an empty marker now reads as expired and
+                    # would send every one of these cases to raw.githubusercontent.
+                    $mk = Get-StyleCacheDir -StyleName $Name
+                    New-Item -ItemType Directory -Path $mk -Force | Out-Null
+                    [System.IO.File]::WriteAllText((Join-Path $mk '.no-background'),
+                        ([pscustomobject]@{ schemaVersion = 1; kind = 'absent'; at = [datetime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress), $script:enc)
                 }
                 return $dir
             }
@@ -123,6 +129,39 @@ Describe 'Background carryover between styles' {
                 $p.PSObject.Properties.Match('backgroundImageOpacity').Count     | Should -Be 0
                 $p.PSObject.Properties.Match('backgroundImageStretchMode').Count | Should -Be 0
                 $p.PSObject.Properties.Match('backgroundImageAlignment').Count   | Should -Be 0
+            }
+
+            It 'clears it even when the new theme.json never mentions background fields' {
+                # All 16 bundled styles declare the placeholder, which is why the
+                # case above passes -- the clear rode along inside the loop over
+                # the new theme's OWN properties. A style that ships no background
+                # has no reason to name background fields at all, and theme.json
+                # keys are optional by contract, so a user-authored style like
+                # this was left showing the PREVIOUS style's image behind its new
+                # palette. The clear is driven by what is on the profile now, not
+                # by what the incoming theme happens to mention.
+                $bare = Join-Path $script:TStylesModuleRoot 'styles\bare'
+                New-Item -ItemType Directory -Path $bare -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $bare 'scheme.json'), '{"name":"bare"}', $script:enc)
+                [System.IO.File]::WriteAllText((Join-Path $bare 'theme.json'),
+                    '{"colorScheme":"bare","opacity":95}', $script:enc)
+                $bareCache = Get-StyleCacheDir -StyleName 'bare'
+                New-Item -ItemType Directory -Path $bareCache -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $bareCache '.no-background'),
+                    ([pscustomobject]@{ schemaVersion = 1; kind = 'absent'; at = [datetime]::UtcNow.ToString('o') } |
+                        ConvertTo-Json -Compress), $script:enc)
+
+                $afterWithBg = script:Merge -Settings (script:New-Settings) -StyleDir $script:withBgDir
+                (script:GetProfile $afterWithBg).backgroundImage | Should -Not -BeNullOrEmpty
+
+                $afterBare = script:Merge -Settings $afterWithBg -StyleDir $bare
+                $p = script:GetProfile $afterBare
+                $p.colorScheme | Should -Be 'bare'
+                $p.opacity     | Should -Be 95
+                foreach ($f in 'backgroundImage','backgroundImageOpacity',
+                               'backgroundImageStretchMode','backgroundImageAlignment') {
+                    $p.PSObject.Properties.Match($f).Count | Should -Be 0 -Because "$f must not survive the switch"
+                }
             }
 
             It "preserves a background the user set themselves" {
