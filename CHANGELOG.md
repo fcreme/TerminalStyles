@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`apply.ps1` deleted a background image you had set yourself.** The scriptable entry point carried copy-pasted forks of five library functions, each with a "keep in sync" note, and two had drifted. Its merge stripped `backgroundImage` and friends whenever the style resolved no background of its own -- with no check of whose background it was -- so applying a style to a profile carrying your own image, or Windows Terminal's `desktopWallpaper`, silently removed it. The module has always decided by ownership and left yours alone; `tests/Background-Carryover.Tests.ps1` pins exactly that, and only ever covered the module
+- `apply.ps1` wrote its background cache into the **style** directory rather than the data root, in the pre-0.2.0 layout, and swallowed the failure. That directory belongs to the installed module on a PSGallery install. It also wrote the old undated `.no-background` marker, which 0.8.6 reads as expired -- so the script and the module had diverged on both where the cache lives and what a marker means
+- `apply.ps1` wrote `current-style.ps1` beside itself instead of into the data root, which only coincide for bootstrap installs; on a PSGallery install the module then looked for it somewhere else entirely
+
+### Changed
+
+- `apply.ps1` now dot-sources the library instead of duplicating it, dropping from 446 lines to 221 with only its own interactive prompt left. Parity tests could only ever catch drift in functions someone had written one for, and neither function that actually drifted had one; there is now a single implementation, and the module's own tests cover it. As a side effect `apply.ps1` sees the same styles `tstyles list` does, including tuned and user-authored ones, rather than only those in its own folder
+
 ## [0.8.6] - 2026-08-25
 
 ### Fixed

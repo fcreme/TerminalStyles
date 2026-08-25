@@ -25,187 +25,29 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-$repoRoot  = $PSScriptRoot
-$stylesDir = Join-Path $repoRoot 'styles'
 
-function Remove-JsonComment {
-    # NOTE: duplicated from tstyles.ps1 -- keep in sync. (apply.ps1 is a
-    # standalone script that doesn't yet dot-source the library.) Strips // and
-    # /* */ comments outside string literals so Windows Terminal's commented
-    # settings.json parses on Windows PowerShell 5.1, whose ConvertFrom-Json
-    # rejects comments.
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
-
-    $sb = [System.Text.StringBuilder]::new($Text.Length)
-    $inString = $false
-    $escaped  = $false
-    $i = 0
-    $n = $Text.Length
-    while ($i -lt $n) {
-        $c = $Text[$i]
-        if ($inString) {
-            [void]$sb.Append($c)
-            if     ($escaped)     { $escaped = $false }
-            elseif ($c -eq '\')   { $escaped = $true }
-            elseif ($c -eq '"')   { $inString = $false }
-            $i++
-            continue
-        }
-        if ($c -eq '"') {
-            $inString = $true
-            [void]$sb.Append($c)
-            $i++
-            continue
-        }
-        if ($c -eq '/' -and ($i + 1) -lt $n) {
-            $next = $Text[$i + 1]
-            if ($next -eq '/') {
-                $i += 2
-                while ($i -lt $n -and $Text[$i] -ne "`n") { $i++ }
-                continue
-            }
-            if ($next -eq '*') {
-                $i += 2
-                while ($i -lt $n -and -not ($Text[$i] -eq '*' -and ($i + 1) -lt $n -and $Text[$i + 1] -eq '/')) { $i++ }
-                $i += 2
-                continue
-            }
-        }
-        [void]$sb.Append($c)
-        $i++
-    }
-    $sb.ToString()
-}
-
-function Remove-JsonTrailingComma {
-    # NOTE: duplicated from tstyles.ps1 -- keep in sync. Drop trailing commas
-    # (a ',' whose next non-whitespace char is '}' or ']') OUTSIDE string literals.
-    # pwsh 7 tolerates them but Windows PowerShell 5.1's ConvertFrom-Json rejects
-    # them ("extra trailing ','"); commas inside string values are preserved. Run
-    # AFTER Remove-JsonComment so a comment can't hide the trailing comma.
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
-
-    $sb = [System.Text.StringBuilder]::new($Text.Length)
-    $inString = $false
-    $escaped  = $false
-    $i = 0
-    $n = $Text.Length
-    while ($i -lt $n) {
-        $c = $Text[$i]
-        if ($inString) {
-            [void]$sb.Append($c)
-            if     ($escaped)     { $escaped = $false }
-            elseif ($c -eq '\')   { $escaped = $true }
-            elseif ($c -eq '"')   { $inString = $false }
-            $i++
-            continue
-        }
-        if ($c -eq '"') {
-            $inString = $true
-            [void]$sb.Append($c)
-            $i++
-            continue
-        }
-        if ($c -eq ',') {
-            $j = $i + 1
-            while ($j -lt $n -and [char]::IsWhiteSpace($Text[$j])) { $j++ }
-            if ($j -lt $n -and ($Text[$j] -eq '}' -or $Text[$j] -eq ']')) {
-                $i++
-                continue
-            }
-        }
-        [void]$sb.Append($c)
-        $i++
-    }
-    $sb.ToString()
-}
-
-function ConvertFrom-WTJson {
-    # NOTE: duplicated from tstyles.ps1 -- keep in sync. Parse WT settings.json
-    # tolerating // and /* */ comments and trailing commas; throw one actionable
-    # error otherwise.
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Json)
-
-    $clean = Remove-JsonComment -Text $Json
-    $clean = Remove-JsonTrailingComma -Text $clean
-    try {
-        $clean | ConvertFrom-Json
-    } catch {
-        throw ("TerminalStyles: could not parse Windows Terminal settings.json. " +
-               "On Windows PowerShell 5.1, JSON comments other than // and /* */ are not supported -- " +
-               "open WT Settings and Save once, or remove the offending text. " +
-               "Underlying error: $($_.Exception.Message)")
-    }
-}
-
-function Get-AvailableStyles {
-    if (-not (Test-Path -LiteralPath $stylesDir)) {
-        throw "No styles directory at $stylesDir"
-    }
-    Get-ChildItem -LiteralPath $stylesDir -Directory | Where-Object {
-        Test-Path (Join-Path $_.FullName 'scheme.json')
-    }
-}
-
-function Get-StyleBundledBackground {
-    # See tstyles.ps1 for full notes. Three-tier resolution: local file ->
-    # negative-cache marker -> lazy-fetch from the `gifs` branch with caching.
-    param([Parameter(Mandatory)][string]$StyleDir)
-
-    foreach ($ext in 'gif','png','jpg','jpeg') {
-        $candidate = Join-Path $StyleDir "background.$ext"
-        if (Test-Path -LiteralPath $candidate) { return $candidate }
-    }
-
-    $noBgMarker = Join-Path $StyleDir '.no-background'
-    if (Test-Path -LiteralPath $noBgMarker) { return $null }
-
-    $styleName = Split-Path -Leaf $StyleDir
-    $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
-    $prevProgress = $ProgressPreference
-    $ProgressPreference = 'SilentlyContinue'
-    try {
-        foreach ($ext in 'gif','png','jpg','jpeg') {
-            $url = "$remoteBase.$ext"
-            $local = Join-Path $StyleDir "background.$ext"
-            try {
-                Invoke-WebRequest -Uri $url -OutFile $local -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-                if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
-                    return $local
-                } else {
-                    Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
-                }
-            } catch {
-                if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
-            }
-        }
-    } finally {
-        $ProgressPreference = $prevProgress
-    }
-
-    try {
-        New-Item -ItemType File -Path $noBgMarker -Force | Out-Null
-    } catch { }
-    return $null
-}
-
-function Find-SettingsPath {
-    # Prefer the live WT build's settings.json ($env:WT_SETTINGS_PATH) before the
-    # static Stable > Preview > unpackaged list -- otherwise a user on WT Preview
-    # silently edits Stable's file. NOTE: mirrors tstyles.ps1 Find-WTSettingsPath.
-    if ($env:WT_SETTINGS_PATH -and (Test-Path -LiteralPath $env:WT_SETTINGS_PATH)) {
-        return $env:WT_SETTINGS_PATH
-    }
-    $candidates = @(
-        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
-        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
-        "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
-    )
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { return $c }
-    }
-    throw "Could not locate Windows Terminal settings.json. Pass -SettingsPath."
-}
+# The library. apply.ps1 used to carry copy-pasted forks of these functions,
+# each with a "keep in sync" note; two of them drifted anyway, in ways that lost
+# user data:
+#
+#   Merge-ThemeIntoEntry stripped the background fields whenever no background
+#   resolved, with no ownership check -- so it deleted a background the USER had
+#   set (their own image, or Windows Terminal's desktopWallpaper), which the
+#   module deliberately leaves alone. tests/Background-Carryover.Tests.ps1 pins
+#   that distinction, and only ever covered the module.
+#
+#   Get-StyleBundledBackground was the pre-0.2.0 shape: it wrote fetched images
+#   AND the .no-background marker into the STYLE directory rather than the data
+#   root's cache, swallowing the failure -- and this script ships to PSGallery,
+#   where that directory belongs to the installed module. It also wrote the old
+#   undated marker format, which 0.8.6 reads as expired, so the two had diverged
+#   on where the cache lives AND what a marker means.
+#
+# $TStylesNoAutoLoad keeps the load from re-emitting the currently applied
+# style's palette, which would repaint the terminal with the old style just
+# before this script applies the new one.
+$TStylesNoAutoLoad = $true
+. (Join-Path $PSScriptRoot 'tstyles.ps1')
 
 function Read-Choice {
     param([string]$Title, [string[]]$Options)
@@ -221,68 +63,6 @@ function Read-Choice {
             if ($n -ge 1 -and $n -le $Options.Count) { return $Options[$n - 1] }
         }
         Write-Host "Invalid choice." -ForegroundColor Yellow
-    }
-}
-
-function Merge-ThemeIntoEntry {
-    param($Entry, $Theme, [string]$BackgroundImagePath)
-
-    $bgFields = @(
-        'backgroundImage', 'backgroundImageOpacity',
-        'backgroundImageStretchMode', 'backgroundImageAlignment'
-    )
-
-    foreach ($prop in $Theme.PSObject.Properties) {
-        $name  = $prop.Name
-        $value = $prop.Value
-
-        if ($name -in $bgFields -and -not $BackgroundImagePath) {
-            if ($Entry.PSObject.Properties.Match($name).Count -gt 0) {
-                $Entry.PSObject.Properties.Remove($name)
-            }
-            continue
-        }
-        if ($name -eq 'backgroundImage' -and $value -eq '{{BACKGROUND_IMAGE}}') {
-            $value = $BackgroundImagePath
-        }
-
-        if ($Entry.PSObject.Properties.Match($name).Count -gt 0) {
-            $Entry.$name = $value
-        } else {
-            $Entry | Add-Member -NotePropertyName $name -NotePropertyValue $value -Force
-        }
-    }
-}
-
-function Write-WTSettingsFile {
-    # Serialize + write Windows Terminal settings.json durably.
-    # NOTE: mirrors tstyles.ps1's Write-SettingsFile/Write-SettingsAtomic -- keep
-    # in sync. (apply.ps1 is standalone and doesn't dot-source the library.)
-    #   * Depth 100 (the JSON max), NOT 32: a user settings.json nested deeper
-    #     than 32 is silently stringified (corrupted) by ConvertTo-Json -- with no
-    #     warning at all on Windows PowerShell 5.1.
-    #   * Atomic replace via a sibling temp file: WriteAllText truncates-then-
-    #     writes, so a crash/kill or a concurrent Windows Terminal reload can
-    #     observe a half-written/empty settings.json. A same-volume rename is
-    #     atomic on NTFS. Falls back to a direct write if Replace/Move is
-    #     unsupported. UTF-8 no BOM.
-    param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)]$Settings)
-    $json = $Settings | ConvertTo-Json -Depth 100
-    $enc = [System.Text.UTF8Encoding]::new($false)
-    $tmp = "$Path.tstmp"
-    [System.IO.File]::WriteAllText($tmp, $json, $enc)
-    try {
-        if (Test-Path -LiteralPath $Path) {
-            # [NullString]::Value, not $null: a bare $null is coerced to '' and
-            # makes Replace throw "path is empty" on PS7, silently degrading to
-            # the non-atomic in-place write in the catch below.
-            [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
-        } else {
-            [System.IO.File]::Move($tmp, $Path)
-        }
-    } catch {
-        [System.IO.File]::WriteAllText($Path, $json, $enc)
-        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
     }
 }
 
@@ -308,7 +88,7 @@ if (-not $styleDir) {
 Write-Host "Style: $Style" -ForegroundColor Green
 
 # --- Settings.json location ---
-if (-not $SettingsPath) { $SettingsPath = Find-SettingsPath }
+if (-not $SettingsPath) { $SettingsPath = Find-WTSettingsPath }
 if (-not (Test-Path -LiteralPath $SettingsPath)) {
     throw "Settings file not found at $SettingsPath"
 }
@@ -329,60 +109,50 @@ if ($Target -ne 'defaults' -and -not ($settings.profiles.list | Where-Object nam
 Write-Host "Target: $Target" -ForegroundColor Green
 
 # --- Background image ---
-# Precedence: explicit -BackgroundImage > interactive prompt > bundled style background
-$bundledBg = Get-StyleBundledBackground -StyleDir $styleDir
+# Precedence: explicit -BackgroundImage > interactive prompt > bundled style
+# background. $bgProvided is the module's contract: $true means "the caller
+# decided" (a path applies it, an empty string removes it), $false means "work
+# it out from the style", which is what leaves a background the USER set in
+# place rather than deleting it.
+$bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
 
-if (-not $PSBoundParameters.ContainsKey('BackgroundImage')) {
+if (-not $bgProvided) {
+    $bundledBg = Get-StyleBundledBackground -StyleDir $styleDir
     Write-Host ""
     $hint = if ($bundledBg) { "blank = use bundled '$([System.IO.Path]::GetFileName($bundledBg))', 'none' = no background" }
             else            { "blank = no background" }
     $answer = (Read-Host "Background image absolute path ($hint)").Trim()
     if ($answer -eq '') {
-        $BackgroundImage = if ($bundledBg) { $bundledBg } else { '' }
+        # Let the merge resolve the bundled image itself -- and, when the style
+        # ships none, decide by ownership whether an existing background is ours
+        # to clear or the user's to keep.
+        $BackgroundImage = ''
     } elseif ($answer -eq 'none') {
         $BackgroundImage = ''
+        $bgProvided = $true
     } else {
         $BackgroundImage = $answer
+        $bgProvided = $true
     }
 }
 if ($BackgroundImage -and -not (Test-Path -LiteralPath $BackgroundImage)) {
     Write-Warning "Background image path doesn't exist: $BackgroundImage (will still apply the setting)"
 }
 
-# --- Load style content ---
-$schemePath = Join-Path $styleDir 'scheme.json'
-$themePath  = Join-Path $styleDir 'theme.json'
-$scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-$theme  = if (Test-Path -LiteralPath $themePath) {
-    [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-} else { $null }
-
 # --- Backup settings.json ---
+# Timestamped, unlike the module's rolling .bak: this script is the scriptable
+# path, so it keeps a full audit trail of every run.
 $bak = "$SettingsPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
 Copy-Item -LiteralPath $SettingsPath -Destination $bak
 Write-Host "Backed up settings to: $bak" -ForegroundColor Gray
 
-# --- Merge scheme ---
-if (-not $settings.PSObject.Properties.Match('schemes').Count) {
-    $settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
-}
-$settings.schemes = @($settings.schemes | Where-Object { $_.name -ne $scheme.name }) + $scheme
-
-# --- Apply theme to target ---
-if ($theme) {
-    if ($Target -eq 'defaults') {
-        if (-not $settings.profiles.PSObject.Properties.Match('defaults').Count) {
-            $settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
-        }
-        Merge-ThemeIntoEntry -Entry $settings.profiles.defaults -Theme $theme -BackgroundImagePath $BackgroundImage
-    } else {
-        $entry = $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
-        Merge-ThemeIntoEntry -Entry $entry -Theme $theme -BackgroundImagePath $BackgroundImage
-    }
-}
+# --- Merge scheme + theme (the module's own merge, not a fork of it) ---
+$settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
+    -TargetName $Target -BackgroundImage $BackgroundImage `
+    -BackgroundImageProvided $bgProvided
 
 # --- Save settings.json (UTF-8 no BOM, atomic, full depth) ---
-Write-WTSettingsFile -Path $SettingsPath -Settings $settings
+Write-SettingsFile -Path $SettingsPath -Settings $settings
 Write-Host "settings.json updated." -ForegroundColor Green
 
 # --- Install profile.ps1 (if applicable) ---
@@ -423,7 +193,10 @@ if ($hasProfile -and -not $KeepPrompt) {
         }
 
         if ($hasLoader) {
-            $currentStyleDest = Join-Path $repoRoot 'current-style.ps1'
+            # The data root, which is where the module READS it from. This used
+            # to write beside the script, which only coincides for bootstrap
+            # installs -- on PSGallery the module looked somewhere else entirely.
+            $currentStyleDest = $script:TStylesCurrent
             Copy-Item -LiteralPath $profilePs1 -Destination $currentStyleDest -Force
             Write-Host "Updated current-style.ps1 (tstyles loader detected; `$PROFILE left intact)" -ForegroundColor Green
         } else {

@@ -30,20 +30,3 @@ Describe 'Find-WTSettingsPath (module)' {
         $result | Should -Not -Be $env:WT_SETTINGS_PATH
     }
 }
-
-Describe 'apply.ps1 Find-SettingsPath' {
-    BeforeAll {
-        $script:applyPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'apply.ps1'
-        $TStylesApplyNoRun = $true
-        . $script:applyPath
-    }
-    BeforeEach { $script:savedWtsp = $env:WT_SETTINGS_PATH }
-    AfterEach  { $env:WT_SETTINGS_PATH = $script:savedWtsp }
-
-    It 'prefers $env:WT_SETTINGS_PATH when it points at an existing file' {
-        $live = Join-Path $TestDrive 'live2.json'
-        [System.IO.File]::WriteAllText($live, '{}', [System.Text.UTF8Encoding]::new($false))
-        $env:WT_SETTINGS_PATH = $live
-        Find-SettingsPath | Should -Be $live
-    }
-}

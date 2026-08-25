@@ -3805,7 +3805,13 @@ Invoke-TerminalStylesStateMigration
 # banner and prompt glyphs with none of the colors. Every terminal that CAN take
 # an OSC palette or a written config qualifies. Module functions import
 # regardless of the gate.
-if ((Test-StyledHost) -and (Test-HostOutputVisible)) {
+#
+# $TStylesNoAutoLoad suppresses this block for callers that want the library
+# without its shell-startup behaviour -- apply.ps1 dot-sources this file for its
+# functions, and re-emitting the CURRENTLY applied style's palette on the way in
+# would repaint the terminal with the old style moments before applying the new
+# one. Same shape as $TStylesApplyNoRun / $TStylesInstallNoRun.
+if (-not $TStylesNoAutoLoad -and (Test-StyledHost) -and (Test-HostOutputVisible)) {
 
     # Windows Terminal reads its colors from settings.json, which the apply
     # already wrote, so the palette is live before this shell even starts.
