@@ -1039,7 +1039,13 @@ function Apply-StyleNonWT {
         } catch { $theme = $null }
     }
     if ($theme) {
-        if ((Get-StyleBundledBackground -StyleDir $StyleDir) -and -not $caps.BackgroundImage) {
+        # Capability first, deliberately. Get-StyleBundledBackground can make up
+        # to four serial 10-second HTTP attempts against the gifs branch, so as
+        # the LEFT operand it ran even where the answer could not matter -- and
+        # ran a second time below. Ordered this way the two calls below and here
+        # are mutually exclusive on $caps.BackgroundImage, so an apply resolves
+        # the background at most once.
+        if (-not $caps.BackgroundImage -and (Get-StyleBundledBackground -StyleDir $StyleDir)) {
             $unsupported += 'background image'
         }
         if ($theme.PSObject.Properties.Match('tabColor').Count -gt 0 -and -not $caps.TabColor) {
@@ -1055,8 +1061,10 @@ function Apply-StyleNonWT {
     # carries one, and a profile only applies to a new window -- so the profile
     # is written either way and opened only when asked. Silently spawning a
     # window on every apply would be a worse surprise than not showing the image.
-    $bundledBg = Get-StyleBundledBackground -StyleDir $StyleDir
-    if ($caps.BackgroundImage -and $bundledBg -and $kind -eq 'AppleTerminal') {
+    $bundledBg = if ($caps.BackgroundImage -and $kind -eq 'AppleTerminal') {
+        Get-StyleBundledBackground -StyleDir $StyleDir
+    } else { $null }
+    if ($bundledBg) {
         $profilePath = New-AppleTerminalProfile -StyleName $StyleName -Scheme $scheme -BackgroundImage $bundledBg
         if ($profilePath) {
             if ($NewWindow) {
@@ -2058,7 +2066,19 @@ function Invoke-TerminalStyleFont {
         }
     }
 
-    # Apply to the active profile.
+    # Apply to the active profile. Applying a font means writing it into a
+    # profile, and Set-ProfileFont only knows how to write Windows Terminal's
+    # settings.json -- there is no escape sequence for a font face. So off WT
+    # the install above IS the whole job: say so, rather than chasing a
+    # settings.json that cannot exist and reporting "Could not locate Windows
+    # Terminal settings.json" in red after an install that actually succeeded.
+    $fontKind = Get-TerminalKind
+    if (-not (Get-TerminalCapability -Kind $fontKind).Font) {
+        Write-Host ("  {0} takes its font from its own preferences, so TerminalStyles cannot apply it for you." -f (Get-TerminalDisplayName -Kind $fontKind)) -ForegroundColor DarkGray
+        Write-Host ("  '{0}' is installed and will be listed there." -f $font.family) -ForegroundColor DarkGray
+        return
+    }
+
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) { Write-Host "Could not locate Windows Terminal settings.json." -ForegroundColor Red; return }
     if (-not $Target) {
@@ -2136,6 +2156,28 @@ function Save-TunedStyle {
         ($theme | ConvertTo-Json -Depth 16),
         [System.Text.UTF8Encoding]::new($false))
 
+    # Re-tuning a style that was already saved with Overwrite makes $BaseStyleDir
+    # and $destDir the SAME directory, so every "copy from base to dest" below is
+    # really a copy of a file onto itself. Left unguarded that appends a second
+    # `# tstyles-tuned:` marker to profile.ps1 on each repeat and makes Copy-Item
+    # throw a red "Cannot overwrite the item with itself" for prompt.sh, at save
+    # time, after the user has already committed.
+    # Compared the way the HOST FILESYSTEM compares, not the way PowerShell's
+    # -eq does. -eq is case-insensitive, so on Linux (case-sensitive) a "Save
+    # as" of `Eva` from a base at styles/eva would look like the same directory
+    # and skip the prompt.sh copy into what is really a brand-new style --
+    # costing it the zsh/bash prompt the copy exists to provide.
+    $sameDir = $false
+    try {
+        $cmp = if ((Get-TStylesPlatform) -eq 'Linux') { [System.StringComparison]::Ordinal }
+               else { [System.StringComparison]::OrdinalIgnoreCase }
+        $sep = [System.IO.Path]::DirectorySeparatorChar
+        $sameDir = [string]::Equals(
+            [System.IO.Path]::GetFullPath($destDir).TrimEnd($sep),
+            [System.IO.Path]::GetFullPath($BaseStyleDir).TrimEnd($sep),
+            $cmp)
+    } catch { $sameDir = $false }
+
     $profileSrc = Join-Path $BaseStyleDir 'profile.ps1'
     if (Test-Path -LiteralPath $profileSrc) {
         # Append a per-style marker so the materialized profile is byte-distinct
@@ -2144,6 +2186,10 @@ function Save-TunedStyle {
         # and returns the alphabetically-first match -- would attribute this tuned
         # style to its base. The marker is an inert comment (profile is dot-sourced).
         $profileContent = [System.IO.File]::ReadAllText($profileSrc, [System.Text.UTF8Encoding]::new($false))
+        # Strip any marker a previous save left, so re-tuning appends exactly one
+        # rather than accumulating a line per save. Idempotent either way.
+        $profileContent = [regex]::Replace($profileContent,
+            '(\r?\n)?^[ \t]*#[ \t]*tstyles-tuned:.*$', '', 'Multiline').TrimEnd("`r", "`n")
         $marker = [Environment]::NewLine + "# tstyles-tuned: $SaveName" + [Environment]::NewLine
         [System.IO.File]::WriteAllText(
             (Join-Path $destDir 'profile.ps1'),
@@ -2156,7 +2202,7 @@ function Save-TunedStyle {
     # this a tuned style has no shell prompt at all, so a zsh user who tunes
     # anything silently loses the banner and prompt while keeping the colors.
     $promptSrc = Join-Path $BaseStyleDir 'prompt.sh'
-    if (Test-Path -LiteralPath $promptSrc) {
+    if (-not $sameDir -and (Test-Path -LiteralPath $promptSrc)) {
         Copy-Item -LiteralPath $promptSrc -Destination (Join-Path $destDir 'prompt.sh') -Force
     }
 
@@ -2348,11 +2394,17 @@ function Invoke-TerminalStyleTune {
         }
     } else {
         # Set expectations before the screen is taken over: the two color knobs
-        # move on screen, the other three are recorded and take effect when the
-        # saved style is applied to a new window.
+        # move on screen, the other three are only recorded.
+        #
+        # They are recorded and nothing more. Off Windows Terminal the only
+        # writer is New-AppleTerminalProfile, whose profile carries colors and a
+        # background image -- no font, no opacity (see Get-AppleTerminalProfileData).
+        # Every other terminal gets escape sequences, which cannot carry either.
+        # So promising "a new window shows them" sent the user to open one and
+        # compare an unchanged font against the screenshot.
         Write-Host ""
         Write-Host ("  Tuning on {0}: brightness and saturation preview live." -f (Get-TerminalDisplayName -Kind $tuneKind)) -ForegroundColor DarkGray
-        Write-Host "  Opacity and font are saved with the style, but only a new window shows them." -ForegroundColor DarkGray
+        Write-Host "  Opacity and font are saved with the style, but this terminal cannot show them." -ForegroundColor DarkGray
         Write-Host ""
         Start-Sleep -Milliseconds 900
     }
@@ -2560,9 +2612,22 @@ function Invoke-TerminalStyleTune {
         if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
         # -Target is a Windows Terminal profile name; off WT it is $null and the
         # apply resolves the host terminal itself.
-        if ($tuneUsesSettings) { Apply-StyleDirect -StyleName $saveName -Target $target }
-        else { Apply-StyleDirect -StyleName $saveName }
-        $applied = $true
+        #
+        # $applied gates the finally block's revert, so it has to mean "the style
+        # really went on", not "we reached this line". Apply-StyleDirect's failure
+        # modes are all Write-Error, which is non-terminating: setting $applied
+        # unconditionally meant a failed apply skipped the OSC reset and left the
+        # tuner's preview colors painted over an already-restored settings.json.
+        # Filtered on Activity, not just "any error": Apply-StyleDirect's three
+        # give-up paths are Write-Error + return, and all three return before
+        # touching anything. An incidental non-terminating error from a cmdlet
+        # further in (the Copy-Item/Remove-Item that install current-style.ps1)
+        # means the style DID go on, so counting it as failure would revert a
+        # good apply -- the opposite bug.
+        $applyErr = $null
+        if ($tuneUsesSettings) { Apply-StyleDirect -StyleName $saveName -Target $target -ErrorVariable applyErr }
+        else { Apply-StyleDirect -StyleName $saveName -ErrorVariable applyErr }
+        $applied = -not @($applyErr | Where-Object { $_.CategoryInfo.Activity -eq 'Write-Error' }).Count
     } finally {
         [Console]::CursorVisible = $true
         if (-not $applied) {
@@ -2617,8 +2682,9 @@ function Get-TerminalStyleHelpData {
                        "Saved styles land in your user dir and show up in 'tstyles list'.",
                        "",
                        "Outside Windows Terminal, brightness and saturation preview live;",
-                       "opacity and font are saved with the style but need a new window to",
-                       "show, because no escape sequence carries them.")
+                       "opacity and font are recorded in the saved style but no terminal",
+                       "there can show them, because no escape sequence carries them and",
+                       "the Terminal.app profile carries only colors and a background.")
             Keys = @('Up/Down      select a knob',
                      'Left/Right   adjust it',
                      'R            reset color',
@@ -3522,10 +3588,32 @@ function Invoke-TerminalStyle {
             # Record the confirmed style so a new tab comes up in it -- the OSC
             # preview alone would die with this tab.
             Set-CurrentStyleRecord -StyleName $styles[$idx].Name -Kind $termKind
+
+            # ...and stage the zsh/bash side, exactly as Apply-StyleNonWT does.
+            # Without this the picker retints the window live but leaves
+            # current-style.osc and current-prompt.sh on the PREVIOUS style, so
+            # every new zsh/bash tab comes up in the old palette and banner --
+            # while `tstyles <name>` on the same terminal gets it right.
+            Set-ShellStyleState -StyleName $selectedStyle.Name `
+                                -StyleDir $selectedStyle.FullName `
+                                -Scheme $schemes[$idx] -KeepPrompt:$KeepPrompt
         }
 
+        # -KeepPrompt means "this style's colors, my prompt". Copying the
+        # style's profile.ps1 over current-style.ps1 is what installs its
+        # prompt, so under -KeepPrompt it must not happen -- the direct-apply
+        # path has always honoured that (see Apply-StyleDirect); the picker
+        # used to overwrite regardless.
+        #
+        # The guard belongs on the INNER condition, exactly as in
+        # Apply-StyleDirect and Apply-StyleNonWT. Hoisting it to the outer `if`
+        # would also skip the elseif, leaving the PREVIOUS style's
+        # current-style.ps1 in place -- which then gets dot-sourced below and
+        # makes Get-CurrentStyleName report the old style. -KeepPrompt's
+        # contract is that current-style.ps1 ends up ABSENT, not stale; the
+        # record fallback at Get-CurrentStyleName exists because of it.
         if ($isPwshTarget) {
-            if (Test-Path -LiteralPath $styleProfile) {
+            if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
                 Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
             } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
                 Remove-Item -LiteralPath $script:TStylesCurrent -Force

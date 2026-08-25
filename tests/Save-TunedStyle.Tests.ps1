@@ -125,3 +125,79 @@ Describe 'Save-TunedStyle carries the shell prompt' {
         }
     }
 }
+
+Describe 'Save-TunedStyle re-tuning a style saved with Overwrite' {
+    # Overwrite saves into the user styles dir under the SAME name, so the next
+    # `tstyles tune <name>` has $BaseStyleDir == $destDir and every "copy from
+    # base to dest" becomes a copy of a file onto itself: Copy-Item threw a red
+    # "Cannot overwrite the item with itself" for prompt.sh, and the profile
+    # marker accumulated one line per save.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            # The base IS the destination -- exactly what Overwrite produces.
+            $script:selfDir = Join-Path (Join-Path $TestDrive 'styles') 'eva-night'
+            New-Item -ItemType Directory -Path $script:selfDir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:selfDir 'theme.json'),
+                '{"colorScheme":"eva-night","opacity":90}', [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $script:selfDir 'profile.ps1'),
+                '# eva profile', [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $script:selfDir 'prompt.sh'),
+                'ts_title "eva"', [System.Text.UTF8Encoding]::new($false))
+            $script:adj = [pscustomobject]@{ name = 'eva-night'; background = '#000000' }
+        }
+
+        It 'writes no error when the base and the destination are the same dir' {
+            # Deliberately NOT `Should -Not -Throw`: Copy-Item onto itself raises
+            # a NON-terminating error ("Cannot overwrite the item ... with
+            # itself"), so nothing is ever thrown -- the user just gets a red
+            # line at save time, after they have already committed to the save.
+            # Only the error stream sees it.
+            $err = $null
+            Save-TunedStyle -AdjustedScheme $script:adj -SaveName 'eva-night' `
+                -BaseStyleDir $script:selfDir -BaseName 'eva-night' `
+                -Brightness -5 -Saturation 0 -Opacity 90 -FontFace 'Hack' -FontSize 12 `
+                -ErrorVariable err -ErrorAction SilentlyContinue
+            $err | Should -BeNullOrEmpty
+        }
+
+        It 'keeps the prompt.sh it already had' {
+            Save-TunedStyle -AdjustedScheme $script:adj -SaveName 'eva-night' `
+                -BaseStyleDir $script:selfDir -BaseName 'eva-night' `
+                -Brightness -5 -Saturation 0 -Opacity 90 -FontFace 'Hack' -FontSize 12
+            Get-Content (Join-Path $script:selfDir 'prompt.sh') -Raw | Should -Match 'ts_title'
+        }
+
+        It 'carries exactly one tuned marker no matter how many times it is saved' {
+            # The marker is what makes the profile byte-distinct from the base's,
+            # so Get-CurrentStyleName can tell them apart. One is load-bearing;
+            # three is just drift that grows the file on every save.
+            foreach ($i in 1..3) {
+                Save-TunedStyle -AdjustedScheme $script:adj -SaveName 'eva-night' `
+                    -BaseStyleDir $script:selfDir -BaseName 'eva-night' `
+                    -Brightness -5 -Saturation 0 -Opacity 90 -FontFace 'Hack' -FontSize 12
+            }
+            $profileText = Get-Content (Join-Path $script:selfDir 'profile.ps1') -Raw
+            @([regex]::Matches($profileText, '(?m)^\s*#\s*tstyles-tuned:')).Count | Should -Be 1
+            $profileText | Should -Match '# eva profile'
+        }
+
+        It 'still marks a normal save-as into a fresh dir' {
+            $base = Join-Path $TestDrive 'base2'
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $base 'profile.ps1'),
+                '# base profile', [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $base 'prompt.sh'),
+                'ts_title "base"', [System.Text.UTF8Encoding]::new($false))
+
+            Save-TunedStyle -AdjustedScheme $script:adj -SaveName 'fresh-name' `
+                -BaseStyleDir $base -BaseName 'base2' `
+                -Brightness 0 -Saturation 0 -Opacity 100 -FontFace 'Hack' -FontSize 12
+
+            $dest = Join-Path (Join-Path $TestDrive 'styles') 'fresh-name'
+            $t = Get-Content (Join-Path $dest 'profile.ps1') -Raw
+            $t | Should -Match '# tstyles-tuned: fresh-name'
+            Test-Path (Join-Path $dest 'prompt.sh') | Should -BeTrue
+        }
+    }
+}

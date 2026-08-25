@@ -84,7 +84,73 @@ Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
             Mock Write-Host {}
             Mock Start-Sleep {}
             try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
-            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'only a new window shows them' }
+            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'cannot show them' }
+        }
+
+        It 'does not promise a new window will show opacity or font' {
+            # It used to say "only a new window shows them", which is not true off
+            # Windows Terminal: the .terminal profile carries colors and a
+            # background image and nothing else, and no escape sequence carries a
+            # font or an opacity. The advice sent the user to open a window and
+            # compare an unchanged font against the screenshot.
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Write-Host {}
+            Mock Start-Sleep {}
+            try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
+            Should -Not -Invoke Write-Host -ParameterFilter { "$Object" -match 'new window shows them' }
+        }
+    }
+}
+
+Describe 'the tuner only skips its revert when the style really went on' {
+    # $applied gates the finally block's safety net (restore settings.json, OSC
+    # reset, restore the title). It used to be set unconditionally right after
+    # Apply-StyleDirect -- but every one of that function's give-up paths is a
+    # NON-terminating Write-Error followed by return, so a failed apply sailed
+    # past, skipped the reset, and left the tuner's preview colors painted over
+    # an already-restored settings.json.
+    InModuleScope TerminalStyles {
+
+        It 'treats a deliberate Write-Error bail-out as "not applied"' {
+            function script:Fake-Apply {
+                [CmdletBinding()] param([Parameter(Mandatory)][string]$StyleName)
+                Write-Error "Style '$StyleName' not found."
+                return
+            }
+            $e = $null
+            script:Fake-Apply -StyleName 'nope' -ErrorVariable e -ErrorAction SilentlyContinue
+            $applied = -not @($e | Where-Object { $_.CategoryInfo.Activity -eq 'Write-Error' }).Count
+            $applied | Should -BeFalse
+        }
+
+        It 'treats incidental cmdlet noise as "applied"' {
+            # The Copy-Item/Remove-Item that install current-style.ps1 run AFTER
+            # the style is on. Counting their noise as failure would revert a
+            # good apply -- the opposite bug, and a worse one.
+            function script:Fake-ApplyNoisy {
+                [CmdletBinding()] param([Parameter(Mandatory)][string]$StyleName, [string]$Missing, [string]$Dest)
+                Copy-Item -LiteralPath $Missing -Destination $Dest -Force
+                'applied'
+            }
+            $missing = Join-Path $TestDrive 'definitely-not-here.txt'
+            $dest    = Join-Path $TestDrive 'dest.txt'
+            $e = $null
+            script:Fake-ApplyNoisy -StyleName 'eva' -Missing $missing -Dest $dest `
+                -ErrorVariable e -ErrorAction SilentlyContinue | Out-Null
+            $e | Should -Not -BeNullOrEmpty   # there WAS an error...
+            $applied = -not @($e | Where-Object { $_.CategoryInfo.Activity -eq 'Write-Error' }).Count
+            $applied | Should -BeTrue         # ...but the style still went on
+        }
+
+        It 'gates $applied on the filtered count, not on any error at all' {
+            # Pins the shape in the source: a bare `-not $applyErr` would flip
+            # the incidental case above and silently revert good applies.
+            $fn = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $fn | Should -Match "CategoryInfo\.Activity\s+-eq\s+'Write-Error'"
+            # (?m) so $ anchors per line, not just at end-of-string -- without it
+            # this assertion would pass no matter what the body contained.
+            $fn | Should -Not -Match '(?m)^\s*\$applied\s*=\s*\$true\s*$'
         }
     }
 }

@@ -233,3 +233,64 @@ Describe 'Write-HostOscPacket reports whether it painted' {
         }
     }
 }
+
+Describe 'Apply-StyleNonWT resolves the background at most once' {
+    # Get-StyleBundledBackground can make up to four serial 10-second HTTP
+    # attempts against the gifs branch before giving up. It used to be called
+    # twice per apply -- once as the LEFT operand of an -and whose right side
+    # would have short-circuited it away, and once again below -- so an apply
+    # for a style with no cached image could sit on the network for up to 80
+    # seconds, all of it AFTER "Style applied" had already printed.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            $script:TStylesCurrent  = Join-Path $TestDrive 'current-style.ps1'
+
+            $script:styleDir = Join-Path $TestDrive 'styles/bgfake'
+            New-Item -ItemType Directory -Force -Path $script:styleDir | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'scheme.json'),
+                '{"name":"bgfake","background":"#101010","foreground":"#f0f0f0"}',
+                [System.Text.UTF8Encoding]::new($false))
+            # A theme.json is required to reach the "can't show" block at all.
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'theme.json'),
+                '{"colorScheme":"bgfake","backgroundImage":"{{BACKGROUND_IMAGE}}"}',
+                [System.Text.UTF8Encoding]::new($false))
+
+            Mock Write-HostOscPacket { }
+            Mock Write-Host { }
+            Mock New-AppleTerminalProfile { $null }
+            Mock Get-StyleBundledBackground { Join-Path $TestDrive 'bg.gif' }
+        }
+
+        It 'calls it once on a terminal that can show an image' {
+            # AppleTerminal: the capability is true, so the "can't show" check
+            # short-circuits before the call and only the profile builder asks.
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Apply-StyleNonWT -StyleName 'bgfake' -StyleDir $script:styleDir
+            Should -Invoke Get-StyleBundledBackground -Times 1 -Exactly -Scope It
+        }
+
+        It 'calls it once on a terminal that cannot' {
+            # Ghostty: the capability is false, so the "can't show" check has to
+            # ask -- and the profile builder must then not ask again.
+            Mock Get-TerminalKind { 'Ghostty' }
+            Apply-StyleNonWT -StyleName 'bgfake' -StyleDir $script:styleDir
+            Should -Invoke Get-StyleBundledBackground -Times 1 -Exactly -Scope It
+        }
+
+        It 'still reports an image it cannot show' {
+            Mock Get-TerminalKind { 'Ghostty' }
+            Apply-StyleNonWT -StyleName 'bgfake' -StyleDir $script:styleDir
+            Should -Invoke Write-Host -ParameterFilter { "$Object" -match "can't show" }
+        }
+
+        It 'never asks when the style ships no theme.json' {
+            # No theme.json means no background field to resolve and nothing to
+            # report as unsupported, on a terminal that could not show it anyway.
+            Mock Get-TerminalKind { 'Ghostty' }
+            Remove-Item -LiteralPath (Join-Path $script:styleDir 'theme.json') -Force
+            Apply-StyleNonWT -StyleName 'bgfake' -StyleDir $script:styleDir
+            Should -Invoke Get-StyleBundledBackground -Times 0 -Exactly -Scope It
+        }
+    }
+}
