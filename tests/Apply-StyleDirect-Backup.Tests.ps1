@@ -76,9 +76,13 @@ Describe 'Apply-StyleDirect backup behavior' {
             $bak = "$script:fakeSettings.bak"
             $firstBakHash = (Get-FileHash $bak).Hash
 
+            # Different CONTENT (new guid) but the target profile still exists.
+            # It used to rename the profile to "DIFFERENT" as well, which now
+            # fails target validation before any write -- correctly, but that
+            # made this test assert nothing about backup rolling.
             [System.IO.File]::WriteAllText(
                 $script:fakeSettings,
-                '{"profiles":{"list":[{"name":"DIFFERENT","guid":"{y}"}]}}',
+                '{"profiles":{"list":[{"name":"PowerShell","guid":"{y}"}]}}',
                 [System.Text.UTF8Encoding]::new($false)
             )
 

@@ -341,6 +341,55 @@ function Assert-ValidArchive {
 }
 
 # --- Assert the module actually landed after the install move ---
+function Sync-InstallTree {
+    # Put the downloaded tree into the data root, removing ONLY what this
+    # install manages.
+    #
+    # $InstallDir is both the install target and the module's writable data root
+    # (Get-TStylesDataRoot), so shipped files sit directly alongside user state:
+    # cache/ (lazily-fetched backgrounds, tens of megabytes), fonts/, profiles/,
+    # current-style.ps1 / .json / .osc, current-prompt.sh, the staged shell
+    # runtime, the update-check markers, and tuned styles under styles/.
+    #
+    # This used to wipe the whole directory and copy a hand-listed subset back.
+    # Everything off that list was destroyed on every update -- and the list read
+    # styles/<name>/background.*, the PRE-0.2.0 cache location, so on any current
+    # install it preserved nothing while deleting the real cache and every tuned
+    # style. Its restore path also hardcoded a backslash separator, so it could
+    # not have worked off Windows either.
+    #
+    # The rule now: the install owns exactly the entries it ships. Anything else
+    # under the data root belongs to the user and is never touched.
+    param(
+        [Parameter(Mandatory)][string]$ExtractedRoot,
+        [Parameter(Mandatory)][string]$InstallDir
+    )
+
+    if (-not (Test-Path -LiteralPath $InstallDir)) {
+        New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
+    }
+
+    foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
+        $target = Join-Path $InstallDir $entry.Name
+        if (-not (Test-Path -LiteralPath $target)) { continue }
+
+        # styles/ is the one directory the install and the user share: bundled
+        # themes sit beside the user's own, and the README documents dropping a
+        # folder named after a bundled theme to override it in place. Removing
+        # the tree would take both, so let the copy below overwrite file by file.
+        if ($entry.PSIsContainer -and $entry.Name -eq 'styles') { continue }
+
+        Remove-Item -LiteralPath $target -Recurse -Force
+        if (Test-Path -LiteralPath $target) {
+            throw ("Could not replace '$target' (a file lock may be held by another PowerShell " +
+                   "tab, OneDrive, or antivirus). Close other PowerShell windows and re-run " +
+                   "the installer.")
+        }
+    }
+
+    Copy-Item -Path (Join-Path $ExtractedRoot '*') -Destination $InstallDir -Recurse -Force
+}
+
 function Assert-InstallLanded {
     param([Parameter(Mandatory)][string]$InstallDir)
     $manifest = Join-Path $InstallDir 'TerminalStyles.psd1'
@@ -439,58 +488,11 @@ if (-not $TStylesInstallNoRun) {
     $extractedRoot = Get-ChildItem -LiteralPath $tempDir -Directory | Select-Object -First 1
     if (-not $extractedRoot) { throw "Failed to locate extracted folder under $tempDir" }
 
-    # --- Install to %LOCALAPPDATA% (preserve current-style.ps1 + cached GIFs across reinstalls) ---
-    $preservedCurrentStyle = Join-Path $installDir 'current-style.ps1'
-    $preservedBytes = $null
-    if (Test-Path -LiteralPath $preservedCurrentStyle) {
-        $preservedBytes = [System.IO.File]::ReadAllBytes($preservedCurrentStyle)
-    }
-
-    # Preserve any previously-fetched background images so they don't have to be
-    # re-downloaded from the gifs branch on every update.
-    $preservedBackgrounds = @()
-    $existingStylesDir = Join-Path $installDir 'styles'
-    if (Test-Path -LiteralPath $existingStylesDir) {
-        foreach ($styleFolder in Get-ChildItem -LiteralPath $existingStylesDir -Directory) {
-            foreach ($ext in 'gif','png','jpg','jpeg') {
-                $bg = Join-Path $styleFolder.FullName "background.$ext"
-                if (Test-Path -LiteralPath $bg) {
-                    $preservedBackgrounds += [pscustomobject]@{
-                        StyleName = $styleFolder.Name
-                        Ext       = $ext
-                        Bytes     = [System.IO.File]::ReadAllBytes($bg)
-                    }
-                    break  # at most one background per style
-                }
-            }
-        }
-    }
-
-    if (Test-Path -LiteralPath $installDir) {
-        Remove-Item -LiteralPath $installDir -Recurse -Force
-        if (Test-Path -LiteralPath $installDir) {
-            throw ("Could not fully remove the previous install at '$installDir' (a file lock may " +
-                   "be held by another PowerShell tab, OneDrive, or antivirus). Close other " +
-                   "PowerShell windows and re-run the installer.")
-        }
-    }
-    Move-Item -LiteralPath $extractedRoot.FullName -Destination $installDir
+    # --- Install into the data root (preserves everything the install does not own) ---
+    Write-InstallStep "Installing"
+    Sync-InstallTree -ExtractedRoot $extractedRoot.FullName -InstallDir $installDir
     Assert-InstallLanded -InstallDir $installDir
-
-    if ($preservedBytes) {
-        [System.IO.File]::WriteAllBytes((Join-Path $installDir 'current-style.ps1'), $preservedBytes)
-        Write-InstallStep "Preserved your active style" -Check
-    }
-
-    if ($preservedBackgrounds) {
-        foreach ($p in $preservedBackgrounds) {
-            $destDir = Join-Path $installDir "styles\$($p.StyleName)"
-            if (Test-Path -LiteralPath $destDir) {
-                [System.IO.File]::WriteAllBytes((Join-Path $destDir "background.$($p.Ext)"), $p.Bytes)
-            }
-        }
-        Write-InstallStep ("Preserved {0} cached background(s)" -f $preservedBackgrounds.Count) -Check
-    }
+    Write-InstallStep "Installing" -Check
 
     # Cleanup temp
     Remove-Item -LiteralPath $tempZip -Force -ErrorAction SilentlyContinue

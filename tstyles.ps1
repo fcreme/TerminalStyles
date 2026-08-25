@@ -153,6 +153,62 @@ function Get-StyleCacheDir {
     Join-Path (Join-Path $script:TStylesDataRoot 'cache') $StyleName
 }
 
+function Test-HttpNotFound {
+    # Did this web error mean "the server answered, and the file is not there"
+    # (404) as opposed to "I could not reach the server" (DNS failure, timeout,
+    # offline, proxy, 5xx)?
+    #
+    # The distinction is the whole point of the negative cache: an absent asset
+    # is a stable fact worth remembering, an unreachable network is not.
+    # Both engines surface it the same way -- a 404 carries a .Response with a
+    # StatusCode, a transport failure has no .Response at all (verified on
+    # pwsh 7's HttpResponseException/HttpRequestException and 5.1's WebException,
+    # whose .Response is null for NameResolutionFailure).
+    param($ErrorRecord)
+    try {
+        $response = $ErrorRecord.Exception.Response
+        if (-not $response) { return $false }
+        return ([int]$response.StatusCode -eq 404)
+    } catch { return $false }
+}
+
+function Test-BackgroundProbeSuppressed {
+    # Should we skip the lazy fetch because a previous probe already answered?
+    # Pure, so the expiry rules are testable without touching the network.
+    #
+    # Two lifetimes, because the two answers are worth different amounts:
+    #   absent      -- every extension 404'd. A stable fact, but not permanent:
+    #                  the gifs branch is updated independently of releases, so
+    #                  a style CAN gain an asset later. Re-probe monthly.
+    #   unreachable -- the network failed. Worth remembering only long enough to
+    #                  stop every apply in the next hour paying four 10-second
+    #                  timeouts; then retry.
+    #
+    # An empty or unparseable marker is treated as EXPIRED. Releases up to 0.8.5
+    # wrote a content-free marker on ANY failure and deleted it never, so one
+    # apply while offline cost that style its background permanently. Returning
+    # $false here re-probes once and replaces it with a marker that can expire.
+    param([string]$MarkerText, [datetime]$Now = [datetime]::UtcNow)
+
+    if ([string]::IsNullOrWhiteSpace($MarkerText)) { return $false }
+    try { $marker = $MarkerText | ConvertFrom-Json } catch { return $false }
+    if (-not $marker -or -not $marker.kind -or -not $marker.at) { return $false }
+
+    # AdjustToUniversal + AssumeUniversal, NOT RoundtripKind: TryParse with
+    # RoundtripKind consumes the trailing Z but hands back Kind=Unspecified, so
+    # a later .ToUniversalTime() re-reads a UTC stamp as local and shifts it by
+    # the machine's offset. That silently widened or narrowed every TTL by hours
+    # depending on where the user lives. The marker is always written as UTC.
+    $at = [datetime]::MinValue
+    $parseStyles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor
+                   [System.Globalization.DateTimeStyles]::AssumeUniversal
+    if (-not [datetime]::TryParse($marker.at, [cultureinfo]::InvariantCulture,
+            $parseStyles, [ref]$at)) { return $false }
+
+    $ttl = if ($marker.kind -eq 'absent') { [timespan]::FromDays(30) } else { [timespan]::FromHours(1) }
+    return (($Now.ToUniversalTime() - $at) -lt $ttl)
+}
+
 function Get-StyleBundledBackground {
     # Three-tier resolution:
     #   1. Bundled file under $StyleDir (module root, read-only-ish on PSGallery)
@@ -186,7 +242,14 @@ function Get-StyleBundledBackground {
         if ($inherited) { return $inherited }
     }
 
-    if (Test-Path -LiteralPath (Join-Path $cacheDir '.no-background')) { return $null }
+    $markerPath = Join-Path $cacheDir '.no-background'
+    if (Test-Path -LiteralPath $markerPath) {
+        $markerText = ''
+        try {
+            $markerText = [System.IO.File]::ReadAllText($markerPath, [System.Text.UTF8Encoding]::new($false))
+        } catch { $markerText = '' }
+        if (Test-BackgroundProbeSuppressed -MarkerText $markerText) { return $null }
+    }
 
     # 3. Lazy-fetch into cache
     if (-not (Test-Path -LiteralPath $cacheDir)) {
@@ -195,6 +258,9 @@ function Get-StyleBundledBackground {
     $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
     $prevProgress = $ProgressPreference
     $ProgressPreference = 'SilentlyContinue'
+    # Did the server actually answer "not there" every time? One unreachable
+    # attempt is enough to make the whole result inconclusive.
+    $definitelyAbsent = $true
     try {
         foreach ($ext in 'gif','png','jpg','jpeg') {
             $url = "$remoteBase.$ext"
@@ -208,15 +274,27 @@ function Get-StyleBundledBackground {
                 }
             } catch {
                 if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
+                if (-not (Test-HttpNotFound -ErrorRecord $_)) { $definitelyAbsent = $false }
             }
         }
     } finally {
         $ProgressPreference = $prevProgress
     }
 
-    # All extensions failed -- write negative-cache marker in CACHE dir
+    # Nothing fetched. Record WHY, so the marker can expire on the right clock:
+    # a real 404 is worth remembering for a month, an unreachable network for an
+    # hour. Writing an undated marker on any failure -- what releases up to 0.8.5
+    # did -- meant a single apply while offline cost that style its background
+    # for good, and the only documented way to clear it was `tstyles uninstall
+    # -DeleteData`, which could not be invoked at all.
     try {
-        New-Item -ItemType File -Path (Join-Path $cacheDir '.no-background') -Force | Out-Null
+        $marker = [pscustomobject]@{
+            schemaVersion = 1
+            kind          = if ($definitelyAbsent) { 'absent' } else { 'unreachable' }
+            at            = [datetime]::UtcNow.ToString('o')
+        }
+        [System.IO.File]::WriteAllText((Join-Path $cacheDir '.no-background'),
+            ($marker | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
     } catch { }
     return $null
 }
@@ -1137,6 +1215,24 @@ function Apply-StyleDirect {
     if (-not $Target) {
         Write-Error "Could not auto-detect a Windows Terminal profile. Pass -Target <name>."
         return
+    }
+
+    # Validate the target BEFORE anything is written. Merge-StyleIntoSettings
+    # returns the settings untouched when the named profile does not exist, but
+    # this function used to write and report success regardless -- so a typo in
+    # -Target printed "Style applied" in green having applied nothing. Worse,
+    # the write was not a no-op: Write-SettingsFile re-serializes the PARSED
+    # object, and ConvertFrom-WTJson has already stripped every comment the user
+    # wrote in their settings.json. A misspelled profile name silently and
+    # irreversibly deleted their JSONC comments.
+    if ($Target -ne 'defaults') {
+        $targetEntry = $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
+        if (-not $targetEntry) {
+            $available = @('defaults') + @($settings.profiles.list.name | Where-Object { $_ })
+            Write-Error ("Windows Terminal profile '$Target' not found. Available: " +
+                         ($available -join ', '))
+            return
+        }
     }
 
     # Rolling backup: copy the on-disk settings.json to settings.json.bak
@@ -3113,7 +3209,12 @@ function Invoke-TerminalStyle {
         [switch]$KeepPrompt,
         # Terminal.app only: open a new window carrying the style's background
         # image, which no escape sequence can deliver to the current one.
-        [switch]$NewWindow
+        [switch]$NewWindow,
+        # `tstyles uninstall -DeleteData`: also delete the data root (active
+        # style, cached backgrounds, tuned styles, shell staging). Without it
+        # uninstall removes only install-managed files and leaves user state,
+        # so a reinstall picks up where you left off.
+        [switch]$DeleteData
     )
 
     $bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
@@ -3130,7 +3231,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
     if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
     if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
-    if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall;  return }
+    if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData; return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
     if ($Arg) {
