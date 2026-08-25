@@ -4,17 +4,25 @@
 
 | Version                | Supported                              |
 | ---------------------- | -------------------------------------- |
-| 0.6.x (latest release) | ✅                                      |
+| 0.8.x (latest release) | ✅                                      |
 | older                  | ❌ — update first (`tstyles update`)    |
+
+Only the latest release is supported. Fixes ship forward in a new version
+rather than being backported.
 
 ## Reporting a vulnerability
 
 Please report vulnerabilities privately — do not open a public issue.
 
-- **Preferred:** GitHub private vulnerability reporting — open the
-  [Security tab](https://github.com/fcreme/TerminalStyles/security) and click
-  "Report a vulnerability".
-- **Fallback:** email felipecremerius1@gmail.com.
+Email **felipecremerius1@gmail.com**. Please include the version
+(`(Get-Module TerminalStyles).Version`, or `Get-Module -ListAvailable
+TerminalStyles` if it is not loaded), your OS and terminal, and the steps to
+reproduce.
+
+GitHub private vulnerability reporting is **not currently enabled** on this
+repository, so there is no "Report a vulnerability" button on the Security
+tab — email is the channel. (This document previously named that button as
+the preferred route, which sent reporters to a page that does not offer it.)
 
 This is a maintainer-run hobby project: responses are best-effort, usually
 within a few days. There is no bug bounty.

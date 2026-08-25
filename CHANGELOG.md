@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `CONTRIBUTING.md` described a theme folder as four files and never mentioned `prompt.sh` -- which `tests/Shell-Prompt.Tests.ps1` requires of every folder under `styles/`, rendering it in real zsh and bash and checking each escape sequence is marked non-printing. All sixteen bundled themes ship one, so the gap was invisible to the maintainer and hit only newcomers: following the contributing guide exactly turned the Linux and macOS CI legs red on a first PR. The folder layout, the submission checklist and a pointer to the smallest existing example are now all in the guide
+- `SECURITY.md` listed `0.6.x` as the supported version, ten releases out of date, and named GitHub private vulnerability reporting as the *preferred* channel while the repository has it disabled -- so it sent reporters to a Security tab with no "Report a vulnerability" button. It now tracks the shipped minor series and gives the channel that actually exists
+
+### Added
+
+- `tests/Contributing-MatchesCI.Tests.ps1`: docs drift silently because nothing executes them, so the suite now asserts that `CONTRIBUTING.md` documents the files CI enforces, that the examples it points at exist, and that `SECURITY.md`'s supported-version table matches the manifest
+
 ## [0.8.7] - 2026-08-25
 
 ### Fixed

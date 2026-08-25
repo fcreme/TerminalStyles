@@ -23,9 +23,19 @@ A theme is a folder under `styles/<name>/`:
 styles/<name>/
 ├── scheme.json    # Windows Terminal color scheme (required)
 ├── theme.json     # profile-level overrides (optional)
-├── profile.ps1    # custom prompt/banner (optional)
+├── profile.ps1    # PowerShell prompt/banner (optional)
+├── prompt.sh      # the same prompt for zsh/bash (REQUIRED by CI)
 └── README.md      # description (optional)
 ```
+
+> **`prompt.sh` is not optional in practice.** The module treats it as
+> optional, but `tests/Shell-Prompt.Tests.ps1` walks every folder under
+> `styles/` and asserts each one has a `prompt.sh` beside its
+> `profile.ps1` — then renders it in real zsh **and** bash and checks
+> every escape sequence is marked non-printing. A theme without one turns
+> the Linux and macOS CI legs red on your first push. Copy the closest
+> existing style's `prompt.sh` and adapt it; `styles/sober/prompt.sh` is
+> the smallest, `styles/gitbash/prompt.sh` shows git-branch detection.
 
 To develop one, iterate locally first: drop the folder into
 `%LOCALAPPDATA%\TerminalStyles\styles\<name>\` and `tstyles` picks it
@@ -62,8 +72,9 @@ See `styles/umbrella/theme.json` for a full example.
 Code and images live on different branches — `main` stays binary-free:
 
 1. **Code on `main`:** fork the repo, add the code-only folder
-   (`scheme.json` / `theme.json` / `profile.ps1` / `README.md` — **no
-   background image**) under `styles/<name>/`, and open a PR against `main`.
+   (`scheme.json` / `theme.json` / `profile.ps1` / `prompt.sh` /
+   `README.md` — **no background image**) under `styles/<name>/`, and open
+   a PR against `main`.
 2. **Image on `gifs`:** if your theme ships a background, put the file
    at the **root** of the [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs)
    named `<name>.<ext>` (flat naming, no subfolder). `tstyles`
