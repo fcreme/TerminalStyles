@@ -50,6 +50,36 @@ Describe 'Merge-StyleIntoSettings' {
             ($out.profiles.list | Where-Object name -eq 'PowerShell').PSObject.Properties.Match('colorScheme').Count | Should -Be 0
         }
 
+        It 'does NOT inject an orphan scheme when the style ships no theme.json' {
+            # Same failure as the bad-target case above, through the door left
+            # open next to it. A scheme is only reachable via a profile's
+            # colorScheme key, which lives in theme.json -- so writing the scheme
+            # and THEN discovering there is no theme.json leaves a scheme nothing
+            # references. Reset-StyleDirect removes the scheme named by the
+            # profile it resets, so an unreferenced one can never be cleaned up
+            # and accumulates in settings.json on every apply.
+            #
+            # theme.json is optional by contract (Merge returns untouched without
+            # one) and the README documents it that way for user-authored styles.
+            Remove-Item -LiteralPath (Join-Path $script:styleDir 'theme.json') -Force
+
+            $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @([pscustomobject]@{ name = 'PowerShell'; guid = '{x}' }) } }
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `
+                -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
+
+            @($out.schemes | Where-Object { $_.name -eq 'eva' }).Count | Should -Be 0
+            ($out.profiles.list | Where-Object name -eq 'PowerShell').PSObject.Properties.Match('colorScheme').Count |
+                Should -Be 0
+        }
+
+        It 'still writes the scheme when there IS a theme.json to reference it' {
+            # The guard must not have cost the normal path its scheme.
+            $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @([pscustomobject]@{ name = 'PowerShell'; guid = '{x}' }) } }
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `
+                -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
+            @($out.schemes | Where-Object { $_.name -eq 'eva' }).Count | Should -Be 1
+        }
+
         It 'creates and styles profiles.defaults for the defaults target' {
             $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @([pscustomobject]@{ name = 'PowerShell'; guid = '{x}' }) } }
             $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `

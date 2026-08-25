@@ -32,7 +32,12 @@ Describe 'Get-StyleCacheDir' {
             New-Item -ItemType Directory -Path $styleDir -Force | Out-Null
             $cacheDir = Get-StyleCacheDir -StyleName 'lonely'
             New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
-            [System.IO.File]::WriteAllText((Join-Path $cacheDir '.no-background'), '', [System.Text.UTF8Encoding]::new($false))
+            # A FRESH, dated marker. An empty one now reads as expired (0.8.6
+            # made the negative cache time out so an offline apply cannot lose a
+            # background permanently), which would send this test to the network.
+            [System.IO.File]::WriteAllText((Join-Path $cacheDir '.no-background'),
+                ([pscustomobject]@{ schemaVersion = 1; kind = 'absent'; at = [datetime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress),
+                [System.Text.UTF8Encoding]::new($false))
 
             # A .no-background in the Get-StyleCacheDir location makes the style
             # "resolved" and suppresses the synchronous fetch.

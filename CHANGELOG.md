@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.6] - 2026-08-25
+
 ### Fixed
 
 - **the bootstrap installer destroyed your data on every update.** `install.ps1` removed the install directory outright -- and that directory *is* the module's writable data root -- then copied a hand-listed subset back. Everything off the list died: the cached background images (tens of megabytes, re-fetched from the `gifs` branch one 10-second request at a time), every style saved by `tstyles tune`, the active-style record, the staged zsh/bash runtime, the font cache and the generated Terminal.app profiles. The one thing it *tried* to save it looked for at `styles/<name>/background.*`, the pre-0.2.0 cache location, so on any install since 0.2.0 it preserved nothing at all; its restore path also hardcoded a backslash separator and so could not have run off Windows. The installer now removes only the entries the downloaded release actually ships and leaves everything else alone. `styles/` is merged rather than replaced, because the README documents dropping a folder named after a bundled theme to override it, and on a bootstrap install that override lives in the same directory as the theme. This affects `tstyles update` for bootstrap installs; PSGallery installs were never touched by it
 - `tstyles uninstall -DeleteData` could not be run at all. The switch existed on the uninstall function and was documented in `tstyles help` and three places in the README, but the `tstyles` dispatcher had no such parameter, so PowerShell rejected the command outright. It was also the only documented way to clear a stuck background cache
 - **a mistyped `-Target` reported success and silently deleted your settings.json comments.** Applying to a Windows Terminal profile that does not exist left the settings untouched by design, but the apply wrote the file and printed "Style applied" in green regardless. The write was not a no-op: it re-serializes the parsed object, and parsing strips every `//` comment on the way in. A typo in a profile name irreversibly erased hand-written comments while claiming to have worked. The profile name is now checked before anything is written -- before even the rolling backup -- and an unknown one lists the profiles that do exist
 - a style's background could be lost permanently by one apply made while offline. Any fetch failure -- a real 404, a DNS failure, four 10-second timeouts -- wrote the same undated `.no-background` marker, and nothing ever deleted it. The two are now told apart: a 404 from the server means the asset is genuinely absent and is remembered for 30 days (the `gifs` branch is updated independently of releases, so a style can gain one later), while an unreachable network is remembered for an hour -- long enough that repeated applies do not each pay four timeouts, short enough to heal itself on reconnect. Markers written by earlier versions are treated as expired, so an already-stuck cache recovers on the next apply
+- applying a style that ships no `theme.json` left an unreferenced color scheme in `settings.json`. A scheme is only reachable through a profile's `colorScheme` key, and that key lives in `theme.json` -- so writing the scheme first and only then discovering there was no theme to write left a scheme nothing points at. `tstyles reset` removes the scheme named by the profile it is resetting, so an unreferenced one could never be cleaned up and a fresh one accumulated on every apply. `theme.json` is optional by contract, and the README documents it that way for user-authored styles. This was the same failure an existing guard already prevented for a mistyped `-Target`, reachable through the door beside it
+- switching to a style whose `theme.json` does not mention background fields left the previous style's image showing behind the new palette. Clearing a background TerminalStyles itself installed was driven by the incoming theme's own properties, so it only happened for styles that named those fields. All sixteen bundled themes declare the placeholder, which is why this never showed up with them -- but a style that ships no background has no reason to name background fields at all. The clear now depends on what is on the profile, not on what the incoming theme happens to mention
 
 ## [0.8.5] - 2026-08-25
 
@@ -238,7 +242,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.5...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.6...HEAD
+[0.8.6]: https://github.com/fcreme/TerminalStyles/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/fcreme/TerminalStyles/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/fcreme/TerminalStyles/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/fcreme/TerminalStyles/compare/v0.8.2...v0.8.3

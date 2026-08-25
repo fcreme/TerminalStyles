@@ -54,7 +54,10 @@ Describe 'Get-StyleBundledBackground inheritance' {
             # .no-background marker for cyc-b so the one-hop base lookup returns fast.
             $bCache = Join-Path $script:TStylesDataRoot 'cache\cyc-b'
             New-Item -ItemType Directory -Path $bCache -Force | Out-Null
-            New-Item -ItemType File -Path (Join-Path $bCache '.no-background') -Force | Out-Null
+            # Dated, so it does not read as expired and trigger a real fetch.
+            [System.IO.File]::WriteAllText((Join-Path $bCache '.no-background'),
+                ([pscustomobject]@{ schemaVersion = 1; kind = 'absent'; at = [datetime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress),
+                [System.Text.UTF8Encoding]::new($false))
 
             # Both must terminate (return a value, not hang/overflow).
             Get-TunedBaseBackground -StyleDir $aDir | Should -BeNullOrEmpty

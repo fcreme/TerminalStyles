@@ -694,11 +694,16 @@ function Merge-StyleIntoSettings {
         if (-not $namedEntry) { return $Settings }   # missing named target: leave settings untouched
     }
 
-    if (-not $Settings.PSObject.Properties.Match('schemes').Count) {
-        $Settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
-    }
-    $Settings.schemes = @($Settings.schemes | Where-Object { $_.name -ne $scheme.name }) + $scheme
-
+    # Everything that could still make us bail happens BEFORE the scheme is
+    # upserted. A scheme is only reachable through a profile's colorScheme key,
+    # which lives in theme.json -- so writing the scheme and then discovering
+    # there is no theme.json, or no profile entry to write it to, leaves a
+    # scheme nothing references. Reset-StyleDirect cleans up the scheme named by
+    # the profile it is resetting, so an unreferenced one can never be removed
+    # and accumulates in settings.json on every apply.
+    #
+    # That is precisely the failure the target guard above was added to prevent;
+    # the missing-theme.json route into it was left open next to it.
     $themePath = Join-Path $StyleDir 'theme.json'
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
     $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
@@ -712,6 +717,11 @@ function Merge-StyleIntoSettings {
         $namedEntry
     }
     if (-not $entry) { return $Settings }
+
+    if (-not $Settings.PSObject.Properties.Match('schemes').Count) {
+        $Settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
+    }
+    $Settings.schemes = @($Settings.schemes | Where-Object { $_.name -ne $scheme.name }) + $scheme
 
     # Resolve effective background:
     #   1. User passed -BackgroundImage <path>  -> use that
@@ -749,19 +759,29 @@ function Merge-StyleIntoSettings {
                 else { 'skip' }
 
     $bgFields = $script:TStylesBgFields
+
+    # 'remove' is driven by what is already ON the profile, not by what the new
+    # style's theme.json happens to mention -- and a style that ships no
+    # background has no reason to mention background fields at all. Running this
+    # inside the property loop below meant the clear only fired for styles whose
+    # theme.json named the fields, so switching to one that omitted them left the
+    # PREVIOUS style's image showing through the new palette.
+    if ($bgAction -eq 'remove') {
+        foreach ($bgField in $bgFields) {
+            if ($entry.PSObject.Properties.Match($bgField).Count -gt 0) {
+                $entry.PSObject.Properties.Remove($bgField)
+            }
+        }
+    }
+
     foreach ($prop in $theme.PSObject.Properties) {
         $name  = $prop.Name
         $value = $prop.Value
 
         if ($name -in $bgFields) {
-            if ($bgAction -eq 'skip') { continue }
-            if ($bgAction -eq 'remove') {
-                if ($entry.PSObject.Properties.Match($name).Count -gt 0) {
-                    $entry.PSObject.Properties.Remove($name)
-                }
-                continue
-            }
-            # bgAction = 'apply'
+            # skip: leave the user's own background alone.
+            # remove: already stripped above; re-adding it here would undo that.
+            if ($bgAction -ne 'apply') { continue }
             if ($name -eq 'backgroundImage' -and $value -eq '{{BACKGROUND_IMAGE}}') {
                 $value = $effectiveBg
             }
