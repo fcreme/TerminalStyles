@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.6'
+    ModuleVersion     = '0.8.7'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.6: data safety. The bootstrap installer removed its install directory on every update -- and that directory IS the module''s data root, so each `tstyles update` destroyed the cached background images, every style saved by `tstyles tune`, the active-style record, the staged zsh/bash runtime, the font cache and the generated Terminal.app profiles. The one thing it tried to preserve it looked for at the pre-0.2.0 location, so since 0.2.0 it preserved nothing. The installer now removes only what the release actually ships. NOTE: bootstrap users receive this fix by re-running the installer, and the version they run it FROM still wipes the data root one last time on the way in -- a fix can only protect the update after the one that delivers it. PSGallery installs were never affected. Also: `tstyles uninstall -DeleteData` could not be invoked at all, though it was documented in three places; a mistyped `-Target` reported "Style applied" in green while silently deleting every comment in your settings.json; one apply made while offline could cost a style its background permanently, because a 404 and an unreachable network wrote the same undated marker; a style shipping no theme.json left an unreferenced color scheme behind on every apply; and switching to a style whose theme.json omits background fields left the previous style''s image showing through the new palette.'
+            ReleaseNotes = 'v0.8.7: apply.ps1 deleted a background image you had set yourself. The scriptable entry point carried copy-pasted forks of five library functions, and its merge stripped the background fields whenever the style resolved no background of its own -- with no check of whose background was there. Applying any style to a profile carrying your own image, or Windows Terminal''s desktopWallpaper, silently removed it. All sixteen bundled styles trigger it. The module has always decided by ownership and left yours alone. apply.ps1 now dot-sources the library instead of duplicating it (446 lines down to 221), so there is one implementation and the module''s own tests cover it. Two further drifts went with it: it wrote its background cache into the STYLE directory in the pre-0.2.0 layout -- which on a PSGallery install belongs to the installed module -- using the old undated marker format that 0.8.6 reads as expired; and it wrote current-style.ps1 beside itself rather than into the data root, which coincide only for bootstrap installs. apply.ps1 now also sees tuned and user-authored styles, the same set `tstyles list` shows, rather than only those in its own folder.'
         }
     }
 }

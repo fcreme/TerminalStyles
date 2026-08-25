@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.7] - 2026-08-25
+
 ### Fixed
 
 - **`apply.ps1` deleted a background image you had set yourself.** The scriptable entry point carried copy-pasted forks of five library functions, each with a "keep in sync" note, and two had drifted. Its merge stripped `backgroundImage` and friends whenever the style resolved no background of its own -- with no check of whose background it was -- so applying a style to a profile carrying your own image, or Windows Terminal's `desktopWallpaper`, silently removed it. The module has always decided by ownership and left yours alone; `tests/Background-Carryover.Tests.ps1` pins exactly that, and only ever covered the module
@@ -252,7 +254,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.6...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.7...HEAD
+[0.8.7]: https://github.com/fcreme/TerminalStyles/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/fcreme/TerminalStyles/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/fcreme/TerminalStyles/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/fcreme/TerminalStyles/compare/v0.8.3...v0.8.4
