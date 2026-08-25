@@ -5,8 +5,10 @@
 
 **Switch terminal themes live.** Run `tstyles`, arrow through 16 themes
 previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
-exactly how it looked before. Color scheme, cursor, font, opacity, and animated
-background, all in one command, all non-destructive.
+exactly how it looked before. The palette, the cursor color and the prompt
+repaint instantly on any terminal that speaks OSC; on **Windows Terminal** the
+font, opacity and animated background come with them. All in one command, all
+non-destructive.
 
 Works on **Windows Terminal**, **macOS Terminal.app**, **iTerm2**, and any
 terminal that speaks OSC color sequences — and in **zsh** and **bash**, not just
@@ -98,8 +100,10 @@ the palette before previewing:
      ...
 ```
 
-As you arrow up/down, the terminal actually changes in real time — color
-scheme, cursor, font, background GIF, opacity. Press **Enter** to keep
+As you arrow up/down, the terminal actually changes in real time: the
+palette, the foreground and the cursor color, on every terminal that
+speaks OSC. On Windows Terminal the font, opacity and background GIF
+follow a beat later, once the keypresses stop. Press **Enter** to keep
 the highlighted style, **Esc** to revert to how things looked before
 you ran `tstyles`.
 
@@ -388,11 +392,23 @@ unaffected.
 
 | | Colors | Cursor | Font | Opacity | Background image | Tab color |
 |---|---|---|---|---|---|---|
-| Windows Terminal | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| iTerm2 | ✅ | ✅ | ✅ | ✅ | ✅ | — |
-| Terminal.app | ✅ | ✅ | ✅ | ✅ | ✅ (new window) | — |
-| Ghostty / WezTerm / kitty / Alacritty | ✅ | ✅ | ✅ | ✅ | WezTerm only | — |
-| VS Code terminal | ✅ | — | — | — | — | — |
+| Windows Terminal | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
+| Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
+| iTerm2 | ✅ | color only | — | — | — | — |
+| Ghostty / WezTerm / kitty / Alacritty | ✅ | color only | — | — | — | — |
+| VS Code terminal | ✅ | color only | — | — | — | — |
+
+Colors, including the cursor color, arrive as escape sequences and retint the
+window you are already in. Everything else has to be written into a config the
+terminal reads at startup, and TerminalStyles only knows how to write two of
+those: Windows Terminal's `settings.json` and Terminal.app's `.terminal`
+profile.
+
+So the dashes above describe this tool, not the emulator. iTerm2 would honour a
+Dynamic Profile and WezTerm draws animated background images; nothing here
+writes either yet. They are marked `—` rather than `✅` on purpose — a claimed
+capability that no code delivers means a style reports success, paints nothing,
+and suppresses the notice that would have explained why.
 
 Applying a style reports which parts the current terminal cannot show, so a
 plainer result is never a mystery.
@@ -423,9 +439,11 @@ Each bundled style has its own animated background, hosted on the
 [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) of
 this repo. `tstyles` lazy-fetches each one on first use of the style and
 caches it under `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`, so the
-install ZIP stays small (~100 KB instead of ~10 MB). Picking a style
-auto-applies the image — arrow keys cycle the background live alongside
-the colors / cursor / font.
+install ZIP stays small (~100 KB instead of ~10 MB). On Windows Terminal,
+picking a style auto-applies the image and the arrow keys cycle the
+background live alongside the colors / cursor / font. Terminal.app takes
+one through a generated profile, which means a new window and a still
+frame (see above); no other terminal gets one yet.
 
 To override the bundled image with your own:
 
@@ -449,10 +467,12 @@ is never touched: only images TerminalStyles itself installed are cleared.
 - **Windows** 10 / 11, or **macOS**, or **Linux**
 - A terminal that can render a style:
   - **Windows Terminal** — the full feature set, including background images
-  - **Terminal.app**, **iTerm2**, **Ghostty**, **WezTerm**, **kitty**,
-    **Alacritty**, and anything else that speaks OSC 4/10/11/12 — colors,
-    cursor, and prompt. Run `tstyles` and it reports what your terminal can and
-    cannot show.
+  - **Terminal.app** — colors, cursor color, and prompt in the current window,
+    plus a background image in a new one (`tstyles <name> -NewWindow`)
+  - **iTerm2**, **Ghostty**, **WezTerm**, **kitty**, **Alacritty**, and
+    anything else that speaks OSC 4/10/11/12 — colors, cursor color, and
+    prompt. Run `tstyles` and it reports what your terminal can and cannot
+    show.
 - **Either** Windows PowerShell 5.1 (ships with Windows) **or**
   [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`).
   Both engines work. On macOS: `brew install powershell`.

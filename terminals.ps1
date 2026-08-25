@@ -23,7 +23,15 @@
 # than a silently-false feature test.
 $script:TStylesCapabilityNames = @(
     'OscPalette',      # OSC 4/10/11/12 dynamic colors -- live retint, no config write
-    'Persist',         # can we write a config that survives a new tab/window?
+    # Can THIS MODULE write a config the terminal reads on startup? True only
+    # where a writer exists: Windows Terminal's settings.json and Terminal.app's
+    # .terminal profile. Not to be confused with a style surviving a new tab,
+    # which works on every terminal and owes nothing to this flag -- that is
+    # current-style.json plus the OSC re-emit in the startup block, and it
+    # carries colors only. Reading Persist as "styles stick here" is what led
+    # to five terminals claiming fonts and background images that no code ever
+    # delivered.
+    'Persist',
     'Font',            # font family + size
     'Opacity',         # window transparency
     'CursorShape',     # block / bar / underscore / filled
@@ -98,16 +106,21 @@ function Get-TerminalCapability {
             foreach ($n in $script:TStylesCapabilityNames) { $caps[$n] = $true }
         }
         'ITerm2' {
-            # Dynamic Profiles: a JSON file dropped in DynamicProfiles/ is picked
-            # up live, no restart. Covers everything except WT's tab styling.
-            $caps.OscPalette      = $true
-            $caps.Persist         = $true
-            $caps.Font            = $true
-            $caps.Opacity         = $true
-            $caps.CursorShape     = $true
-            $caps.BackgroundImage = $true
-            $caps.TabTitle        = $true
-            $caps.Padding         = $true
+            # iTerm2 can do every one of these, through a Dynamic Profile
+            # dropped in ~/Library/Application Support/iTerm2/DynamicProfiles/,
+            # which it picks up live with no restart. Nothing in this module
+            # writes one yet, and a capability is a promise about what
+            # TerminalStyles will deliver -- not about what the terminal could
+            # do in principle.
+            #
+            # Claiming them cost more than leaving them off: BackgroundImage in
+            # particular meant a style that ships a GIF reported success,
+            # painted nothing (the apply path only builds a profile when the
+            # kind is AppleTerminal), skipped the "can't show: background image"
+            # notice that explains a plain result, and still had the picker
+            # prefetch megabytes of GIFs that could never be drawn.
+            $caps.OscPalette = $true
+            $caps.TabTitle   = $true
         }
         'AppleTerminal' {
             # Persistence goes through a .terminal profile plist. No per-profile
@@ -127,46 +140,39 @@ function Get-TerminalCapability {
             # picker's live preview and its Esc revert both work here with the
             # same escape packets Windows Terminal uses -- no AppleScript needed
             # on the hot path.
+            # Font / Opacity / CursorShape are deliberately NOT claimed. The
+            # profile this module builds carries colors and a background image
+            # and nothing else (see Get-AppleTerminalProfileData), so a style's
+            # font and opacity are dropped on the way through. Terminal.app
+            # would honour them in a profile; until the profile carries them,
+            # saying so here would suppress the "can't show" notice and leave
+            # the user comparing an unchanged font against the screenshot.
             $caps.OscPalette      = $true
             $caps.Persist         = $true
-            $caps.Font            = $true
-            $caps.Opacity         = $true
-            $caps.CursorShape     = $true
             $caps.TabTitle        = $true
             $caps.BackgroundImage = $true
         }
+        # Ghostty / WezTerm / kitty / Alacritty all keep their settings in a
+        # config file this module has never learned to write -- ghostty's
+        # `config`, `wezterm.lua`, `kitty.conf`, `alacritty.toml`. Each of them
+        # can do fonts and opacity, and WezTerm does animated background
+        # images, but none of that reaches the user through TerminalStyles
+        # today. What genuinely works on all four is the OSC retint, which is
+        # the whole live-preview path, so that is what is claimed.
+        #
+        # Adding a writer for any of these is the moment to turn its flags back
+        # on -- one terminal at a time, next to the code that delivers it.
         'Ghostty' {
-            $caps.OscPalette  = $true
-            $caps.Persist     = $true
-            $caps.Font        = $true
-            $caps.Opacity     = $true
-            $caps.CursorShape = $true
-            $caps.Padding     = $true
+            $caps.OscPalette = $true
         }
         'WezTerm' {
-            $caps.OscPalette      = $true
-            $caps.Persist         = $true
-            $caps.Font            = $true
-            $caps.Opacity         = $true
-            $caps.CursorShape     = $true
-            $caps.BackgroundImage = $true
-            $caps.Padding         = $true
+            $caps.OscPalette = $true
         }
         'Kitty' {
-            $caps.OscPalette  = $true
-            $caps.Persist     = $true
-            $caps.Font        = $true
-            $caps.Opacity     = $true
-            $caps.CursorShape = $true
-            $caps.Padding     = $true
+            $caps.OscPalette = $true
         }
         'Alacritty' {
-            $caps.OscPalette  = $true
-            $caps.Persist     = $true
-            $caps.Font        = $true
-            $caps.Opacity     = $true
-            $caps.CursorShape = $true
-            $caps.Padding     = $true
+            $caps.OscPalette = $true
         }
         'VSCode' {
             # The integrated terminal honours OSC colors for the session but its

@@ -10,6 +10,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - choosing a style in the interactive picker applied its colors but not its prompt or banner, on every terminal except Windows Terminal. The style's `profile.ps1` was copied into place and then not dot-sourced, so the prompt only appeared in the next tab you opened -- while `tstyles <name>` on the very same terminal painted it immediately. The live-reload was gated on a Windows Terminal check left over from before there was any non-Windows-Terminal path for it to be wrong about
+- the capability table promised things no code delivered. iTerm2 was marked as supporting background images, fonts, opacity and cursor shapes on the strength of Dynamic Profiles, and Ghostty / WezTerm / kitty / Alacritty on the strength of their own config files -- but nothing in this module has ever written a config for any of them. Only Windows Terminal's `settings.json` and Terminal.app's `.terminal` profile have writers. On iTerm2 the effect was the failure the table exists to prevent: applying a style with a background reported success, painted no image, said nothing about why, and still had the picker prefetch megabytes of GIFs that could never be drawn. It now reports "can't show: background image" and skips the download. The live OSC retint -- the whole picker preview -- is unchanged on every terminal
+- Terminal.app was likewise marked as supporting fonts, opacity and cursor shapes. The profile this module builds carries colors and a background image and nothing else, so a style's font was dropped in transit with no notice. Terminal.app would honour a font in a profile; this is a gap in the writer, not in the terminal
 
 ### Added
 

@@ -73,14 +73,66 @@ Describe 'Get-TerminalCapability' {
             (Get-TerminalCapability -Kind 'AppleTerminal').OscPalette | Should -BeTrue
         }
 
-        It 'marks every terminal it can persist to as also able to set a font' {
-            # A persistable config that cannot carry a font would silently drop
-            # the style's font choice on apply.
+        It 'never claims a stored visual on a terminal it cannot persist to' {
+            # The invariant that actually holds, and the one that catches the
+            # bug this replaced. Font, opacity, cursor shape, a background
+            # image and a tab color cannot be delivered by an escape sequence
+            # -- each has to be written into a config the terminal reads. So
+            # any of them being true REQUIRES Persist.
+            #
+            # The previous version of this test asserted the converse, that
+            # Persist implies Font, and it was the assumption rather than the
+            # code that was wrong: off Windows Terminal, Persist means the
+            # .terminal profile writer, which carries colors and an image and
+            # no font at all. Asserting it that way round is what kept five
+            # terminals marked as font-capable with nothing behind it.
+            $stored = @('Font', 'Opacity', 'CursorShape', 'BackgroundImage', 'TabColor')
             foreach ($k in $script:AllKinds) {
                 $caps = Get-TerminalCapability -Kind $k
-                if ($caps.Persist) {
-                    $caps.Font | Should -BeTrue -Because "$k persists config, so it should carry a font"
+                foreach ($n in $stored) {
+                    if ($caps[$n]) {
+                        $caps.Persist | Should -BeTrue -Because "$k claims $n, which can only arrive through a config write"
+                    }
                 }
+            }
+        }
+
+        It 'claims a capability only where a writer exists' {
+            # Windows Terminal has Merge-StyleIntoSettings; Terminal.app has
+            # New-AppleTerminalProfile. No other terminal has anything that
+            # writes a config, so no other terminal may claim a stored visual
+            # -- however capable the emulator itself is. iTerm2 would honour a
+            # Dynamic Profile and WezTerm animates background GIFs; neither is
+            # written today, and claiming them made styles fail silently.
+            $writers = @('WindowsTerminal', 'AppleTerminal')
+            $stored  = @('Font', 'Opacity', 'CursorShape', 'BackgroundImage', 'TabColor')
+            foreach ($k in ($script:AllKinds | Where-Object { $_ -notin $writers })) {
+                $caps = Get-TerminalCapability -Kind $k
+                $caps.Persist | Should -BeFalse -Because "nothing writes a config for $k"
+                foreach ($n in $stored) {
+                    $caps[$n] | Should -BeFalse -Because "$k has no config writer, so it cannot deliver $n"
+                }
+            }
+        }
+
+        It 'does not claim a font or opacity for Terminal.app' {
+            # The .terminal profile carries colors and a background image only
+            # (Get-AppleTerminalProfileData). Terminal.app would honour a font
+            # in a profile -- this is a gap in the writer, not in the terminal
+            # -- so when the profile learns to carry one, flip this with it.
+            $caps = Get-TerminalCapability -Kind 'AppleTerminal'
+            $caps.Font        | Should -BeFalse
+            $caps.Opacity     | Should -BeFalse
+            $caps.CursorShape | Should -BeFalse
+        }
+
+        It 'still lets every OSC terminal preview colors' {
+            # The counterweight to the two tests above: trimming the
+            # over-claims must not cost the live retint, which is the one thing
+            # that does work everywhere and the whole of the picker preview.
+            foreach ($k in $script:AllKinds) {
+                (Get-TerminalCapability -Kind $k).OscPalette |
+                    Should -BeTrue -Because "$k should still get the OSC preview"
             }
         }
 
