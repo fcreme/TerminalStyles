@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.8] - 2026-08-25
+
 ### Fixed
 
 - **`tstyles register` did nothing on macOS and Linux.** It probed only `pwsh.exe` and `powershell.exe`; off Windows the binary is `pwsh`, with no extension, and Windows PowerShell does not exist at all. So it printed "Neither pwsh.exe nor powershell.exe was found on PATH. Nothing to do." and did exactly that -- while the README tells macOS users to run it. `tstyles uninstall` shared the probe and so could not strip the loader either. Both on the platforms 0.8.0 added support for
@@ -266,7 +268,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.7...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.8...HEAD
+[0.8.8]: https://github.com/fcreme/TerminalStyles/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/fcreme/TerminalStyles/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/fcreme/TerminalStyles/compare/v0.8.5...v0.8.6
 [0.8.5]: https://github.com/fcreme/TerminalStyles/compare/v0.8.4...v0.8.5
