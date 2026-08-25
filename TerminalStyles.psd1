@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.4'
+    ModuleVersion     = '0.8.5'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.4: background images now actually appear on macOS Terminal.app. 0.8.2 generated correct profiles that pointed at the bundled animated GIFs -- and Terminal.app renders a still image but not an animated one, so the background came up blank with no error anywhere. The first frame is now extracted to a PNG and cached, so Windows Terminal animates and Terminal.app shows a still. "tstyles tune" also runs outside Windows Terminal now: brightness and saturation preview live over OSC, while opacity and font are saved with the style and take effect in a new window. Fixes a tuned style being saved without its zsh/bash prompt, which left shell users with the colors and none of the prompt or banner. --- v0.8.3: corrects the macOS install command to "brew install powershell". --- v0.8.2: background images on Terminal.app via "tstyles <name> -NewWindow". --- v0.8.0: TerminalStyles runs on macOS and Linux, and styles zsh and bash as well as PowerShell.'
+            ReleaseNotes = 'v0.8.5: the four things that were wrong outside Windows Terminal. Choosing a style in the picker left every new zsh/bash tab on the PREVIOUS style''s palette and banner -- it recorded the name and retinted the current window, but never staged the shell runtime, so nothing errored and the next tab was simply wrong. The picker also ignored -KeepPrompt and installed the style''s prompt anyway. "tstyles font <name>" installed the font and then reported failure, hunting for a settings.json that cannot exist off Windows Terminal. An apply resolved the style''s background image twice on the hot path, which for an uncached style meant up to 80 seconds of HTTP for a result that was thrown away. And re-tuning a style saved with Overwrite copied files onto themselves, while the tuner promised opacity and font would show in a new window that cannot show either. Also in this release: the capability table now claims only what a writer actually delivers, so iTerm2, Ghostty, WezTerm, kitty and Alacritty report "can''t show: background image" instead of reporting success and painting nothing -- and stop prefetching megabytes of GIFs they could never draw. The live OSC retint is unchanged everywhere.'
         }
     }
 }

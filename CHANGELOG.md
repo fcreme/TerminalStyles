@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.5] - 2026-08-25
+
 ### Fixed
 
 - choosing a style in the interactive picker applied its colors but not its prompt or banner, on every terminal except Windows Terminal. The style's `profile.ps1` was copied into place and then not dot-sourced, so the prompt only appeared in the next tab you opened -- while `tstyles <name>` on the very same terminal painted it immediately. The live-reload was gated on a Windows Terminal check left over from before there was any non-Windows-Terminal path for it to be wrong about
@@ -229,7 +231,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.4...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.5...HEAD
+[0.8.5]: https://github.com/fcreme/TerminalStyles/compare/v0.8.4...v0.8.5
 [0.8.4]: https://github.com/fcreme/TerminalStyles/compare/v0.8.3...v0.8.4
 [0.8.3]: https://github.com/fcreme/TerminalStyles/compare/v0.8.2...v0.8.3
 [0.8.2]: https://github.com/fcreme/TerminalStyles/compare/v0.8.1...v0.8.2
