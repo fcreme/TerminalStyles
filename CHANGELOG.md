@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.14] - 2026-08-27
+
 ### Fixed
 
 - the bootstrap installer did not raise the TLS floor to 1.2, so on stock Windows PowerShell 5.1 -- which is exactly who runs the `iwr | iex` one-liner -- the download could fail outright. On .NET Framework the default `SecurityProtocol` can still omit TLS 1.2 and GitHub refuses anything older, and the failure surfaces as "the underlying connection was closed", which reads like a network fault rather than a protocol one. This project already forced TLS 1.2 in its own CI to bootstrap Pester on the 5.1 leg; it was missing from the one place a user actually runs
@@ -330,7 +332,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.13...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.14...HEAD
+[0.8.14]: https://github.com/fcreme/TerminalStyles/compare/v0.8.13...v0.8.14
 [0.8.13]: https://github.com/fcreme/TerminalStyles/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/fcreme/TerminalStyles/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/fcreme/TerminalStyles/compare/v0.8.10...v0.8.11
