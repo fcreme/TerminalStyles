@@ -88,3 +88,61 @@ Describe 'SECURITY.md tracks the shipped version' {
         $script:security | Should -Match '@'
     }
 }
+
+Describe 'README claims that the code can settle' {
+    # Prose drifts from code silently because nothing executes it. These are the
+    # README statements a reader would act on, each pinned to the thing that
+    # makes it true or false.
+    BeforeAll {
+        $script:readme = [System.IO.File]::ReadAllText(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md'),
+            [System.Text.UTF8Encoding]::new($false))
+    }
+
+    It 'does not claim the picker skips the rolling backup' {
+        # It writes one before its first preview -- Invoke-TerminalStyle does
+        # WriteAllText to "$settingsPath.bak". The README said the opposite,
+        # which would have talked someone out of a recovery path that exists.
+        $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
+        $writesBak = $src -match '\$settingsPath\.bak'
+        if ($writesBak) {
+            $script:readme | Should -Not -Match "picker.*doesn't write a ``\.bak``"
+        }
+    }
+
+    It 'points at the cache directory the code actually uses' {
+        # Get-StyleCacheDir puts fetched backgrounds under <DataRoot>/cache/<name>.
+        # The README pointed at the pre-0.2.0 styles/<name> location, so anyone
+        # looking for their cache -- or trying to clear it -- looked in the wrong
+        # place.
+        $leaf = InModuleScope TerminalStyles {
+            Split-Path (Split-Path (Get-StyleCacheDir -StyleName 'eva') -Parent) -Leaf
+        }
+        $leaf | Should -Be 'cache'
+        $script:readme | Should -Match 'TerminalStyles\\cache\\<name>'
+    }
+
+    It 'does not describe background images as committed binaries' {
+        # .gitignore blocks them and tests/No-Committed-Backgrounds.Tests.ps1
+        # fails the build if one becomes tracked.
+        $gitignore = [System.IO.File]::ReadAllText(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) '.gitignore'),
+            [System.Text.UTF8Encoding]::new($false))
+        $gitignore | Should -Match 'background'
+        $script:readme | Should -Not -Match 'Bundled GIFs are committed binaries'
+    }
+}
+
+Describe 'CHANGELOG dates match the tags they describe' {
+
+    It '<_> is dated as its tag was' -ForEach @('0.8.2', '0.8.3', '0.8.4') {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $tagDate = (& git -C $repoRoot log -1 --format=%ad --date=short "v$_" 2>$null)
+        if (-not $tagDate) { Set-ItResult -Skipped -Because "tag v$_ is not present"; return }
+        $changelog = [System.IO.File]::ReadAllText(
+            (Join-Path $repoRoot 'CHANGELOG.md'), [System.Text.UTF8Encoding]::new($false))
+        $m = [regex]::Match($changelog, "## \[$([regex]::Escape($_))\] - (\d{4}-\d{2}-\d{2})")
+        $m.Success | Should -BeTrue -Because "$_ should have a dated heading"
+        $m.Groups[1].Value | Should -Be $tagDate
+    }
+}

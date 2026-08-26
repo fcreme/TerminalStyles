@@ -440,7 +440,7 @@ it from Finder or set it as your Terminal.app default.
 Each bundled style has its own animated background, hosted on the
 [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) of
 this repo. `tstyles` lazy-fetches each one on first use of the style and
-caches it under `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`, so the
+caches it under `%LOCALAPPDATA%\TerminalStyles\cache\<name>\`, so the
 install ZIP stays small (~100 KB instead of ~10 MB). On Windows Terminal,
 picking a style auto-applies the image and the arrow keys cycle the
 background live alongside the colors / cursor / font. Terminal.app takes
@@ -525,10 +525,11 @@ $wt = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalS
 Copy-Item "$wt.bak" $wt -Force
 ```
 
-The picker (`tstyles` with no arg) doesn't write a `.bak` — pressing
-Esc reverts in-memory to the exact prior bytes. If you need a full
-history of changes (rather than just "undo the most recent direct
-apply"), use `apply.ps1` instead — it keeps timestamped backups per run.
+The picker (`tstyles` with no arg) writes the same rolling `.bak` before
+its first preview, so a crash mid-pick is recoverable too. Pressing Esc
+reverts in-memory to the exact prior bytes without needing it. If you
+want a full history of changes rather than just "undo the most recent
+apply", use `apply.ps1` — it keeps a timestamped backup per run.
 
 ## Updating
 
@@ -658,9 +659,12 @@ takes one PNG of the WT window, then restores your original theme.
 - **One `$PROFILE` per host.** Confirming a style with a custom prompt
   replaces `current-style.ps1`. Switching styles changes the prompt
   globally — there's no per-tab prompt configuration.
-- **Repo size grows with styles.** Bundled GIFs are committed binaries;
-  contributors should keep each under ~2 MB and only submit images they
-  have the right to redistribute.
+- **Background images live on a separate branch.** They are deliberately
+  not committed to `main` — `.gitignore` blocks them and a test fails the
+  build if one becomes tracked — so the install stays ~350 KB instead of
+  ~10 MB. They sit flat-named on the [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs)
+  and are fetched on first use. Contributors should keep each under ~2 MB
+  and only submit images they have the right to redistribute.
 - **Not every terminal can show every part of a style.** Windows Terminal reads
   the whole `theme.json` field set from its `settings.json`. Everywhere else the
   colors are applied as OSC escape sequences, and no escape sequence carries a

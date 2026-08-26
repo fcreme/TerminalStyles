@@ -20,6 +20,9 @@ sessions. Pale cyan default text on near-black, vintage cursor.
   - History-based inline predictions
   - Tab title set to `EX MACHINA // BLUEBOOK`
 - **background.gif** — the body-scan loop bundled with the style; auto
+  Not in this folder: background images live flat-named on the
+  [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
+  fetched into your cache on first use, so `main` stays binary-free.
   applied when you select this style in `tstyles`.
 
 ## Best paired with

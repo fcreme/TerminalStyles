@@ -26,6 +26,9 @@ cinematic dark themes.
   - Tab title set to `GITBASH // MINGW64`.
   - **No startup banner** — Git Bash itself is silent.
 - **background.png** — 256×256 solid `#FFFFFF` so the previous theme's
+  Not in this folder: background images live flat-named on the
+  [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
+  fetched into your cache on first use, so `main` stays binary-free.
   GIF doesn't bleed through.
 
 ## Notes

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the README told you the picker writes no `settings.json.bak`. It writes one before its first preview, so a crash mid-pick is recoverable -- the README would have talked you out of a recovery path that exists
+- the README pointed at `%LOCALAPPDATA%\TerminalStyles\styles\<name>\` for cached background images. That is the pre-0.2.0 location; they have been under `cache\<name>\` since. Anyone looking for their cache, or trying to clear it, was looking in the wrong place
+- the README described bundled GIFs as "committed binaries". They are deliberately not committed -- `.gitignore` blocks them and a test fails the build if one becomes tracked -- and live on the `gifs` branch, which the README says correctly three hundred lines earlier
+- five style READMEs listed `background.gif` among the folder's files, where a reader will not find it. Each now says where the image actually lives
+- `CHANGELOG.md` dated 0.8.3 and 0.8.4 to 2026-08-21; both tags are 2026-08-22
+
 ## [0.8.14] - 2026-08-27
 
 ### Fixed
@@ -127,7 +135,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `scripts/demo.ps1` and `docs/DEMO.md`: a harness for recording a short demo of live theme switching. It snapshots style state, parks personal tuned styles so the picker lists only the bundled ones, and either prints a cue card or drives the real picker through a pty with fixed timings so takes are comparable. `-Restore` puts everything back
 
-## [0.8.4] - 2026-08-21
+## [0.8.4] - 2026-08-22
 
 ### Fixed
 
@@ -138,7 +146,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `tstyles tune` now runs outside Windows Terminal. It previously refused, on the grounds that opacity and font need a config file the terminal does not expose -- true when that message was written, and no longer true once 0.8.2 started generating `.terminal` profiles. Brightness and saturation preview live over OSC exactly as on Windows Terminal; opacity and font are saved with the style and take effect when it is applied to a new window. The tuner says which knobs will not move before it takes over the screen, so the stillness is not read as a bug
 
-## [0.8.3] - 2026-08-21
+## [0.8.3] - 2026-08-22
 
 ### Fixed
 

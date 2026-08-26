@@ -22,6 +22,9 @@ in spirit to a Ghibli / Miyazaki rainscape than a sci-fi terminal.
   - History-based inline predictions
   - Tab title set to `RAIN // HIGHLAND`
 - **background.gif** — the bundled highland-castle storm loop.
+  Not in this folder: background images live flat-named on the
+  [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
+  fetched into your cache on first use, so `main` stays binary-free.
 
 ## Best paired with
 

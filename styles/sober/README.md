@@ -16,6 +16,9 @@ shell startup is silent. The opposite of umbrella.
   `<leaf-dir> $ ` with the `$` in muted teal. PSReadLine syntax stays
   grayscale.
 - **background.png** — 256×256 solid `#0a0a0a` (the same color as the
+  Not in this folder: background images live flat-named on the
+  [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
+  fetched into your cache on first use, so `main` stays binary-free.
   scheme background), so the WT background reads as plain black.
 
 ## Preview

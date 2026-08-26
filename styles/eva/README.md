@@ -18,6 +18,9 @@ directly from Asuka / Unit-02 stills.
   - History-based inline predictions
   - Tab title set to `EVA // NERV`
 - **background.gif** — the bundled body-scan loop (3.0 MB).
+  Not in this folder: background images live flat-named on the
+  [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
+  fetched into your cache on first use, so `main` stays binary-free.
 
 ## Best paired with
 
