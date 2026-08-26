@@ -602,9 +602,16 @@ with:
 ├── scheme.json        # Windows Terminal color scheme (required)
 ├── theme.json         # profile-level overrides (optional)
 ├── profile.ps1        # custom pwsh $PROFILE (optional)
+├── prompt.sh          # the same prompt for zsh/bash (optional)
 ├── background.gif     # default background image (optional, .png/.jpg/.jpeg also accepted)
 └── README.md          # description (optional)
 ```
+
+Without a `prompt.sh`, a zsh or bash tab gets your style's colors and none
+of its prompt or banner — `profile.ps1` is PowerShell-only. Copy the
+closest bundled style's `prompt.sh` and adapt it; `styles/sober/prompt.sh`
+is the smallest. (Contributing a theme back to the repo? There it is
+**required** — see [CONTRIBUTING.md](CONTRIBUTING.md).)
 
 `tstyles` picks it up automatically on next module load — no
 registration needed. The dir is the same regardless of install path

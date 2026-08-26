@@ -7,7 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.10] - 2026-08-26
+
 ### Fixed
+
+- the README's "Adding your own style" folder listing never mentioned `prompt.sh`, so a style created from it gives a zsh or bash tab the colors and none of the prompt or banner -- `profile.ps1` is PowerShell-only. (`CONTRIBUTING.md` had the same gap, fixed in 0.8.8.)
 
 - **`tstyles tune` could destroy a style you had already saved.** Choosing "Save as a new name" and typing the name of an existing user style replaced it with no warning at all -- while the *harmless* collision, a name matching a bundled style, did warn. That is backwards: a bundled style is only shadowed and comes back if the user style is deleted, whereas a user style of the same name is overwritten in place. Both cases are now checked, and the destructive one says so
 - the font-face knob in `tstyles tune` cycled through the *letters* of a font name on a machine with exactly one monospace font installed, and saved a one-character font face. `return @(...)` does not stop PowerShell unrolling an array on the way to the output stream, so a single-element list arrived at the caller as a string and was indexed per character: the knob read `M`, then `e`, then `n`
@@ -291,7 +295,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.9...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.10...HEAD
+[0.8.10]: https://github.com/fcreme/TerminalStyles/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/fcreme/TerminalStyles/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/fcreme/TerminalStyles/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/fcreme/TerminalStyles/compare/v0.8.6...v0.8.7
