@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.12'
+    ModuleVersion     = '0.8.13'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.12: the picker garbled itself once the style list outgrew the terminal window. It redraws by parking the cursor at a fixed row and overwriting in place, which only works while the whole frame fits below that row -- draw more rows than the terminal has and it scrolls, the saved home row stops pointing at the top of the menu, and every later redraw lands in the wrong place. With 17 styles the frame is already 23 rows and a stock Terminal.app window is 24, so a couple of tuned styles was enough to break it. The list now scrolls within the window, keeping the selection visible and showing how many entries are hidden above and below. Also: the synchronous background fetch could strand a truncated image in the cache, the same way the picker''s prefetch could before 0.8.11 -- its error handling cleans up after a failed request, but a Ctrl+C or a killed process never reaches it, and a file sitting at the cache path is treated as a complete entry by every reader. Both paths now download to a temporary name and rename only once the transfer finished.'
+            ReleaseNotes = 'v0.8.13: cancelling "tstyles tune" now puts your colours back. Esc emitted the OSC reset, which hands colour control to the TERMINAL''s own defaults -- correct on Windows Terminal, where settings.json has just been restored and WT repaints from it, and wrong everywhere else, where the style being tuned was itself only escape sequences. Cancelling dropped you to a stock palette instead of the style you opened the tuner on. All three exit paths -- Esc, an aborted save, and the safety net -- now restore it. This is the same bug the picker''s Esc had before 0.8.9, in the one place it had not been fixed. Internally, the library was split out of tstyles.ps1 into lib/, one file per subsystem; tstyles.ps1 went from 4,105 lines to 1,148. Everything is dot-sourced into the same scope it always shared, so there is no behaviour change -- but the module now ships a lib/ directory, which matters if you have scripted against the file layout rather than the commands.'
         }
     }
 }

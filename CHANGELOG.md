@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.13] - 2026-08-27
+
 ### Fixed
 
 - cancelling `tstyles tune` did not put your colours back on any terminal except Windows Terminal -- the same bug the picker's Esc had before 0.8.9, in the one place it had not been fixed. Esc emitted the OSC reset, which hands colour control to the *terminal's own* defaults; correct on Windows Terminal, where settings.json has just been restored and WT repaints from it, and wrong everywhere else, where the style being tuned was itself only escape sequences. All three exit paths -- Esc, an aborted save, and the safety net -- now re-emit the style you opened the tuner on
+
+### Changed
+
+- the library was split out of `tstyles.ps1` into `lib/`, one file per subsystem: background resolution, the Windows Terminal merge, colour maths, fonts, apply/reset, the tuner, the picker's testable pieces, help, and install/update. `tstyles.ps1` went from 4,105 lines to 1,148 and keeps platform/paths/discovery plus the `tstyles` dispatcher. No behaviour change -- everything is dot-sourced into the same scope it always shared. `CONTRIBUTING.md` now carries a map of where things live
 
 ## [0.8.12] - 2026-08-26
 
@@ -318,7 +324,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.12...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.13...HEAD
+[0.8.13]: https://github.com/fcreme/TerminalStyles/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/fcreme/TerminalStyles/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/fcreme/TerminalStyles/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/fcreme/TerminalStyles/compare/v0.8.9...v0.8.10
