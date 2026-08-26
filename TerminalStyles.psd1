@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.14'
+    ModuleVersion     = '0.8.15'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.14: bootstrap installer hardening. It did not raise the TLS floor to 1.2, so on stock Windows PowerShell 5.1 -- exactly who runs the "iwr | iex" one-liner -- the download could fail outright: on .NET Framework the default SecurityProtocol can omit TLS 1.2, GitHub refuses anything older, and the failure surfaces as "the underlying connection was closed", which reads like a network fault rather than a protocol one. The main download also had no timeout, while the far less important update-check call did, so a stalled connection sat on "Downloading" indefinitely. And because the one-liner runs the script body in your OWN session, the installer left $ErrorActionPreference set to Stop behind it -- turning every later non-terminating error in that shell into a terminating one. Preferences and the TLS floor are now restored on the way out, including on the failure paths. NOTE: these reach you by re-running the installer, and the version you run it FROM is the one being fixed.'
+            ReleaseNotes = 'v0.8.15: "tstyles reset <profile>" reset the WRONG profile. The name lands in the second positional slot and the dispatcher read only -Target, so it was silently ignored and the auto-detected profile was reset instead, reported as a success. -Target still wins when both are given. Also: "tstyles ls" is an accepted alias for "list" and was missing from tab-completion, so you only found it if you already knew it existed; the coding-font download had no timeout, unlike every other fetch, so a stalled connection hung "tstyles font"; and a font published as a bare .ttf rather than a zip could never have installed, because the direct-file branch took its extension from the local download name. Documentation: the README claimed the picker writes no settings.json.bak (it does, so the README was talking you out of a recovery path that exists), pointed at the pre-0.2.0 location for cached background images, and described the bundled GIFs as committed binaries when they are deliberately not.'
         }
     }
 }

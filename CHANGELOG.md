@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.15] - 2026-08-27
+
 ### Fixed
 
 - **`tstyles reset <profile>` reset the wrong profile.** The name landed in the second positional slot and the dispatcher read only `-Target`, so it was silently ignored and the auto-detected profile was reset instead -- with a success message. `-Target` still wins when both are given
@@ -345,7 +347,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.14...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.15...HEAD
+[0.8.15]: https://github.com/fcreme/TerminalStyles/compare/v0.8.14...v0.8.15
 [0.8.14]: https://github.com/fcreme/TerminalStyles/compare/v0.8.13...v0.8.14
 [0.8.13]: https://github.com/fcreme/TerminalStyles/compare/v0.8.12...v0.8.13
 [0.8.12]: https://github.com/fcreme/TerminalStyles/compare/v0.8.11...v0.8.12
