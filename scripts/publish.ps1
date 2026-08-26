@@ -31,6 +31,9 @@ $allowlist = @(
     'TerminalStyles.psm1',
     'tstyles.ps1',
     'terminals.ps1',                       # dot-sourced by tstyles.ps1 -- import fails without it
+    'lib',                                 # the rest of the library, also dot-sourced; a
+                                           # directory entry so a new lib file needs no
+                                           # registration here and cannot be forgotten
     'apply.ps1',
     'README.md',
     'LICENSE',

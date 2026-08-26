@@ -26,16 +26,32 @@ BeforeAll {
     $repoRoot = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
 
-    $script:tstylesPath = Join-Path $repoRoot 'tstyles.ps1'
-    $script:ast = [System.Management.Automation.Language.Parser]::ParseFile(
-        $script:tstylesPath, [ref]$null, [ref]$null)
+    # Every file the module dot-sources, not just tstyles.ps1. The library is
+    # split across lib/, so a function these tests reason about can live in any
+    # of them -- and moving one between files must not silently turn an
+    # assertion into a lookup that returns $null and passes vacuously.
+    $script:modulePaths = @(
+        (Join-Path $repoRoot 'tstyles.ps1')
+        (Join-Path $repoRoot 'terminals.ps1')
+    ) + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'lib') -Filter '*.ps1' -ErrorAction SilentlyContinue |
+            ForEach-Object { $_.FullName })
+
+    $script:asts = @(foreach ($p in $script:modulePaths) {
+        [System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$null, [ref]$null)
+    })
+    # Kept for the assertions that specifically mean "in tstyles.ps1".
+    $script:ast = $script:asts[0]
 
     function script:Get-FunctionAst {
         param([string]$Name)
-        @($script:ast.FindAll({
-            param($n)
-            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $Name
-        }, $true))[0]
+        foreach ($a in $script:asts) {
+            $hit = @($a.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and $n.Name -eq $Name
+            }, $true))
+            if ($hit.Count) { return $hit[0] }
+        }
+        return $null
     }
 
     function script:Get-CalledCommandName {
@@ -76,11 +92,15 @@ Describe 'the picker stages shell state on confirm' {
         # Set-ShellStyleState computes current-style.osc from -Scheme. Omitting
         # it is a Mandatory-parameter prompt at confirm time, on a screen the
         # picker has already taken over.
-        $calls = @($script:ast.FindAll({
-            param($n)
-            $n -is [System.Management.Automation.Language.CommandAst] -and
-            $n.GetCommandName() -eq 'Set-ShellStyleState'
-        }, $true))
+        # Across every module file: the two call sites now live in different
+        # ones (the picker in tstyles.ps1, Apply-StyleNonWT in lib/applystyle.ps1).
+        $calls = @(foreach ($a in $script:asts) {
+            $a.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Set-ShellStyleState'
+            }, $true)
+        })
 
         $calls.Count | Should -BeGreaterOrEqual 2
         foreach ($c in $calls) {
@@ -291,5 +311,31 @@ Describe 'the update notice survives the picker clearing the screen' {
         $src = $fn.Extent.Text
         ([regex]::Matches($src, 'Test-UpdateAvailable')).Count | Should -Be 1
         $src | Should -Not -Match 'Show-UpdateNoticeIfAvailable'
+    }
+}
+
+Describe 'the AST helper actually finds what it is asked for' {
+    # These tests reason about functions by parsing source. Splitting the library
+    # across lib/ means a function can move between files -- and a lookup that
+    # returns $null would make every assertion built on it pass vacuously, which
+    # is worse than a failure. Pin that the helper resolves each name it is used
+    # with, wherever that function currently lives.
+
+    It 'resolves <_>' -ForEach @(
+        'Invoke-TerminalStyle', 'Apply-StyleNonWT', 'Apply-StyleDirect',
+        'Save-TunedStyle', 'Invoke-TerminalStyleTune', 'Get-PickerViewport',
+        'Invoke-TerminalStylesUninstall', 'Invoke-TerminalStylesShellInit'
+    ) {
+        script:Get-FunctionAst -Name $_ | Should -Not -BeNullOrEmpty `
+            -Because 'a null lookup would make the assertions built on it meaningless'
+    }
+
+    It 'returns nothing for a name that does not exist' {
+        script:Get-FunctionAst -Name 'Definitely-NotAFunction' | Should -BeNullOrEmpty
+    }
+
+    It 'searches every file the module dot-sources' {
+        $script:modulePaths.Count | Should -BeGreaterThan 2
+        ($script:modulePaths | Where-Object { $_ -like '*lib*' }).Count | Should -BeGreaterThan 0
     }
 }

@@ -99,6 +99,10 @@ The `scripts/publish.ps1` allowlist controls what ships. Currently:
 - `TerminalStyles.psd1`, `TerminalStyles.psm1`
 - `tstyles.ps1`, `terminals.ps1`, `apply.ps1` — `terminals.ps1` is
   dot-sourced by `tstyles.ps1`, so the import fails outright without it
+- `lib/` — the rest of the library, also dot-sourced. It is a **directory**
+  entry in the allowlist on purpose: `tstyles.ps1` loads `lib/*.ps1` by
+  enumeration, so a new file needs registering in neither place and cannot be
+  left out of the package by accident
 - `styles/` (all 16 themes, including each one's `prompt.sh`)
 - `shell/` — the zsh/bash runtime (`tstyles.sh`) and the Terminal.app
   profile helper (`appleterminal.js`)
