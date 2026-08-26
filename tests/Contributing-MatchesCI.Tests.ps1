@@ -137,8 +137,20 @@ Describe 'CHANGELOG dates match the tags they describe' {
 
     It '<_> is dated as its tag was' -ForEach @('0.8.2', '0.8.3', '0.8.4') {
         $repoRoot = Split-Path $PSScriptRoot -Parent
-        $tagDate = (& git -C $repoRoot log -1 --format=%ad --date=short "v$_" 2>$null)
-        if (-not $tagDate) { Set-ItResult -Skipped -Because "tag v$_ is not present"; return }
+
+        # Ask git whether the tag EXISTS before asking about its date. CI checks
+        # out with actions/checkout@v4 at fetch-depth 1, which brings no tags at
+        # all, and `git log v0.8.2` on a missing ref does not fail the same way
+        # on Windows PowerShell 5.1 as it does elsewhere -- it left a non-empty
+        # value that then compared unequal, so this failed on one leg and passed
+        # on three. `git tag -l` is unambiguous everywhere.
+        $hasTag = @(& git -C $repoRoot tag -l "v$_" 2>$null) -contains "v$_"
+        if (-not $hasTag) {
+            Set-ItResult -Skipped -Because "tag v$_ is not in this checkout (CI clones without tags)"
+            return
+        }
+        $tagDate = (& git -C $repoRoot log -1 --format=%ad --date=short "v$_" 2>$null) | Select-Object -First 1
+        if (-not $tagDate) { Set-ItResult -Skipped -Because "could not read the date of v$_"; return }
         $changelog = [System.IO.File]::ReadAllText(
             (Join-Path $repoRoot 'CHANGELOG.md'), [System.Text.UTF8Encoding]::new($false))
         $m = [regex]::Match($changelog, "## \[$([regex]::Escape($_))\] - (\d{4}-\d{2}-\d{2})")
