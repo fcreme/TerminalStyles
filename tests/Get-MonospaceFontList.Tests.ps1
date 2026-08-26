@@ -74,34 +74,50 @@ Describe 'Get-MonospaceFontList' {
 Describe 'Get-MonospaceFontList always hands back an array' {
     InModuleScope TerminalStyles {
 
+        # Driven through the -Installed / -MonospaceNames seams the function
+        # documents, NOT by mocking Get-InstalledFontFamily. The curated
+        # favourites list is platform-dependent -- 'Menlo' is offered on macOS
+        # and not on Linux -- so a mock at the lower level made these pass here
+        # and fail on the ubuntu CI leg, where the input fell through to the
+        # 'DejaVu Sans Mono' fallback. Every name used below is in the BASE
+        # favourites list, which is identical on all three platforms.
+
         It 'returns an array even when exactly one font is installed' {
             # `return @(...)` is not enough: PowerShell unrolls an array on the
-            # way to the output stream, so a one-element result arrived at the
+            # way to the output stream, so a one-element result reached the
             # caller as a [string]. The tuner's font-face knob then indexed into
-            # it per CHARACTER -- the knob read "M", then "e", then "n", and a
+            # it per CHARACTER -- the knob read "C", then "a", then "s" -- and a
             # save wrote a one-letter font face into the style's theme.json.
-            Mock Get-InstalledFontFamily { @('Menlo') }
-            Mock Test-MonospaceFont { $true }
-            $f = Get-MonospaceFontList
+            $f = Get-MonospaceFontList -Installed @('Cascadia Code') -MonospaceNames @()
             ($f -is [array]) | Should -BeTrue -Because 'a scalar string would be indexed per character'
             $f.Count         | Should -Be 1
-            $f[0]         | Should -Be 'Menlo'
+            $f[0]            | Should -Be 'Cascadia Code'
         }
 
         It 'indexing it gives whole font names, not characters' {
-            Mock Get-InstalledFontFamily { @('Menlo') }
-            Mock Test-MonospaceFont { $true }
-            $f = Get-MonospaceFontList
-            $f[0] | Should -Not -Be 'M'
+            $f = Get-MonospaceFontList -Installed @('Cascadia Code') -MonospaceNames @()
+            $f[0]             | Should -Not -Be 'C'
             "$($f[0])".Length | Should -BeGreaterThan 1
         }
 
         It 'still returns an array for the many-font case' {
-            Mock Get-InstalledFontFamily { @('Menlo', 'Monaco', 'Courier') }
-            Mock Test-MonospaceFont { $true }
-            $f = Get-MonospaceFontList
+            $f = Get-MonospaceFontList -Installed @('Cascadia Code','Fira Code','Hack') -MonospaceNames @()
             ($f -is [array]) | Should -BeTrue
             $f.Count         | Should -BeGreaterThan 1
+        }
+
+        It 'holds even when the list falls through to the platform default' {
+            # A name that is in no curated list and matches no mono/code
+            # pattern, so favourites and others are both empty and the platform
+            # fallback fires -- a single name, exactly the case that unrolled.
+            #
+            # NOT -Installed @(): the function guards with `if (-not $Installed)`,
+            # and an empty array is falsy there, so it would fall back to
+            # enumerating the real machine's fonts instead.
+            $f = Get-MonospaceFontList -Installed @('Zzz Proportional Face') -MonospaceNames @()
+            ($f -is [array]) | Should -BeTrue
+            $f.Count         | Should -Be 1
+            "$($f[0])".Length | Should -BeGreaterThan 1
         }
 
         It 'the tuner wraps the call as well' {
