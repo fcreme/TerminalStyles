@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `tstyles random` accepted `-Target`, `-KeepPrompt` and `-NewWindow` and forwarded none of them. `tstyles random -KeepPrompt` replaced the prompt it had just promised to keep, `-Target` applied to the auto-detected Windows Terminal profile rather than the one you named, and `-NewWindow` did nothing at all
+- one malformed style stopped `tstyles list` dead. Every style's `scheme.json` was read and parsed with no guard, so a user-authored folder with broken JSON threw mid-loop: a raw .NET exception printed between the rows and every style after it was hidden. A bad folder now costs its own row, marked `(unreadable scheme.json)`, and the rest of the listing prints
+- a `current-style.ps1` that will not parse -- a style profile with a syntax error, or a copy interrupted mid-write -- printed a full `ParserError` with a caret diagram into **every new shell tab**. It is now one warning naming the way out (`tstyles reset`). The module import always succeeded either way; this was never the "bricked `tstyles`" it was first reported as
+
 ## [0.8.9] - 2026-08-26
 
 ### Fixed

@@ -1025,9 +1025,18 @@ function Show-StyleList {
     Write-Host "Available styles:" -ForegroundColor Cyan
     foreach ($s in $styles) {
         $marker = if ($s.Name -eq $current) { '*' } else { ' ' }
+        # A user-authored style with a malformed or unreadable scheme.json used
+        # to throw here, mid-loop -- so `tstyles list` printed a raw .NET
+        # exception and then stopped, hiding every style after it. One bad
+        # folder should cost its own row, not the listing.
         $schemePath = Join-Path $s.FullName 'scheme.json'
-        $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-        $swatch = Get-SchemeSwatch -Scheme $scheme
+        $swatch = ''
+        try {
+            $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            $swatch = Get-SchemeSwatch -Scheme $scheme
+        } catch {
+            $swatch = "$([char]27)[38;2;160;160;160m(unreadable scheme.json)$([char]27)[0m"
+        }
         Write-Host ("  {0} {1,-16}  {2}" -f $marker, $s.Name, $swatch)
     }
     Write-Host ""
@@ -1067,6 +1076,16 @@ function Show-CurrentStyle {
 function Invoke-RandomStyle {
     # `tstyles random` -- pick a random bundled style and apply it.
     # Excludes the currently active one so it actually changes.
+    #
+    # Takes the same apply flags as `tstyles <name>` and forwards them. It used
+    # to call Apply-StyleDirect with only the style name, so `tstyles random
+    # -KeepPrompt` replaced the prompt it promised to keep, `-Target` applied to
+    # the wrong Windows Terminal profile, and `-NewWindow` did nothing.
+    param(
+        [string]$Target,
+        [switch]$KeepPrompt,
+        [switch]$NewWindow
+    )
     Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     $candidates = @(Get-AvailableStyles | Where-Object { $_.Name -ne $current })
@@ -1078,7 +1097,8 @@ function Invoke-RandomStyle {
     Write-Host ""
     Write-Host "Rolling the dice... -> " -NoNewline
     Write-Host $pick.Name -ForegroundColor Cyan
-    Apply-StyleDirect -StyleName $pick.Name
+    Apply-StyleDirect -StyleName $pick.Name -Target $Target `
+        -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
 }
 
 function Apply-StyleNonWT {
@@ -3297,7 +3317,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'font')                 { Invoke-TerminalStyleFont -Name $SubArg -Target $Target; return }
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
-    if ($Arg -eq 'random')               { Invoke-RandomStyle;              return }
+    if ($Arg -eq 'random')               { Invoke-RandomStyle -Target $Target -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow; return }
     if ($Arg -eq 'reset')                { Reset-StyleDirect -Target $Target; return }
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
@@ -3930,7 +3950,22 @@ if (-not $TStylesNoAutoLoad -and (Test-StyledHost) -and (Test-HostOutputVisible)
         } catch { }
     }
 
+    # Guarded, because this runs on EVERY module import -- which means every new
+    # shell tab, and (through the generated shim) every `tstyles` command run
+    # from zsh or bash. current-style.ps1 is a file we wrote, but it can still be
+    # broken: a style's profile.ps1 with a syntax error, a copy interrupted
+    # mid-write, a disk that filled. Unguarded that became a parse error on every
+    # new tab AND on every `tstyles` invocation -- including the ones that would
+    # have fixed it, since `tstyles <name>` and `tstyles reset` both have to
+    # import the module first. A style whose prompt will not load is worth one
+    # warning, not a shell that cannot start.
     if (Test-Path -LiteralPath $script:TStylesCurrent) {
-        . $script:TStylesCurrent
+        try {
+            . $script:TStylesCurrent
+        } catch {
+            Write-Warning ("TerminalStyles: could not load the active style's prompt. " +
+                           "Run 'tstyles reset' to clear it, or 'tstyles <name>' to apply " +
+                           "another. Details: $($_.Exception.Message)")
+        }
     }
 }
