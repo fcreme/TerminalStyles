@@ -15,6 +15,36 @@ Quick links:
   [theme idea issue](https://github.com/fcreme/TerminalStyles/issues/new/choose) first
   to get a quick yes/no before doing the work (see [Curation model](#curation-model)).
 
+## Where the code lives
+
+```
+TerminalStyles.psm1   loads tstyles.ps1 and nothing else
+tstyles.ps1           platform + paths + style discovery, and the `tstyles`
+                      dispatcher (Invoke-TerminalStyle)
+terminals.ps1         which terminal is hosting this session, what it can
+                      show, OSC output, zsh/bash staging, Terminal.app profiles
+lib/                  the rest of the library, one file per subsystem:
+  background.ps1        resolving a style's image + the negative cache
+  wtsettings.ps1        Windows Terminal settings.json: JSONC, merge, write
+  color.ps1             HSL maths and the OSC packets built from it
+  fonts.ps1             the font catalogue, detection, download, install
+  applystyle.ps1        apply / reset, and list / current / random
+  tune.ps1              `tstyles tune` and the style it saves
+  picker.ps1            the picker's testable pieces
+  help.ps1              `tstyles help`
+  update.ps1            install kind, update check, register / uninstall
+```
+
+Everything under `lib/` is **dot-sourced** into one shared scope, so a function
+behaves the same wherever it sits and tests reach it with `InModuleScope
+TerminalStyles`. `tstyles.ps1` loads `lib/*.ps1` by enumeration and the publish
+allowlist has a single `lib` entry, so **a new file there needs registering
+nowhere** — just commit it.
+
+Almost nothing is exported: `Invoke-TerminalStyle` and
+`Invoke-TerminalStylesUpdate`, plus the `tstyles` alias. That is why the tests
+use `InModuleScope` to reach the internals.
+
 ## Contributing a theme
 
 A theme is a folder under `styles/<name>/`:
