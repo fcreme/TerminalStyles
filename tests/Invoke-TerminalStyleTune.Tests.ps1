@@ -184,3 +184,42 @@ Describe 'the tuner warns about the collision that actually loses work' {
         }
     }
 }
+
+Describe 'cancelling the tuner puts the terminal back' {
+    InModuleScope TerminalStyles {
+
+        It 'restores the base style off Windows Terminal, not the terminal default' {
+            # Same bug the picker had. Get-OscResetPacket hands colour control to
+            # the TERMINAL's own defaults -- correct on Windows Terminal, where
+            # settings.json has just been restored and WT repaints from it, and
+            # wrong everywhere else, where the style being tuned was itself only
+            # escape sequences. Esc dropped the user to a stock palette instead
+            # of the style they opened the tuner on.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $src | Should -Match 'Get-SchemeOscPacket -Scheme \$baseScheme'
+            $src | Should -Match '\$restoreBaseLook = \{'
+        }
+
+        It 'routes every exit path through the same restore' {
+            # Three of them: Esc in the key loop, an aborted save, and the
+            # finally-block safety net. They drifted apart once already.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            ([regex]::Matches($src, '& \$restoreBaseLook')).Count | Should -BeGreaterOrEqual 3
+        }
+
+        It 'still hands control back to Windows Terminal there' {
+            # On WT the reset is right: the file is restored and WT repaints.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $block = [regex]::Match($src, '(?s)\$restoreBaseLook = \{.*?\n    \}').Value
+            $block | Should -Match 'Get-OscResetPacket'
+            $block | Should -Match 'Write-SettingsAtomic'
+        }
+
+        It 'guards the finally against restoring before it exists' {
+            # An exception thrown before $baseScheme is read would otherwise turn
+            # a real error into a null-invocation error on the way out.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $src | Should -Match 'if \(\$restoreBaseLook\) \{ & \$restoreBaseLook \}'
+        }
+    }
+}

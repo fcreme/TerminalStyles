@@ -412,6 +412,24 @@ function Invoke-TerminalStyleTune {
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
+
+    # Undo the live preview and put the terminal back the way it was found.
+    #
+    # Get-OscResetPacket hands colour control to the TERMINAL's own defaults,
+    # which is right on Windows Terminal -- settings.json has just been restored
+    # and WT repaints from it. Off Windows Terminal there is no such file: the
+    # style being tuned was itself only escape sequences, so resetting drops the
+    # user to a stock palette instead of the style they opened the tuner on.
+    # Re-emit the unmodified base scheme there. Same fix, and the same reasoning,
+    # as the picker's Esc.
+    $restoreBaseLook = {
+        if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
+        if (-not $tuneUsesSettings -and $baseScheme) {
+            [Console]::Out.Write((Get-SchemeOscPacket -Scheme $baseScheme))
+        } else {
+            [Console]::Out.Write((Get-OscResetPacket))
+        }
+    }
     $needsRedraw = $true
     try {
         & $writePreview   # initial preview from seeds
@@ -465,10 +483,7 @@ function Invoke-TerminalStyleTune {
                     }
                     'Enter'  { if ($pendingApply) { & $writePreview; $pendingApply = $false }; $confirmed = $true; continue }
                     'Escape' {
-                        if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
-                        # Hand color control back to WT's configured scheme: the
-                        # live OSC retint would otherwise linger over the reverted file.
-                        [Console]::Out.Write((Get-OscResetPacket))
+                        & $restoreBaseLook
                         Clear-Host
                         Write-Host "Reverted." -ForegroundColor Yellow
                         return
@@ -525,8 +540,7 @@ function Invoke-TerminalStyleTune {
 
         if (-not $saveName) {
             # Treat an aborted save like a cancel: revert and exit.
-            if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
-            [Console]::Out.Write((Get-OscResetPacket))
+            & $restoreBaseLook
             Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
             return
         }
@@ -564,8 +578,8 @@ function Invoke-TerminalStyleTune {
             # Safety net: restore settings.json + title unless a saved style was
             # applied. Esc / aborted-save already reverted explicitly; this also
             # covers an exception thrown mid-session (the key loop is not tested).
-            if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
-            [Console]::Out.Write((Get-OscResetPacket))
+            # $restoreBaseLook may not exist yet if something threw very early.
+            if ($restoreBaseLook) { & $restoreBaseLook }
             $Host.UI.RawUI.WindowTitle = $originalTitle
         }
         if (Test-Path -LiteralPath $scratchDir) {

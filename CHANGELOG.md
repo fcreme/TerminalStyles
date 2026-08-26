@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- cancelling `tstyles tune` did not put your colours back on any terminal except Windows Terminal -- the same bug the picker's Esc had before 0.8.9, in the one place it had not been fixed. Esc emitted the OSC reset, which hands colour control to the *terminal's own* defaults; correct on Windows Terminal, where settings.json has just been restored and WT repaints from it, and wrong everywhere else, where the style being tuned was itself only escape sequences. All three exit paths -- Esc, an aborted save, and the safety net -- now re-emit the style you opened the tuner on
+
 ## [0.8.12] - 2026-08-26
 
 ### Fixed
