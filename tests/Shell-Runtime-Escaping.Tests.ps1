@@ -27,6 +27,12 @@ BeforeDiscovery {
     $script:HasZsh  = [bool](Get-Command zsh  -ErrorAction SilentlyContinue)
     $script:HasBash = [bool](Get-Command bash -ErrorAction SilentlyContinue)
     $script:HasGit  = [bool](Get-Command git  -ErrorAction SilentlyContinue)
+    # `script` is the only portable way to hand a shell a real pty, and ts_load
+    # returns early without one. Two incompatible flavours exist:
+    #   BSD (macOS)       script -q <file> <cmd...>
+    #   util-linux (Linux) script -q -c "<cmd>" <file>
+    # Windows has neither.
+    $script:HasScript = [bool](Get-Command script -ErrorAction SilentlyContinue)
 }
 BeforeAll {
     $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -46,6 +52,28 @@ BeforeAll {
     function script:Invoke-Shell {
         param([string]$Shell, [string]$Script)
         & $Shell -c $Script 2>&1 | Out-String
+    }
+
+    # Run a command under a real pty and return everything it printed.
+    function script:Invoke-UnderPty {
+        param([string]$Command, [string]$LogPath)
+        $isUtilLinux = $false
+        try {
+            # util-linux prints "util-linux" in its version banner; BSD script
+            # has no --version and exits non-zero.
+            $v = (& script --version 2>&1 | Out-String)
+            $isUtilLinux = $v -match 'util-linux'
+        } catch { $isUtilLinux = $false }
+
+        if ($isUtilLinux) {
+            & script -q -c $Command $LogPath *> $null
+        } else {
+            'exit' | & script -q $LogPath $Command *> $null
+        }
+        if (Test-Path -LiteralPath $LogPath) {
+            return [System.IO.File]::ReadAllText($LogPath)
+        }
+        return ''
     }
 }
 
@@ -194,7 +222,7 @@ Describe 'the generated tstyles-cli.ps1 shim' {
 
 Describe 'the loader is idempotent' {
 
-    It 'runs once even when the runtime is sourced twice' -Skip:(-not $script:HasBash) {
+    It 'runs once even when the runtime is sourced twice' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
         # shell-init registers the SAME block into both ~/.bashrc and
         # ~/.bash_profile -- .bash_profile because macOS Terminal.app starts bash
         # as a login shell and never reads .bashrc. The widespread convention is
@@ -213,18 +241,22 @@ Describe 'the loader is idempotent' {
         [System.IO.File]::WriteAllText((Join-Path $data 'current-style.osc'), '')
 
         $rc = Join-Path $TestDrive 'rc.sh'
+        # The rc file exits at the end on purpose. util-linux's `script -c` gives
+        # the shell the pty as stdin, so an interactive bash left at a prompt
+        # would wait forever and hang CI; BSD's flavour is fed 'exit' on stdin
+        # instead. Exiting from the rc works for both.
         [System.IO.File]::WriteAllText($rc, @"
 export TSTYLES_DATA='$data'
 . '$repoRoot/shell/tstyles.sh'
 . '$repoRoot/shell/tstyles.sh'
+exit
 "@)
         $wrapper = Join-Path $TestDrive 'w.sh'
         [System.IO.File]::WriteAllText($wrapper, "#!/bin/sh`nexec bash --init-file '$rc' -i`n")
         & chmod +x $wrapper
 
         $log = Join-Path $TestDrive 'log'
-        'exit' | & script -q $log $wrapper *> $null
-        $text = [System.IO.File]::ReadAllText($log)
+        $text = script:Invoke-UnderPty -Command $wrapper -LogPath $log
         ([regex]::Matches($text, 'UMBRELLA CORP')).Count | Should -Be 1
     }
 
