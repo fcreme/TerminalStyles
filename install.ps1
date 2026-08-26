@@ -492,6 +492,16 @@ if (-not $TStylesInstallNoRun) {
     # Force UTF-8 console output as defense-in-depth (see header note).
     $null = & chcp 65001 2>&1
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
+
+    # The entry point is `iwr ... | iex`, which runs this whole body in the
+    # CALLER'S scope -- so every preference set here outlives the install and
+    # changes how the user's shell behaves afterwards. $ErrorActionPreference in
+    # particular: leaving it on 'Stop' turns every later non-terminating error in
+    # that session into a terminating one. Save and restore them.
+    $tstylesPrevEAP      = $ErrorActionPreference
+    $tstylesPrevProgress = $ProgressPreference
+    $tstylesPrevTls      = $null
+
     $ErrorActionPreference = 'Stop'
     # Suppress the IWR / Expand-Archive progress UI. On Windows PowerShell 5.1
     # this is the dominant cost of the install -- the progress-bar rendering
@@ -499,11 +509,36 @@ if (-not $TStylesInstallNoRun) {
     # speedups. Doesn't affect pwsh 7 noticeably but doesn't hurt either.
     $ProgressPreference = 'SilentlyContinue'
 
+    # Force TLS 1.2 on .NET Framework, where the default SecurityProtocol can
+    # still omit it -- and GitHub, like PSGallery, hard-refuses anything older.
+    # Without this the download below fails on a stock Windows PowerShell 5.1
+    # with a bare "underlying connection was closed", which reads like a network
+    # fault rather than a protocol one.
+    #
+    # This project already does exactly this in .github/workflows/test.yml to
+    # bootstrap Pester on the 5.1 leg. It was missing from the one place a user
+    # actually runs.
+    try {
+        $tstylesPrevTls = [Net.ServicePointManager]::SecurityProtocol
+        [Net.ServicePointManager]::SecurityProtocol =
+            [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+    } catch {
+        # pwsh 7 on Unix negotiates TLS through the OS and may not expose this.
+        # Not being able to raise the floor is not a reason to refuse to install.
+        $tstylesPrevTls = $null
+    }
+
+    try {
+
     Write-InstallBanner
 
     # --- Download ---
     Write-InstallStep "Downloading"
-    Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing
+    # -TimeoutSec, like the far less important update-check call further down
+    # already has. Without it a stalled connection hangs the installer forever
+    # with a "Downloading" line and no way to tell it apart from a slow link.
+    # 300s is generous for ~10 MB and still bounded.
+    Invoke-WebRequest -Uri $zipUrl -OutFile $tempZip -UseBasicParsing -TimeoutSec 300
     Assert-ValidArchive -Path $tempZip
     Write-InstallStep "Downloading" -Check
 
@@ -587,5 +622,17 @@ if (-not $TStylesInstallNoRun) {
     $installedManifest = Join-Path $installDir 'TerminalStyles.psd1'
     if (Test-Path -LiteralPath $installedManifest) {
         Import-Module $installedManifest -Force -Global -DisableNameChecking *> $null
+    }
+
+    } finally {
+        # Put the caller's session back. This body runs in THEIR scope under
+        # `iwr | iex`, so anything left set here follows them around for the rest
+        # of the session -- and it has to be restored on the failure paths too,
+        # which is why this is a finally rather than a few lines at the end.
+        $ErrorActionPreference = $tstylesPrevEAP
+        $ProgressPreference    = $tstylesPrevProgress
+        if ($null -ne $tstylesPrevTls) {
+            try { [Net.ServicePointManager]::SecurityProtocol = $tstylesPrevTls } catch { }
+        }
     }
 }

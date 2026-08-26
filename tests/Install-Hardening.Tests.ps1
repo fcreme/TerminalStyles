@@ -189,3 +189,58 @@ Describe 'Test-PolicyResolved' {
         Test-PolicyResolved -Policy "  Restricted  "       | Should -BeFalse
     }
 }
+
+Describe 'install.ps1 hardens its download' {
+    BeforeAll {
+        $script:installSrc = [System.IO.File]::ReadAllText(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'),
+            [System.Text.UTF8Encoding]::new($false))
+    }
+
+    It 'raises the TLS floor to 1.2 before downloading' {
+        # On .NET Framework -- i.e. stock Windows PowerShell 5.1, which is
+        # exactly who runs the bootstrap one-liner -- the default
+        # SecurityProtocol can still omit TLS 1.2, and GitHub refuses anything
+        # older. The failure reads as "the underlying connection was closed",
+        # which looks like a network fault rather than a protocol one.
+        $script:installSrc | Should -Match 'SecurityProtocol'
+        $script:installSrc | Should -Match 'SecurityProtocolType\]::Tls12'
+        $script:installSrc.IndexOf('Tls12') |
+            Should -BeLessThan $script:installSrc.IndexOf('-OutFile $tempZip') `
+            -Because 'raising the floor after the download would be pointless'
+    }
+
+    It 'does not lower the TLS floor, only raise it' {
+        # -bor, never assignment: clobbering the value would disable protocols
+        # the user's environment had deliberately enabled.
+        $script:installSrc | Should -Match 'SecurityProtocol -bor'
+    }
+
+    It 'bounds the main download with a timeout' {
+        # The far less important update-check call already had one. Without it a
+        # stalled connection hangs on "Downloading" indefinitely.
+        $script:installSrc | Should -Match '-OutFile \$tempZip -UseBasicParsing -TimeoutSec \d+'
+    }
+
+    It 'restores the preferences it changes' {
+        # `iwr | iex` runs this body in the CALLER's scope, so a preference set
+        # here outlives the install. Leaving $ErrorActionPreference on 'Stop'
+        # turns every later non-terminating error in that session terminating.
+        $script:installSrc | Should -Match '\$tstylesPrevEAP\s*=\s*\$ErrorActionPreference'
+        $script:installSrc | Should -Match '\$ErrorActionPreference\s*=\s*\$tstylesPrevEAP'
+        $script:installSrc | Should -Match '\$ProgressPreference\s*=\s*\$tstylesPrevProgress'
+    }
+
+    It 'restores them on the failure paths too' {
+        # A finally, not a few lines at the end: the installer throws on plenty
+        # of paths, and every one of them leaves the user's shell behind.
+        $script:installSrc | Should -Match '(?s)\} finally \{.*\$ErrorActionPreference = \$tstylesPrevEAP'
+    }
+
+    It 'still installs when the TLS floor cannot be raised' {
+        # pwsh 7 on Unix negotiates through the OS and may not expose
+        # ServicePointManager at all. Not being able to raise the floor is not a
+        # reason to refuse to install.
+        $script:installSrc | Should -Match '(?s)SecurityProtocol -bor.*?\} catch \{'
+    }
+}

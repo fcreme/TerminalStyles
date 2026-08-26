@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the bootstrap installer did not raise the TLS floor to 1.2, so on stock Windows PowerShell 5.1 -- which is exactly who runs the `iwr | iex` one-liner -- the download could fail outright. On .NET Framework the default `SecurityProtocol` can still omit TLS 1.2 and GitHub refuses anything older, and the failure surfaces as "the underlying connection was closed", which reads like a network fault rather than a protocol one. This project already forced TLS 1.2 in its own CI to bootstrap Pester on the 5.1 leg; it was missing from the one place a user actually runs
+- the installer's main download had no timeout, while the far less important update-check call did. A stalled connection left it sitting on "Downloading" indefinitely with no way to tell that apart from a slow link
+- the installer left `$ErrorActionPreference` set to `Stop` in your session after it finished. `iwr | iex` runs the whole script body in the *caller's* scope, so every preference it set outlived the install -- and that one turns every later non-terminating error in that session into a terminating one. The preferences it changes, and the TLS floor it raises, are now restored on the way out, including on the failure paths
+
 ## [0.8.13] - 2026-08-27
 
 ### Fixed
