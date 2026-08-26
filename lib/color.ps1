@@ -40,6 +40,7 @@ function Get-SchemeSwatch {
         if ($picks.Count -ge 5) { break }
         if (-not $hex) { continue }
         $key = ([string]$hex).TrimStart('#').ToLowerInvariant()
+        if ($key -notmatch '^[0-9a-f]{6}$') { continue }
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
         $picks += $hex

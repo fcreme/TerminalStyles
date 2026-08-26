@@ -58,6 +58,27 @@ Describe 'Get-SchemeSwatch' {
         }
     }
 
+
+    Context 'Malformed colors' {
+        It 'skips invalid hex values instead of throwing' {
+            InModuleScope TerminalStyles {
+                $scheme = [pscustomobject]@{
+                    background          = '#101010'
+                    foreground          = 'not-a-color'
+                    cursorColor         = '#202020'
+                    brightRed           = '#zzzzzz'
+                    brightCyan          = '#303030'
+                    selectionBackground = '#12345'
+                    brightPurple        = '#404040'
+                    brightYellow        = '#505050'
+                }
+
+                { $script:swatch = Get-SchemeSwatch -Scheme $scheme } | Should -Not -Throw
+                ([regex]::Matches($script:swatch, '\[48;2;(\d+;\d+;\d+)m')).Count | Should -Be 5
+            }
+        }
+    }
+
     Context 'Across all themes' {
         It 'every pair of themes produces a byte-distinct swatch' {
             $repoRoot = Split-Path $PSScriptRoot -Parent
