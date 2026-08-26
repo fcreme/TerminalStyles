@@ -200,3 +200,96 @@ Describe 'the picker puts the terminal back when you cancel' {
         $fn.Extent.Text | Should -Match '\$pickerState\s*=\s*@\{\s*Reverted\s*=\s*\$false\s*\}'
     }
 }
+
+Describe 'the picker does not burn work it throws away' {
+
+    It 'bails out of the idle slice BEFORE scanning every style' {
+        # The idle slice runs ~20x/second. Its loop calls Test-StyleResolved --
+        # a filesystem probe -- once per style, and then the very next line
+        # returned early on any terminal that is not Windows Terminal, discarding
+        # the result. Measured at 8.8 ms per full scan over 17 styles, that is
+        # ~176 ms of work per second spent computing nothing.
+        $fn  = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $idle = [regex]::Match($src, '(?s)\$onIdle = \{.*?\n        \}').Value
+        $idle | Should -Not -BeNullOrEmpty -Because 'the $onIdle scriptblock should still be there'
+        # Matched on the CALL forms, not the bare names: the comment above the
+        # early-out explains the fix and names Test-StyleResolved, so a search
+        # for the bare word finds the prose rather than the code.
+        $bail = $idle.IndexOf('if (-not $useSettingsFile) { Start-Sleep')
+        $scan = $idle.IndexOf('-not (Test-StyleResolved -StyleDir')
+        $bail | Should -BeGreaterOrEqual 0 -Because 'the early-out should still be there'
+        $scan | Should -BeGreaterOrEqual 0 -Because 'the prebuild scan should still be there'
+        $bail | Should -BeLessThan $scan -Because 'the early-out has to come before the scan'
+    }
+
+    It 'still prebuilds on Windows Terminal, where the scan is used' {
+        # The fix must not have cost WT its prebuild -- that cache is what makes
+        # arrow-keying back to a visited style instant.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $idle = [regex]::Match($fn.Extent.Text, '(?s)\$onIdle = \{.*?\n        \}').Value
+        $idle | Should -Match 'Merge-StyleIntoSettings'
+        $idle | Should -Match 'mergedCache\['
+    }
+}
+
+Describe 'the background prefetch cannot leave a truncated cache entry' {
+
+    It 'downloads to a .part and renames on completion' {
+        # The job is killed with Stop-Job the moment the user picks. Writing
+        # -OutFile straight to the final name left a half-downloaded file at the
+        # exact path every reader treats as a valid cache hit -- and nothing
+        # revalidates a file that exists, so a truncated GIF became that style's
+        # background permanently.
+        $fn  = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $src | Should -Match '\$part = "\$local\.part"'
+        $src | Should -Match 'Invoke-WebRequest -Uri "\$remoteBase\.\$ext" -OutFile \$part'
+        $src | Should -Match 'Move-Item -LiteralPath \$part -Destination \$local -Force'
+    }
+
+    It 'never points -OutFile at the final cache path' {
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $fn.Extent.Text | Should -Not -Match '-OutFile \$local\b'
+    }
+
+    It 'writes a dated negative-cache marker, like the synchronous path' {
+        # An undated marker reads as expired since 0.8.6, so the prefetch's
+        # negative caching was silently doing nothing at all.
+        # Searched over the whole function rather than a sliced-out job body:
+        # the prefetch job is the only thing in Invoke-TerminalStyle that writes
+        # a .no-background marker, so these are unambiguous here.
+        $fn  = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $src | Should -Match "kind\s*=\s*'absent'"
+        $src | Should -Match 'UtcNow'
+        $src | Should -Not -Match "New-Item -ItemType File -Path \(Join-Path \`$cacheDir '\.no-background'\)"
+    }
+}
+
+Describe 'the update notice survives the picker clearing the screen' {
+
+    It 'is held until after the picker gives the screen back' {
+        # It was printed before the menu was drawn, and the picker's first
+        # Clear-Host wiped it a few lines later -- while still paying for the
+        # HTTP check that produced it.
+        $fn  = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $src | Should -Match '\$pendingUpdate = Test-UpdateAvailable'
+        # Compared against the picker loop, NOT the first Clear-Host in the
+        # function -- an earlier subcommand branch clears the screen too, so
+        # that index belongs to a different code path entirely.
+        $src.IndexOf('$pendingUpdate = Test-UpdateAvailable') |
+            Should -BeLessThan $src.IndexOf('Invoke-StylePickerLoop')
+        # ...and it is actually printed somewhere after the confirm output.
+        $src.IndexOf('Style applied: ') |
+            Should -BeLessThan $src.LastIndexOf('$pendingUpdate')
+    }
+
+    It 'still throttles through Test-UpdateAvailable rather than checking twice' {
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        ([regex]::Matches($src, 'Test-UpdateAvailable')).Count | Should -Be 1
+        $src | Should -Not -Match 'Show-UpdateNoticeIfAvailable'
+    }
+}

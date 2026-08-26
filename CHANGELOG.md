@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the picker could cache a truncated background image permanently.** The prefetch job downloads each style's image in the background and is killed with `Stop-Job` the moment you pick -- but it wrote straight to the final cache path, so a half-finished transfer left a partial file exactly where every reader treats it as a valid cache hit. Nothing revalidates a file that exists, so that style kept a corrupt background for good. Downloads now land in a `.part` and are renamed only once complete, which is what the code's own comment already claimed happened
+- the picker burned roughly 176 ms of work per second doing nothing, on every terminal except Windows Terminal. Its idle slice runs about 20 times a second and probed the filesystem once per style before checking whether the result would be used at all -- measured at 8.8 ms per full scan over 17 styles. The check now comes first
+- the update notice was printed and then immediately wiped. It went to the screen just before the picker's first `Clear-Host`, so it was never readable, while still costing the HTTP check that produced it. It is now held and shown after the picker hands the screen back
+- the background prefetch wrote an undated `.no-background` marker, which has read as expired since 0.8.6 -- so its negative caching silently did nothing
+
 - a login bash window printed the style's banner twice and re-emitted its palette twice. `tstyles shell-init` registers the same loader into both `~/.bashrc` and `~/.bash_profile` -- the latter because macOS Terminal.app starts bash as a *login* shell and never reads `.bashrc` -- but the widespread convention is for `.bash_profile` to source `.bashrc`, so both fired. The loader now runs once per shell, with the guard set after the non-interactive check so `ssh host command`, `scp` and `rsync` stay silent as before
 
 ## [0.8.10] - 2026-08-26

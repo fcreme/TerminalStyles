@@ -3368,9 +3368,12 @@ function Invoke-TerminalStyle {
     # subcommands — they all `return` above before reaching this point).
     Invoke-FontFirstRunPrompt
 
-    # Update-notice path runs on every passive invocation (picker included),
-    # but Test-UpdateAvailable short-circuits inside the 24h throttle window.
-    Show-UpdateNoticeIfAvailable
+    # Update-notice path runs on every passive invocation, but the PICKER is a
+    # special case: it Clear-Host's before drawing its menu, so a notice printed
+    # here was wiped a few lines later and never read -- while still costing the
+    # HTTP check that produced it. Hold the result and print it after the picker
+    # gives the screen back, below.
+    $pendingUpdate = Test-UpdateAvailable
 
     # Windows Terminal previews a style by writing settings.json and letting WT
     # reload; every other terminal previews purely through the OSC packet the
@@ -3573,21 +3576,42 @@ function Invoke-TerminalStyle {
                 $success = $false
                 foreach ($ext in 'gif','png','jpg','jpeg') {
                     $local = Join-Path $cacheDir "background.$ext"
+                    # Download to a sibling .part and rename into place only once
+                    # the transfer finished. This job is killed with Stop-Job the
+                    # moment the user picks, and writing -OutFile straight to the
+                    # final name left a HALF-DOWNLOADED file sitting at the path
+                    # every reader treats as a valid cache hit -- so a truncated
+                    # GIF became that style's background permanently, since
+                    # nothing revalidates a file that exists. A killed job now
+                    # leaves only a .part, which no reader looks for.
+                    $part = "$local.part"
                     try {
-                        Invoke-WebRequest -Uri "$remoteBase.$ext" -OutFile $local `
+                        Invoke-WebRequest -Uri "$remoteBase.$ext" -OutFile $part `
                             -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-                        if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
+                        if ((Get-Item -LiteralPath $part -ErrorAction SilentlyContinue).Length -gt 0) {
+                            Move-Item -LiteralPath $part -Destination $local -Force
                             $success = $true
                             break
                         } else {
-                            Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+                            Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
                         }
                     } catch {
-                        if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
+                        if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
                     }
                 }
                 if (-not $success) {
-                    try { New-Item -ItemType File -Path (Join-Path $cacheDir '.no-background') -Force | Out-Null } catch { }
+                    # Dated marker, matching Get-StyleBundledBackground's format.
+                    # An undated one reads as expired (0.8.6), so the prefetch's
+                    # negative caching was silently doing nothing.
+                    try {
+                        $marker = [pscustomobject]@{
+                            schemaVersion = 1
+                            kind          = 'absent'
+                            at            = [datetime]::UtcNow.ToString('o')
+                        }
+                        [System.IO.File]::WriteAllText((Join-Path $cacheDir '.no-background'),
+                            ($marker | ConvertTo-Json -Compress), [System.Text.UTF8Encoding]::new($false))
+                    } catch { }
                 }
             }
         } -ArgumentList $missingPaths, $script:TStylesDataRoot
@@ -3764,6 +3788,15 @@ function Invoke-TerminalStyle {
         # Idle slice: prebuild the next uncached resolved theme's merged JSON,
         # else sleep briefly. (Verbatim from the old idle branch.)
         $onIdle = {
+            # Nothing to prebuild when no settings.json is being written, so bail
+            # BEFORE the scan rather than after it. The loop below calls
+            # Test-StyleResolved -- a filesystem probe -- once per style, and the
+            # idle slice runs roughly 20 times a second: measured at 8.8 ms per
+            # full scan over 17 styles, that was ~176 ms of work per second spent
+            # computing a value the very next line threw away, on every terminal
+            # that is not Windows Terminal.
+            if (-not $useSettingsFile) { Start-Sleep -Milliseconds 50; return }
+
             $nextPrebuild = -1
             for ($j = 0; $j -lt $styles.Count; $j++) {
                 if ($mergedCache.ContainsKey($j)) { continue }
@@ -3771,8 +3804,6 @@ function Invoke-TerminalStyle {
                 $nextPrebuild = $j
                 break
             }
-            # Nothing to prebuild when no settings.json is being written.
-            if (-not $useSettingsFile) { Start-Sleep -Milliseconds 50; return }
             if ($nextPrebuild -ge 0) {
                 $pp = ConvertFrom-WTJson $originalJson
                 $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
@@ -3866,6 +3897,11 @@ function Invoke-TerminalStyle {
         Write-Host "  Style applied: " -NoNewline
         Write-Host $selectedStyle.Name -ForegroundColor Green
         Write-Host ""
+        if ($pendingUpdate) {
+            Write-Host ("  Update available ({0} -> {1}). Run: tstyles update" -f
+                        $pendingUpdate.Installed, $pendingUpdate.Remote) -ForegroundColor Yellow
+            Write-Host ""
+        }
 
         # Live-reload: dot-source the newly active profile so the title,
         # prompt, banner, and PSReadLine colors update in THIS session
@@ -3895,10 +3931,12 @@ function Invoke-TerminalStyle {
                 try { & $restoreOriginalLook } catch { }
             }
         }
-        # Clean up the background prefetch job. If it's still mid-fetch
-        # (user picked quickly), the downloads in progress may be cut off
-        # -- the next Get-StyleBundledBackground call will fall back to
-        # synchronous fetch for whatever didn't complete.
+        # Clean up the background prefetch job. If it's still mid-fetch (user
+        # picked quickly) the transfer is cut off, and the next
+        # Get-StyleBundledBackground call fetches synchronously instead -- which
+        # is only true because the job downloads to a .part and renames on
+        # completion. Writing to the final name directly would leave a truncated
+        # file that every reader accepts as a cache hit.
         if ($prefetchJob) {
             Stop-Job -Job $prefetchJob -ErrorAction SilentlyContinue
             Remove-Job -Job $prefetchJob -Force -ErrorAction SilentlyContinue
