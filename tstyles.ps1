@@ -1860,7 +1860,13 @@ function Get-MonospaceFontList {
     if ($Current) {
         $list = @($Current) + @($list | Where-Object { $_ -ne $Current })
     }
-    return @($list | Select-Object -Unique)
+    # The leading comma matters. `return @(...)` still writes the array to the
+    # output stream, and PowerShell UNROLLS an array on the way out -- so a
+    # machine with exactly one monospace font handed the caller a [string], and
+    # the tuner's font-face knob then indexed into it per CHARACTER: the knob
+    # read "M", then "e", then "n", and saved a one-letter font face. `,@(...)`
+    # emits the array as a single object, so every call site gets an array.
+    return ,@($list | Select-Object -Unique)
 }
 
 function Get-FontCatalog {
@@ -2563,7 +2569,7 @@ function Invoke-TerminalStyleTune {
 
     $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
-    $fontList = Get-MonospaceFontList -Current $fontFace
+    $fontList = @(Get-MonospaceFontList -Current $fontFace)
     if (-not $fontFace) { $fontFace = $fontList[0] }
     $fontIdx = [Math]::Max(0, [array]::IndexOf($fontList, $fontFace))
 
@@ -2773,10 +2779,24 @@ function Invoke-TerminalStyleTune {
                     Write-Host "  Use letters, digits, dot, underscore, or hyphen only." -ForegroundColor Yellow
                     continue
                 }
-                $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $candidate
-                if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) {
-                    $warn = (Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]").Trim()
+                # Two different collisions, and only one of them loses work.
+                #
+                # A USER style of the same name is in the directory Save-TunedStyle
+                # writes to, so saving over it destroys it -- and that was the case
+                # with no warning at all. A BUNDLED style of the same name is only
+                # shadowed: the original stays in the module and comes back if the
+                # user style is deleted. The prompt used to warn about the harmless
+                # one and stay silent about the destructive one.
+                $userDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $candidate
+                if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) {
+                    $warn = (Read-Host "  '$candidate' already exists and will be REPLACED. Continue? [y/N]").Trim()
                     if ($warn -notmatch '^(?i)y') { continue }
+                } else {
+                    $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $candidate
+                    if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) {
+                        $warn = (Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]").Trim()
+                        if ($warn -notmatch '^(?i)y') { continue }
+                    }
                 }
                 $saveName = $candidate
             }

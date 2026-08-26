@@ -154,3 +154,33 @@ Describe 'the tuner only skips its revert when the style really went on' {
         }
     }
 }
+
+Describe 'the tuner warns about the collision that actually loses work' {
+    InModuleScope TerminalStyles {
+
+        It 'checks the USER styles dir, which is where a save would land' {
+            # Save-TunedStyle writes to $DataRoot/styles/<name>. A user style of
+            # that name is REPLACED. The prompt only ever checked the module's
+            # bundled dir -- so it warned about the harmless collision (a bundled
+            # style is merely shadowed and comes back) and stayed silent about
+            # the destructive one.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $src | Should -Match "userDir = Join-Path \(Join-Path \`$script:TStylesDataRoot 'styles'\)"
+            $src | Should -Match 'will be REPLACED'
+        }
+
+        It 'still mentions shadowing for a bundled name' {
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $src | Should -Match 'shadows bundled'
+        }
+
+        It 'asks before replacing, rather than after' {
+            # Both branches gate on a y/N answer and `continue` back to the name
+            # prompt, so declining re-asks instead of saving anyway.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $block = [regex]::Match($src, '(?s)\$userDir = .*?\n            \}').Value
+            $block | Should -Match "warn -notmatch '\^\(\?i\)y'"
+            ([regex]::Matches($block, 'continue')).Count | Should -BeGreaterOrEqual 2
+        }
+    }
+}

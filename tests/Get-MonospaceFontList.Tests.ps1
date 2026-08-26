@@ -70,3 +70,45 @@ Describe 'Get-MonospaceFontList' {
         }
     }
 }
+
+Describe 'Get-MonospaceFontList always hands back an array' {
+    InModuleScope TerminalStyles {
+
+        It 'returns an array even when exactly one font is installed' {
+            # `return @(...)` is not enough: PowerShell unrolls an array on the
+            # way to the output stream, so a one-element result arrived at the
+            # caller as a [string]. The tuner's font-face knob then indexed into
+            # it per CHARACTER -- the knob read "M", then "e", then "n", and a
+            # save wrote a one-letter font face into the style's theme.json.
+            Mock Get-InstalledFontFamily { @('Menlo') }
+            Mock Test-MonospaceFont { $true }
+            $f = Get-MonospaceFontList
+            ($f -is [array]) | Should -BeTrue -Because 'a scalar string would be indexed per character'
+            $f.Count         | Should -Be 1
+            $f[0]         | Should -Be 'Menlo'
+        }
+
+        It 'indexing it gives whole font names, not characters' {
+            Mock Get-InstalledFontFamily { @('Menlo') }
+            Mock Test-MonospaceFont { $true }
+            $f = Get-MonospaceFontList
+            $f[0] | Should -Not -Be 'M'
+            "$($f[0])".Length | Should -BeGreaterThan 1
+        }
+
+        It 'still returns an array for the many-font case' {
+            Mock Get-InstalledFontFamily { @('Menlo', 'Monaco', 'Courier') }
+            Mock Test-MonospaceFont { $true }
+            $f = Get-MonospaceFontList
+            ($f -is [array]) | Should -BeTrue
+            $f.Count         | Should -BeGreaterThan 1
+        }
+
+        It 'the tuner wraps the call as well' {
+            # Belt and braces: the comma in the function fixes every call site,
+            # and the @() at the call site makes the contract visible there.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $src | Should -Match '\$fontList = @\(Get-MonospaceFontList'
+        }
+    }
+}
