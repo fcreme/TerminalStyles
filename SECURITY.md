@@ -14,15 +14,15 @@ rather than being backported.
 
 Please report vulnerabilities privately — do not open a public issue.
 
-Email **felipecremerius1@gmail.com**. Please include the version
-(`(Get-Module TerminalStyles).Version`, or `Get-Module -ListAvailable
-TerminalStyles` if it is not loaded), your OS and terminal, and the steps to
-reproduce.
+- **Preferred:** GitHub private vulnerability reporting — open the
+  [Security tab](https://github.com/fcreme/TerminalStyles/security) and click
+  **Report a vulnerability**. This is enabled on the repository, so the button
+  is there.
+- **Fallback:** email **felipecremerius1@gmail.com**.
 
-GitHub private vulnerability reporting is **not currently enabled** on this
-repository, so there is no "Report a vulnerability" button on the Security
-tab — email is the channel. (This document previously named that button as
-the preferred route, which sent reporters to a page that does not offer it.)
+Either way, please include the version (`(Get-Module TerminalStyles).Version`,
+or `Get-Module -ListAvailable TerminalStyles` if it is not loaded), your OS and
+terminal, and the steps to reproduce.
 
 This is a maintainer-run hobby project: responses are best-effort, usually
 within a few days. There is no bug bounty.

@@ -72,15 +72,16 @@ Describe 'SECURITY.md tracks the shipped version' {
         $script:security | Should -Match ([regex]::Escape($series))
     }
 
-    It 'does not advertise a reporting channel that is turned off' {
-        # It named GitHub private vulnerability reporting as the PREFERRED route
-        # while the repo has it disabled, sending reporters to a Security tab
-        # with no "Report a vulnerability" button. Either enable it and say so,
-        # or say plainly that it is off -- but do not point at a missing button.
-        if ($script:security -match 'Report a vulnerability') {
-            $script:security | Should -Match 'not currently enabled' `
-                -Because 'the button does not exist unless private reporting is enabled'
-        }
+    It 'is internally consistent about the reporting channel' {
+        # This document once named GitHub private vulnerability reporting as the
+        # PREFERRED route while the repository had it disabled, sending reporters
+        # to a Security tab with no such button. Private reporting is enabled
+        # now, so pointing at the button is correct -- but the doc must not do
+        # both: claim the button exists AND say the feature is off.
+        $claimsButton  = $script:security -match 'Report a vulnerability'
+        $claimsDisabled = $script:security -match 'not currently enabled'
+        ($claimsButton -and $claimsDisabled) | Should -BeFalse `
+            -Because 'the doc cannot both offer the button and say it is unavailable'
     }
 
     It 'gives a channel that does exist' {
