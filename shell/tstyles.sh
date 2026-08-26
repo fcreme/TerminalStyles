@@ -170,6 +170,19 @@ ts_load() {
         *) return 0 ;;
     esac
 
+    # Once per shell. shell-init registers the same loader into BOTH ~/.bashrc
+    # and ~/.bash_profile -- .bash_profile because macOS Terminal.app starts
+    # bash as a login shell and never reads .bashrc. But the widespread
+    # convention is for .bash_profile to source .bashrc, and then both fire:
+    # the palette was re-emitted and the style's whole ASCII banner printed
+    # TWICE on every new window. Set after the interactivity check, so a
+    # non-interactive shell that returned above does not poison a later
+    # interactive load in the same process.
+    if [ -n "$TS_LOADED" ]; then
+        return 0
+    fi
+    TS_LOADED=1
+
     # 1. Colors. The packet was rendered at apply time.
     if [ -r "$TSTYLES_DATA/current-style.osc" ]; then
         cat "$TSTYLES_DATA/current-style.osc"

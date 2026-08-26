@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- a login bash window printed the style's banner twice and re-emitted its palette twice. `tstyles shell-init` registers the same loader into both `~/.bashrc` and `~/.bash_profile` -- the latter because macOS Terminal.app starts bash as a *login* shell and never reads `.bashrc` -- but the widespread convention is for `.bash_profile` to source `.bashrc`, so both fired. The loader now runs once per shell, with the guard set after the non-interactive check so `ssh host command`, `scp` and `rsync` stay silent as before
+
 ## [0.8.10] - 2026-08-26
 
 ### Fixed

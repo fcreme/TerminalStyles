@@ -191,3 +191,60 @@ Describe 'the generated tstyles-cli.ps1 shim' {
         }
     }
 }
+
+Describe 'the loader is idempotent' {
+
+    It 'runs once even when the runtime is sourced twice' -Skip:(-not $script:HasBash) {
+        # shell-init registers the SAME block into both ~/.bashrc and
+        # ~/.bash_profile -- .bash_profile because macOS Terminal.app starts bash
+        # as a login shell and never reads .bashrc. The widespread convention is
+        # for .bash_profile to source .bashrc, so both fired: the palette was
+        # re-emitted and the style's whole ASCII banner printed twice on every
+        # new window.
+        #
+        # Driven through a real pty, because ts_load returns early in a
+        # non-interactive shell and that is the branch a piped bash takes.
+        # Note macOS ships bash 3.2, which requires long options BEFORE short
+        # ones -- `bash -i --init-file X` is a usage error there.
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $data = Join-Path $TestDrive 'data'
+        New-Item -ItemType Directory -Path $data -Force | Out-Null
+        Copy-Item (Join-Path $repoRoot 'styles/umbrella/prompt.sh') (Join-Path $data 'current-prompt.sh')
+        [System.IO.File]::WriteAllText((Join-Path $data 'current-style.osc'), '')
+
+        $rc = Join-Path $TestDrive 'rc.sh'
+        [System.IO.File]::WriteAllText($rc, @"
+export TSTYLES_DATA='$data'
+. '$repoRoot/shell/tstyles.sh'
+. '$repoRoot/shell/tstyles.sh'
+"@)
+        $wrapper = Join-Path $TestDrive 'w.sh'
+        [System.IO.File]::WriteAllText($wrapper, "#!/bin/sh`nexec bash --init-file '$rc' -i`n")
+        & chmod +x $wrapper
+
+        $log = Join-Path $TestDrive 'log'
+        'exit' | & script -q $log $wrapper *> $null
+        $text = [System.IO.File]::ReadAllText($log)
+        ([regex]::Matches($text, 'UMBRELLA CORP')).Count | Should -Be 1
+    }
+
+    It 'still says nothing at all in a non-interactive shell' -Skip:(-not $script:HasBash) {
+        # The guard sits AFTER the interactivity check on purpose: a
+        # non-interactive shell must stay silent (ssh host command, scp, rsync
+        # all break if startup writes to stdout) and must not set the flag in a
+        # way that would suppress a later interactive load.
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $out = script:Invoke-Shell -Shell 'bash' -Script @"
+export TSTYLES_DATA='$TestDrive'
+. '$repoRoot/shell/tstyles.sh'
+echo READY
+"@
+        $out.Trim() | Should -Be 'READY'
+    }
+
+    It 'sets the guard only after the interactivity check' {
+        $src = [System.IO.File]::ReadAllText($script:runtime, [System.Text.UTF8Encoding]::new($false))
+        $body = [regex]::Match($src, '(?s)ts_load\(\) \{.*?\n\}').Value
+        $body.IndexOf('case "$-"') | Should -BeLessThan $body.IndexOf('TS_LOADED=1')
+    }
+}
