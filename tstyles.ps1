@@ -294,15 +294,23 @@ function Get-StyleBundledBackground {
         foreach ($ext in 'gif','png','jpg','jpeg') {
             $url = "$remoteBase.$ext"
             $local = Join-Path $cacheDir "background.$ext"
+            # Same .part-then-rename as the picker's prefetch job, for the same
+            # reason: a file at $local is treated as a complete cache entry by
+            # every reader and nothing revalidates it. The catch below cleans up
+            # after a network error, but a Ctrl+C or a killed process never
+            # reaches it -- and that would strand a truncated image as this
+            # style's background for good.
+            $part = "$local.part"
             try {
-                Invoke-WebRequest -Uri $url -OutFile $local -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-                if ((Get-Item -LiteralPath $local -ErrorAction SilentlyContinue).Length -gt 0) {
+                Invoke-WebRequest -Uri $url -OutFile $part -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+                if ((Get-Item -LiteralPath $part -ErrorAction SilentlyContinue).Length -gt 0) {
+                    Move-Item -LiteralPath $part -Destination $local -Force
                     return $local
                 } else {
-                    Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue
+                    Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
                 }
             } catch {
-                if (Test-Path -LiteralPath $local) { Remove-Item -LiteralPath $local -Force -ErrorAction SilentlyContinue }
+                if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
                 if (-not (Test-HttpNotFound -ErrorRecord $_)) { $definitelyAbsent = $false }
             }
         }

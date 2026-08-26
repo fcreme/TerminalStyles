@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the synchronous background fetch could also strand a truncated image in the cache, the same way the picker's prefetch could before 0.8.11. Its `catch` cleans up after a network error, but a Ctrl+C or a killed process never reaches it -- and a file sitting at the cache path is treated as a complete entry by every reader, with nothing to revalidate it. Both paths now download to a `.part` and rename only once the transfer finished
+
 ## [0.8.11] - 2026-08-26
 
 ### Fixed

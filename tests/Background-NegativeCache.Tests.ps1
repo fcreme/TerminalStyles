@@ -222,3 +222,30 @@ Describe 'tstyles uninstall -DeleteData is reachable' {
         $fn | Should -Match 'Invoke-TerminalStylesUninstall\s+-DeleteData:\$DeleteData'
     }
 }
+
+Describe 'a fetch cannot leave a truncated cache entry' {
+    InModuleScope TerminalStyles {
+
+        It 'the synchronous fetch downloads to a .part and renames' {
+            # Every reader treats a file at the cache path as a complete entry
+            # and nothing revalidates it, so a partial write is permanent. The
+            # catch cleans up after a network error, but a Ctrl+C or killed
+            # process never reaches it. Matches the picker prefetch's approach.
+            $src = (Get-Command Get-StyleBundledBackground).ScriptBlock.ToString()
+            $src | Should -Match '\$part = "\$local\.part"'
+            $src | Should -Match '-OutFile \$part'
+            $src | Should -Match 'Move-Item -LiteralPath \$part -Destination \$local -Force'
+        }
+
+        It 'never writes the download straight to the cache path' {
+            $src = (Get-Command Get-StyleBundledBackground).ScriptBlock.ToString()
+            $src | Should -Not -Match '-OutFile \$local\b'
+        }
+
+        It 'still returns the final path, not the .part' {
+            $src = (Get-Command Get-StyleBundledBackground).ScriptBlock.ToString()
+            $src | Should -Match 'return \$local'
+            $src | Should -Not -Match 'return \$part'
+        }
+    }
+}
