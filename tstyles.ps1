@@ -423,7 +423,14 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
     if ($Arg -eq 'random')               { Invoke-RandomStyle -Target $Target -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow; return }
-    if ($Arg -eq 'reset')                { Reset-StyleDirect -Target $Target; return }
+    if ($Arg -eq 'reset')                {
+        # `tstyles reset Ubuntu` puts "Ubuntu" in $SubArg, the second positional.
+        # Reading only -Target meant the name was silently ignored and the
+        # AUTO-DETECTED profile was reset instead -- the wrong profile, with a
+        # success message. -Target still wins when both are given.
+        $resetTarget = if ($Target) { $Target } else { $SubArg }
+        Reset-StyleDirect -Target $resetTarget; return
+    }
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
@@ -1070,7 +1077,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('font', 'help', 'list', 'current', 'random', 'register', 'reset',
+    $subcommands = @('font', 'help', 'list', 'ls', 'current', 'random', 'register', 'reset',
                      'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`

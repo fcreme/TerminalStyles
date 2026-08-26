@@ -326,7 +326,12 @@ function Resolve-FontPackage {
         $archive = Join-Path $cacheDir 'download.bin'
         $prev = $ProgressPreference; $ProgressPreference = 'SilentlyContinue'
         try {
-            Invoke-WebRequest -Uri $Font.url -OutFile $archive -UseBasicParsing -ErrorAction Stop
+            # -TimeoutSec, like every other fetch in the project. A font
+            # archive is a few megabytes over a CDN; 120s is generous and still
+            # bounded, where unbounded means a stalled connection hangs
+            # `tstyles font` with no way to tell it from a slow link.
+            Invoke-WebRequest -Uri $Font.url -OutFile $archive -UseBasicParsing `
+                -TimeoutSec 120 -ErrorAction Stop
         } finally { $ProgressPreference = $prev }
     }
     if (-not (Test-Path -LiteralPath $archive) -or (Get-Item -LiteralPath $archive).Length -eq 0) {
@@ -343,7 +348,15 @@ function Resolve-FontPackage {
     New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
 
     # A direct .ttf/.otf download (no 'files') -- copy it through as-is.
-    $ext = [System.IO.Path]::GetExtension($archive).ToLowerInvariant()
+    #
+    # Keyed off the URL, not the local file. Downloads always land in
+    # 'download.bin', so taking the extension from $archive made this branch
+    # unreachable for anything fetched -- it could only ever fire for a caller
+    # that passed -DownloadPath, i.e. the tests. Every catalogue entry today is
+    # a .zip with a 'files' list, so nothing was broken; it was waiting for the
+    # first person to add a font published as a bare .ttf.
+    $extSource = if ($DownloadPath) { $DownloadPath } else { "$($Font.url)" }
+    $ext = [System.IO.Path]::GetExtension(($extSource -split '\?')[0]).ToLowerInvariant()
     if ((-not $Font.files -or @($Font.files).Count -eq 0) -and ($ext -in '.ttf','.otf','.ttc')) {
         $dest = Join-Path $extractDir (Split-Path -Leaf $Font.url)
         Copy-Item -LiteralPath $archive -Destination $dest -Force

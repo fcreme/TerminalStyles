@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`tstyles reset <profile>` reset the wrong profile.** The name landed in the second positional slot and the dispatcher read only `-Target`, so it was silently ignored and the auto-detected profile was reset instead -- with a success message. `-Target` still wins when both are given
+- `tstyles ls` worked but was offered nowhere: it is an accepted alias for `list` and was missing from tab-completion, so you only found it if you already knew it existed
+- the coding-font download had no timeout, unlike every other fetch in the project, so a stalled connection hung `tstyles font` with nothing to distinguish it from a slow link
+- adding a font published as a bare `.ttf` rather than a zip would not have worked. The direct-file branch took its extension from the local download name, which is always `download.bin`, so it could never fire for anything actually fetched. All six catalogue entries are zips, so nothing was broken today -- it was waiting for the first person to add one
+
 - the README told you the picker writes no `settings.json.bak`. It writes one before its first preview, so a crash mid-pick is recoverable -- the README would have talked you out of a recovery path that exists
 - the README pointed at `%LOCALAPPDATA%\TerminalStyles\styles\<name>\` for cached background images. That is the pre-0.2.0 location; they have been under `cache\<name>\` since. Anyone looking for their cache, or trying to clear it, was looking in the wrong place
 - the README described bundled GIFs as "committed binaries". They are deliberately not committed -- `.gitignore` blocks them and a test fails the build if one becomes tracked -- and live on the `gifs` branch, which the README says correctly three hundred lines earlier

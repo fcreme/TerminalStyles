@@ -148,3 +148,94 @@ Describe 'a broken current-style.ps1 does not dump a parser error into every tab
         $tail | Should -Match "tstyles reset"
     }
 }
+
+Describe 'tstyles reset honours a profile name given positionally' {
+    InModuleScope TerminalStyles {
+
+        It 'passes the positional name through as the target' {
+            # `tstyles reset Ubuntu` puts "Ubuntu" in $SubArg, the second
+            # positional. The dispatcher read only -Target, so the name was
+            # silently ignored and the AUTO-DETECTED profile was reset instead --
+            # the wrong profile, reported as a success.
+            Mock Reset-StyleDirect {}
+            Mock Show-UpdateNoticeIfAvailable {}
+            Invoke-TerminalStyle -Arg 'reset' -SubArg 'Ubuntu'
+            Should -Invoke Reset-StyleDirect -ParameterFilter { $Target -eq 'Ubuntu' } -Times 1 -Exactly
+        }
+
+        It 'lets an explicit -Target win over the positional' {
+            Mock Reset-StyleDirect {}
+            Mock Show-UpdateNoticeIfAvailable {}
+            Invoke-TerminalStyle -Arg 'reset' -SubArg 'Ubuntu' -Target 'PowerShell'
+            Should -Invoke Reset-StyleDirect -ParameterFilter { $Target -eq 'PowerShell' } -Times 1 -Exactly
+        }
+
+        It 'still auto-detects when neither is given' {
+            Mock Reset-StyleDirect {}
+            Mock Show-UpdateNoticeIfAvailable {}
+            Invoke-TerminalStyle -Arg 'reset'
+            Should -Invoke Reset-StyleDirect -ParameterFilter { -not $Target } -Times 1 -Exactly
+        }
+    }
+}
+
+Describe 'every dispatched subcommand is discoverable' {
+    InModuleScope TerminalStyles {
+
+        It "offers 'ls' in tab-completion, since it is dispatched" {
+            # `ls` has been an accepted alias for `list` while being absent from
+            # the completer -- so it worked only if you already knew it existed.
+            #
+            # The completer list is registered at TOP LEVEL, after
+            # Invoke-TerminalStyle ends, so it is not in that function's
+            # scriptblock. Read the file.
+            $repoRoot = Split-Path $PSScriptRoot -Parent
+            $file = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'tstyles.ps1'),
+                [System.Text.UTF8Encoding]::new($false))
+            (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString() | Should -Match "\`$Arg -eq 'ls'"
+            $completer = [regex]::Match($file, '(?s)\$subcommands = @\((.*?)\)').Value
+            $completer | Should -Not -BeNullOrEmpty
+            $completer | Should -Match "'ls'"
+        }
+    }
+}
+
+Describe 'the font download is bounded' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            # Put the module root back. An earlier Describe in this file points
+            # $script:TStylesModuleRoot at its TestDrive, and that assignment
+            # persists across Describe blocks -- so Get-FontCatalog went looking
+            # for fonts.json under a temp directory. Only one test file in the
+            # suite saves and restores these; the rest rely on the next file's
+            # Import-Module -Force, which does not help within a file.
+            $script:TStylesModuleRoot = Split-Path $PSScriptRoot -Parent
+        }
+
+        It 'passes a timeout, like every other fetch in the project' {
+            $src = (Get-Command Resolve-FontPackage).ScriptBlock.ToString()
+            $src | Should -Match '-TimeoutSec \d+'
+        }
+
+        It 'decides the direct-font case from the URL, not the local filename' {
+            # Downloads always land in 'download.bin', so taking the extension
+            # from the local path made the direct .ttf/.otf branch unreachable
+            # for anything actually fetched. Every catalogue entry today is a
+            # .zip, so nothing was broken -- it was waiting for the first font
+            # published as a bare .ttf.
+            $src = (Get-Command Resolve-FontPackage).ScriptBlock.ToString()
+            $src | Should -Match '\$extSource'
+            $src | Should -Not -Match 'GetExtension\(\$archive\)'
+        }
+
+        It 'still resolves a .zip catalogue entry to its listed files' {
+            # The change must not have cost the path all six shipped fonts use.
+            $catalog = @(Get-FontCatalog)
+            $catalog.Count | Should -BeGreaterThan 0
+            foreach ($f in $catalog) {
+                "$($f.url)" | Should -Match '\.zip$'
+                @($f.files).Count | Should -BeGreaterThan 0
+            }
+        }
+    }
+}
