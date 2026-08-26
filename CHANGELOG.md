@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.12] - 2026-08-26
+
 ### Fixed
 
 - **the picker garbled itself once the style list outgrew the window.** It redraws by parking the cursor at a fixed row and overwriting in place, which only works while the whole frame fits below that row -- draw more rows than the terminal has and it scrolls, the saved home row stops pointing at the top of the menu, and every later redraw lands in the wrong place. With 17 styles the frame is already 23 rows and a stock Terminal.app window is 24, so two more tuned styles was enough to break it. The list now scrolls within the window, keeping the selection visible and showing how many entries are hidden above and below
@@ -312,7 +314,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.11...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.12...HEAD
+[0.8.12]: https://github.com/fcreme/TerminalStyles/compare/v0.8.11...v0.8.12
 [0.8.11]: https://github.com/fcreme/TerminalStyles/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/fcreme/TerminalStyles/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/fcreme/TerminalStyles/compare/v0.8.8...v0.8.9

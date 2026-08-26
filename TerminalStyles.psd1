@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.11'
+    ModuleVersion     = '0.8.12'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.11: the picker could cache a truncated background image permanently. The prefetch job downloads each style''s image in the background and is killed the moment you pick -- but it wrote straight to the final cache path, so a half-finished transfer left a partial file exactly where every reader treats it as a valid cache hit, and nothing revalidates a file that exists. Downloads now land in a .part and are renamed only once complete. The picker also burned roughly 176 ms of work per second doing nothing on every terminal except Windows Terminal: its idle slice ran a filesystem probe per style about 20 times a second, then checked whether the result was wanted at all. And the update notice was printed a few lines before the picker cleared the screen, so it was wiped before it could be read while still costing the HTTP check. Also in this release: a login bash window printed the style''s banner twice and re-emitted its palette twice, because shell-init registers the same loader into both ~/.bashrc and ~/.bash_profile and the usual convention is for one to source the other; the loader now runs once per shell, with the guard set after the non-interactive check so ssh/scp/rsync stay silent.'
+            ReleaseNotes = 'v0.8.12: the picker garbled itself once the style list outgrew the terminal window. It redraws by parking the cursor at a fixed row and overwriting in place, which only works while the whole frame fits below that row -- draw more rows than the terminal has and it scrolls, the saved home row stops pointing at the top of the menu, and every later redraw lands in the wrong place. With 17 styles the frame is already 23 rows and a stock Terminal.app window is 24, so a couple of tuned styles was enough to break it. The list now scrolls within the window, keeping the selection visible and showing how many entries are hidden above and below. Also: the synchronous background fetch could strand a truncated image in the cache, the same way the picker''s prefetch could before 0.8.11 -- its error handling cleans up after a failed request, but a Ctrl+C or a killed process never reaches it, and a file sitting at the cache path is treated as a complete entry by every reader. Both paths now download to a temporary name and rename only once the transfer finished.'
         }
     }
 }
