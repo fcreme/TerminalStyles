@@ -151,3 +151,52 @@ Describe 'Save-TunedStyle same-directory detection' {
         [string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
     }
 }
+
+Describe 'the picker puts the terminal back when you cancel' {
+    # Esc is documented as "revert to exactly how it looked before". On Windows
+    # Terminal it restores settings.json byte-exactly and WT repaints from it.
+    # Off Windows Terminal the applied style exists ONLY as escape sequences in
+    # the tab, so emitting Get-OscResetPacket -- which hands control back to the
+    # terminal's OWN defaults -- dropped the user to a stock palette instead of
+    # the style they arrived with.
+
+    It 'revert re-emits the starting style off Windows Terminal' {
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $src | Should -Match '\$startIdx'
+        $src | Should -Match '\$hadCurrentStyle'
+        $src | Should -Match 'Get-SchemeOscPacket -Scheme \$schemes\[\$startIdx\]'
+    }
+
+    It 'captures the starting index before the cursor moves' {
+        # $idx is the live cursor and has moved by the time Esc arrives, so the
+        # revert cannot read it.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $src | Should -Match '\$startIdx\s*=\s*\$idx'
+        $src.IndexOf('$startIdx        = $idx') | Should -BeLessThan $src.IndexOf('Invoke-StylePickerLoop')
+    }
+
+    It 'still hands control back to the terminal when there was no active style' {
+        # Nothing to restore: the stock palette IS correct there.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $fn.Extent.Text | Should -Match 'Get-OscResetPacket'
+    }
+
+    It 'reverts on Ctrl+C or an exception, not only on Esc' {
+        # Anything that throws out of the loop skips the Escape branch, so the
+        # last previewed style stayed applied while only the cursor and title
+        # were put back.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $src = $fn.Extent.Text
+        $src | Should -Match '\$pickerState\.Reverted'
+        $src | Should -Match '-not \$pickerState\.Reverted -and \$restoreOriginalLook'
+    }
+
+    It 'tracks the revert in a reference type, not a plain bool' {
+        # A scriptblock assigning to a [bool] would land in its own child scope
+        # and the finally would never see it, so the revert would run twice.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $fn.Extent.Text | Should -Match '\$pickerState\s*=\s*@\{\s*Reverted\s*=\s*\$false\s*\}'
+    }
+}

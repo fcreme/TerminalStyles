@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **Esc in the picker did not put your colors back on any terminal except Windows Terminal.** It emitted the OSC reset, which hands color control to the *terminal's own* defaults -- correct on Windows Terminal, where settings.json has just been restored byte-exactly and WT repaints from it, but wrong everywhere else, where the style you arrived with was itself only escape sequences. Cancelling dropped you to a stock palette rather than back to your style. It now re-emits the style you started with, and still resets when there genuinely was no active style
+- Ctrl+C, or any error inside the picker, left the last previewed style applied. The cleanup restored the cursor and the window title and nothing else, so on Windows Terminal settings.json kept the preview and elsewhere the preview palette stayed painted. Cancelling by any route now reverts
+- `tstyles list`, `tstyles current` and every other read-only subcommand reprinted the whole style banner when run from zsh or bash. The shell wrapper re-sourced the staged prompt after any command that exited 0; the comment above it claimed the exit code prevented exactly that, which it never did. It now re-sources only when the staged prompt actually changed
+- every `tstyles` command run from zsh or bash first repainted the terminal with the *currently applied* style and printed its banner, because the generated `tstyles-cli.ps1` imported the module normally and that import re-emits the active style. The shim now suppresses the shell-startup path
+- a `%` in a git branch name corrupted the zsh prompt: zsh re-scans command-substitution output for prompt escapes, so a branch called `100%done` rendered as `100`, then the **current directory** (`%d`), then `one` -- and a branch containing `%(` swallowed the rest of the prompt as an unterminated ternary
+- the git-branch segment printed its own color escapes as literal `\[\033[38;2;...m\]` text in bash. bash decodes PS1 backslash escapes once, when it parses the prompt, and only then performs command substitution -- so colors produced inside `$(...)` arrive too late to be decoded. There is now a substitution-safe colour helper that emits the bytes bash would have decoded to
+- an apostrophe anywhere in the module path produced a `tstyles-cli.ps1` that could not parse -- the path was interpolated into a single-quoted string with no escaping -- so every `tstyles` call from zsh died on a syntax error while the staging step reported success
+- **`tstyles uninstall` never undid `tstyles shell-init`.** It stripped only the PowerShell `$PROFILE` loader, so afterwards every new zsh/bash tab still repainted the palette, set the window title, printed the banner and took over the prompt. The documented way back was already dead by then: uninstall deletes `TerminalStyles.psd1`, which is the exact path baked into the generated shim, so the shell's own `tstyles` could no longer load the module and hand-editing `~/.zshrc` was the only recovery. Uninstall now strips the shell loader and clears the staged state, and counts `terminals.ps1` and the shell runtime as install-managed -- leaving those behind kept an "uninstalled" copy fully working
+- one unwritable rc file took down the whole of `shell-init` / `shell-remove` with a raw .NET exception, after some files had already been written and before anything was reported. Each file now fails on its own and is reported as `failed`
+
 ## [0.8.8] - 2026-08-25
 
 ### Fixed

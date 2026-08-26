@@ -22,7 +22,7 @@ pYellow=$(ts_c '155;150;29')
 ts_title 'GITBASH // MINGW64'
 
 # Colors for the " (branch)" segment ts_git_branch appends.
-TS_GIT_OPEN=$pMagenta
-TS_GIT_CLOSE=$pX
+TS_GIT_OPEN=$(ts_cs '187;0;187')   # same magenta as pMagenta, but substitution-safe
+TS_GIT_CLOSE=$(ts_xs)
 
 ts_prompt_apply "$(ts_prompt_expand "${pGreen}{USER}@{HOST}${pX} ${pYellow}MINGW64${pX} ${pCyan}{CWD}${pX}{GITBRANCH}{NL}${pGray}\$${pX} ")"

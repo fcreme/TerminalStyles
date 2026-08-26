@@ -1514,10 +1514,14 @@ function Invoke-TerminalStylesUninstall {
             }
         }
         'Bootstrap' {
+            # terminals.ps1 and shell/ were missing: tstyles.ps1 dot-sources
+            # terminals.ps1, and the staged shell runtime is what an orphaned rc
+            # block loads. Leaving them behind kept a "removed" install working.
             $installManagedItems = @(
-                'tstyles.ps1', 'apply.ps1', 'install.ps1',
+                'tstyles.ps1', 'terminals.ps1', 'apply.ps1', 'install.ps1',
                 'TerminalStyles.psd1', 'TerminalStyles.psm1',
-                'styles', 'scripts',
+                'styles', 'scripts', 'shell', 'fonts.json',
+                'tstyles.sh', 'tstyles-cli.ps1',
                 'README.md', 'LICENSE'
             )
             foreach ($item in $installManagedItems) {
@@ -1530,7 +1534,29 @@ function Invoke-TerminalStylesUninstall {
         }
     }
 
-    # 2. Strip the loader from both PowerShell engines' $PROFILE
+    # 2. Strip the zsh/bash loader too, and clear what it reads.
+    #
+    # Uninstall used to remove only the PowerShell $PROFILE loader, so after it
+    # every new zsh/bash tab still repainted the palette, set the window title,
+    # printed the style's banner and took over the prompt -- the shell side was
+    # untouched. Worse, the documented way back (`tstyles shell-remove`) was
+    # already dead by then: step 1 deletes TerminalStyles.psd1, which is the
+    # exact path baked into the generated tstyles-cli.ps1, so the shell's own
+    # `tstyles` command could no longer load the module. That left hand-editing
+    # ~/.zshrc as the only recovery.
+    $shellRemoved = 0
+    foreach ($c in (Get-ShellRcCandidate)) {
+        if (Unregister-ShellLoader -Path $c.Path) {
+            Write-Host "  Removed shell loader from $($c.Path)" -ForegroundColor Green
+            $shellRemoved++
+        }
+    }
+    Clear-ShellStyleState
+    if ($shellRemoved) {
+        Write-Host "  Open a new zsh/bash tab to get your original prompt back." -ForegroundColor Gray
+    }
+
+    # 3. Strip the loader from both PowerShell engines' $PROFILE
     foreach ($exe in (Get-PowerShellEngineCandidate).Exe) {
         $cmd = Get-Command -Name $exe -ErrorAction SilentlyContinue
         if (-not $cmd) { continue }
@@ -1547,7 +1573,7 @@ function Invoke-TerminalStylesUninstall {
         }
     }
 
-    # 3. Optionally remove user state
+    # 4. Optionally remove user state
     if ($DeleteData) {
         if (Test-Path -LiteralPath $dataDir) {
             Remove-Item -LiteralPath $dataDir -Recurse -Force
@@ -3410,6 +3436,20 @@ function Invoke-TerminalStyle {
     }
     $confirmed = $false
 
+    # What "revert" has to put back. On Windows Terminal it is the byte-exact
+    # settings.json, which WT repaints from on its own. Off Windows Terminal the
+    # applied style exists ONLY as escape sequences in this tab, so there is
+    # nothing to repaint from -- reverting has to re-emit the style the user
+    # arrived with, and only when there was one. $startIdx is captured here
+    # because $idx is the live cursor and has moved by the time Esc arrives.
+    $startIdx        = $idx
+    $hadCurrentStyle = [bool]$currentName
+    # A hashtable, not a [bool]: the revert runs inside a scriptblock, and a
+    # plain assignment there would land in the scriptblock's own child scope and
+    # never be seen out here. The finally block needs to know whether the revert
+    # already happened.
+    $pickerState     = @{ Reverted = $false }
+
     # Pre-load each style's color swatch AND the parsed scheme object.
     # Schemes are reused per-arrow to emit OSC color escapes (see the
     # render loop below) so the terminal repaints colors in <5ms, well
@@ -3661,12 +3701,25 @@ function Invoke-TerminalStyle {
         # settings.json write is $applyTheme, passed as -OnPreview.
         $onRetint = { param($i) [Console]::Out.Write($oscPackets[$i]) }
 
-        # Esc: restore the byte-exact original settings.json and clear the live
+        # Esc: restore the byte-exact original settings.json and undo the live
         # OSC retint so the cancelled preview's colors don't linger.
-        $onRevert = {
+        #
+        # Get-OscResetPacket hands color control back to the terminal's OWN
+        # defaults, which is right on Windows Terminal -- settings.json has just
+        # been restored and WT repaints from it. Off Windows Terminal there is no
+        # such file: the style the user arrived with was itself only escape
+        # sequences, so resetting drops them to the terminal's stock palette
+        # rather than back to their style. Re-emit it instead.
+        $restoreOriginalLook = {
             & $writeSettings $originalJson
-            [Console]::Out.Write((Get-OscResetPacket))
+            if (-not $useSettingsFile -and $hadCurrentStyle -and $schemes.ContainsKey($startIdx)) {
+                Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$startIdx]) | Out-Null
+            } else {
+                [Console]::Out.Write((Get-OscResetPacket))
+            }
+            $pickerState.Reverted = $true
         }
+        $onRevert = $restoreOriginalLook
 
         # Idle slice: prebuild the next uncached resolved theme's merged JSON,
         # else sleep briefly. (Verbatim from the old idle branch.)
@@ -3791,6 +3844,16 @@ function Invoke-TerminalStyle {
         # the user didn't confirm.
         if (-not $confirmed) {
             $Host.UI.RawUI.WindowTitle = $originalTitle
+
+            # Ctrl+C, or anything that throws out of the loop, skips the Escape
+            # branch entirely -- so the last previewed style stayed applied,
+            # with settings.json still holding the preview on Windows Terminal
+            # and the preview palette still painted everywhere else. Only the
+            # cursor and the title were ever put back. Revert here too, unless
+            # Escape already did it.
+            if (-not $pickerState.Reverted -and $restoreOriginalLook) {
+                try { & $restoreOriginalLook } catch { }
+            }
         }
         # Clean up the background prefetch job. If it's still mid-fetch
         # (user picked quickly), the downloads in progress may be cut off

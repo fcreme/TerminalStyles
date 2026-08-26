@@ -57,6 +57,23 @@ else
     ts_x() { printf '\\[\\033[0m\\]'; }
 fi
 
+# ts_cs / ts_xs -- the same colors, but safe INSIDE a command substitution that
+# the prompt re-evaluates every time (ts_git_branch).
+#
+# bash decodes the backslash escapes in PS1 once, when it parses the prompt, and
+# only then performs command substitution -- so a `\[` or `\033` produced by
+# ts_c at that point arrives too late to be decoded and prints as literal text.
+# What bash accepts post-expansion is the raw bytes it would have decoded to:
+# \001 and \002 around a real ESC. zsh re-scans substitution output for prompt
+# escapes under PROMPT_SUBST, so there %{...%} still works and these match ts_c.
+if [ "$TS_SHELL" = 'zsh' ]; then
+    ts_cs() { printf '%%{\033[38;2;%sm%%}' "$1"; }
+    ts_xs() { printf '%%{\033[0m%%}'; }
+else
+    ts_cs() { printf '\001\033[38;2;%sm\002' "$1"; }
+    ts_xs() { printf '\001\033[0m\002'; }
+fi
+
 # ts_raw <r;g;b> / ts_rawx -- unwrapped, for banner text printed with printf.
 # A banner is ordinary output, not part of the prompt, so it must NOT carry the
 # non-printing markers (they would show up literally).
@@ -108,6 +125,18 @@ ts_git_branch() {
     # a non-repo directory prints nothing rather than a git error.
     _ts_b=$(git rev-parse --abbrev-ref HEAD 2>/dev/null) || return 0
     [ -n "$_ts_b" ] || return 0
+
+    # zsh re-scans this output for prompt escapes under PROMPT_SUBST, and git
+    # permits '%' in a branch name -- so a branch called 100%done rendered as
+    # "100", the CURRENT DIRECTORY (%d), then "one", and a '%(' swallowed the
+    # rest of the prompt as a malformed ternary. Doubling makes each '%'
+    # literal. bash does no such re-scan, so it is left alone there.
+    if [ "$TS_SHELL" = 'zsh' ]; then
+        # The backslash matters: an unescaped % is a zsh glob pattern and
+        # ${b//%/%%} appends rather than replaces (verified: 100%done ->
+        # 100%done%%). ${b//\%/%%} is correct in both zsh and bash.
+        _ts_b="${_ts_b//\%/%%}"
+    fi
     printf ' %s(%s)%s' "$TS_GIT_OPEN" "$_ts_b" "$TS_GIT_CLOSE"
 }
 
@@ -173,14 +202,42 @@ tstyles() {
         return 1
     fi
 
+    # Fingerprint the staged prompt before the call so we can tell an apply
+    # (which rewrites it) from a read-only subcommand (which does not).
+    _ts_before=''
+    if [ -r "$TSTYLES_DATA/current-prompt.sh" ]; then
+        if command -v shasum >/dev/null 2>&1; then
+            _ts_before=$(shasum "$TSTYLES_DATA/current-prompt.sh" 2>/dev/null)
+        elif command -v md5sum >/dev/null 2>&1; then
+            _ts_before=$(md5sum "$TSTYLES_DATA/current-prompt.sh" 2>/dev/null)
+        fi
+    fi
+
     "$_ts_exe" -NoProfile -File "$TSTYLES_DATA/tstyles-cli.ps1" "$@"
     _ts_rc=$?
 
-    # Re-apply the staged prompt in this shell. Only on success: a failed or
-    # unrecognized command has not changed the staged state, and re-sourcing
-    # would just repeat the previous style's banner.
+    # Re-apply the staged prompt in this shell, so `tstyles eva` recolors the
+    # window AND swaps the prompt without waiting for a new tab.
+    #
+    # Gated on the staged prompt actually CHANGING, not merely on exit code 0.
+    # Every read-only subcommand -- list, current, help, font with no argument --
+    # also exits 0, and re-sourcing reprints the style's whole ASCII banner. So
+    # `tstyles list` painted a banner above the listing every single time. The
+    # comment here used to say that was what the exit-code check prevented; it
+    # never did.
     if [ $_ts_rc -eq 0 ] && [ -r "$TSTYLES_DATA/current-prompt.sh" ]; then
-        . "$TSTYLES_DATA/current-prompt.sh"
+        _ts_after=''
+        if command -v shasum >/dev/null 2>&1; then
+            _ts_after=$(shasum "$TSTYLES_DATA/current-prompt.sh" 2>/dev/null)
+        elif command -v md5sum >/dev/null 2>&1; then
+            _ts_after=$(md5sum "$TSTYLES_DATA/current-prompt.sh" 2>/dev/null)
+        fi
+        # No hashing tool: fall back to the old behaviour rather than never
+        # re-sourcing, since a missed prompt swap is worse than a stray banner.
+        if [ -z "$_ts_before" ] || [ -z "$_ts_after" ] || [ "$_ts_before" != "$_ts_after" ]; then
+            . "$TSTYLES_DATA/current-prompt.sh"
+        fi
+        unset _ts_before _ts_after
     fi
     return $_ts_rc
 }
