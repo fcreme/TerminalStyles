@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the picker garbled itself once the style list outgrew the window.** It redraws by parking the cursor at a fixed row and overwriting in place, which only works while the whole frame fits below that row -- draw more rows than the terminal has and it scrolls, the saved home row stops pointing at the top of the menu, and every later redraw lands in the wrong place. With 17 styles the frame is already 23 rows and a stock Terminal.app window is 24, so two more tuned styles was enough to break it. The list now scrolls within the window, keeping the selection visible and showing how many entries are hidden above and below
+
 - the synchronous background fetch could also strand a truncated image in the cache, the same way the picker's prefetch could before 0.8.11. Its `catch` cleans up after a network error, but a Ctrl+C or a killed process never reaches it -- and a file sitting at the cache path is treated as a complete entry by every reader, with nothing to revalidate it. Both paths now download to a `.part` and rename only once the transfer finished
 
 ## [0.8.11] - 2026-08-26

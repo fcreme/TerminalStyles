@@ -3156,6 +3156,40 @@ function Reset-StyleDirect {
     Write-Host ""
 }
 
+function Get-PickerViewport {
+    # Which slice of the style list to draw, so the menu always fits the window.
+    #
+    # The picker redraws by parking the cursor at a fixed row and overwriting in
+    # place. That only works while the whole frame fits below that row: draw more
+    # rows than the terminal has and it scrolls, the saved home row no longer
+    # points at the top of the menu, and every later redraw lands in the wrong
+    # place and garbles. With 17 styles the frame is already 23 rows in a 24-row
+    # window -- two more user styles and it breaks.
+    #
+    # Returns @{ First = <index>; Count = <how many>; More = <bool> }, keeping the
+    # selection visible and the window stable while arrowing through the middle.
+    # Pure, so the arithmetic is testable without a terminal.
+    param(
+        [Parameter(Mandatory)][int]$Total,
+        [Parameter(Mandatory)][int]$Selected,
+        [Parameter(Mandatory)][int]$Available
+    )
+
+    if ($Total -le 0) { return @{ First = 0; Count = 0; More = $false } }
+
+    # At least one row, even in an absurdly short window: a picker showing
+    # nothing is worse than one showing a single entry.
+    $visible = [Math]::Max(1, [Math]::Min($Total, $Available))
+    if ($visible -ge $Total) { return @{ First = 0; Count = $Total; More = $false } }
+
+    # Centre the selection, then clamp so the window never runs off either end.
+    $first = $Selected - [int][Math]::Floor($visible / 2)
+    if ($first -lt 0) { $first = 0 }
+    if ($first + $visible -gt $Total) { $first = $Total - $visible }
+
+    return @{ First = $first; Count = $visible; More = $true }
+}
+
 function Invoke-StylePickerLoop {
     # The interactive picker's selection loop, with all I/O / rendering / input
     # injected as seams so it can be driven by tests. Owns ONLY the highlight
@@ -3728,7 +3762,35 @@ function Invoke-TerminalStyle {
             Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
             Write-Host "$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
             Write-Host ""
-            for ($i = 0; $i -lt $styles.Count; $i++) {
+            # Rows the frame spends on anything that is not a style: the leading
+            # blank, the header line, the two hint lines, the two always-present
+            # scroll indicators, the trailing blank, and one spare so the shell's
+            # own prompt has somewhere to land.
+            $chrome = 8
+            # A non-positive WindowHeight means "I don't know", not "no room".
+            # It reads as 0 under a pty whose size was never set -- some CI
+            # runners, some SSH sessions before the first SIGWINCH -- and
+            # subtracting the chrome from that would collapse the menu to a
+            # single row, which is far worse than the unbounded frame this
+            # viewport exists to prevent. Fall back to the old behaviour of
+            # drawing everything, which was fine for years.
+            $available = $styles.Count
+            try {
+                $wh = [Console]::WindowHeight
+                if ($wh -gt 0) { $available = $wh - $chrome }
+            } catch { }
+            $vp = Get-PickerViewport -Total $styles.Count -Selected $idx -Available $available
+            # Both indicator rows are ALWAYS emitted, blank when there is
+            # nothing to report. The frame is overwritten in place rather than
+            # cleared, so its height has to be identical every redraw -- a row
+            # that comes and goes would leave the taller frame's last line
+            # stranded on screen.
+            if ($vp.More -and $vp.First -gt 0) {
+                Write-Host "$hintColor     ... $($vp.First) more above$resetColor"
+            } else {
+                Write-Host ""
+            }
+            for ($i = $vp.First; $i -lt ($vp.First + $vp.Count); $i++) {
                 $name = $styles[$i].Name
                 # "Resolved" means the style's background image is on disk. That
                 # only gates the swatch when a background can actually be shown;
@@ -3744,6 +3806,12 @@ function Invoke-TerminalStyle {
                 } else {
                     Write-Host "$hintColor...fetching background$resetColor"
                 }
+            }
+            $below = $styles.Count - ($vp.First + $vp.Count)
+            if ($vp.More -and $below -gt 0) {
+                Write-Host "$hintColor     ... $below more below$resetColor"
+            } else {
+                Write-Host ""
             }
             Write-Host ""
         }
