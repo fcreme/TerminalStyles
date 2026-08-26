@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.10'
+    ModuleVersion     = '0.8.11'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.10: "tstyles tune" could destroy a style you had already saved. Choosing "Save as a new name" and typing the name of an existing user style replaced it with no warning, while the harmless collision -- a name matching a BUNDLED style, which is only shadowed and comes back when the shadow is deleted -- did warn. Both are checked now and the destructive one says so. The tuner''s font-face knob also cycled through the LETTERS of a font name on a machine with exactly one monospace font installed, and saved a one-character font face: PowerShell unrolls an array on the way to the output stream, so a single-element list reached the caller as a string and was indexed per character. Also: "tstyles random" accepted -Target, -KeepPrompt and -NewWindow and forwarded none of them, so "tstyles random -KeepPrompt" replaced the prompt it had just promised to keep; one malformed style stopped "tstyles list" dead, hiding every style after it, and now costs only its own row; and a current-style.ps1 that will not parse printed a full ParserError into every new shell tab instead of one warning naming "tstyles reset". Documentation: the README''s style-folder listing now mentions prompt.sh, without which a zsh or bash tab gets the colors and none of the prompt or banner.'
+            ReleaseNotes = 'v0.8.11: the picker could cache a truncated background image permanently. The prefetch job downloads each style''s image in the background and is killed the moment you pick -- but it wrote straight to the final cache path, so a half-finished transfer left a partial file exactly where every reader treats it as a valid cache hit, and nothing revalidates a file that exists. Downloads now land in a .part and are renamed only once complete. The picker also burned roughly 176 ms of work per second doing nothing on every terminal except Windows Terminal: its idle slice ran a filesystem probe per style about 20 times a second, then checked whether the result was wanted at all. And the update notice was printed a few lines before the picker cleared the screen, so it was wiped before it could be read while still costing the HTTP check. Also in this release: a login bash window printed the style''s banner twice and re-emitted its palette twice, because shell-init registers the same loader into both ~/.bashrc and ~/.bash_profile and the usual convention is for one to source the other; the loader now runs once per shell, with the guard set after the non-interactive check so ssh/scp/rsync stay silent.'
         }
     }
 }

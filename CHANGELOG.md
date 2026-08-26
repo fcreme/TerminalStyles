@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.11] - 2026-08-26
+
 ### Fixed
 
 - **the picker could cache a truncated background image permanently.** The prefetch job downloads each style's image in the background and is killed with `Stop-Job` the moment you pick -- but it wrote straight to the final cache path, so a half-finished transfer left a partial file exactly where every reader treats it as a valid cache hit. Nothing revalidates a file that exists, so that style kept a corrupt background for good. Downloads now land in a `.part` and are renamed only once complete, which is what the code's own comment already claimed happened
@@ -304,7 +306,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.10...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.11...HEAD
+[0.8.11]: https://github.com/fcreme/TerminalStyles/compare/v0.8.10...v0.8.11
 [0.8.10]: https://github.com/fcreme/TerminalStyles/compare/v0.8.9...v0.8.10
 [0.8.9]: https://github.com/fcreme/TerminalStyles/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/fcreme/TerminalStyles/compare/v0.8.7...v0.8.8
