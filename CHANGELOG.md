@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.9] - 2026-08-26
+
 ### Fixed
 
 - **Esc in the picker did not put your colors back on any terminal except Windows Terminal.** It emitted the OSC reset, which hands color control to the *terminal's own* defaults -- correct on Windows Terminal, where settings.json has just been restored byte-exactly and WT repaints from it, but wrong everywhere else, where the style you arrived with was itself only escape sequences. Cancelling dropped you to a stock palette rather than back to your style. It now re-emits the style you started with, and still resets when there genuinely was no active style
@@ -280,7 +282,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.8...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.9...HEAD
+[0.8.9]: https://github.com/fcreme/TerminalStyles/compare/v0.8.8...v0.8.9
 [0.8.8]: https://github.com/fcreme/TerminalStyles/compare/v0.8.7...v0.8.8
 [0.8.7]: https://github.com/fcreme/TerminalStyles/compare/v0.8.6...v0.8.7
 [0.8.6]: https://github.com/fcreme/TerminalStyles/compare/v0.8.5...v0.8.6
