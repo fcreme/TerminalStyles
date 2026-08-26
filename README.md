@@ -1,3 +1,5 @@
+
+
 # TerminalStyles
 
 [![Tests](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg)](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml)
@@ -600,7 +602,7 @@ with:
 ├── scheme.json        # Windows Terminal color scheme (required)
 ├── theme.json         # profile-level overrides (optional)
 ├── profile.ps1        # custom pwsh $PROFILE (optional)
-├── background.gif     # default background image (optional, .png/.jpg also accepted)
+├── background.gif     # default background image (optional, .png/.jpg/.jpeg also accepted)
 └── README.md          # description (optional)
 ```
 
