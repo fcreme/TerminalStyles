@@ -18,6 +18,7 @@ banner that reads like a save-room readout.
   - History-based inline predictions
   - Tab title set to `UMBRELLA TERMINAL`
 
+- **prompt.sh** — the same prompt and banner for zsh and bash.
 ## Best paired with
 
 A dark, slow Resident-Evil-style GIF (RE2/RE4 remake scenes work well).

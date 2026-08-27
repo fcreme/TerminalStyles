@@ -15,6 +15,7 @@ shell startup is silent. The opposite of umbrella.
 - **profile.ps1** — title `SOBER`, no banner, single-line prompt:
   `<leaf-dir> $ ` with the `$` in muted teal. PSReadLine syntax stays
   grayscale.
+- **prompt.sh** — the same single-line prompt for zsh and bash.
 - **background.png** — 256×256 solid `#0a0a0a` (the same color as the
   Not in this folder: background images live flat-named on the
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are

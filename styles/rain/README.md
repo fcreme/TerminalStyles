@@ -21,6 +21,7 @@ in spirit to a Ghibli / Miyazaki rainscape than a sci-fi terminal.
   - PSReadLine syntax colors tuned to the palette (no screaming reds)
   - History-based inline predictions
   - Tab title set to `RAIN // HIGHLAND`
+- **prompt.sh** — the same prompt and banner for zsh and bash.
 - **background.gif** — the bundled highland-castle storm loop.
   Not in this folder: background images live flat-named on the
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are

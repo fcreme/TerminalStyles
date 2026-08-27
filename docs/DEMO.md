@@ -203,8 +203,17 @@ Small and fully reversible, listed so you can audit it:
   `-KeepUserStyles` to skip it.
 - **Runs `tstyles reset`**, the same command a user would.
 
-It does not modify the module, write to Windows Terminal's `settings.json`, or
-touch anything outside the data root.
+It does not modify the module.
+
+On **Windows Terminal** it does write `settings.json` — `tstyles reset` and the
+picker previews go through the same code path a normal `tstyles` run does, so
+prep, the take, and `-Restore` each touch it. That is the point (the demo is the
+real tool, not a mock), but it means `settings.json` is not covered by the
+snapshot above: the protection there is the rolling `settings.json.bak` the
+module writes for any user, not anything demo-specific.
+
+Off Windows Terminal — Terminal.app, VS Code, kitty, plain pwsh — there is no
+`settings.json` to write, and the demo touches nothing outside the data root.
 
 ## If a take goes wrong
 

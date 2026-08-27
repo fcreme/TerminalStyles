@@ -17,6 +17,7 @@ directly from Asuka / Unit-02 stills.
   - PSReadLine syntax colors tuned to the palette
   - History-based inline predictions
   - Tab title set to `EVA // NERV`
+- **prompt.sh** — the same prompt and banner for zsh and bash.
 - **background.gif** — the bundled body-scan loop (3.0 MB).
   Not in this folder: background images live flat-named on the
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are

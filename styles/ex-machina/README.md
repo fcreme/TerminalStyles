@@ -19,6 +19,7 @@ sessions. Pale cyan default text on near-black, vintage cursor.
   - PSReadLine syntax colors tuned to the palette
   - History-based inline predictions
   - Tab title set to `EX MACHINA // BLUEBOOK`
+- **prompt.sh** — the same prompt and banner for zsh and bash.
 - **background.gif** — the body-scan loop bundled with the style; auto
   Not in this folder: background images live flat-named on the
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are

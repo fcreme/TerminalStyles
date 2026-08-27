@@ -12,7 +12,7 @@ cinematic dark themes.
 
 - **scheme.json** — Git Bash / MinTTY defaults: white background,
   near-black text, the classic 16-color ANSI palette
-  (`#A31515` reds, `#008000` greens, `#A6A000` yellows, `#0000BB`
+  (`#A31515` reds, `#008000` greens, `#9B961D` yellows, `#0000BB`
   blues, `#BB00BB` magentas, `#007777` cyans).
 - **theme.json** — bar cursor, Cascadia Code regular, padding 10,
   opacity 100, full-screen solid-white bundled PNG so picking gitbash
@@ -25,6 +25,7 @@ cinematic dark themes.
   - PSReadLine syntax colors tuned for a light background.
   - Tab title set to `GITBASH // MINGW64`.
   - **No startup banner** — Git Bash itself is silent.
+- **prompt.sh** — the same two-line MINGW64 prompt for zsh and bash.
 - **background.png** — 256×256 solid `#FFFFFF` so the previous theme's
   Not in this folder: background images live flat-named on the
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are

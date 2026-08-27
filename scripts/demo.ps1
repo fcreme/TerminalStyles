@@ -254,12 +254,37 @@ function Restore-UserStyles {
             Remove-Item -LiteralPath $UserStyles -Recurse -Force
         } else {
             # Someone tuned a new style mid-session. Merge rather than clobber.
+            #
+            # The parked tree is the ONLY copy -- Hide-UserStyles moved it, it was
+            # never copied -- so a name collision must never be resolved by
+            # deleting the parked side. It used to skip the colliding style and
+            # then Remove-Item -Recurse -Force the whole parked directory, which
+            # destroyed the user's original with no backup and no warning, under
+            # a comment saying it merged rather than clobbered.
+            #
+            # The collision is not exotic: tune's default save is "[1] Overwrite
+            # '<name>' (shadows the bundled style)", so a user style named after
+            # a bundled one is the ordinary shape -- and tune's own overwrite
+            # warning cannot fire mid-demo, because it probes the live user dir
+            # that prep just emptied.
+            $kept = @()
             foreach ($d in @(Get-ChildItem -LiteralPath $ParkedDir -Directory)) {
                 $dst = Join-Path $UserStyles $d.Name
-                if (-not (Test-Path -LiteralPath $dst)) { Move-Item -LiteralPath $d.FullName -Destination $dst }
+                if (Test-Path -LiteralPath $dst) { $kept += $d.Name; continue }
+                Move-Item -LiteralPath $d.FullName -Destination $dst
             }
-            Remove-Item -LiteralPath $ParkedDir -Recurse -Force
-            Write-Good "Personal styles restored (merged)."
+            if ($kept.Count -eq 0) {
+                Remove-Item -LiteralPath $ParkedDir -Recurse -Force
+                Write-Good "Personal styles restored (merged)."
+            } else {
+                # Deliberately left on disk. Two styles claim one name and only
+                # the user knows which to keep; the demo's job is to stop, not to
+                # choose.
+                Write-Warn ("Kept the parked copy of: " + ($kept -join ', '))
+                Write-Warn "A style of the same name was created during the demo, so these were NOT restored."
+                Write-Warn "Both copies survive -- yours is at: $ParkedDir"
+                Write-Warn "Merge or delete it by hand, then this script will stop mentioning it."
+            }
             return
         }
     }
@@ -667,12 +692,19 @@ if ($Record) {
     }
 }
 
-$names = Invoke-Prep
-if ($Prep) {
-    Write-Host ""
-    Write-Good "Prepped. Run the picker yourself, or re-run with -Mode Auto."
-    Write-Host ""
-    return
-}
+# Main flow. Guarded so tests can dot-source this script for its functions
+# (set $TStylesDemoNoRun = $true) without running the demo -- which parks the
+# maintainer's real styles and takes over the terminal. Mirrors
+# $TStylesInstallNoRun in install.ps1 and $TStylesApplyNoRun in apply.ps1. A
+# normal run never sets the var, so main runs.
+if (-not $TStylesDemoNoRun) {
+    $names = Invoke-Prep
+    if ($Prep) {
+        Write-Host ""
+        Write-Good "Prepped. Run the picker yourself, or re-run with -Mode Auto."
+        Write-Host ""
+        return
+    }
 
-if ($Mode -eq 'Auto') { Invoke-Auto -Names $names } else { Invoke-Guided -Names $names }
+    if ($Mode -eq 'Auto') { Invoke-Auto -Names $names } else { Invoke-Guided -Names $names }
+}

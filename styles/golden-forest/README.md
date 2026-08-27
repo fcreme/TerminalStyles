@@ -11,8 +11,15 @@ and grounded.
 - **theme.json** — filledBox cursor, opaque background, GIF stretched
   `uniformToFill`, anchored top-left, 55% opacity (slightly stronger
   presence than umbrella/kitty).
+- **profile.ps1** — sets the tab title to `GOLDEN FOREST`, resets the pwsh
+  prompt to a plain `PS <path> `, and pins PSReadLine's syntax colors to the
+  golden-forest palette so the previous theme's colors do not bleed through
+  after a live `tstyles` switch.
+- **prompt.sh** — the same, for zsh and bash.
 
-No `profile.ps1` — purely visual.
+This style keeps no custom prompt *shape* — it deliberately restores the stock
+one — but it does replace whatever prompt was active, so `tstyles golden-forest
+-KeepPrompt` is the flag to reach for if you have your own.
 
 ## Best paired with
 
