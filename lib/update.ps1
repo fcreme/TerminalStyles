@@ -311,7 +311,7 @@ function Get-UninstallPlan {
     'styles' and removed the whole tree -- but bundled themes sit BESIDE the
     user's own there, so a plain `tstyles uninstall` destroyed every style the
     user had authored or tuned, one line after printing "PRESERVE user state".
-    The same list also named only 14 of the ~20 entries the bootstrap extracts,
+    The same list also named only 13 of the 21 entries the bootstrap extracts,
     leaving CHANGELOG.md, CONTRIBUTING.md, docs/, tests/ and .github/ behind.
 
     .OUTPUTS

@@ -317,6 +317,21 @@ Describe 'the install panel names the engines it actually registered' {
         $label | Should -BeIn @(Get-PowerShellEngineCandidate | ForEach-Object { $_.Label }) `
             -Because 'the running engine must be one of the ones this script probes for'
 
+        # For EVERY platform, not just this one. The first version of this test
+        # asked only about the default platform, which on macOS/Linux does list
+        # 'PowerShell 7 (preview)' -- so it passed while the answer was wrong on
+        # Windows, where the probe looks for pwsh.exe / powershell.exe and a
+        # 7-preview build installs AS pwsh.exe. Returning a label absent from the
+        # platform's list makes Write-InstallPanel's subtraction a no-op, and the
+        # panel then tells the user to open a new tab for the engine they are
+        # already in -- the same defect this function exists to fix, on the
+        # platform this suite cannot run on.
+        foreach ($platform in 'Windows', 'MacOS', 'Linux') {
+            $expected = @((Get-PowerShellEngineCandidate -Platform $platform).Label)
+            (Get-CurrentEngineLabel -Platform $platform) | Should -BeIn $expected `
+                -Because "on $platform the label must be one the installer actually registers"
+        }
+
         if ($PSVersionTable.PSEdition -eq 'Desktop') {
             $label | Should -Be 'Windows PowerShell 5.1'
         } elseif ($PSVersionTable.PSVersion.PSObject.Properties.Match('PreReleaseLabel').Count -gt 0 -and

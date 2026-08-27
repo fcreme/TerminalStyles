@@ -70,11 +70,23 @@ function Get-CurrentEngineLabel {
     Edition is checked first so Windows PowerShell 5.1 never reaches the
     PreReleaseLabel lookup: its $PSVersionTable.PSVersion is a plain
     System.Version, which has no such property.
+
+    The answer is constrained to the labels this PLATFORM actually registers.
+    Windows probes for pwsh.exe and powershell.exe, so 'PowerShell 7 (preview)'
+    is not one of its labels -- a Windows 7-preview build installs AS pwsh.exe
+    and is registered under 'PowerShell 7'. Returning the preview label there
+    made Write-InstallPanel's subtraction a no-op, so the panel told the user to
+    open a new tab for the engine they were already sitting in. Which is the
+    same defect, on the other platform, as the one this function was written to
+    fix.
     #>
+    param([string]$Platform = (Get-TStylesPlatform))
+
+    $labels = @((Get-PowerShellEngineCandidate -Platform $Platform).Label)
     if ($PSVersionTable.PSEdition -eq 'Desktop') { return 'Windows PowerShell 5.1' }
     $v = $PSVersionTable.PSVersion
     $pre = if ($v.PSObject.Properties.Match('PreReleaseLabel').Count -gt 0) { $v.PreReleaseLabel } else { $null }
-    if ($pre) { return 'PowerShell 7 (preview)' }
+    if ($pre -and ($labels -contains 'PowerShell 7 (preview)')) { return 'PowerShell 7 (preview)' }
     return 'PowerShell 7'
 }
 
@@ -471,7 +483,7 @@ function Write-InstallManifest {
         a bundled theme to override it), so a plain `tstyles uninstall` deleted
         every style the user had authored or tuned -- one line after printing
         "PRESERVE user state ... pass -DeleteData to wipe".
-      * It named 14 of the ~20 entries the bootstrap actually extracts, so
+      * It named 13 of the 21 entries the bootstrap actually extracts, so
         CHANGELOG.md, CODE_OF_CONDUCT.md, CONTRIBUTING.md, SECURITY.md, docs/,
         tests/, .github/ and .gitignore survived an uninstall.
 
