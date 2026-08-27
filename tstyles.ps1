@@ -1000,6 +1000,24 @@ function Invoke-TerminalStyle {
             Set-ShellStyleState -StyleName $selectedStyle.Name `
                                 -StyleDir $selectedStyle.FullName `
                                 -Scheme $schemes[$idx] -KeepPrompt:$KeepPrompt
+
+            # ...and the background image, which is the other half of what
+            # Apply-StyleNonWT does. Without this, `tstyles` + Enter on
+            # Terminal.app applied colors and prompt, said "Style applied: eva",
+            # and stopped -- no profile written, no mention that the style ships
+            # a background, no hint -- while `tstyles eva` on the same terminal
+            # wrote the profile and told the user how to see it. -NewWindow was
+            # declared on the param block and read by the two apply paths only,
+            # so `tstyles -NewWindow` was accepted in silence and did nothing:
+            # the same defect CHANGELOG records for `tstyles random`, in the last
+            # place it survived.
+            #
+            # The fetch is free here: this terminal reports BackgroundImage, so
+            # the prefetch above has already resolved every style's image.
+            Publish-StyleBackgroundProfile -StyleName $selectedStyle.Name `
+                                           -StyleDir $selectedStyle.FullName `
+                                           -Scheme $schemes[$idx] `
+                                           -Kind $termKind -NewWindow:$NewWindow | Out-Null
         }
 
         # -KeepPrompt means "this style's colors, my prompt". Copying the

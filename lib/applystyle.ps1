@@ -102,6 +102,80 @@ function Invoke-RandomStyle {
         -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
 }
 
+
+
+function Open-AppleTerminalProfile {
+    <#
+    .SYNOPSIS
+    Hand a generated .terminal profile to macOS, which opens a new Terminal.app
+    window in it.
+
+    .DESCRIPTION
+    A one-line wrapper so it can be mocked. `& open` in-line meant the only test
+    that could reach the -NewWindow branch would really shell out to `open` on
+    the test runner -- launching a window, or relying on the path not existing.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    & open $Path
+}
+
+function Publish-StyleBackgroundProfile {
+    <#
+    .SYNOPSIS
+    Write the Terminal.app profile that carries a style's background image, and
+    either open it or say how to.
+
+    .DESCRIPTION
+    Extracted from Apply-StyleNonWT because the picker needs the identical thing
+    and did not have it: on Terminal.app, `tstyles` + Enter applied colors and
+    prompt, printed "Style applied: eva", and stopped -- no profile written, no
+    mention that the style ships a background, no hint. `tstyles eva` on the same
+    terminal wrote the profile and told the user how to see it, and `tstyles
+    -NewWindow` was accepted in silence and did nothing at all.
+
+    A background image cannot be pushed into the current window -- only a profile
+    carries one, and a profile only applies to a NEW window. So the profile is
+    written either way and opened only when asked: silently spawning a window on
+    every apply would be a worse surprise than not showing the image.
+
+    .OUTPUTS
+    The profile path, or $null where there is nothing to write (any terminal but
+    Terminal.app, or a style with no background).
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [Parameter(Mandatory)][AllowNull()]$Scheme,
+        [Parameter(Mandatory)][string]$Kind,
+        [switch]$NewWindow
+    )
+
+    $caps = Get-TerminalCapability -Kind $Kind
+    if (-not ($caps.BackgroundImage -and $Kind -eq 'AppleTerminal')) { return $null }
+
+    $bundledBg = Get-StyleBundledBackground -StyleDir $StyleDir
+    if (-not $bundledBg) { return $null }
+
+    $profilePath = New-AppleTerminalProfile -StyleName $StyleName -Scheme $Scheme -BackgroundImage $bundledBg
+    if (-not $profilePath) { return $null }
+
+    if ($NewWindow) {
+        Write-Host ""
+        Write-Host "  Opening a new window with the background image..." -ForegroundColor DarkGray
+        try { Open-AppleTerminalProfile -Path $profilePath } catch {
+            Write-Host "  Could not open the profile: $_" -ForegroundColor Yellow
+        }
+    } else {
+        Write-Host ""
+        Write-Host "  This style ships a background image, which Terminal.app can only show" -ForegroundColor DarkGray
+        Write-Host "  in a new window. To get it:" -ForegroundColor DarkGray
+        Write-Host "    tstyles $StyleName -NewWindow" -ForegroundColor Cyan
+    }
+    return $profilePath
+}
+
 function Apply-StyleNonWT {
     # Apply a style on a terminal that is not Windows Terminal.
     #
@@ -205,30 +279,8 @@ function Apply-StyleNonWT {
         Write-Host ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $kind), ($unsupported -join ', ')) -ForegroundColor DarkGray
     }
 
-    # Background image. It cannot be pushed into this window -- only a profile
-    # carries one, and a profile only applies to a new window -- so the profile
-    # is written either way and opened only when asked. Silently spawning a
-    # window on every apply would be a worse surprise than not showing the image.
-    $bundledBg = if ($caps.BackgroundImage -and $kind -eq 'AppleTerminal') {
-        Get-StyleBundledBackground -StyleDir $StyleDir
-    } else { $null }
-    if ($bundledBg) {
-        $profilePath = New-AppleTerminalProfile -StyleName $StyleName -Scheme $scheme -BackgroundImage $bundledBg
-        if ($profilePath) {
-            if ($NewWindow) {
-                Write-Host ""
-                Write-Host "  Opening a new window with the background image..." -ForegroundColor DarkGray
-                try { & open $profilePath } catch {
-                    Write-Host "  Could not open the profile: $_" -ForegroundColor Yellow
-                }
-            } else {
-                Write-Host ""
-                Write-Host "  This style ships a background image, which Terminal.app can only show" -ForegroundColor DarkGray
-                Write-Host "  in a new window. To get it:" -ForegroundColor DarkGray
-                Write-Host "    tstyles $StyleName -NewWindow" -ForegroundColor Cyan
-            }
-        }
-    }
+    Publish-StyleBackgroundProfile -StyleName $StyleName -StyleDir $StyleDir `
+        -Scheme $scheme -Kind $kind -NewWindow:$NewWindow | Out-Null
     Write-Host ""
 
     # Live reload of the prompt in THIS shell (matches the WT confirm path).
