@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.17] - 2026-08-27
+
 ### Fixed
 
 - `tstyles update` on a bootstrap install runs the installer inside the module's own scope, so the three functions `install.ps1` duplicates from the module (`Get-TStylesPlatform`, `Get-TStylesDataRoot`, `Get-PowerShellEngineCandidate`) do not sit beside the module's copies -- they REPLACE them for the rest of that session. One had drifted: the module returned `[pscustomobject]`, the installer raw hashtables, and uninstall enumerates `.Exe` over the result. So `tstyles update` followed by `tstyles uninstall` in the same tab ran a different function than the same command in a fresh one. All three now say "keep in sync" and a test enforces it
@@ -14,6 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - an uninstall left `CHANGELOG.md`, `CODE_OF_CONDUCT.md`, `CONTRIBUTING.md`, `SECURITY.md`, `docs/`, `tests/`, `.github/` and `.gitignore` behind in the data root. The bootstrap extracts the whole repo; the removal list named 14 of the ~20 entries it unpacks
 - **the documented `iwr | iex` install opened with a red error on macOS and Linux.** `chcp` is a Windows console command, and `$null = & chcp ... 2>&1` does not swallow its absence -- a missing native command is a PowerShell error, not stderr -- so "The term 'chcp' is not recognized" was the first thing anyone following the README saw. The install itself worked; it just looked like it had failed before it started
 - the install's closing line told macOS and Linux users they were "Also wired up for Windows PowerShell 5.1", which does not exist there. It named the other engine by inverting `$PSVersionTable.PSEdition`, which assumed the only two engines are pwsh 7 and Windows PowerShell 5.1 -- true while the probe looked for `pwsh.exe`/`powershell.exe`, and false once it became platform-aware and started finding `pwsh` alongside `pwsh-preview`
+- `tstyles list` threw on a style whose `scheme.json` holds a colour that is not 6-digit hex. `Get-SchemeSwatch` checked only the length before `[Convert]::ToInt32`, so `not-a-color` or `#zzzzzz` reached the conversion. The bad value is now skipped in the dedup pass rather than the render pass, so it does not consume one of the five swatch slots either -- the remaining valid colours still fill it. Thanks to [@cnovakdev](https://github.com/cnovakdev) for the fix ([#11](https://github.com/fcreme/TerminalStyles/pull/11))
 - `docs/RELEASING.md`'s post-publish smoke test told the maintainer to run `Get-Command -Module TerminalStyles` and expect `tstyles` in the output. Bare `Get-Command -Module` lists functions only, so the alias never appeared -- every release since it existed looked like a failed publish at the final verification step. `-CommandType Function,Alias` is what shows it
 
 ## [0.8.16] - 2026-08-27
@@ -381,7 +384,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.16...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.17...HEAD
+[0.8.17]: https://github.com/fcreme/TerminalStyles/compare/v0.8.16...v0.8.17
 [0.8.16]: https://github.com/fcreme/TerminalStyles/compare/v0.8.15...v0.8.16
 [0.8.15]: https://github.com/fcreme/TerminalStyles/compare/v0.8.14...v0.8.15
 [0.8.14]: https://github.com/fcreme/TerminalStyles/compare/v0.8.13...v0.8.14
