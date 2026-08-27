@@ -125,16 +125,38 @@ $RepoRoot = Split-Path $PSScriptRoot -Parent
 # called through it: that function is not exported, and a recording harness
 # reaching into module internals is exactly the kind of coupling that breaks
 # the day someone refactors. Five lines, one comment, no dependency.
+function Get-DemoPlatform {
+    # 'Windows' | 'MacOS' | 'Linux'. Same shape as tstyles.ps1's
+    # Get-TStylesPlatform, and duplicated for the same reason the data-root
+    # probe below is: this script deliberately does not reach into the module.
+    #
+    # The version check has to come FIRST. $IsWindows / $IsMacOS only exist on
+    # PowerShell 6+; Windows PowerShell 5.1 predates them, so referencing
+    # $IsWindows there yields $null -- or throws outright under Set-StrictMode.
+    # Get-DemoDataRoot tested $IsWindows directly and so fell through to the XDG
+    # branch under 5.1, putting the demo's data root at
+    # ~/.local/share/TerminalStyles on a Windows box -- not where the module
+    # keeps it, so prep would have parked nothing and restored nothing.
+    if ($PSVersionTable.PSVersion.Major -lt 6) { return 'Windows' }
+    if ($IsWindows) { return 'Windows' }
+    if ($IsMacOS)   { return 'MacOS' }
+    return 'Linux'
+}
+
 function Get-DemoDataRoot {
-    if ($IsWindows) {
-        $base = $env:LOCALAPPDATA
-        if (-not $base) { $base = Join-Path $HOME 'AppData\Local' }
-        return Join-Path $base 'TerminalStyles'
+    switch (Get-DemoPlatform) {
+        'Windows' {
+            $base = $env:LOCALAPPDATA
+            if (-not $base) { $base = Join-Path $HOME 'AppData\Local' }
+            return Join-Path $base 'TerminalStyles'
+        }
+        'MacOS' { return Join-Path $HOME 'Library/Application Support/TerminalStyles' }
+        default {
+            $base = $env:XDG_DATA_HOME
+            if (-not $base) { $base = Join-Path $HOME '.local/share' }
+            return Join-Path $base 'TerminalStyles'
+        }
     }
-    if ($IsMacOS) { return Join-Path $HOME 'Library/Application Support/TerminalStyles' }
-    $base = $env:XDG_DATA_HOME
-    if (-not $base) { $base = Join-Path $HOME '.local/share' }
-    return Join-Path $base 'TerminalStyles'
 }
 
 $DataRoot   = Get-DemoDataRoot
@@ -331,7 +353,7 @@ function Invoke-Prep {
         # No console attached (piped, CI). Nothing to check.
     }
 
-    if ($IsMacOS) {
+    if ((Get-DemoPlatform) -eq 'MacOS') {
         Write-Host ""
         Write-Warn "macOS: only colors change in the window you are recording."
         Write-Step "Background images need a new window and render as a still frame;"
@@ -429,7 +451,7 @@ function Get-RecordRect {
     # cannot be confused about which window is which. Anything else goes
     # through System Events, which reports position and size for the frontmost
     # app's front window whatever that app is.
-    if (-not $IsMacOS) { return $null }
+    if ((Get-DemoPlatform) -ne 'MacOS') { return $null }
     try {
         if ($env:TERM_PROGRAM -eq 'Apple_Terminal') {
             $raw = & osascript -e 'tell application "Terminal" to get bounds of front window' 2>$null
@@ -672,7 +694,7 @@ if ($Record) {
         Write-Step "Use: -Mode Auto -Record, or record Guided takes yourself."
         return
     }
-    if (-not $IsMacOS) {
+    if ((Get-DemoPlatform) -ne 'MacOS') {
         Write-Warn "-Record uses macOS screencapture and only runs there."
         return
     }

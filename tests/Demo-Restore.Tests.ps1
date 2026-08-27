@@ -41,6 +41,53 @@ Describe 'demo.ps1 park/restore' {
         $ParkedDir   = Join-Path $case 'styles.demo-parked'
     }
 
+    It 'resolves its data root on Windows PowerShell 5.1' {
+        # $IsWindows / $IsMacOS only exist on PowerShell 6+. Under 5.1 they are
+        # $null -- or throw, under the StrictMode Pester sets -- so testing
+        # $IsWindows directly sent Get-DemoDataRoot down to the XDG branch and
+        # put the demo's data root at ~/.local/share/TerminalStyles on a Windows
+        # box. Prep would have parked nothing and restored nothing.
+        #
+        # tstyles.ps1's Get-TStylesPlatform and install.ps1's copy both check the
+        # version FIRST and both say why; demo.ps1's copy of the probe was
+        # written without it. This asserts the shape, since the run cannot
+        # actually be 5.1 and 7 at once.
+        $src = [System.IO.File]::ReadAllText($script:demoPath, [System.Text.UTF8Encoding]::new($false))
+        $ast = [System.Management.Automation.Language.Parser]::ParseInput($src, [ref]$null, [ref]$null)
+        $fn = @($ast.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Name -eq 'Get-DemoPlatform' }, $true))
+        @($fn).Count | Should -Be 1 -Because 'the platform probe belongs in one place'
+
+        # Offsets from the AST, not from the source text: the explanation above
+        # this assertion names $IsWindows, and an IndexOf over the raw body finds
+        # the comment before it finds the code.
+        $verRef = @($fn[0].FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $n.VariablePath.UserPath -eq 'PSVersionTable' }, $true))
+        $winRef = @($fn[0].FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $n.VariablePath.UserPath -in 'IsWindows', 'IsMacOS', 'IsLinux' }, $true))
+        @($verRef).Count | Should -BeGreaterThan 0 -Because 'the version is what 5.1 can be asked about'
+        @($winRef).Count | Should -BeGreaterThan 0
+
+        $firstVer = ($verRef | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+        $firstWin = ($winRef | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+        $firstVer | Should -BeLessThan $firstWin `
+            -Because 'the version check has to come before any reference to the 6+-only variables'
+
+        # And nothing outside it may test those variables directly.
+        foreach ($other in @($ast.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
+            $n.Name -ne 'Get-DemoPlatform' }, $true))) {
+            $stray = @($other.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                $n.VariablePath.UserPath -in 'IsWindows', 'IsMacOS', 'IsLinux' }, $true))
+            @($stray).Count | Should -Be 0 `
+                -Because "$($other.Name) must ask Get-DemoPlatform, not the 6+-only automatic variables"
+        }
+    }
+
     It 'dot-sources for its functions without running the demo' {
         # The demo parks real styles and takes over the terminal, so this seam is
         # load-bearing: without it no test here could exist.
