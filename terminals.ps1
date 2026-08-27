@@ -500,10 +500,17 @@ function Get-ShellLoaderBlock {
     # opens with a failed-status indicator and no failing command to explain it.
     # Verified: healthy 0, orphaned 1, both shells. The `if` form exits 0 either
     # way.
-    $runtime = Get-ShellRuntimePath
+    # SINGLE-quoted, not double. Double quotes protect spaces and apostrophes
+    # but not $, ` or \ -- and a home directory containing a '$' is perfectly
+    # legal. With `"..."` the shell expanded it, the path came out wrong, and
+    # the runtime silently never loaded: no colours, no prompt, no error, on
+    # every shell forever. Single quotes make every byte literal; an embedded
+    # apostrophe is closed, escaped and reopened, which is the only character
+    # single quotes cannot carry.
+    $runtime = (Get-ShellRuntimePath).Replace("'", "'\''")
     return @"
 # ===== TerminalStyles BEGIN =====
-if [ -r "$runtime" ]; then . "$runtime"; fi
+if [ -r '$runtime' ]; then . '$runtime'; fi
 # ===== TerminalStyles END =====
 "@
 }
@@ -513,11 +520,45 @@ function Get-ShellRcCandidate {
     # ~/.bash_profile is included because macOS Terminal.app starts bash as a
     # LOGIN shell, which reads .bash_profile and never .bashrc.
     param([string]$HomeDir = $HOME)
+
+    # $ZDOTDIR first when it is set: zsh reads $ZDOTDIR/.zshrc and does NOT read
+    # ~/.zshrc, so for anyone with a relocated config (the standard XDG layout,
+    # and every dotfile framework that uses one) the block went into a file zsh
+    # never opens. shell-init reported success and no shell ever loaded it.
+    $zdot = @()
+    if ($env:ZDOTDIR -and (Test-Path -LiteralPath $env:ZDOTDIR)) {
+        $zdotRc = Join-Path $env:ZDOTDIR '.zshrc'
+        if ($zdotRc -ne (Join-Path $HomeDir '.zshrc')) {
+            $zdot = @([pscustomobject]@{ Shell = 'zsh'; Path = $zdotRc })
+        }
+    }
+    $zdot
     @(
         [pscustomobject]@{ Shell = 'zsh';  Path = (Join-Path $HomeDir '.zshrc') }
         [pscustomobject]@{ Shell = 'bash'; Path = (Join-Path $HomeDir '.bashrc') }
         [pscustomobject]@{ Shell = 'bash'; Path = (Join-Path $HomeDir '.bash_profile') }
     )
+}
+
+function Get-RcFileEncoding {
+    <#
+    .SYNOPSIS
+    The encoding to read and write a user's rc file with.
+
+    .DESCRIPTION
+    ISO-8859-1, which maps every byte 0-255 to exactly one character and back.
+    Reading and writing an rc file through it is byte-preserving whatever the
+    file really is, and the markers and loader block this module cares about are
+    pure ASCII either way.
+
+    It used to be UTF-8. Both halves read the WHOLE file and write the WHOLE
+    file back, so a single byte that is not valid UTF-8 -- a latin-1 comment, a
+    stray byte from an old editor -- was decoded to U+FFFD on the first
+    shell-init and written back as the replacement character. The user's own
+    content, silently and permanently corrupted, by a tool that was only asked
+    to append three lines.
+    #>
+    return [System.Text.Encoding]::GetEncoding(28591)
 }
 
 function Register-ShellLoader {
@@ -542,7 +583,7 @@ function Register-ShellLoader {
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
     $block = Get-ShellLoaderBlock
-    $enc   = [System.Text.UTF8Encoding]::new($false)
+    $enc   = Get-RcFileEncoding
 
     $exists = Test-Path -LiteralPath $Path
     if (-not $exists -and -not $Create) { return 'skipped' }
@@ -565,9 +606,13 @@ function Register-ShellLoader {
 
     # Append. A newline guard keeps the block from landing on the same line as
     # whatever the user's rc file ended with.
+    # One newline before the block, and Unregister-ShellLoader substitutes
+    # exactly one back. It used to append a blank line as well and give only one
+    # back, so every init/remove cycle grew the file by a line -- shell-remove
+    # was not the byte-exact reversal it is documented to be.
     $sep = if ($content -and -not $content.EndsWith("`n")) { "`n" } else { '' }
     try {
-        [System.IO.File]::WriteAllText($Path, $content + $sep + "`n" + $block.Trim() + "`n", $enc)
+        [System.IO.File]::WriteAllText($Path, $content + $sep + $block.Trim() + "`n", $enc)
     } catch { return 'failed' }
     return 'added'
 }
@@ -604,7 +649,7 @@ function Unregister-ShellLoader {
     if (-not (Test-Path -LiteralPath $Path)) { return 'none' }
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
-    $enc   = [System.Text.UTF8Encoding]::new($false)
+    $enc   = Get-RcFileEncoding
     $content = [System.IO.File]::ReadAllText($Path, $enc)
     if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
 
@@ -769,7 +814,17 @@ function Invoke-TerminalStylesShellInit {
         }
     }
     Write-Host ""
-    Write-Host "  Open a new tab, or run:  source ~/.zshrc" -ForegroundColor DarkGray
+    # Name the file that was actually registered. This was hardcoded to
+    # ~/.zshrc and printed unconditionally, so a bash user who had just had
+    # .bashrc and .bash_profile written was told to source a zsh file they may
+    # not even have.
+    $hintPath = ($touched | Where-Object { $_.Action -ne 'failed' } | Select-Object -First 1).Path
+    if ($hintPath) {
+        $shown = if ($hintPath.StartsWith($HomeDir)) { '~' + $hintPath.Substring($HomeDir.Length) } else { $hintPath }
+        Write-Host ("  Open a new tab, or run:  source {0}" -f $shown) -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Open a new tab to pick it up." -ForegroundColor DarkGray
+    }
     Write-Host ""
 }
 

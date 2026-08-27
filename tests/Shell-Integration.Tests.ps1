@@ -196,3 +196,92 @@ Describe 'Get-ShellRcCandidate' {
         }
     }
 }
+
+Describe 'the rc file survives contact with shell-init' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+        }
+
+        It 'is byte-identical after repeated init/remove cycles' {
+            # Register appended a blank line before the block and Unregister gave
+            # back only one newline, so every cycle grew the file. shell-remove
+            # is documented as a byte-exact reversal.
+            $rc = Join-Path $script:h '.zshrc'
+            $orig = "# mine`nexport A=1`n"
+            [System.IO.File]::WriteAllText($rc, $orig, (Get-RcFileEncoding))
+            $before = (Get-FileHash -Path $rc -Algorithm SHA256).Hash
+            foreach ($i in 1..3) {
+                Register-ShellLoader -Path $rc | Out-Null
+                Unregister-ShellLoader -Path $rc | Out-Null
+            }
+            (Get-FileHash -Path $rc -Algorithm SHA256).Hash | Should -Be $before
+        }
+
+        It 'preserves bytes that are not valid UTF-8' {
+            # Both halves read the WHOLE file and write it back, so one latin-1
+            # byte in the user's own comment became U+FFFD on the first
+            # shell-init and was gone for good.
+            $rc = Join-Path $script:h '.zshrc'
+            $bytes = [byte[]](0x23,0x20,0x63,0x61,0x66,0xE9,0x0A)   # "# caf<e9>\n"
+            [System.IO.File]::WriteAllBytes($rc, $bytes)
+            Register-ShellLoader -Path $rc | Out-Null
+            Unregister-ShellLoader -Path $rc | Out-Null
+            $after = [System.IO.File]::ReadAllBytes($rc)
+            $after[0..5] | Should -Be $bytes[0..5] -Because 'the 0xE9 must still be 0xE9'
+            [System.Linq.Enumerable]::Contains([byte[]]$after, [byte]0xEF) | Should -BeFalse `
+                -Because '0xEF starts the UTF-8 replacement character'
+        }
+    }
+}
+
+Describe 'the loader block quotes the path safely' {
+    InModuleScope TerminalStyles {
+
+        It 'uses single quotes, so a $ in the path stays literal' {
+            # A home directory containing '$' is legal, and inside "..." the
+            # shell expanded it: the path came out wrong and the runtime silently
+            # never loaded. No colours, no prompt, no error, on every shell.
+            $block = Get-ShellLoaderBlock
+            $block | Should -Match "\[ -r '" -Because 'double quotes do not protect $, ` or \'
+            $block | Should -Not -Match '\[ -r "'
+        }
+
+        It 'closes and reopens around an apostrophe, the one char it cannot carry' {
+            $src = (Get-Command Get-ShellLoaderBlock).ScriptBlock.ToString()
+            $src | Should -Match "Replace\(" -Because 'an apostrophe in the path needs escaping'
+        }
+    }
+}
+
+Describe 'shell-init finds the rc file zsh actually reads' {
+    InModuleScope TerminalStyles {
+
+        It 'includes $ZDOTDIR/.zshrc when ZDOTDIR is set' {
+            # zsh reads $ZDOTDIR/.zshrc and does NOT read ~/.zshrc, so for the
+            # standard XDG layout the block went into a file zsh never opens --
+            # and shell-init reported success.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $z = Join-Path $h '.config/zsh'
+            New-Item -ItemType Directory -Path $z -Force | Out-Null
+            $prev = $env:ZDOTDIR
+            try {
+                $env:ZDOTDIR = $z
+                @(Get-ShellRcCandidate -HomeDir $h | ForEach-Object { $_.Path }) |
+                    Should -Contain (Join-Path $z '.zshrc')
+            } finally { $env:ZDOTDIR = $prev }
+        }
+
+        It 'does not duplicate it when ZDOTDIR is just $HOME' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $prev = $env:ZDOTDIR
+            try {
+                $env:ZDOTDIR = $h
+                $paths = @(Get-ShellRcCandidate -HomeDir $h | ForEach-Object { $_.Path })
+                @($paths | Where-Object { $_ -eq (Join-Path $h '.zshrc') }).Count | Should -Be 1
+            } finally { $env:ZDOTDIR = $prev }
+        }
+    }
+}
