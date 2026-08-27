@@ -40,14 +40,14 @@ function Get-PowerShellEngineCandidate {
 
     if ($Platform -eq 'Windows') {
         return @(
-            @{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
-            @{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
+            [pscustomobject]@{ Exe = 'pwsh.exe';       Label = 'PowerShell 7' },
+            [pscustomobject]@{ Exe = 'powershell.exe'; Label = 'Windows PowerShell 5.1' }
         )
     }
     # pwsh-preview is what some macOS machines have INSTEAD of pwsh.
     return @(
-        @{ Exe = 'pwsh';         Label = 'PowerShell 7' },
-        @{ Exe = 'pwsh-preview'; Label = 'PowerShell 7 (preview)' }
+        [pscustomobject]@{ Exe = 'pwsh';         Label = 'PowerShell 7' },
+        [pscustomobject]@{ Exe = 'pwsh-preview'; Label = 'PowerShell 7 (preview)' }
     )
 }
 
