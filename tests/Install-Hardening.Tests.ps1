@@ -265,6 +265,26 @@ Describe 'install.ps1 hardens its download' {
             -Because 'both preferences are the caller''s, so both restore on the same path'
     }
 
+    It 'runs chcp only on Windows' {
+        # chcp is a Windows console command. `$null = & chcp ... 2>&1` does NOT
+        # swallow its absence: a missing native command is a PowerShell error,
+        # not stderr output, so on macOS and Linux the documented `iwr | iex`
+        # one-liner opened with a red "The term 'chcp' is not recognized" block.
+        # The install worked; it looked like it had failed before it started.
+        $chcp = @($script:installAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'chcp' }, $true))
+        @($chcp).Count | Should -Be 1
+
+        $guards = @($script:installAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.IfStatementAst] -and
+            $n.Clauses[0].Item1.Extent.Text -match "Get-TStylesPlatform\)\s*-eq\s*'Windows'" -and
+            $n.Extent.StartOffset -lt $chcp[0].Extent.StartOffset -and
+            $n.Extent.EndOffset -gt $chcp[0].Extent.EndOffset }, $true))
+        @($guards).Count | Should -BeGreaterThan 0 `
+            -Because 'the chcp call must sit inside a Windows-only branch'
+    }
+
     It 'still installs when the TLS floor cannot be raised' {
         # pwsh 7 on Unix negotiates through the OS and may not expose
         # ServicePointManager at all. Not being able to raise the floor is not a
@@ -274,5 +294,66 @@ Describe 'install.ps1 hardens its download' {
             -Because 'the SecurityProtocol write must sit inside a try, not merely before some later catch'
         $guard[0].CatchClauses.Count | Should -BeGreaterThan 0 `
             -Because 'a host without ServicePointManager must still reach the install'
+    }
+}
+
+Describe 'the install panel names the engines it actually registered' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+    }
+
+    It 'identifies the running engine without inverting the edition' {
+        # The panel used to name "the other" engine as
+        #   if ($PSVersionTable.PSEdition -eq 'Core') { 'Windows PowerShell 5.1' } else { 'PowerShell 7' }
+        # which assumed the only two engines are pwsh 7 and Windows PowerShell
+        # 5.1. That held while the probe looked for pwsh.exe / powershell.exe. It
+        # stopped holding when the probe became platform-aware: on macOS the pair
+        # is pwsh and pwsh-preview -- both Core -- so "more than one engine" became
+        # true off Windows and Mac users were told the install was "Also wired up
+        # for Windows PowerShell 5.1".
+        $label = Get-CurrentEngineLabel
+        $label | Should -BeIn @(Get-PowerShellEngineCandidate | ForEach-Object { $_.Label }) `
+            -Because 'the running engine must be one of the ones this script probes for'
+
+        if ($PSVersionTable.PSEdition -eq 'Desktop') {
+            $label | Should -Be 'Windows PowerShell 5.1'
+        } elseif ($PSVersionTable.PSVersion.PSObject.Properties.Match('PreReleaseLabel').Count -gt 0 -and
+                  $PSVersionTable.PSVersion.PreReleaseLabel) {
+            $label | Should -Be 'PowerShell 7 (preview)'
+        } else {
+            $label | Should -Be 'PowerShell 7'
+        }
+    }
+
+    It 'never names a Windows-only engine off Windows' {
+        if ((Get-TStylesPlatform) -eq 'Windows') {
+            Set-ItResult -Skipped -Because 'Windows PowerShell 5.1 is a real answer here'
+            return
+        }
+        Get-CurrentEngineLabel | Should -Not -Match 'Windows PowerShell' `
+            -Because 'Windows PowerShell does not exist on macOS or Linux'
+        @(Get-PowerShellEngineCandidate | ForEach-Object { $_.Label }) |
+            Should -Not -Contain 'Windows PowerShell 5.1'
+    }
+
+    It 'the panel subtracts the current engine from what it announces' {
+        # AST, not source text: the comment explaining this fix names PSEdition
+        # a few lines above the code, so a -Match over the body finds the
+        # explanation and fails for the wrong reason. Comments are not in the AST.
+        $ast = (Get-Command Write-InstallPanel).ScriptBlock.Ast
+
+        $asks = @($ast.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Get-CurrentEngineLabel' }, $true))
+        @($asks).Count | Should -BeGreaterThan 0 `
+            -Because 'the other engines are the registered ones minus the current one'
+
+        $editionReads = @($ast.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.MemberExpressionAst] -and
+            "$($n.Member.Extent.Text)" -eq 'PSEdition' }, $true))
+        @($editionReads).Count | Should -Be 0 `
+            -Because 'inverting the edition is what named Windows PowerShell 5.1 on a Mac'
     }
 }

@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the documented `iwr | iex` install opened with a red error on macOS and Linux.** `chcp` is a Windows console command, and `$null = & chcp ... 2>&1` does not swallow its absence -- a missing native command is a PowerShell error, not stderr -- so "The term 'chcp' is not recognized" was the first thing anyone following the README saw. The install itself worked; it just looked like it had failed before it started
+- the install's closing line told macOS and Linux users they were "Also wired up for Windows PowerShell 5.1", which does not exist there. It named the other engine by inverting `$PSVersionTable.PSEdition`, which assumed the only two engines are pwsh 7 and Windows PowerShell 5.1 -- true while the probe looked for `pwsh.exe`/`powershell.exe`, and false once it became platform-aware and started finding `pwsh` alongside `pwsh-preview`
 - `docs/RELEASING.md`'s post-publish smoke test told the maintainer to run `Get-Command -Module TerminalStyles` and expect `tstyles` in the output. Bare `Get-Command -Module` lists functions only, so the alias never appeared -- every release since it existed looked like a failed publish at the final verification step. `-CommandType Function,Alias` is what shows it
 
 ## [0.8.16] - 2026-08-27

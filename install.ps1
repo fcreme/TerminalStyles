@@ -51,6 +51,33 @@ function Get-PowerShellEngineCandidate {
     )
 }
 
+
+function Get-CurrentEngineLabel {
+    <#
+    .SYNOPSIS
+    Which Get-PowerShellEngineCandidate label describes the shell running this
+    script.
+
+    .DESCRIPTION
+    Off Windows every engine reports PSEdition 'Core', so an edition test cannot
+    tell pwsh from pwsh-preview -- and INVERTING it, which is what this used to
+    do, named a Windows-only engine on a Mac.
+
+    The discriminator is the prerelease label, not the process name: on macOS
+    `pwsh-preview` is a symlink to the 7-preview build's own `pwsh` binary, so
+    Get-Process reports 'pwsh' for both.
+
+    Edition is checked first so Windows PowerShell 5.1 never reaches the
+    PreReleaseLabel lookup: its $PSVersionTable.PSVersion is a plain
+    System.Version, which has no such property.
+    #>
+    if ($PSVersionTable.PSEdition -eq 'Desktop') { return 'Windows PowerShell 5.1' }
+    $v = $PSVersionTable.PSVersion
+    $pre = if ($v.PSObject.Properties.Match('PreReleaseLabel').Count -gt 0) { $v.PreReleaseLabel } else { $null }
+    if ($pre) { return 'PowerShell 7 (preview)' }
+    return 'PowerShell 7'
+}
+
 function Get-TStylesDataRoot {
     # NOTE: duplicated from tstyles.ps1 -- keep in sync.
     param(
@@ -214,13 +241,22 @@ function Write-InstallPanel {
     Write-Host "  $bottom" -ForegroundColor Green
     Write-Host ''
 
-    # If both engines were registered, mention the one the user isn't
-    # currently in -- they need a new tab for that side.
+    # If more than one engine was registered, mention the ones the user isn't
+    # currently in -- they need a new tab for those.
+    #
+    # Named from what was ACTUALLY registered, not inferred by inverting
+    # $PSVersionTable.PSEdition. That inversion assumed the only two engines are
+    # pwsh 7 and Windows PowerShell 5.1, which held while this script probed for
+    # pwsh.exe / powershell.exe. It stopped holding when the probe became
+    # platform-aware: on macOS the pair is pwsh and pwsh-preview, both Core, so
+    # "more than one" became true off Windows and the message told Mac users the
+    # install was "Also wired up for Windows PowerShell 5.1".
     if ($RegisteredEngines.Count -gt 1) {
-        $current    = $PSVersionTable.PSEdition  # 'Core' for pwsh 7, 'Desktop' for WinPS 5.1
-        $otherLabel = if ($current -eq 'Core') { 'Windows PowerShell 5.1' } else { 'PowerShell 7' }
-        Write-Host "  Also wired up for $otherLabel -- available in any new tab there." -ForegroundColor DarkGray
-        Write-Host ''
+        $others = @($RegisteredEngines | Where-Object { $_ -ne (Get-CurrentEngineLabel) })
+        if ($others.Count -gt 0) {
+            Write-Host "  Also wired up for $($others -join ', ') -- available in any new tab there." -ForegroundColor DarkGray
+            Write-Host ''
+        }
     }
 }
 
@@ -490,7 +526,15 @@ function Resolve-ExecutionPolicy {
 if (-not $TStylesInstallNoRun) {
 
     # Force UTF-8 console output as defense-in-depth (see header note).
-    $null = & chcp 65001 2>&1
+    # Windows only: chcp is a Windows console command, and `$null = & chcp ... 2>&1`
+    # does not swallow its absence -- a missing NATIVE COMMAND is a PowerShell
+    # error, not stderr output, so on macOS and Linux this printed a red
+    # "The term 'chcp' is not recognized" block as the very first thing anyone
+    # running the documented `iwr | iex` one-liner saw. The install worked; it
+    # just looked like it had failed before it started.
+    if ((Get-TStylesPlatform) -eq 'Windows') {
+        $null = & chcp 65001 2>&1
+    }
     [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
     # The entry point is `iwr ... | iex`, which runs this whole body in the
