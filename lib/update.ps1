@@ -434,7 +434,9 @@ function Invoke-TerminalStylesUninstall {
     # ~/.zshrc as the only recovery.
     $shellRemoved = 0
     foreach ($c in (Get-ShellRcCandidate)) {
-        if (Unregister-ShellLoader -Path $c.Path) {
+        # Explicit comparison: Unregister-ShellLoader returns a STATUS now, and
+        # every status -- including 'none' -- is a truthy string.
+        if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed') {
             Write-Host "  Removed shell loader from $($c.Path)" -ForegroundColor Green
             $shellRemoved++
         }

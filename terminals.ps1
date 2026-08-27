@@ -489,12 +489,21 @@ function Get-ShellLoaderBlock {
     # PowerShell loader's so uninstall can strip both with one pattern.
     #
     # Guarded on the runtime existing: if the user removes TerminalStyles
-    # without running uninstall, the block becomes a no-op instead of printing
+    # without running uninstall, the block does nothing instead of printing
     # "no such file" on every shell start.
+    #
+    # An `if` rather than `[ -r ... ] && . ...`. The && form is silent but it is
+    # NOT a no-op: when the runtime is gone the compound command is false, and
+    # since this block is the last thing in the rc file, the whole file exits 1.
+    # `set -e; source ~/.bashrc` then aborts before doing any work,
+    # `source ~/.bashrc && next-step` skips next-step, and every new terminal
+    # opens with a failed-status indicator and no failing command to explain it.
+    # Verified: healthy 0, orphaned 1, both shells. The `if` form exits 0 either
+    # way.
     $runtime = Get-ShellRuntimePath
     return @"
 # ===== TerminalStyles BEGIN =====
-[ -r "$runtime" ] && . "$runtime"
+if [ -r "$runtime" ]; then . "$runtime"; fi
 # ===== TerminalStyles END =====
 "@
 }
@@ -564,21 +573,49 @@ function Register-ShellLoader {
 }
 
 function Unregister-ShellLoader {
-    # Strip the block from one rc file. Returns $true if something was removed.
+    <#
+    .SYNOPSIS
+    Strip the loader block from one rc file.
+
+    .OUTPUTS
+    'removed'   -- the block was there and is gone
+    'none'      -- no block in this file (or the file does not exist)
+    'malformed' -- a BEGIN marker with no matching END; nothing was removed
+    'failed'    -- the block is there and the file could not be written
+
+    A STATUS, not a boolean, because the three failure modes are not the same
+    thing and were being reported as one. Two of them lied to the user:
+
+      * A BEGIN with no END (hand-edited rc, interrupted write) made the
+        Replace match nothing. The unchanged text was written back and $true
+        returned, so shell-remove said the loader was removed and a new tab
+        would restore the prompt -- while every new shell still sourced the
+        runtime.
+      * An unwritable rc file (read-only dotfiles, a symlink into a nix or
+        chezmoi store) returned the same $false as "there was no block here",
+        and the caller turned that into "No shell loader was registered." --
+        telling the user the opposite of the truth and sending them looking for
+        a block the tool had just denied existed.
+
+    Callers must compare explicitly. `if (Unregister-ShellLoader ...)` is true
+    for EVERY status now, including 'none'.
+    #>
     param([Parameter(Mandatory)][string]$Path)
-    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    if (-not (Test-Path -LiteralPath $Path)) { return 'none' }
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
     $enc   = [System.Text.UTF8Encoding]::new($false)
     $content = [System.IO.File]::ReadAllText($Path, $enc)
-    if ($content -notmatch [regex]::Escape($begin)) { return $false }
+    if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
 
     $pattern = '\r?\n?' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end) + '\r?\n?'
     $stripped = [regex]::Replace($content, $pattern, "`n", 'Singleline')
+    if ($stripped -eq $content) { return 'malformed' }
+
     # Same reasoning as Register-ShellLoader: one unwritable rc file must not
     # take down a shell-remove that has already stripped others.
-    try { [System.IO.File]::WriteAllText($Path, $stripped, $enc) } catch { return $false }
-    return $true
+    try { [System.IO.File]::WriteAllText($Path, $stripped, $enc) } catch { return 'failed' }
+    return 'removed'
 }
 
 function Invoke-TerminalStylesShellInit {
@@ -599,15 +636,35 @@ function Invoke-TerminalStylesShellInit {
     $candidates = Get-ShellRcCandidate -HomeDir $HomeDir
 
     if ($Remove) {
+        # Each status reported for what it is. A failure and a malformed block
+        # both used to read as "nothing was registered", so the user was told
+        # the loader was gone while every new shell still sourced it.
         $removed = 0
+        $problems = @()
         foreach ($c in $candidates) {
-            if (Unregister-ShellLoader -Path $c.Path) {
-                Write-Host ("  removed from {0}" -f $c.Path) -ForegroundColor Yellow
-                $removed++
+            switch (Unregister-ShellLoader -Path $c.Path) {
+                'removed' {
+                    Write-Host ("  removed from {0}" -f $c.Path) -ForegroundColor Yellow
+                    $removed++
+                }
+                'malformed' {
+                    Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $c.Path) -ForegroundColor Red
+                    Write-Host "    Nothing was removed. Delete the block by hand -- it still loads on every shell." -ForegroundColor Red
+                    $problems += $c.Path
+                }
+                'failed' {
+                    Write-Host ("  ! could not write {0}" -f $c.Path) -ForegroundColor Red
+                    Write-Host "    The loader is still there. Check the file's permissions (a read-only" -ForegroundColor Red
+                    Write-Host "    dotfile, or a symlink into a managed store) and re-run." -ForegroundColor Red
+                    $problems += $c.Path
+                }
             }
         }
         Clear-ShellStyleState
-        if ($removed -eq 0) {
+        if ($problems.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  Shell loader NOT fully removed. See the file(s) above." -ForegroundColor Yellow
+        } elseif ($removed -eq 0) {
             Write-Host "  No shell loader was registered." -ForegroundColor Gray
         } else {
             Write-Host ""
@@ -632,6 +689,50 @@ function Invoke-TerminalStylesShellInit {
         }
     }
 
+    # A bash user needs the LOGIN file, and it is the one most likely absent.
+    # macOS Terminal.app starts bash as a login shell, which reads
+    # ~/.bash_profile and never ~/.bashrc -- that is why .bash_profile is in the
+    # candidate list at all. But Register-ShellLoader skips a file that does not
+    # exist, and the -Create fallback below only fired when NOTHING was
+    # registered. So a bash user with a .bashrc and no .bash_profile got a green
+    # "added ~/.bashrc", opened a new Terminal window, and saw nothing: default
+    # prompt, default colours, no banner, and no hint that the file the style
+    # needs was never written.
+    #
+    # Created as a source of .bashrc plus the block, which is the conventional
+    # shape -- a bare .bash_profile would stop bash reading ~/.profile, and
+    # would leave their own .bashrc unloaded in login shells exactly as before.
+    $bashrc       = $candidates | Where-Object { $_.Path -like '*.bashrc' }       | Select-Object -First 1
+    $bashProfile  = $candidates | Where-Object { $_.Path -like '*.bash_profile' } | Select-Object -First 1
+    $dotProfile   = Join-Path $HomeDir '.profile'
+    if ($bashrc -and $bashProfile -and
+        (Test-Path -LiteralPath $bashrc.Path) -and
+        -not (Test-Path -LiteralPath $bashProfile.Path)) {
+
+        if (Test-Path -LiteralPath $dotProfile) {
+            # They have a ~/.profile that login bash reads today. Register there
+            # rather than creating a .bash_profile that would shadow it.
+            $action = Register-ShellLoader -Path $dotProfile -Force:$Force
+            if ($action -ne 'skipped') {
+                $touched += [pscustomobject]@{ Path = $dotProfile; Action = $action }
+            }
+        } else {
+            $seed = "# Created by TerminalStyles: bash login shells read this file, never" + [Environment]::NewLine +
+                    "# ~/.bashrc. Sourcing it here is the conventional way to get both." + [Environment]::NewLine +
+                    '[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"' + [Environment]::NewLine
+            try {
+                [System.IO.File]::WriteAllText($bashProfile.Path, $seed, [System.Text.UTF8Encoding]::new($false))
+                $action = Register-ShellLoader -Path $bashProfile.Path -Force:$Force
+                $touched += [pscustomobject]@{ Path = $bashProfile.Path; Action = $action }
+                Write-Host ""
+                Write-Host ("  Created {0}, which is what bash reads for a login shell" -f $bashProfile.Path) -ForegroundColor DarkGray
+                Write-Host "  (Terminal.app opens one). It sources your ~/.bashrc." -ForegroundColor DarkGray
+            } catch {
+                Write-Host ("  ! could not create {0}: {1}" -f $bashProfile.Path, $_.Exception.Message) -ForegroundColor Yellow
+            }
+        }
+    }
+
     # Nothing existed to register in. Create the rc file for the login shell
     # rather than doing nothing and leaving the user to guess.
     if (-not $touched) {
@@ -639,6 +740,19 @@ function Invoke-TerminalStylesShellInit {
         $target = $candidates | Where-Object Shell -eq $loginShell | Select-Object -First 1
         $action = Register-ShellLoader -Path $target.Path -Create
         $touched += [pscustomobject]@{ Path = $target.Path; Action = $action }
+        # A bash login shell reads .bash_profile, so creating only .bashrc would
+        # have produced the same silent nothing as above.
+        if ($loginShell -eq 'bash' -and $target.Path -like '*.bashrc') {
+            $bp = $candidates | Where-Object { $_.Path -like '*.bash_profile' } | Select-Object -First 1
+            if ($bp -and -not (Test-Path -LiteralPath $dotProfile)) {
+                $seed = '[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"' + [Environment]::NewLine
+                try {
+                    [System.IO.File]::WriteAllText($bp.Path, $seed, [System.Text.UTF8Encoding]::new($false))
+                    $touched += [pscustomobject]@{ Path = $bp.Path
+                                                   Action = (Register-ShellLoader -Path $bp.Path -Force:$Force) }
+                } catch { }
+            }
+        }
     }
 
     Write-Host ""

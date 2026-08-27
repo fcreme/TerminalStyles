@@ -90,7 +90,7 @@ Describe 'Unregister-ShellLoader' {
         It 'removes the block and leaves the rest intact' {
             [System.IO.File]::WriteAllText($script:rc, "alias g=git`n", [System.Text.UTF8Encoding]::new($false))
             [void](Register-ShellLoader -Path $script:rc)
-            Unregister-ShellLoader -Path $script:rc | Should -BeTrue
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'removed'
             $c = [System.IO.File]::ReadAllText($script:rc, [System.Text.UTF8Encoding]::new($false))
             $c | Should -Not -Match 'TerminalStyles'
             $c | Should -Match 'alias g=git'
@@ -98,11 +98,14 @@ Describe 'Unregister-ShellLoader' {
 
         It 'reports false when there is no block to remove' {
             [System.IO.File]::WriteAllText($script:rc, "alias g=git`n", [System.Text.UTF8Encoding]::new($false))
-            Unregister-ShellLoader -Path $script:rc | Should -BeFalse
+            # A STATUS, not a boolean: 'none', 'malformed' and 'failed' were all
+            # $false, and two of them made shell-remove report success while
+            # leaving a live loader in the file.
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'none'
         }
 
         It 'reports false for a missing file' {
-            Unregister-ShellLoader -Path (Join-Path $TestDrive 'nope') | Should -BeFalse
+            Unregister-ShellLoader -Path (Join-Path $TestDrive 'nope') | Should -Be 'none'
         }
 
         It 'round-trips: register then unregister restores the original bytes' {

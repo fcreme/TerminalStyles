@@ -80,7 +80,10 @@ Describe 'Register-ShellLoader fails softly' {
             & chmod 444 $script:rc
             try {
                 { Unregister-ShellLoader -Path $script:rc } | Should -Not -Throw
-                Unregister-ShellLoader -Path $script:rc | Should -BeFalse
+                # 'failed', distinctly from 'none'. Reporting an unwritable file as
+            # "there was no block here" told the user the opposite of the truth
+            # and sent them hunting for a block still sitting in the file.
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'failed'
             } finally { & chmod 644 $script:rc }
         }
     }
@@ -234,6 +237,130 @@ Describe 'shell-init and uninstall agree on where the loader lives' {
             ($paths | Where-Object { $_ -like '*.zshrc' })        | Should -Not -BeNullOrEmpty
             ($paths | Where-Object { $_ -like '*.bashrc' })       | Should -Not -BeNullOrEmpty
             ($paths | Where-Object { $_ -like '*.bash_profile' }) | Should -Not -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'shell-remove tells the truth about what it did' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:home = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:home -Force | Out-Null
+            $script:rc = Join-Path $script:home '.zshrc'
+            [System.IO.File]::WriteAllText($script:rc, "# mine`n", [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $script:rc | Out-Null
+        }
+
+        It 'reports a BEGIN with no matching END instead of claiming success' {
+            # Hand-edited rc, or an interrupted write. The strip pattern needs
+            # both markers, so it matched nothing, the unchanged text was written
+            # back, and $true was returned -- shell-remove said the loader was
+            # gone and a new tab would restore the prompt, while every new shell
+            # still sourced the runtime.
+            $text = [System.IO.File]::ReadAllText($script:rc, [System.Text.UTF8Encoding]::new($false))
+            $text = $text -replace '# ===== TerminalStyles END =====\r?\n?', ''
+            [System.IO.File]::WriteAllText($script:rc, $text, [System.Text.UTF8Encoding]::new($false))
+
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'malformed'
+            [System.IO.File]::ReadAllText($script:rc, [System.Text.UTF8Encoding]::new($false)) |
+                Should -Match 'TerminalStyles BEGIN' -Because 'nothing was removed, and the caller must not say otherwise'
+        }
+
+        It 'distinguishes an unwritable file from an empty one' {
+            if ((Get-TStylesPlatform) -eq 'Windows') {
+                Set-ItResult -Skipped -Because 'chmod is the POSIX way to make this unwritable'; return
+            }
+            & chmod 444 $script:rc
+            try {
+                Unregister-ShellLoader -Path $script:rc | Should -Be 'failed' `
+                    -Because '"none" would tell the user there was never a block here'
+            } finally { & chmod 644 $script:rc }
+        }
+
+        It 'still reports a clean removal as removed' {
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'removed'
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'none'
+        }
+
+        It 'every caller compares the status explicitly' {
+            # Every status is a truthy STRING, so `if (Unregister-ShellLoader ...)`
+            # is now true even for 'none' -- it would strip nothing and report
+            # success for every rc file the user has.
+            foreach ($fn in 'Invoke-TerminalStylesShellInit', 'Invoke-TerminalStylesUninstall') {
+                $src = (Get-Command $fn).ScriptBlock.ToString()
+                if ($src -notmatch 'Unregister-ShellLoader') { continue }
+                $src | Should -Not -Match 'if \(Unregister-ShellLoader[^)]*\)\s*\{' `
+                    -Because "$fn must not use the status as a bare boolean"
+            }
+        }
+    }
+}
+
+Describe 'the loader block never fails the rc file' {
+
+    It 'uses an if, not a && that leaves exit status 1 when orphaned' {
+        # The block is the LAST content of the rc file, so `[ -r x ] && . x`
+        # with the runtime gone made the whole file exit 1: `set -e; source
+        # ~/.bashrc` aborted before doing any work, `source ~/.bashrc &&
+        # next-step` skipped next-step, and every new terminal opened showing a
+        # failed status with no failing command behind it. Verified: healthy 0,
+        # orphaned 1, both shells. Now 0 either way.
+        $block = InModuleScope TerminalStyles { Get-ShellLoaderBlock }
+        $block | Should -Match 'if \[ -r ' -Because 'the && form propagates a false exit status'
+        $block | Should -Not -Match '\]\s*&&\s*\.'
+    }
+}
+
+Describe 'bash login shells get the style' {
+    InModuleScope TerminalStyles {
+
+        It 'registers a .bash_profile for a user who has only .bashrc' {
+            # macOS Terminal.app starts bash as a LOGIN shell, which reads
+            # ~/.bash_profile and never ~/.bashrc. Register-ShellLoader skips a
+            # file that does not exist, and the -Create fallback only fired when
+            # NOTHING was registered -- so this user got a green "added
+            # ~/.bashrc", opened a new window, and saw nothing at all.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $h '.bashrc'), "export FOO=1`n",
+                [System.Text.UTF8Encoding]::new($false))
+
+            Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+
+            $bp = Join-Path $h '.bash_profile'
+            Test-Path -LiteralPath $bp | Should -BeTrue -Because 'login bash reads this file, not .bashrc'
+            $text = [System.IO.File]::ReadAllText($bp, [System.Text.UTF8Encoding]::new($false))
+            $text | Should -Match 'TerminalStyles BEGIN'
+            $text | Should -Match '\.bashrc' `
+                -Because 'a bare .bash_profile would leave the user''s own .bashrc unloaded in login shells'
+        }
+
+        It 'uses an existing ~/.profile rather than shadowing it' {
+            # Creating .bash_profile stops bash reading ~/.profile. If they have
+            # one, that is where the loader belongs.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            foreach ($f in '.bashrc', '.profile') {
+                [System.IO.File]::WriteAllText((Join-Path $h $f), "# $f`n", [System.Text.UTF8Encoding]::new($false))
+            }
+
+            Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+
+            Test-Path -LiteralPath (Join-Path $h '.bash_profile') | Should -BeFalse `
+                -Because 'it would shadow the ~/.profile bash reads today'
+            [System.IO.File]::ReadAllText((Join-Path $h '.profile'), [System.Text.UTF8Encoding]::new($false)) |
+                Should -Match 'TerminalStyles BEGIN'
+        }
+
+        It 'leaves an existing .bash_profile alone apart from the block' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            foreach ($f in '.bashrc', '.bash_profile') {
+                [System.IO.File]::WriteAllText((Join-Path $h $f), "# original $f`n", [System.Text.UTF8Encoding]::new($false))
+            }
+            Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            [System.IO.File]::ReadAllText((Join-Path $h '.bash_profile'), [System.Text.UTF8Encoding]::new($false)) |
+                Should -Match 'original \.bash_profile'
         }
     }
 }
