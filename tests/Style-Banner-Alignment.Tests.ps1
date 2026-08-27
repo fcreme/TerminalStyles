@@ -20,6 +20,12 @@
 
 BeforeDiscovery {
     $repoRoot = Split-Path $PSScriptRoot -Parent
+    # Probed at DISCOVERY, because -Skip: is decided there and a flag set in
+    # BeforeAll is still $null when Pester reads it. Windows has neither binary;
+    # CI's PowerShell is `pwsh`, this machine's is `pwsh-preview`.
+    $script:HasZsh  = [bool](Get-Command zsh -ErrorAction SilentlyContinue)
+    $script:PwshExe = @('pwsh', 'pwsh-preview') |
+        Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
     $script:BannerStyles = @(
         Get-ChildItem -LiteralPath (Join-Path $repoRoot 'styles') -Directory |
             Where-Object {
@@ -31,6 +37,8 @@ BeforeDiscovery {
 
 BeforeAll {
     $script:repoRoot = Split-Path $PSScriptRoot -Parent
+    $script:pwshExe = @('pwsh', 'pwsh-preview') |
+        Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
 
     # Strip OSC (ESC ] ... BEL) and CSI (ESC [ ... letter), then take the box
     # rows. What is left is what the terminal actually puts on screen.
@@ -46,7 +54,7 @@ BeforeAll {
 
 Describe 'banner boxes are rectangular' {
 
-    It '<_> renders a constant-width box in zsh' -ForEach $script:BannerStyles {
+    It '<_> renders a constant-width box in zsh' -Skip:(-not $script:HasZsh) -ForEach $script:BannerStyles {
         $sh = Join-Path (Join-Path $script:repoRoot 'styles') $_
         $out = & zsh -f -c "source '$($script:repoRoot)/shell/tstyles.sh' 2>/dev/null; source '$sh/prompt.sh' 2>/dev/null" 2>$null | Out-String
         $widths = @(script:Get-BoxWidths -Text $out)
@@ -55,11 +63,11 @@ Describe 'banner boxes are rectangular' {
             -Because "$_'s box rows measured $(($widths | Sort-Object -Unique) -join ', ') columns; a box is a rectangle"
     }
 
-    It '<_> renders the same box in pwsh' -ForEach $script:BannerStyles {
+    It '<_> renders the same box in pwsh' -Skip:(-not $script:PwshExe) -ForEach $script:BannerStyles {
         # The pwsh copy drifted identically, so checking only one half would
         # have left the other broken.
         $ps = Join-Path (Join-Path (Join-Path $script:repoRoot 'styles') $_) 'profile.ps1'
-        $out = & pwsh-preview -NoProfile -Command "`$ErrorActionPreference='SilentlyContinue'; & { . '$ps' } 2>`$null" 2>$null | Out-String
+        $out = & $script:pwshExe -NoProfile -Command "`$ErrorActionPreference='SilentlyContinue'; & { . '$ps' } 2>`$null" 2>$null | Out-String
         $widths = @(script:Get-BoxWidths -Text $out)
         if (@($widths).Count -le 2) {
             Set-ItResult -Skipped -Because "$_'s profile.ps1 drew no box here"
@@ -69,12 +77,12 @@ Describe 'banner boxes are rectangular' {
             -Because "$_'s pwsh box rows measured $(($widths | Sort-Object -Unique) -join ', ') columns"
     }
 
-    It '<_> draws the same width on both halves' -ForEach $script:BannerStyles {
+    It '<_> draws the same width on both halves' -Skip:(-not ($script:HasZsh -and $script:PwshExe)) -ForEach $script:BannerStyles {
         # zsh and pwsh render hand-maintained copies of one piece of art. If they
         # disagree, one of them has been edited and the other forgotten.
         $dir = Join-Path (Join-Path $script:repoRoot 'styles') $_
         $shOut = & zsh -f -c "source '$($script:repoRoot)/shell/tstyles.sh' 2>/dev/null; source '$dir/prompt.sh' 2>/dev/null" 2>$null | Out-String
-        $psOut = & pwsh-preview -NoProfile -Command "`$ErrorActionPreference='SilentlyContinue'; & { . '$dir/profile.ps1' } 2>`$null" 2>$null | Out-String
+        $psOut = & $script:pwshExe -NoProfile -Command "`$ErrorActionPreference='SilentlyContinue'; & { . '$dir/profile.ps1' } 2>`$null" 2>$null | Out-String
         $shW = @(script:Get-BoxWidths -Text $shOut | Sort-Object -Unique)
         $psW = @(script:Get-BoxWidths -Text $psOut | Sort-Object -Unique)
         if (@($psW).Count -eq 0) { Set-ItResult -Skipped -Because 'no pwsh box'; return }
