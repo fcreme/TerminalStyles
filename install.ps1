@@ -82,8 +82,20 @@ function Get-CurrentEngineLabel {
     #>
     param([string]$Platform = (Get-TStylesPlatform))
 
+    # Every branch is filtered through the platform's own labels, so the answer
+    # is ALWAYS one Write-InstallPanel can actually subtract from what it
+    # registered. Otherwise the subtraction silently becomes a no-op and the
+    # panel names the engine the user is already in.
+    #
+    # That includes the Desktop branch. Windows PowerShell only exists on
+    # Windows, so -Platform MacOS on a 5.1 host is a contradiction -- but it is
+    # a reachable one (the test suite runs on 5.1 and asks about all three), and
+    # answering with a label that platform never registers would be the same
+    # bug in the other direction.
     $labels = @((Get-PowerShellEngineCandidate -Platform $Platform).Label)
-    if ($PSVersionTable.PSEdition -eq 'Desktop') { return 'Windows PowerShell 5.1' }
+    if ($PSVersionTable.PSEdition -eq 'Desktop' -and ($labels -contains 'Windows PowerShell 5.1')) {
+        return 'Windows PowerShell 5.1'
+    }
     $v = $PSVersionTable.PSVersion
     $pre = if ($v.PSObject.Properties.Match('PreReleaseLabel').Count -gt 0) { $v.PreReleaseLabel } else { $null }
     if ($pre -and ($labels -contains 'PowerShell 7 (preview)')) { return 'PowerShell 7 (preview)' }
