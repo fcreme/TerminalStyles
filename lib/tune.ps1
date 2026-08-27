@@ -38,6 +38,47 @@ function New-TunedThemeObject {
     return $theme
 }
 
+
+function Test-SameStyleDirectory {
+    <#
+    .SYNOPSIS
+    Do two style paths name the same directory, as the HOST FILESYSTEM sees it?
+
+    .DESCRIPTION
+    Carved out as a pure function for the same reason Get-PickerViewport was: the
+    decision is one line of subtlety that cannot be tested through its caller.
+    Save-TunedStyle's effect here is "copy prompt.sh, or don't", and the case that
+    matters -- styles/Eva versus styles/eva -- is not even expressible on the
+    macOS and Windows filesystems the test suite mostly runs on, where the two
+    are one directory. Mock Get-TStylesPlatform and ask this instead.
+
+    Case sensitivity follows the platform, not PowerShell. -eq is case-insensitive
+    everywhere, so on Linux a "Save as Eva" from a base at styles/eva looked like
+    the same directory and skipped the prompt.sh copy into what was really a brand
+    new style, costing it the zsh/bash prompt entirely.
+
+    Returns $false on any path it cannot resolve: the copies this guards are
+    idempotent, so a wrong $false costs a redundant write and a wrong $true costs
+    a missing prompt.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$A,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$B
+    )
+
+    if (-not $A -or -not $B) { return $false }
+    try {
+        $cmp = if ((Get-TStylesPlatform) -eq 'Linux') { [System.StringComparison]::Ordinal }
+               else { [System.StringComparison]::OrdinalIgnoreCase }
+        $sep = [System.IO.Path]::DirectorySeparatorChar
+        return [string]::Equals(
+            [System.IO.Path]::GetFullPath($A).TrimEnd($sep),
+            [System.IO.Path]::GetFullPath($B).TrimEnd($sep),
+            $cmp)
+    } catch { return $false }
+}
+
 function Save-TunedStyle {
     # Materializes a tuned style into $DataRoot\styles\$SaveName\:
     #   scheme.json (adjusted colors, name = $SaveName)
@@ -83,16 +124,7 @@ function Save-TunedStyle {
     # as" of `Eva` from a base at styles/eva would look like the same directory
     # and skip the prompt.sh copy into what is really a brand-new style --
     # costing it the zsh/bash prompt the copy exists to provide.
-    $sameDir = $false
-    try {
-        $cmp = if ((Get-TStylesPlatform) -eq 'Linux') { [System.StringComparison]::Ordinal }
-               else { [System.StringComparison]::OrdinalIgnoreCase }
-        $sep = [System.IO.Path]::DirectorySeparatorChar
-        $sameDir = [string]::Equals(
-            [System.IO.Path]::GetFullPath($destDir).TrimEnd($sep),
-            [System.IO.Path]::GetFullPath($BaseStyleDir).TrimEnd($sep),
-            $cmp)
-    } catch { $sameDir = $false }
+    $sameDir = Test-SameStyleDirectory -A $destDir -B $BaseStyleDir
 
     $profileSrc = Join-Path $BaseStyleDir 'profile.ps1'
     if (Test-Path -LiteralPath $profileSrc) {

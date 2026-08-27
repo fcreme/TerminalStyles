@@ -192,9 +192,27 @@ Describe 'Test-PolicyResolved' {
 
 Describe 'install.ps1 hardens its download' {
     BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
         $script:installSrc = [System.IO.File]::ReadAllText(
-            (Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'),
-            [System.Text.UTF8Encoding]::new($false))
+            $script:installPath, [System.Text.UTF8Encoding]::new($false))
+        $script:installAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            $script:installPath, [ref]$null, [ref]$null)
+
+        # The two tests below used to ask the whole FILE for `} finally {` and
+        # `} catch {` with a (?s) match across it. install.ps1 has an unrelated
+        # finally at line 363 and an unrelated catch at 576, either of which
+        # satisfied the pattern on its own -- so deleting the try/catch the test
+        # was named for left it green. Ask the AST which try statement actually
+        # contains the code, instead of asking the text whether the keyword
+        # appears anywhere after it.
+        function script:Get-EnclosingTry {
+            param([Parameter(Mandatory)][string]$Needle)
+            $tries = @($script:installAst.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] }, $true))
+            # Innermost wins: a nested try is the one that actually guards the line.
+            @($tries | Where-Object { $_.Body.Extent.Text -match $Needle } |
+                Sort-Object { $_.Extent.Text.Length } | Select-Object -First 1)
+        }
     }
 
     It 'raises the TLS floor to 1.2 before downloading' {
@@ -233,14 +251,28 @@ Describe 'install.ps1 hardens its download' {
 
     It 'restores them on the failure paths too' {
         # A finally, not a few lines at the end: the installer throws on plenty
-        # of paths, and every one of them leaves the user's shell behind.
-        $script:installSrc | Should -Match '(?s)\} finally \{.*\$ErrorActionPreference = \$tstylesPrevEAP'
+        # of paths, and every one of them leaves the user's shell behind -- and
+        # under `iwr | iex` that shell is the user's own, for the rest of the
+        # session.
+        $restoring = @($script:installAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.TryStatementAst] -and
+            $n.Finally -and
+            $n.Finally.Extent.Text -match '\$ErrorActionPreference\s*=\s*\$tstylesPrevEAP' }, $true))
+        @($restoring).Count | Should -BeGreaterThan 0 `
+            -Because 'the preference restore must sit in a finally, not merely somewhere after one'
+        $restoring[0].Finally.Extent.Text |
+            Should -Match '\$ProgressPreference\s*=\s*\$tstylesPrevProgress' `
+            -Because 'both preferences are the caller''s, so both restore on the same path'
     }
 
     It 'still installs when the TLS floor cannot be raised' {
         # pwsh 7 on Unix negotiates through the OS and may not expose
         # ServicePointManager at all. Not being able to raise the floor is not a
         # reason to refuse to install.
-        $script:installSrc | Should -Match '(?s)SecurityProtocol -bor.*?\} catch \{'
+        $guard = script:Get-EnclosingTry -Needle 'SecurityProtocol\s*-bor'
+        @($guard).Count | Should -Be 1 `
+            -Because 'the SecurityProtocol write must sit inside a try, not merely before some later catch'
+        $guard[0].CatchClauses.Count | Should -BeGreaterThan 0 `
+            -Because 'a host without ServicePointManager must still reach the install'
     }
 }

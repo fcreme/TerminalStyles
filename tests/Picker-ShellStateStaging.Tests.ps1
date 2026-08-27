@@ -150,25 +150,76 @@ Describe 'the picker honours -KeepPrompt' {
 }
 
 Describe 'Save-TunedStyle same-directory detection' {
+    # This pair used to assert nothing about the module. One checked that both
+    # StringComparison names appeared SOMEWHERE in Save-TunedStyle -- true with
+    # the branches swapped -- and the other called [string]::Equals on two
+    # TestDrive paths and asserted the BCL behaves as documented, never entering
+    # the module at all. Swapping the platform branch back left both green.
+    #
+    # The decision is now Test-SameStyleDirectory, a pure function over two paths
+    # and the platform, so it can be asked directly. The filesystem effect cannot
+    # be tested end-to-end: on macOS and Windows styles/Eva and styles/eva are
+    # one directory, so the interesting case does not exist to be set up.
+    InModuleScope TerminalStyles {
 
-    It 'compares paths the way the host filesystem does' {
-        # PowerShell's -eq is case-insensitive. On Linux, where the filesystem
-        # is not, that made a "Save as Eva" from a base at styles/eva look like
-        # the same directory and skip the prompt.sh copy into a genuinely new
-        # style -- leaving it with colors and no zsh/bash prompt.
-        $fn = script:Get-FunctionAst -Name 'Save-TunedStyle'
-        $fn | Should -Not -BeNullOrEmpty
-        $fn.Extent.Text | Should -Match 'StringComparison\]::Ordinal\b'
-        $fn.Extent.Text | Should -Match 'StringComparison\]::OrdinalIgnoreCase'
+        It 'treats a case-variant sibling as a DIFFERENT directory on Linux' {
+            Mock Get-TStylesPlatform { 'Linux' }
+            $base = Join-Path (Join-Path $TestDrive 'styles') 'eva'
+            $dest = Join-Path (Join-Path $TestDrive 'styles') 'Eva'
+            Test-SameStyleDirectory -A $dest -B $base | Should -BeFalse `
+                -Because 'a Linux filesystem has two directories here, and the new one needs its own prompt.sh'
+        }
+
+        It 'treats it as the SAME directory where the filesystem is case-insensitive' {
+            # Not symmetry for its own sake: on Windows and macOS these really are
+            # one directory, and a $false there makes every copy below a copy of a
+            # file onto itself -- a duplicated tstyles-tuned marker, and a red
+            # "Cannot overwrite the item with itself" for prompt.sh at save time.
+            foreach ($platform in 'Windows', 'macOS') {
+                Mock Get-TStylesPlatform { $platform }.GetNewClosure()
+                $base = Join-Path (Join-Path $TestDrive 'styles') 'eva'
+                $dest = Join-Path (Join-Path $TestDrive 'styles') 'Eva'
+                Test-SameStyleDirectory -A $dest -B $base | Should -BeTrue -Because "on $platform they are one directory"
+            }
+        }
+
+        It 'recognises the re-tune case on every platform' {
+            # The original reason the guard exists: saving over the style you are
+            # tuning makes base and dest literally identical.
+            foreach ($platform in 'Linux', 'Windows', 'macOS') {
+                Mock Get-TStylesPlatform { $platform }.GetNewClosure()
+                $d = Join-Path (Join-Path $TestDrive 'styles') 'eva'
+                Test-SameStyleDirectory -A $d -B $d | Should -BeTrue -Because "on $platform a re-tune is a self-copy"
+            }
+        }
+
+        It 'normalises trailing separators and relative segments' {
+            Mock Get-TStylesPlatform { 'Linux' }
+            $sep = [System.IO.Path]::DirectorySeparatorChar
+            $d   = Join-Path (Join-Path $TestDrive 'styles') 'eva'
+            Test-SameStyleDirectory -A ($d + $sep) -B $d | Should -BeTrue
+            Test-SameStyleDirectory -A (Join-Path (Join-Path $d '..') 'eva') -B $d | Should -BeTrue
+        }
+
+        It 'answers not-the-same rather than throwing on a path it cannot resolve' {
+            # Reached with a caller-supplied name, so it must not take down a save.
+            Mock Get-TStylesPlatform { 'Linux' }
+            { Test-SameStyleDirectory -A '' -B 'x' } | Should -Not -Throw
+            Test-SameStyleDirectory -A '' -B 'x' | Should -BeFalse
+            $bad = "$([char]0)invalid"
+            { Test-SameStyleDirectory -A $bad -B 'x' } | Should -Not -Throw
+            Test-SameStyleDirectory -A $bad -B 'x' | Should -BeFalse
+        }
+
     }
 
-    It 'treats a case-variant sibling as a DIFFERENT directory on Linux' {
-        $sep  = [System.IO.Path]::DirectorySeparatorChar
-        $a    = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $TestDrive 'styles') 'Eva')).TrimEnd($sep)
-        $b    = [System.IO.Path]::GetFullPath((Join-Path (Join-Path $TestDrive 'styles') 'eva')).TrimEnd($sep)
-        [string]::Equals($a, $b, [System.StringComparison]::Ordinal) | Should -BeFalse
-        # ...and the same directory where the filesystem is case-insensitive.
-        [string]::Equals($a, $b, [System.StringComparison]::OrdinalIgnoreCase) | Should -BeTrue
+    It 'is what Save-TunedStyle actually asks' {
+        # Keeps the decision from being inlined back into the caller, where it
+        # would stop being reachable by the tests above. Outside InModuleScope:
+        # the file's script:Get-FunctionAst helper is not visible inside one.
+        $fn = script:Get-FunctionAst -Name 'Save-TunedStyle'
+        $fn | Should -Not -BeNullOrEmpty
+        $fn.Extent.Text | Should -Match '\$sameDir\s*=\s*Test-SameStyleDirectory'
     }
 }
 
@@ -191,10 +242,29 @@ Describe 'the picker puts the terminal back when you cancel' {
     It 'captures the starting index before the cursor moves' {
         # $idx is the live cursor and has moved by the time Esc arrives, so the
         # revert cannot read it.
+        #
+        # Asked of the AST, not of the source text. The ordering half of this used
+        # to be $src.IndexOf('$startIdx        = $idx'), with the alignment padding
+        # baked into the needle: re-space the line while moving it and IndexOf
+        # returns -1, which is less than any real offset, so the assertion passed
+        # precisely when the regression was present.
         $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
-        $src = $fn.Extent.Text
-        $src | Should -Match '\$startIdx\s*=\s*\$idx'
-        $src.IndexOf('$startIdx        = $idx') | Should -BeLessThan $src.IndexOf('Invoke-StylePickerLoop')
+        $fn | Should -Not -BeNullOrEmpty
+
+        $assign = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Left.Extent.Text -eq '$startIdx' }, $true))
+        @($assign).Count | Should -BeGreaterThan 0 -Because '$startIdx must be captured somewhere'
+
+        $loopCall = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Invoke-StylePickerLoop' }, $true))
+        @($loopCall).Count | Should -BeGreaterThan 0
+
+        $firstAssign = ($assign | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+        $firstLoop   = ($loopCall | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
+        $firstAssign | Should -BeLessThan $firstLoop `
+            -Because 'the revert reads $startIdx, so it must be captured before the cursor starts moving'
     }
 
     It 'still hands control back to the terminal when there was no active style' {

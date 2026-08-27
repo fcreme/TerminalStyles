@@ -45,27 +45,108 @@ Describe 'picker guards on a non-console session' {
 }
 
 Describe 'picker background handling off Windows Terminal' {
-    InModuleScope TerminalStyles {
-        It 'does not treat a missing background as unresolved when none can be shown' {
-            # The picker was downloading a GIF per style from the gifs branch --
-            # megabytes over the network, and a "...fetching background" row next
-            # to every entry -- for an image Terminal.app can never draw.
-            # Terminal.app CAN show a background image, but only through a
-            # profile -- never in the window the picker is previewing in. The
-            # picker still must not prefetch GIFs it cannot paint mid-preview.
-            (Get-TerminalCapability -Kind 'VSCode').BackgroundImage | Should -BeFalse
-            (Get-TerminalCapability -Kind 'WindowsTerminal').BackgroundImage | Should -BeTrue
+    # These two Describes used to assert only that Get-TerminalCapability and
+    # Get-TerminalDisplayName return what Get-TerminalCapability.Tests.ps1
+    # already pins -- nothing in either reached the picker, so restoring the
+    # exact 0.8.0 regressions left them green.
+    #
+    # The picker's non-WT branch cannot be driven from a test: it needs a real
+    # console, and returns early the moment [Console]::IsInputRedirected is true
+    # (which is what the first Describe in this file covers). So these are shape
+    # assertions -- but on the AST, pinned to the expressions that carry the
+    # decision, rather than on whether a string appears anywhere in the file.
+    BeforeAll {
+        $script:pickerFn = InModuleScope TerminalStyles {
+            (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast
         }
+        function script:Get-AssignmentRhs {
+            param([Parameter(Mandatory)][string]$Name)
+            $a = @($script:pickerFn.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Left.Extent.Text -eq $Name }, $true))
+            if (-not $a) { return $null }
+            $a[0].Right.Extent.Text
+        }
+    }
+
+    It 'derives the prefetch decision from the terminal, not from a constant' {
+        # The regression is a one-word edit: $wantsBackgrounds = $true. The
+        # picker then downloads a GIF per style from the gifs branch on a
+        # terminal that can never paint one -- megabytes over the network, and a
+        # "...fetching background" row beside every entry. Terminal.app CAN show
+        # a background image, but only through a profile, never in the window the
+        # picker is previewing in.
+        $rhs = script:Get-AssignmentRhs -Name '$wantsBackgrounds'
+        $rhs | Should -Not -BeNullOrEmpty -Because '$wantsBackgrounds must exist'
+        $rhs | Should -Match 'Get-TerminalCapability[^\n]*BackgroundImage' `
+            -Because 'it must be asked of the terminal, not hardcoded'
+    }
+
+    It 'gates the prefetch loop on it' {
+        # Without the gate the download happens regardless of what the flag says.
+        $gated = @($script:pickerFn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.IfStatementAst] -and
+            $n.Clauses[0].Item1.Extent.Text -match '^\$wantsBackgrounds$' -and
+            $n.Clauses[0].Item2.Extent.Text -match 'Test-StyleResolved' }, $true))
+        @($gated).Count | Should -BeGreaterThan 0 `
+            -Because 'the Test-StyleResolved sweep that builds $missingPaths must sit inside if ($wantsBackgrounds)'
+    }
+
+    It 'does not treat a missing background as unresolved when none can be shown' {
+        # The row-state half. A bare Test-StyleResolved here prints
+        # "...fetching background" next to every style forever, describing work
+        # that is deliberately never done.
+        #
+        # Scoped to $drawMenu deliberately. There is a SECOND $resolved a few
+        # lines below, inside the `if (-not $useSettingsFile) { return }` arm --
+        # so it only runs on Windows Terminal, where a bare Test-StyleResolved is
+        # the correct thing. Taking "the first $resolved in the function" would
+        # pass or fail on source order rather than on meaning.
+        $draw = @($script:pickerFn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Left.Extent.Text -eq '$drawMenu' }, $true))
+        @($draw).Count | Should -Be 1 -Because 'the menu is drawn from one scriptblock'
+
+        $rows = @($draw[0].FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Left.Extent.Text -eq '$resolved' }, $true))
+        @($rows).Count | Should -Be 1 -Because 'the row state is decided in one place'
+
+        $rhs = $rows[0].Right.Extent.Text
+        $rhs | Should -Match '-not\s+\$wantsBackgrounds' `
+            -Because 'where no background can be shown, every style is ready the moment it is listed'
+        $rhs | Should -Match 'Test-StyleResolved' `
+            -Because 'and where one can, the swatch still waits for the file'
     }
 }
 
 Describe 'picker header target label' {
-    InModuleScope TerminalStyles {
-        It 'names the terminal when there is no profile to name' {
-            # Off Windows Terminal $Target is empty, and the header read
-            # "Choose a style for ''", which looks like a bug in the tool.
+    BeforeAll {
+        $script:pickerFn = InModuleScope TerminalStyles {
+            (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast
+        }
+    }
+
+    It 'names the terminal when there is no profile to name' {
+        # Off Windows Terminal $Target is empty, and the header read
+        # "Choose a style for ''", which looks like a bug in the tool. The label
+        # must therefore be a CHOICE -- the quoted profile name only where there
+        # is a settings file to name, the terminal's own name otherwise.
+        $a = @($script:pickerFn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Left.Extent.Text -eq '$pickerTargetLabel' }, $true))
+        @($a).Count | Should -BeGreaterThan 0
+
+        $rhs = $a[0].Right.Extent.Text
+        $rhs | Should -Match 'Get-TerminalDisplayName' `
+            -Because 'with no profile to name, the header names the terminal'
+        $rhs | Should -Match '\$useSettingsFile' `
+            -Because 'the quoted profile name is only correct where a settings file exists'
+    }
+
+    It 'and the name it falls back to is a real one' {
+        InModuleScope TerminalStyles {
             Get-TerminalDisplayName -Kind 'AppleTerminal' | Should -Be 'Terminal.app'
-            Get-TerminalDisplayName -Kind 'AppleTerminal' | Should -Not -BeNullOrEmpty
         }
     }
 }
