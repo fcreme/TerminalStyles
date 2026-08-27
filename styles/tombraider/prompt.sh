@@ -27,7 +27,7 @@ ts_title 'TOMB RAIDER // EXT3'
 printf '%s\n' ""
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' "${D}|  ${M}>>> TOMB RAIDER // EXT3 <<<${W}                 ${D}|${X}"
-printf '%s\n' "${D}|  ${Y}CROFT INDUSTRIES${W}  ::  ${C}POWER: ONLINE${W}            ${D}|${X}"
+printf '%s\n' "${D}|  ${Y}CROFT INDUSTRIES${W}  ::  ${C}POWER: ONLINE${W}         ${D}|${X}"
 printf '%s\n' "${D}|  ${M}\"Press start.\"${W}                              ${D}|${X}"
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' ""

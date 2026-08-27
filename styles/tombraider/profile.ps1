@@ -20,7 +20,7 @@ $X   = "$Esc[0m"                  # reset
 Write-Host ""
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host "${D}|  ${M}>>> TOMB RAIDER // EXT3 <<<${W}                 ${D}|${X}"
-Write-Host "${D}|  ${Y}CROFT INDUSTRIES${W}  ::  ${C}POWER: ONLINE${W}            ${D}|${X}"
+Write-Host "${D}|  ${Y}CROFT INDUSTRIES${W}  ::  ${C}POWER: ONLINE${W}         ${D}|${X}"
 Write-Host "${D}|  ${M}`"Press start.`"${W}                              ${D}|${X}"
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host ""

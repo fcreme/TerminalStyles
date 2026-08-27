@@ -22,7 +22,7 @@ $X   = "$Esc[0m"                  # reset
 Write-Host ""
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host "${D}|  ${O}>>> HALO // EXT3 <<<${W}                        ${D}|${X}"
-Write-Host "${D}|  ${Y}NIGHT CHAPEL${W}  ::  ${L}RADIANCE: HIGH${W}              ${D}|${X}"
+Write-Host "${D}|  ${Y}NIGHT CHAPEL${W}  ::  ${L}RADIANCE: HIGH${W}            ${D}|${X}"
 Write-Host "${D}|  ${O}`"Look up. Look closer.`"${W}                     ${D}|${X}"
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host ""

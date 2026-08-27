@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- the banner box was misaligned in 5 of the 9 boxed styles -- halo, lain, marquee, neon-rain and tombraider -- by 1 to 3 columns, always on the line with a colour code embedded mid-string, which is where hand-counted padding goes wrong. It was wrong identically in both halves (`prompt.sh` for zsh/bash and `profile.ps1` for pwsh), since the two are hand-maintained copies of the same art. A test now measures the rendered output with the escape sequences stripped, and checks the two halves agree
 - **a `$` anywhere in your home directory path stopped the runtime loading entirely** -- no colours, no prompt, no error, on every shell. The generated rc block put the path inside double quotes, which protect spaces and apostrophes but not `$`, so the shell expanded it and the path came out wrong. Single-quoted now
 - **`shell-init` ignored `$ZDOTDIR`.** zsh reads `$ZDOTDIR/.zshrc` and does *not* read `~/.zshrc`, so anyone with a relocated zsh config -- the standard XDG layout, and most dotfile frameworks -- got a success message and a block in a file zsh never opens
 - **one byte that was not valid UTF-8 in your own rc file was silently replaced.** Both halves read the whole file and write it back, so a latin-1 comment became a replacement character on the first `shell-init` and was gone for good. rc files are now read and written byte-preservingly

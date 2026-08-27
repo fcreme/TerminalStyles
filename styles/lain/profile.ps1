@@ -22,7 +22,7 @@ $X   = "$Esc[0m"                  # reset
 Write-Host ""
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host "${D}|  ${P}NAVI // PROTOCOL 7${W}                          ${D}|${X}"
-Write-Host "${D}|  ${W}COPLAND OS  ::  WIRED CONNECTION ${R}ONLINE${W}      ${D}|${X}"
+Write-Host "${D}|  ${W}COPLAND OS  ::  WIRED CONNECTION ${R}ONLINE${W}     ${D}|${X}"
 Write-Host "${D}|  ${M}`"Present day, present time. Hahaha.`"${W}        ${D}|${X}"
 Write-Host "${D}+----------------------------------------------+${X}"
 Write-Host ""

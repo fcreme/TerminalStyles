@@ -27,7 +27,7 @@ ts_title 'NAVI // PROTOCOL 7'
 printf '%s\n' ""
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' "${D}|  ${P}NAVI // PROTOCOL 7${W}                          ${D}|${X}"
-printf '%s\n' "${D}|  ${W}COPLAND OS  ::  WIRED CONNECTION ${R}ONLINE${W}      ${D}|${X}"
+printf '%s\n' "${D}|  ${W}COPLAND OS  ::  WIRED CONNECTION ${R}ONLINE${W}     ${D}|${X}"
 printf '%s\n' "${D}|  ${M}\"Present day, present time. Hahaha.\"${W}        ${D}|${X}"
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' ""

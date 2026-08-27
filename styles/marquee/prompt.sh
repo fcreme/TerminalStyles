@@ -27,7 +27,7 @@ ts_title 'MARQUEE // EXT3'
 printf '%s\n' ""
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' "${D}|  ${M}>>> MARQUEE // EXT3 <<<${W}                     ${D}|${X}"
-printf '%s\n' "${D}|  ${Y}NIGHT GALLERY${W}  ::  ${B}SIGNAL: STRONG${W}             ${D}|${X}"
+printf '%s\n' "${D}|  ${Y}NIGHT GALLERY${W}  ::  ${B}SIGNAL: STRONG${W}           ${D}|${X}"
 printf '%s\n' "${D}|  ${M}\"Through the glass, after hours.\"${W}           ${D}|${X}"
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' ""

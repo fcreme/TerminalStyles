@@ -26,7 +26,7 @@ ts_title 'NEON RAIN // DISTRICT-05'
 printf '%s\n' ""
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' "${D}|  ${Y}DISTRICT-05 // NIGHT SECTOR${W}                 ${D}|${X}"
-printf '%s\n' "${D}|  ${W}RAIN PROTOCOL ACTIVE  ::  STATUS: ${G}ONLINE${W}      ${D}|${X}"
+printf '%s\n' "${D}|  ${W}RAIN PROTOCOL ACTIVE  ::  STATUS: ${G}ONLINE${W}    ${D}|${X}"
 printf '%s\n' "${D}|  ${Y}\"The neon never sleeps.\"${W}                    ${D}|${X}"
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' ""

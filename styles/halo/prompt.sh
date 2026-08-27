@@ -28,7 +28,7 @@ ts_title 'HALO // EXT3'
 printf '%s\n' ""
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' "${D}|  ${O}>>> HALO // EXT3 <<<${W}                        ${D}|${X}"
-printf '%s\n' "${D}|  ${Y}NIGHT CHAPEL${W}  ::  ${L}RADIANCE: HIGH${W}              ${D}|${X}"
+printf '%s\n' "${D}|  ${Y}NIGHT CHAPEL${W}  ::  ${L}RADIANCE: HIGH${W}            ${D}|${X}"
 printf '%s\n' "${D}|  ${O}\"Look up. Look closer.\"${W}                     ${D}|${X}"
 printf '%s\n' "${D}+----------------------------------------------+${X}"
 printf '%s\n' ""
