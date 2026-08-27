@@ -73,8 +73,16 @@ function Invoke-RandomStyle {
     # to call Apply-StyleDirect with only the style name, so `tstyles random
     # -KeepPrompt` replaced the prompt it promised to keep, `-Target` applied to
     # the wrong Windows Terminal profile, and `-NewWindow` did nothing.
+    #
+    # -BackgroundImage was missed by that fix and stayed dropped a while longer:
+    # three of the four flags were forwarded and the comment above said all of
+    # them were. It needs its own -Provided flag because "" is meaningful --
+    # the documented way to apply a style with NO background image -- so the
+    # switch cannot be inferred from the value being empty.
     param(
         [string]$Target,
+        [string]$BackgroundImage,
+        [bool]$BackgroundImageProvided,
         [switch]$KeepPrompt,
         [switch]$NewWindow
     )
@@ -90,6 +98,7 @@ function Invoke-RandomStyle {
     Write-Host "Rolling the dice... -> " -NoNewline
     Write-Host $pick.Name -ForegroundColor Cyan
     Apply-StyleDirect -StyleName $pick.Name -Target $Target `
+        -BackgroundImage $BackgroundImage -BackgroundImageProvided $BackgroundImageProvided `
         -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
 }
 

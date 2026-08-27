@@ -117,7 +117,15 @@ function Show-TerminalStyleHelp {
     $data = Get-TerminalStyleHelpData
 
     if ($Command) {
-        $entry = $data | Where-Object { $_.Name -eq $Command.ToLower() } | Select-Object -First 1
+        # No .ToLower(). PowerShell's -eq is already both case-insensitive and
+        # culture-INVARIANT, which .ToLower() is not: it lowercases with the
+        # current culture, so under tr-TR / az-AZ an uppercase 'I' becomes the
+        # dotless 'i' and `tstyles help LIST` looked up "list" -- printing
+        # "No help topic 'LIST'." directly above a topics line containing 'list'.
+        # The dispatcher accepts `tstyles LIST` in the same session, because it
+        # compares with a bare -eq like everything else here. This was the only
+        # culture-sensitive comparison left in the module.
+        $entry = $data | Where-Object { $_.Name -eq $Command } | Select-Object -First 1
         if (-not $entry) {
             Write-Host "No help topic '$Command'." -ForegroundColor Yellow
             Write-Host ("Topics: " + (($data.Name) -join ', ')) -ForegroundColor DarkGray

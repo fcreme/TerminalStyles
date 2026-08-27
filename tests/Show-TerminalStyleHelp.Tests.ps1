@@ -34,6 +34,32 @@ Describe 'Show-TerminalStyleHelp' {
             $out = Show-TerminalStyleHelp -Command 'TUNE' 6>&1 | Out-String
             $out | Should -Match 'brightness'
         }
+        It 'command lookup is case-insensitive the same way in every culture' {
+            # The case-insensitivity above was implemented as $Command.ToLower(),
+            # which lowercases with the CURRENT culture. Under tr-TR and az-AZ an
+            # uppercase 'I' lowercases to the dotless 'i', so `tstyles help LIST`
+            # printed "No help topic 'LIST'." directly above a topics line
+            # containing 'list' -- while `tstyles LIST` worked in the same
+            # session, because the dispatcher compares with a bare -eq.
+            #
+            # 'TUNE' could never catch it: the bug needs an I in the token. Every
+            # topic that has one is checked here.
+            $withI = @((Get-TerminalStyleHelpData).Name | Where-Object { $_ -match 'i' })
+            @($withI).Count | Should -BeGreaterThan 0 -Because 'otherwise this test proves nothing'
+
+            $prev = [System.Threading.Thread]::CurrentThread.CurrentCulture
+            try {
+                [System.Threading.Thread]::CurrentThread.CurrentCulture =
+                    [System.Globalization.CultureInfo]::new('tr-TR')
+                foreach ($topic in $withI) {
+                    $out = Show-TerminalStyleHelp -Command $topic.ToUpperInvariant() 6>&1 | Out-String
+                    $out | Should -Not -Match 'No help topic' `
+                        -Because "help $($topic.ToUpperInvariant()) must resolve under tr-TR as it does anywhere else"
+                }
+            } finally {
+                [System.Threading.Thread]::CurrentThread.CurrentCulture = $prev
+            }
+        }
         It 'unknown topic shows a not-found message and lists topics' {
             $out = Show-TerminalStyleHelp -Command 'frobnicate' 6>&1 | Out-String
             $out | Should -Match "No help topic 'frobnicate'"

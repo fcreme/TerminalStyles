@@ -65,9 +65,55 @@ Describe 'tstyles random forwards the flags it accepts' {
             Should -Not -Invoke Apply-StyleDirect
         }
 
-        It 'is wired up in the dispatcher with all three' {
-            $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
-            $src | Should -Match "Invoke-RandomStyle -Target \`$Target -KeepPrompt:\`$KeepPrompt -NewWindow:\`$NewWindow"
+        It 'passes -BackgroundImage through' {
+            # Missed by the fix that added the other three, and by the test that
+            # covered them: `tstyles random -BackgroundImage moody.gif` applied a
+            # random style with that style's OWN bundled GIF and reported success,
+            # while `tstyles <name> -BackgroundImage moody.gif` honoured it.
+            Invoke-RandomStyle -BackgroundImage 'C:\pics\moody.gif' -BackgroundImageProvided $true
+            Should -Invoke Apply-StyleDirect -ParameterFilter {
+                $BackgroundImage -eq 'C:\pics\moody.gif' -and $BackgroundImageProvided
+            } -Times 1 -Exactly
+        }
+
+        It 'passes an EMPTY -BackgroundImage through as a real choice' {
+            # "" is the documented way to apply a style with no background image
+            # at all, so the intent cannot be inferred from the value being
+            # empty -- it rides on the separate -Provided flag.
+            Invoke-RandomStyle -BackgroundImage '' -BackgroundImageProvided $true
+            Should -Invoke Apply-StyleDirect -ParameterFilter {
+                $BackgroundImage -eq '' -and $BackgroundImageProvided
+            } -Times 1 -Exactly
+        }
+
+        It 'leaves the style''s own background alone when the flag is absent' {
+            Invoke-RandomStyle
+            Should -Invoke Apply-StyleDirect -ParameterFilter {
+                -not $BackgroundImageProvided
+            } -Times 1 -Exactly
+        }
+
+        It 'is wired up in the dispatcher with all four' {
+            # The dispatcher's own named-style branch is the reference: whatever
+            # it forwards, random forwards. Asserted against that branch rather
+            # than against a literal call string, so the two cannot drift apart
+            # again while the test stays green.
+            $fn = (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast
+            $calls = @($fn.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -in 'Invoke-RandomStyle', 'Apply-StyleDirect' }, $true))
+            $random = @($calls | Where-Object { $_.GetCommandName() -eq 'Invoke-RandomStyle' })
+            $direct = @($calls | Where-Object { $_.GetCommandName() -eq 'Apply-StyleDirect' })
+            @($random).Count | Should -Be 1
+            @($direct).Count | Should -BeGreaterThan 0
+
+            foreach ($flag in '-Target', '-BackgroundImage', '-BackgroundImageProvided',
+                              '-KeepPrompt', '-NewWindow') {
+                $direct[0].Extent.Text | Should -Match ([regex]::Escape($flag)) `
+                    -Because "$flag is an apply flag the named-style branch forwards"
+                $random[0].Extent.Text | Should -Match ([regex]::Escape($flag)) `
+                    -Because "random claims to take the same apply flags, so it must forward $flag too"
+            }
         }
     }
 }
