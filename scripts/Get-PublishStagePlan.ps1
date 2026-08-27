@@ -58,6 +58,27 @@ function Get-PublishStagePlan {
             throw "Allowlist item missing from repo: $item"
         }
 
+        # A directory entry that resolves to SOMETHING passes the check above even
+        # when a file inside it is uncommitted -- git ls-files simply cannot see
+        # it, so it left the package silently. That is the exact failure the
+        # directory entries exist to prevent: lib/*.ps1 is dot-sourced by
+        # enumeration, so a forgotten `git add` ships a module that imports fine
+        # and then fails at first use with "Show-StyleList is not recognized".
+        #
+        # --others --exclude-standard is untracked-and-NOT-ignored, which is the
+        # distinction that matters: gitignored runtime cache inside styles/
+        # (background.*, .no-background) must still be skipped in silence -- that
+        # is what this helper is for.
+        $stray = @(& git -C $RepoRoot ls-files --others --exclude-standard -- $pathspec 2>$null)
+        if ($LASTEXITCODE -ne 0) {
+            throw "git ls-files --others failed for allowlist item: $item"
+        }
+        $stray = @($stray | Where-Object { $_ -and $_.Trim() } | ForEach-Object { $_.Trim() })
+        if ($stray.Count -gt 0) {
+            throw ("Untracked file(s) under allowlist item '$item' would be dropped from the " +
+                   "package (commit them, or add them to .gitignore): " + ($stray -join ', '))
+        }
+
         foreach ($path in $tracked) {
             if ($seen.Add($path)) { $plan.Add($path) }
         }

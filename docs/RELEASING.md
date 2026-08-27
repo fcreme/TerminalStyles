@@ -101,8 +101,10 @@ The `scripts/publish.ps1` allowlist controls what ships. Currently:
   dot-sourced by `tstyles.ps1`, so the import fails outright without it
 - `lib/` — the rest of the library, also dot-sourced. It is a **directory**
   entry in the allowlist on purpose: `tstyles.ps1` loads `lib/*.ps1` by
-  enumeration, so a new file needs registering in neither place and cannot be
-  left out of the package by accident
+  enumeration, so a new file needs registering in neither place. Unlike
+  `terminals.ps1`, a missing `lib/` file does **not** fail the import — the
+  module loads clean and then dies at first use — so `Get-PublishStagePlan`
+  refuses to stage a directory entry that contains an untracked, unignored file
 - `styles/` (all 16 themes, including each one's `prompt.sh`)
 - `shell/` — the zsh/bash runtime (`tstyles.sh`) and the Terminal.app
   profile helper (`appleterminal.js`)

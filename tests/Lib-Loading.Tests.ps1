@@ -3,15 +3,21 @@
 # The library was one 4,100-line file. Splitting it across lib/ adds exactly one
 # new way to break the module, and it is a quiet one: a file that exists in the
 # repo, passes every test locally, and is simply absent from the published
-# package -- at which point `Import-Module TerminalStyles` fails outright for
-# everyone who installs it, while the maintainer's checkout is fine.
+# package, while the maintainer's checkout is fine.
+#
+# That failure is quieter still than it first looks. Verified against a staged
+# package with lib/applystyle.ps1 removed: `Import-Module TerminalStyles`
+# SUCCEEDS. The install looks clean and the module dies at first use --
+# `tstyles list` -> "The term 'Show-StyleList' is not recognized". A loud import
+# failure would at least land on the person who could fix it.
 #
 # Two guards against that, matching the two places a file has to be known:
 #   - tstyles.ps1 enumerates lib/*.ps1 rather than listing names, so a new file
 #     is dot-sourced without being registered.
 #   - scripts/publish.ps1's allowlist has a single 'lib' DIRECTORY entry for the
-#     same reason. Get-PublishStagePlan expands it through git ls-files, so an
-#     uncommitted file is refused rather than silently dropped.
+#     same reason. Get-PublishStagePlan expands it through git ls-files, and
+#     refuses any untracked-and-unignored file underneath, so an uncommitted one
+#     stops the release rather than being silently dropped.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -19,6 +25,8 @@
 BeforeDiscovery {
     $repoRoot = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+    # Discovery scope, for the -ForEach cases below. It does NOT survive into the
+    # run phase -- see the BeforeAll copy, and the comment there.
     $script:LibFiles = @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'lib') -Filter '*.ps1' |
         ForEach-Object { $_.Name })
 }
@@ -26,6 +34,16 @@ BeforeAll {
     $script:repoRoot = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $script:repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
     $script:libDir  = Join-Path $script:repoRoot 'lib'
+    # Enumerated AGAIN here, deliberately. Pester runs BeforeDiscovery in the
+    # discovery scope, and a $script: variable set there is $null by the time an
+    # It body executes -- the same trap as a -Skip: flag set in BeforeAll, in the
+    # other direction. The four `foreach ($f in $script:LibFiles)` loops below
+    # ran zero iterations and asserted nothing until this line existed: with an
+    # untracked lib/ file present that also defined an unloadable function, both
+    # guards passed. -ForEach is fine on the discovery copy; a loop inside an It
+    # body is not.
+    $script:LibFiles = @(Get-ChildItem -LiteralPath $script:libDir -Filter '*.ps1' |
+        ForEach-Object { $_.Name })
     $script:tstyles = [System.IO.File]::ReadAllText(
         (Join-Path $script:repoRoot 'tstyles.ps1'), [System.Text.UTF8Encoding]::new($false))
     $script:publish = [System.IO.File]::ReadAllText(

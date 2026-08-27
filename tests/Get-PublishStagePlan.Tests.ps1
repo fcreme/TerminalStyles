@@ -120,6 +120,28 @@ Describe 'Get-PublishStagePlan' {
             Should -Throw '*brand-new.ps1*'
     }
 
+    It 'throws when a DIRECTORY entry hides an untracked file' {
+        # The gap the directory entries were supposed to close, and did not. The
+        # zero-count guard above only fires when the WHOLE entry resolves to
+        # nothing, so 'styles' -- which resolves to plenty -- sailed past it while
+        # a forgotten `git add` sat inside. lib/*.ps1 is dot-sourced by
+        # enumeration, so that ships a module which imports cleanly and then dies
+        # at first use.
+        script:New-File (Join-Path $script:root 'styles\newtheme\theme.json') '{}'
+        { Get-PublishStagePlan -RepoRoot $script:root -Allowlist @('styles') } |
+            Should -Throw '*newtheme*'
+    }
+
+    It 'still stays silent about gitignored cache inside a directory entry' {
+        # The distinction the guard above must not blur: background.gif and
+        # .no-background are untracked too, and skipping them silently is the
+        # entire reason this helper exists. Only untracked-and-NOT-ignored is an
+        # error.
+        { Get-PublishStagePlan -RepoRoot $script:root -Allowlist @('styles') } |
+            Should -Not -Throw
+        Test-Path (Join-Path $script:root 'styles\eva\background.gif') | Should -BeTrue
+    }
+
     It 'throws when the repo root is not a git checkout' {
         $bare = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
         New-Item -ItemType Directory -Path $bare -Force | Out-Null
