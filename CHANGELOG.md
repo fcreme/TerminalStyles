@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the interactive picker could never deliver a background image on Terminal.app.** `tstyles` + arrow + Enter applied colors and prompt, said "Style applied", and stopped -- no profile written, no mention that the style ships a background, no hint about how to see it -- while `tstyles <name>` on the same terminal did all three. That is the primary macOS flow. `tstyles -NewWindow` was worse: accepted without error, and did nothing at all
+- **`tstyles random -BackgroundImage <path>` silently dropped the flag** and reported success, while `tstyles <name> -BackgroundImage <path>` honoured it. `-BackgroundImage ""`, the documented way to apply a style with no background, was dropped the same way
+- **kitty's selection highlight made selected text unreadable.** `selectionBackground` was a byte-identical copy of `cursorColor` (a near-white pink), so selecting a line filled the cells with it while the text kept its own colour: foreground at 1.34:1, `brightRed` at 1.00:1 -- invisible. Now the dark plum the style always meant, which its own PSReadLine highlight has been using all along
+- `tstyles help LIST` failed under Turkish and Azerbaijani locales, printing "No help topic 'LIST'." directly above a topics line containing `list` -- while `tstyles LIST` worked in the same session. The lookup lowercased with the current culture, where an uppercase `I` becomes a dotless `i`
+- `scripts/demo.ps1 -Restore` destroyed a personal style when its name collided with one created during the demo. Prep *moves* your styles aside, so the parked copy is the only copy, and the merge branch deleted it. Both copies are now kept, and it says where
+- three false claims in the docs: `docs/DEMO.md` said the demo never writes Windows Terminal's `settings.json` (on WT every stage of it does); kitty and golden-forest both said "No `profile.ps1` -- purely visual" while shipping one that replaces your prompt; gitbash documented a yellow that is in no slot of its scheme. Six more style READMEs listed what they ship without mentioning `prompt.sh`
+
 ### Changed
 
 - `scripts/` is no longer shipped to the PowerShell Gallery. `capture-screenshots.ps1` was included as "useful for theme authors", but it requires `$env:WT_SESSION`, the bootstrap layout at `%LOCALAPPDATA%\TerminalStyles\`, and a repo checkout to write `docs/screenshots` into -- a Gallery consumer has none of the three, so it could only ever fail for the people receiving it. Theme authors work from a clone, which is what the README and CONTRIBUTING both tell them to do
@@ -14,6 +23,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - `scripts/setup-gifs-branch.ps1` described itself as "idempotent: safe to re-run" and was neither. It snapshots `styles/<name>/background.*` as its first step and those are blocked from `main`, so every re-run ended in a "nothing to migrate" throw. The migration completed before 0.2.0; the script now says so and exits cleanly, and is kept as the record of how the `gifs` branch came to be
+
+### Internal
+
+- an audit of the test suite itself found seven assertions that could not fail, each proved by restoring the regression it named and watching it stay green. The worst pair were the guards written to protect the `lib/` split: they iterated a list that Pester leaves empty at run time, so an uncommitted `lib/` file passed both. `Get-PublishStagePlan` now refuses one outright, which is what those guards always claimed it did
+- `scripts/demo.ps1` had no tests, because dot-sourcing it ran the demo. It has a `$TStylesDemoNoRun` seam now, matching `install.ps1` and `apply.ps1`
 
 ## [0.8.15] - 2026-08-27
 
