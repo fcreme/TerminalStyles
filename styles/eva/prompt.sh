@@ -12,10 +12,10 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-R=$(ts_raw '255;61;90')        pR=$(ts_c '255;61;90')
-W=$(ts_raw '255;232;232')      pW=$(ts_c '255;232;232')
-X=$(ts_rawx)                   pX=$(ts_x)
-Y=$(ts_raw '232;197;71')       pY=$(ts_c '232;197;71')
+_ts_R=$(ts_raw '255;61;90')        pR=$(ts_c '255;61;90')
+_ts_W=$(ts_raw '255;232;232')      pW=$(ts_c '255;232;232')
+_ts_X=$(ts_rawx)                   pX=$(ts_x)
+_ts_Y=$(ts_raw '232;197;71')       pY=$(ts_c '232;197;71')
 
 ts_title 'EVA // NERV'
 
@@ -23,11 +23,11 @@ ts_title 'EVA // NERV'
 # printf '%s\n' -- never printf "$line": a banner containing a '%' (eva's
 # SYNC readout does) would otherwise be read as a format specifier.
 printf '%s\n' ""
-printf '%s\n' "${R}+----------------------------------------------+${X}"
-printf '%s\n' "${R}|  ${W}NERV // EVA-02 PILOT INTERFACE              ${R}|${X}"
-printf '%s\n' "${R}|  ${W}SOHRYU, ASUKA LANGLEY :: SYNC: ${Y}89%${W}          ${R}|${X}"
-printf '%s\n' "${R}|  ${Y}ANTA BAKA?${W}                                  ${R}|${X}"
-printf '%s\n' "${R}+----------------------------------------------+${X}"
+printf '%s\n' "${_ts_R}+----------------------------------------------+${_ts_X}"
+printf '%s\n' "${_ts_R}|  ${_ts_W}NERV // EVA-02 PILOT INTERFACE              ${_ts_R}|${_ts_X}"
+printf '%s\n' "${_ts_R}|  ${_ts_W}SOHRYU, ASUKA LANGLEY :: SYNC: ${_ts_Y}89%${_ts_W}          ${_ts_R}|${_ts_X}"
+printf '%s\n' "${_ts_R}|  ${_ts_Y}ANTA BAKA?${_ts_W}                                  ${_ts_R}|${_ts_X}"
+printf '%s\n' "${_ts_R}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
 ts_prompt_apply "$(ts_prompt_expand "${pR}[PILOT${pY} // EVA-02${pR}]${pX} ${pR}[LOC: ${pW}{CWD}${pR}]${pX}{NL}${pR}>${pX} ")"

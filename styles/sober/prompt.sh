@@ -12,9 +12,9 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-pTeal=$(ts_c '122;153;153')
-pX=$(ts_x)
+_ts_pTeal=$(ts_c '122;153;153')
+_ts_pX=$(ts_x)
 
 ts_title 'SOBER'
 
-ts_prompt_apply "$(ts_prompt_expand "{LEAF} ${pTeal}\$${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "{LEAF} ${_ts_pTeal}\$${_ts_pX} ")"

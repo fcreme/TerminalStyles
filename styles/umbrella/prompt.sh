@@ -12,9 +12,9 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-R=$(ts_raw '180;30;30')        pR=$(ts_c '180;30;30')
-W=$(ts_raw '232;220;200')      pW=$(ts_c '232;220;200')
-X=$(ts_rawx)                   pX=$(ts_x)
+_ts_R=$(ts_raw '180;30;30')        pR=$(ts_c '180;30;30')
+_ts_W=$(ts_raw '232;220;200')      pW=$(ts_c '232;220;200')
+_ts_X=$(ts_rawx)                   pX=$(ts_x)
 
 ts_title 'UMBRELLA TERMINAL'
 
@@ -22,10 +22,10 @@ ts_title 'UMBRELLA TERMINAL'
 # printf '%s\n' -- never printf "$line": a banner containing a '%' (eva's
 # SYNC readout does) would otherwise be read as a format specifier.
 printf '%s\n' ""
-printf '%s\n' "${R}+------------------------------------------+${X}"
-printf '%s\n' "${R}|  ${W}UMBRELLA CORP. // OPERATOR TERMINAL     ${R}|${X}"
-printf '%s\n' "${R}|  ${W}CLEARANCE: PERSONAL  ::  STATUS: FINE   ${R}|${X}"
-printf '%s\n' "${R}+------------------------------------------+${X}"
+printf '%s\n' "${_ts_R}+------------------------------------------+${_ts_X}"
+printf '%s\n' "${_ts_R}|  ${_ts_W}UMBRELLA CORP. // OPERATOR TERMINAL     ${_ts_R}|${_ts_X}"
+printf '%s\n' "${_ts_R}|  ${_ts_W}CLEARANCE: PERSONAL  ::  STATUS: FINE   ${_ts_R}|${_ts_X}"
+printf '%s\n' "${_ts_R}+------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
 ts_prompt_apply "$(ts_prompt_expand "${pR}[UMBRELLA // OPERATOR: ${pW}{USER}${pR}]${pX}{NL}${pR}[CWD: ${pW}{CWD}${pR}]${pX}{NL}${pR}>${pX} ")"

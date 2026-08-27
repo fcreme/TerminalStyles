@@ -12,13 +12,13 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-pB=$(ts_c '72;104;216')
-D=$(ts_raw '90;48;72')
-L=$(ts_raw '192;160;240')
-O=$(ts_raw '255;104;80')       pO=$(ts_c '255;104;80')
-W=$(ts_raw '240;216;192')
-X=$(ts_rawx)                   pX=$(ts_x)
-Y=$(ts_raw '240;208;64')       pY=$(ts_c '240;208;64')
+_ts_pB=$(ts_c '72;104;216')
+_ts_D=$(ts_raw '90;48;72')
+_ts_L=$(ts_raw '192;160;240')
+_ts_O=$(ts_raw '255;104;80')       pO=$(ts_c '255;104;80')
+_ts_W=$(ts_raw '240;216;192')
+_ts_X=$(ts_rawx)                   pX=$(ts_x)
+_ts_Y=$(ts_raw '240;208;64')       pY=$(ts_c '240;208;64')
 
 ts_title 'HALO // EXT3'
 
@@ -26,11 +26,11 @@ ts_title 'HALO // EXT3'
 # printf '%s\n' -- never printf "$line": a banner containing a '%' (eva's
 # SYNC readout does) would otherwise be read as a format specifier.
 printf '%s\n' ""
-printf '%s\n' "${D}+----------------------------------------------+${X}"
-printf '%s\n' "${D}|  ${O}>>> HALO // EXT3 <<<${W}                        ${D}|${X}"
-printf '%s\n' "${D}|  ${Y}NIGHT CHAPEL${W}  ::  ${L}RADIANCE: HIGH${W}            ${D}|${X}"
-printf '%s\n' "${D}|  ${O}\"Look up. Look closer.\"${W}                     ${D}|${X}"
-printf '%s\n' "${D}+----------------------------------------------+${X}"
+printf '%s\n' "${_ts_D}+----------------------------------------------+${_ts_X}"
+printf '%s\n' "${_ts_D}|  ${_ts_O}>>> HALO // EXT3 <<<${_ts_W}                        ${_ts_D}|${_ts_X}"
+printf '%s\n' "${_ts_D}|  ${_ts_Y}NIGHT CHAPEL${_ts_W}  ::  ${_ts_L}RADIANCE: HIGH${_ts_W}            ${_ts_D}|${_ts_X}"
+printf '%s\n' "${_ts_D}|  ${_ts_O}\"Look up. Look closer.\"${_ts_W}                     ${_ts_D}|${_ts_X}"
+printf '%s\n' "${_ts_D}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pO}[HALO${pY} // EXT3${pO}]${pX} ${pO}[${pB}{CWD}${pO}]${pX}{NL}${pO}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${pO}[HALO${pY} // EXT3${pO}]${pX} ${pO}[${_ts_pB}{CWD}${pO}]${pX}{NL}${pO}>${pX} ")"

@@ -12,10 +12,10 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-C=$(ts_raw '0;204;255')        pC=$(ts_c '0;204;255')
-P=$(ts_raw '255;123;138')      pP=$(ts_c '255;123;138')
-W=$(ts_raw '184;240;255')      pW=$(ts_c '184;240;255')
-X=$(ts_rawx)                   pX=$(ts_x)
+_ts_C=$(ts_raw '0;204;255')        pC=$(ts_c '0;204;255')
+_ts_P=$(ts_raw '255;123;138')      pP=$(ts_c '255;123;138')
+_ts_W=$(ts_raw '184;240;255')      pW=$(ts_c '184;240;255')
+_ts_X=$(ts_rawx)                   pX=$(ts_x)
 
 ts_title 'EX MACHINA // BLUEBOOK'
 
@@ -23,11 +23,11 @@ ts_title 'EX MACHINA // BLUEBOOK'
 # printf '%s\n' -- never printf "$line": a banner containing a '%' (eva's
 # SYNC readout does) would otherwise be read as a format specifier.
 printf '%s\n' ""
-printf '%s\n' "${C}+----------------------------------------------+${X}"
-printf '%s\n' "${C}|  ${W}BLUEBOOK RESEARCH // SESSION 06 -- ACTIVE   ${C}|${X}"
-printf '%s\n' "${C}|  ${W}SUBJECT: ${P}AVA${W}   ::  PROTOCOL: TURING TEST    ${C}|${X}"
-printf '%s\n' "${C}|  ${W}STATUS: CONSCIOUS  ::  TRUST: ${P}??${W}            ${C}|${X}"
-printf '%s\n' "${C}+----------------------------------------------+${X}"
+printf '%s\n' "${_ts_C}+----------------------------------------------+${_ts_X}"
+printf '%s\n' "${_ts_C}|  ${_ts_W}BLUEBOOK RESEARCH // SESSION 06 -- ACTIVE   ${_ts_C}|${_ts_X}"
+printf '%s\n' "${_ts_C}|  ${_ts_W}SUBJECT: ${_ts_P}AVA${_ts_W}   ::  PROTOCOL: TURING TEST    ${_ts_C}|${_ts_X}"
+printf '%s\n' "${_ts_C}|  ${_ts_W}STATUS: CONSCIOUS  ::  TRUST: ${_ts_P}??${_ts_W}            ${_ts_C}|${_ts_X}"
+printf '%s\n' "${_ts_C}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
 ts_prompt_apply "$(ts_prompt_expand "${pP}[AVA${pC} // BLUEBOOK${pP}]${pX} ${pC}[LOC: ${pW}{CWD}${pC}]${pX}{NL}${pC}>${pX} ")"

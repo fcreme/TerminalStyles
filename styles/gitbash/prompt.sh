@@ -12,12 +12,12 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-pCyan=$(ts_c '0;119;119')
-pGray=$(ts_c '56;56;56')
-pGreen=$(ts_c '0;128;0')
-pMagenta=$(ts_c '187;0;187')
-pX=$(ts_x)
-pYellow=$(ts_c '155;150;29')
+_ts_pCyan=$(ts_c '0;119;119')
+_ts_pGray=$(ts_c '56;56;56')
+_ts_pGreen=$(ts_c '0;128;0')
+_ts_pMagenta=$(ts_c '187;0;187')
+_ts_pX=$(ts_x)
+_ts_pYellow=$(ts_c '155;150;29')
 
 ts_title 'GITBASH // MINGW64'
 
@@ -25,4 +25,4 @@ ts_title 'GITBASH // MINGW64'
 TS_GIT_OPEN=$(ts_cs '187;0;187')   # same magenta as pMagenta, but substitution-safe
 TS_GIT_CLOSE=$(ts_xs)
 
-ts_prompt_apply "$(ts_prompt_expand "${pGreen}{USER}@{HOST}${pX} ${pYellow}MINGW64${pX} ${pCyan}{CWD}${pX}{GITBRANCH}{NL}${pGray}\$${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pGreen}{USER}@{HOST}${_ts_pX} ${_ts_pYellow}MINGW64${_ts_pX} ${_ts_pCyan}{CWD}${_ts_pX}{GITBRANCH}{NL}${_ts_pGray}\$${_ts_pX} ")"

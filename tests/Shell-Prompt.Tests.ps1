@@ -173,3 +173,35 @@ Describe 'banners survive shell quoting' -Skip:(-not $script:HasBash) {
         }
     }
 }
+
+Describe 'a style prompt does not clobber the user''s shell variables' {
+    # ts_load sources the staged prompt.sh straight into the user's interactive
+    # shell, with no isolation. Eleven of the sixteen styles assigned bare
+    # single-letter names at top level -- X, W, D, M, P, R, Y, C, B, G, L, O and
+    # Mist/Moss/Slate -- so opening a terminal silently overwrote anything the
+    # user had by those names. $X and $D are not exotic choices for a person's
+    # own scratch variables.
+    #
+    # Everything is prefixed _ts_ now. Verified in a real interactive zsh: a
+    # .zshrc setting X and D keeps both after the style loads.
+    BeforeDiscovery {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $script:PromptFiles = @(
+            Get-ChildItem -LiteralPath (Join-Path $repoRoot 'styles') -Directory |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'prompt.sh') } |
+                ForEach-Object { $_.Name })
+    }
+
+    It '<_>/prompt.sh assigns only namespaced names at top level' -ForEach $script:PromptFiles {
+        $path = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'styles') $_) 'prompt.sh'
+        $text = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
+
+        $bare = @([regex]::Matches($text, '(?m)^([A-Za-z_][A-Za-z0-9_]*)=') |
+            ForEach-Object { $_.Groups[1].Value } |
+            Where-Object { $_ -notmatch '^(TS_|_ts_)' } |
+            Sort-Object -Unique)
+
+        $bare | Should -BeNullOrEmpty `
+            -Because "$_ would overwrite the user's own $($bare -join ', ') on every new shell"
+    }
+}

@@ -12,10 +12,10 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-Mist=$(ts_raw '200;197;220')   pMist=$(ts_c '200;197;220')
-Moss=$(ts_raw '200;184;80')    pMoss=$(ts_c '200;184;80')
-Slate=$(ts_raw '156;160;204')  pSlate=$(ts_c '156;160;204')
-X=$(ts_rawx)                   pX=$(ts_x)
+_ts_Mist=$(ts_raw '200;197;220')   pMist=$(ts_c '200;197;220')
+_ts_Moss=$(ts_raw '200;184;80')    pMoss=$(ts_c '200;184;80')
+_ts_Slate=$(ts_raw '156;160;204')  pSlate=$(ts_c '156;160;204')
+_ts_X=$(ts_rawx)                   pX=$(ts_x)
 
 ts_title 'RAIN // HIGHLAND'
 
@@ -23,11 +23,11 @@ ts_title 'RAIN // HIGHLAND'
 # printf '%s\n' -- never printf "$line": a banner containing a '%' (eva's
 # SYNC readout does) would otherwise be read as a format specifier.
 printf '%s\n' ""
-printf '%s\n' "${Slate}+--------------------------------------------+${X}"
-printf '%s\n' "${Slate}|  ${Mist}FIELD JOURNAL // ${Moss}DAY 47${Mist}                   ${Slate}|${X}"
-printf '%s\n' "${Slate}|  ${Mist}WEATHER: ${Moss}STEADY RAIN${Mist}  ::  CEILING: ${Moss}40m${Mist}    ${Slate}|${X}"
-printf '%s\n' "${Slate}|  ${Mist}STILL NO SIGN OF THE OTHERS.              ${Slate}|${X}"
-printf '%s\n' "${Slate}+--------------------------------------------+${X}"
+printf '%s\n' "${_ts_Slate}+--------------------------------------------+${_ts_X}"
+printf '%s\n' "${_ts_Slate}|  ${_ts_Mist}FIELD JOURNAL // ${_ts_Moss}DAY 47${_ts_Mist}                   ${_ts_Slate}|${_ts_X}"
+printf '%s\n' "${_ts_Slate}|  ${_ts_Mist}WEATHER: ${_ts_Moss}STEADY RAIN${_ts_Mist}  ::  CEILING: ${_ts_Moss}40m${_ts_Mist}    ${_ts_Slate}|${_ts_X}"
+printf '%s\n' "${_ts_Slate}|  ${_ts_Mist}STILL NO SIGN OF THE OTHERS.              ${_ts_Slate}|${_ts_X}"
+printf '%s\n' "${_ts_Slate}+--------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
 ts_prompt_apply "$(ts_prompt_expand "${pSlate}[TRAVELER${pMoss} // RAIN${pSlate}]${pX} ${pSlate}[LOC: ${pMist}{CWD}${pSlate}]${pX}{NL}${pSlate}>${pX} ")"
