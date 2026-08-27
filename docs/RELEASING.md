@@ -76,11 +76,17 @@ How to publish a new version of TerminalStyles.
    loaded):
 
    ```powershell
-   pwsh -NoProfile -Command "Install-PSResource -Name TerminalStyles -Scope CurrentUser; Import-Module TerminalStyles -DisableNameChecking; Get-Command -Module TerminalStyles | Format-Table"
+   pwsh -NoProfile -Command "Install-PSResource -Name TerminalStyles -Scope CurrentUser; Import-Module TerminalStyles -DisableNameChecking; Get-Command -Module TerminalStyles -CommandType Function,Alias | Format-Table"
    ```
 
    Expected: `Invoke-TerminalStyle`, `Invoke-TerminalStylesUpdate`,
    `tstyles` all show up under `Module TerminalStyles`.
+
+   `-CommandType Function,Alias` is not optional. Bare `Get-Command -Module`
+   lists functions only, so `tstyles` is missing from it — every release since
+   the alias existed, making this step look like a failed publish when it was
+   fine. The alias is genuinely exported (`(Get-Module TerminalStyles).ExportedAliases`
+   confirms it, and `tstyles` resolves).
 
 ## Troubleshooting
 

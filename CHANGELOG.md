@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `docs/RELEASING.md`'s post-publish smoke test told the maintainer to run `Get-Command -Module TerminalStyles` and expect `tstyles` in the output. Bare `Get-Command -Module` lists functions only, so the alias never appeared -- every release since it existed looked like a failed publish at the final verification step. `-CommandType Function,Alias` is what shows it
+
 ## [0.8.16] - 2026-08-27
 
 ### Fixed
