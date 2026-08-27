@@ -280,3 +280,78 @@ echo READY
         $body.IndexOf('case "$-"') | Should -BeLessThan $body.IndexOf('TS_LOADED=1')
     }
 }
+
+Describe 'the runtime stays out of captured output' {
+    # Found by driving a real interactive shell, which nothing had ever done.
+    #
+    # ts_load gated on $- alone. That says the shell is INTERACTIVE; it says
+    # nothing about where fd 1 goes. `zsh -ic 'cmd'` sets the i flag with stdout
+    # on a pipe -- the shape every editor and IDE uses to learn a user's real
+    # PATH -- and got the OSC palette plus the style's whole ASCII banner glued
+    # to the front of the captured value. Measured on a sandbox HOME: 14 bytes
+    # without the runtime, 854 with it, and the result unusable as a path.
+    #
+    # The PowerShell half has always checked [Console]::IsOutputRedirected. The
+    # shell half never did.
+    BeforeAll {
+        $script:runtime = [System.IO.File]::ReadAllText(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) 'shell/tstyles.sh'),
+            [System.Text.UTF8Encoding]::new($false))
+    }
+
+    It 'ts_load requires stdout to be a terminal, not just an interactive shell' {
+        $fn = [regex]::Match($script:runtime, '(?s)ts_load\(\)\s*\{.*?\n\}').Value
+        $fn | Should -Not -BeNullOrEmpty
+        $fn | Should -Match '\[ -t 1 \]' `
+            -Because 'an interactive shell with a redirected stdout must stay silent'
+        # And the tty test must come before anything that writes.
+        $fn.IndexOf('[ -t 1 ]') | Should -BeLessThan $fn.IndexOf('current-style.osc') `
+            -Because 'the guard is worthless after the packet has been written'
+    }
+
+    It 'ts_title does the same' {
+        # tstyles <style> re-sources the staged prompt, which calls ts_title
+        # outside ts_load's guard.
+        $fn = [regex]::Match($script:runtime, '(?s)ts_title\(\)\s*\{.*?\n\}').Value
+        $fn | Should -Not -BeNullOrEmpty
+        $fn | Should -Match '\[ -t 1 \]'
+    }
+
+    It 'the guard the PowerShell half uses is still there to match' {
+        # If that check ever leaves terminals.ps1, these two halves have drifted
+        # and the shell one is alone again.
+        $terminals = [System.IO.File]::ReadAllText(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) 'terminals.ps1'),
+            [System.Text.UTF8Encoding]::new($false))
+        $terminals | Should -Match 'IsOutputRedirected'
+    }
+}
+
+Describe 'an apply prints its banner once, not twice' {
+    It 'the pwsh-side live reload is skipped for a non-interactive host' {
+        # `tstyles <style>` from zsh/bash runs the generated tstyles-cli.ps1 in a
+        # one-shot pwsh process that exits immediately, so dot-sourcing the
+        # style's profile.ps1 to "live reload the prompt in THIS shell" reloads
+        # nothing -- and printed the style's whole ASCII banner. The shell
+        # function then re-sourced the staged prompt.sh to swap the prompt for
+        # real, printing it a SECOND time. Two banners per apply, for every zsh
+        # and bash user.
+        #
+        # $TStylesNoAutoLoad is the signal the shim already sets.
+        $src = InModuleScope TerminalStyles {
+            (Get-Command Apply-StyleNonWT).ScriptBlock.ToString()
+        }
+        $src | Should -Match '-not \$global:TStylesNoAutoLoad[^\n]*TStylesCurrent' `
+            -Because 'the reload must be gated on the shim''s own signal'
+    }
+
+    It 'the shim still sets that signal' {
+        # The shim is a here-string in terminals.ps1, not inside the shell-init
+        # function, so it has to be read from the file.
+        $terminals = [System.IO.File]::ReadAllText(
+            (Join-Path (Split-Path $PSScriptRoot -Parent) 'terminals.ps1'),
+            [System.Text.UTF8Encoding]::new($false))
+        $terminals | Should -Match 'TStylesNoAutoLoad' `
+            -Because 'the gate above is inert if the generated shim stops setting it'
+    }
+}

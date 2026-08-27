@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **an interactive shell with a redirected stdout still emitted the palette and the style's banner**, so anything capturing output from your login shell got them glued to the front of the value. `zsh -ic 'cmd'` is how editors and IDEs learn your real `PATH`; measured on a clean sandbox, a `PATH` probe came back as 854 bytes of escape sequences instead of 14 bytes of path, and was unusable. The guard tested `$-`, which says the shell is interactive and nothing about where fd 1 goes. The PowerShell half of the project has always checked `[Console]::IsOutputRedirected`; the shell half now checks `[ -t 1 ]` to match. `ssh host command`, scp and rsync were never affected -- those are non-interactive and were already covered
+- **`tstyles <style>` from zsh or bash printed the style's banner twice**, every time. The shim runs a one-shot pwsh process that exits immediately, so dot-sourcing the style's `profile.ps1` to "live reload the prompt in this shell" reloaded nothing and printed the banner; the shell function then re-sourced the staged `prompt.sh` to swap the prompt for real, printing it again. The pwsh-side reload is now skipped when the shim's own `$TStylesNoAutoLoad` signal is set, and still happens for `tstyles <style>` run from a real pwsh session
+
 ## [0.8.17] - 2026-08-27
 
 ### Fixed

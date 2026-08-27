@@ -284,7 +284,19 @@ function Apply-StyleNonWT {
     Write-Host ""
 
     # Live reload of the prompt in THIS shell (matches the WT confirm path).
-    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+    #
+    # Skipped when $TStylesNoAutoLoad is set, which is exactly the "I am not an
+    # interactive pwsh session" signal the generated tstyles-cli.ps1 sets. From
+    # zsh or bash, `tstyles <style>` runs that shim in a one-shot pwsh process
+    # that exits immediately, so reloading the prompt into it accomplishes
+    # nothing -- and dot-sourcing the style's profile.ps1 printed its whole
+    # ASCII banner. The shell function then re-sources the staged prompt.sh to
+    # swap the prompt for real, printing the banner a SECOND time. Two banners
+    # per apply, every apply, for every zsh and bash user.
+    #
+    # The shell's copy is the one to keep: it is the one that actually changes
+    # the prompt the user is looking at.
+    if (-not $global:TStylesNoAutoLoad -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
         . $script:TStylesCurrent
     }
 }

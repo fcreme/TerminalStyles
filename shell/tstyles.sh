@@ -157,7 +157,12 @@ ts_prompt_apply() {
 ts_title() {
     # OSC 0 sets both the window and tab title. Interactive shells only -- a
     # script writing escape bytes into a redirected stdout would corrupt it.
-    case "$-" in *i*) printf '\033]0;%s\007' "$1" ;; esac
+    # Same two conditions as ts_load: interactive AND stdout really a terminal.
+    # A title escape written into a redirected stdout corrupts it exactly as the
+    # palette packet does, and `tstyles <style>` re-sources the prompt (which
+    # calls this) outside ts_load's guard.
+    case "$-" in *i*) [ -t 1 ] && printf '\033]0;%s\007' "$1" ;; esac
+    return 0
 }
 
 # --- Startup ---------------------------------------------------------------
@@ -169,6 +174,22 @@ ts_load() {
         *i*) ;;
         *) return 0 ;;
     esac
+
+    # ...and neither does an interactive shell whose stdout is NOT a terminal.
+    # `$-` says the shell is interactive; it says nothing about where fd 1 goes.
+    # `zsh -ic 'cmd'` sets the i flag with stdout on a pipe, which is the shape
+    # every editor and IDE uses to learn a user's real PATH -- and it got the
+    # OSC palette and the style's whole ASCII banner glued to the front of the
+    # captured value. Measured: 14 bytes without the runtime, 854 with it, and
+    # the result unusable as a path.
+    #
+    # The PowerShell half of this project has always checked
+    # [Console]::IsOutputRedirected before emitting a packet (terminals.ps1,
+    # lib/applystyle.ps1) and says so on screen. The shell half never did.
+    #
+    # Nothing is lost by returning here: a shell whose stdout is redirected
+    # never displays the prompt this would set.
+    [ -t 1 ] || return 0
 
     # Once per shell. shell-init registers the same loader into BOTH ~/.bashrc
     # and ~/.bash_profile -- .bash_profile because macOS Terminal.app starts
