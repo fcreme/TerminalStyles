@@ -452,6 +452,53 @@ function Sync-InstallTree {
     }
 
     Copy-Item -Path (Join-Path $ExtractedRoot '*') -Destination $InstallDir -Recurse -Force
+
+    Write-InstallManifest -ExtractedRoot $ExtractedRoot -InstallDir $InstallDir
+}
+
+function Write-InstallManifest {
+    <#
+    .SYNOPSIS
+    Record exactly which entries this install placed in the data root.
+
+    .DESCRIPTION
+    Uninstall needs the same answer Sync-InstallTree needs -- "what does the
+    install own?" -- and used to guess it from a hand-maintained list. The list
+    drifted, in both directions:
+
+      * It named 'styles', and removed the whole tree. Bundled themes sit BESIDE
+        the user's own there (the README documents dropping a folder named after
+        a bundled theme to override it), so a plain `tstyles uninstall` deleted
+        every style the user had authored or tuned -- one line after printing
+        "PRESERVE user state ... pass -DeleteData to wipe".
+      * It named 14 of the ~20 entries the bootstrap actually extracts, so
+        CHANGELOG.md, CODE_OF_CONDUCT.md, CONTRIBUTING.md, SECURITY.md, docs/,
+        tests/, .github/ and .gitignore survived an uninstall.
+
+    Recorded per style folder, not as 'styles', for the first reason. One line
+    per repo-relative entry, UTF-8 without BOM.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$ExtractedRoot,
+        [Parameter(Mandatory)][string]$InstallDir
+    )
+
+    $owned = [System.Collections.Generic.List[string]]::new()
+    foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
+        if ($entry.PSIsContainer -and $entry.Name -eq 'styles') {
+            foreach ($style in Get-ChildItem -LiteralPath $entry.FullName -Force) {
+                $owned.Add("styles/$($style.Name)")
+            }
+            continue
+        }
+        $owned.Add($entry.Name)
+    }
+
+    [System.IO.File]::WriteAllText(
+        (Join-Path $InstallDir '.installed-files'),
+        (($owned | Sort-Object) -join "`n") + "`n",
+        [System.Text.UTF8Encoding]::new($false))
 }
 
 function Assert-InstallLanded {

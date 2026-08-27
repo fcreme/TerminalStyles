@@ -290,6 +290,68 @@ $loaderEnd
     Write-Host ""
 }
 
+
+# Staged by `tstyles shell-init` at RUNTIME, not extracted by the installer, so
+# the file manifest cannot know about them -- but they are install-managed all
+# the same, and tstyles.sh in particular is what an orphaned rc block loads. Both
+# uninstall paths remove them.
+$script:TStylesStagedRuntimeFiles = @('tstyles.sh', 'tstyles-cli.ps1')
+
+function Get-UninstallPlan {
+    <#
+    .SYNOPSIS
+    Which entries under the data root does the install own?
+
+    .DESCRIPTION
+    The bootstrap install shares its directory with the module's writable state,
+    so uninstall has to be exact. install.ps1 records what it placed in
+    .installed-files; this reads it back.
+
+    Two failures come from guessing instead. A hand-maintained list named
+    'styles' and removed the whole tree -- but bundled themes sit BESIDE the
+    user's own there, so a plain `tstyles uninstall` destroyed every style the
+    user had authored or tuned, one line after printing "PRESERVE user state".
+    The same list also named only 14 of the ~20 entries the bootstrap extracts,
+    leaving CHANGELOG.md, CONTRIBUTING.md, docs/, tests/ and .github/ behind.
+
+    .OUTPUTS
+    @{ Items = <repo-relative paths>; Source = 'manifest' | 'fallback' }
+
+    The fallback covers installs made before the manifest existed. It leaves
+    styles/ ALONE -- both bundled and user. The risks are not symmetric: a
+    leftover bundled theme is untidy, and a deleted style the user wrote is gone.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$DataDir)
+
+    $manifestPath = Join-Path $DataDir '.installed-files'
+    if (Test-Path -LiteralPath $manifestPath) {
+        try {
+            $lines = [System.IO.File]::ReadAllLines($manifestPath, [System.Text.UTF8Encoding]::new($false))
+            $items = @($lines | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+            # Never let a manifest line escape the data root, however it got there.
+            $items = @($items | Where-Object { $_ -notmatch '(^|[\\/])\.\.([\\/]|$)' -and
+                                               $_ -notmatch '^([a-zA-Z]:|[\\/])' })
+            if ($items.Count -gt 0) {
+                return @{ Items = @($items + $script:TStylesStagedRuntimeFiles + '.installed-files')
+                          Source = 'manifest' }
+            }
+        } catch { }
+    }
+
+    return @{
+        Items = @(
+            'tstyles.ps1', 'terminals.ps1', 'lib', 'apply.ps1', 'install.ps1',
+            'TerminalStyles.psd1', 'TerminalStyles.psm1',
+            'scripts', 'shell', 'fonts.json',
+            'README.md', 'LICENSE',
+            'CHANGELOG.md', 'CODE_OF_CONDUCT.md', 'CONTRIBUTING.md', 'SECURITY.md',
+            'docs', 'tests', '.github', '.gitignore'
+        ) + $script:TStylesStagedRuntimeFiles
+        Source = 'fallback'
+    }
+}
+
 function Invoke-TerminalStylesUninstall {
     [CmdletBinding()]
     param(
@@ -337,20 +399,26 @@ function Invoke-TerminalStylesUninstall {
             # terminals.ps1 and shell/ were missing: tstyles.ps1 dot-sources
             # terminals.ps1, and the staged shell runtime is what an orphaned rc
             # block loads. Leaving them behind kept a "removed" install working.
-            $installManagedItems = @(
-                'tstyles.ps1', 'terminals.ps1', 'lib', 'apply.ps1', 'install.ps1',
-                'TerminalStyles.psd1', 'TerminalStyles.psm1',
-                'styles', 'scripts', 'shell', 'fonts.json',
-                'tstyles.sh', 'tstyles-cli.ps1',
-                'README.md', 'LICENSE'
-            )
-            foreach ($item in $installManagedItems) {
+            $plan = Get-UninstallPlan -DataDir $dataDir
+            foreach ($item in $plan.Items) {
                 $path = Join-Path $dataDir $item
                 if (Test-Path -LiteralPath $path) {
                     Remove-Item -LiteralPath $path -Recurse -Force -ErrorAction SilentlyContinue
                 }
             }
+            # styles/ is left in place when it still holds the user's own; drop
+            # it only once it is empty, so an uninstall does not leave a bare
+            # directory behind either.
+            $stylesDir = Join-Path $dataDir 'styles'
+            if ((Test-Path -LiteralPath $stylesDir) -and
+                -not (Get-ChildItem -LiteralPath $stylesDir -Force)) {
+                Remove-Item -LiteralPath $stylesDir -Recurse -Force -ErrorAction SilentlyContinue
+            }
             Write-Host "  Removed install-managed files from $dataDir" -ForegroundColor Green
+            if ($plan.Source -eq 'fallback') {
+                Write-Host "  This install predates the file manifest, so the bundled styles were left" -ForegroundColor Gray
+                Write-Host "  in $stylesDir rather than risk deleting your own alongside them." -ForegroundColor Gray
+            }
         }
     }
 

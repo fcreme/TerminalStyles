@@ -143,11 +143,10 @@ Describe 'lib/ reaches the published package' {
         # only Invoke-TerminalStyle and Invoke-TerminalStylesUpdate are -- so
         # Get-Command finds nothing out here and .ScriptBlock is $null.
         $items = InModuleScope TerminalStyles {
-            $src = (Get-Command Invoke-TerminalStylesUninstall).ScriptBlock.ToString()
-            [regex]::Match($src, '(?s)\$installManagedItems = @\((.*?)\)').Groups[1].Value
+            (Get-UninstallPlan -DataDir (Join-Path $TestDrive 'no-manifest-here')).Items
         }
         $items | Should -Not -BeNullOrEmpty
-        $items | Should -Match "'lib'"
+        $items | Should -Contain 'lib'
     }
 }
 
