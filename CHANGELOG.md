@@ -37,6 +37,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Internal
 
+- `tstyles font` was exercised end-to-end for the first time -- list, install, re-install, unknown names, and a deliberately tampered SHA-256 -- against a sandboxed font directory. No defects found. Two properties it was relying on without checking are now pinned: a hash mismatch leaves nothing on disk (not even the directory it would have unpacked into), and a hostile archive entry cannot write outside the extract directory
 - an audit of the test suite itself found seven assertions that could not fail, each proved by restoring the regression it named and watching it stay green. The worst pair were the guards written to protect the `lib/` split: they iterated a list that Pester leaves empty at run time, so an uncommitted `lib/` file passed both. `Get-PublishStagePlan` now refuses one outright, which is what those guards always claimed it did
 - `scripts/demo.ps1` had no tests, because dot-sourcing it ran the demo. It has a `$TStylesDemoNoRun` seam now, matching `install.ps1` and `apply.ps1`
 
