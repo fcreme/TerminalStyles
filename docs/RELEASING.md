@@ -108,9 +108,8 @@ The `scripts/publish.ps1` allowlist controls what ships. Currently:
   profile helper (`appleterminal.js`)
 - `fonts.json` (coding-font catalog for `tstyles font`)
 - `README.md`, `LICENSE`
-- `scripts/capture-screenshots.ps1`
 
-Intentionally excluded: `docs/`, `tests/`, `.github/`, `install.ps1`,
+Intentionally excluded: `docs/`, `tests/`, `.github/`, `scripts/`, `install.ps1`,
 runtime state files (`current-style.ps1`, `.installed-sha`,
 `.last-update-check`, cached `background.<ext>` files), the publish
 script itself.

@@ -39,8 +39,13 @@ $allowlist = @(
     'LICENSE',
     'fonts.json',
     'styles',                              # whole tree, 16 themes + their shell prompts
-    'shell',                               # zsh/bash runtime + the Terminal.app profile helper
-    'scripts\capture-screenshots.ps1'      # useful for theme authors
+    'shell'                                # zsh/bash runtime + the Terminal.app profile helper
+    # NOTE: scripts/ is deliberately NOT shipped. capture-screenshots.ps1 used to
+    # be, as "useful for theme authors" -- but it requires $env:WT_SESSION, the
+    # bootstrap layout at %LOCALAPPDATA%\TerminalStyles, and a repo checkout to
+    # write docs/screenshots into. A PSGallery user has none of those, so it
+    # could only ever fail for the people receiving it. Theme authors work from
+    # a clone, which is what README and CONTRIBUTING both tell them to do.
 )
 
 . (Join-Path $PSScriptRoot 'Get-PublishStagePlan.ps1')

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `scripts/` is no longer shipped to the PowerShell Gallery. `capture-screenshots.ps1` was included as "useful for theme authors", but it requires `$env:WT_SESSION`, the bootstrap layout at `%LOCALAPPDATA%\TerminalStyles\`, and a repo checkout to write `docs/screenshots` into -- a Gallery consumer has none of the three, so it could only ever fail for the people receiving it. Theme authors work from a clone, which is what the README and CONTRIBUTING both tell them to do
+
+### Fixed
+
+- `scripts/setup-gifs-branch.ps1` described itself as "idempotent: safe to re-run" and was neither. It snapshots `styles/<name>/background.*` as its first step and those are blocked from `main`, so every re-run ended in a "nothing to migrate" throw. The migration completed before 0.2.0; the script now says so and exits cleanly, and is kept as the record of how the `gifs` branch came to be
+
 ## [0.8.15] - 2026-08-27
 
 ### Fixed

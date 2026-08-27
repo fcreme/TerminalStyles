@@ -1,6 +1,16 @@
-# One-off helper to set up the `gifs` branch for TerminalStyles.
+# One-off helper that set up the `gifs` branch for TerminalStyles.
 #
-# What it does:
+# ALREADY RUN. This migration completed before 0.2.0 and cannot run again: it
+# starts by snapshotting styles/<name>/background.* files, and those no longer
+# exist on main -- .gitignore blocks them and tests/No-Committed-Backgrounds
+# fails the build if one becomes tracked. Kept as the record of how the gifs
+# branch came to be; it now reports that and exits rather than throwing a
+# confusing "nothing to migrate".
+#
+# (The header used to claim it was idempotent and safe to re-run. It was not --
+# re-running it threw, every time.)
+#
+# What it did:
 #   1. Snapshots the current styles/<name>/background.* files
 #   2. Creates an orphan `gifs` branch
 #   3. Writes the GIFs at the gifs branch root with flat naming
@@ -17,8 +27,10 @@
 #      git commit -am "Move bundled GIFs to the gifs branch; main is now code-only"
 #      git push
 #
-# Idempotent: safe to re-run if it bails partway through (it'll fast-path
-# the snapshot step if the gifs branch already exists).
+# NOT re-runnable. This claimed to be idempotent, and was not: step 1 snapshots
+# styles/<name>/background.* and those no longer exist on main, so a re-run
+# reached the end of the snapshot loop with nothing and gave up. See ALREADY RUN
+# at the top.
 
 #Requires -Version 5.1
 
@@ -59,7 +71,15 @@ try {
         }
     }
     if (-not $snapshot) {
-        throw "No background.* files found under styles/. Nothing to migrate."
+        # Not a throw: this is the expected state on any current checkout, and
+        # a stack trace reads like a fault rather than "there is nothing left
+        # to do here".
+        Write-Host ""
+        Write-Host "  Nothing to migrate -- this already ran." -ForegroundColor Yellow
+        Write-Host "  Background images live on the 'gifs' branch and are blocked from main" -ForegroundColor Gray
+        Write-Host "  by .gitignore. See the header of this script for what it did." -ForegroundColor Gray
+        Write-Host ""
+        return
     }
     Write-Host ("Snapshotted {0} background file(s):" -f $snapshot.Count) -ForegroundColor Green
     foreach ($s in $snapshot) {

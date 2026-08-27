@@ -132,3 +132,56 @@ Describe 'lib/ reaches the published package' {
         $items | Should -Match "'lib'"
     }
 }
+
+Describe 'the package ships only what a consumer can use' {
+
+    It 'does not ship scripts/' {
+        # capture-screenshots.ps1 was shipped as "useful for theme authors", but
+        # it requires $env:WT_SESSION, the bootstrap layout at
+        # %LOCALAPPDATA%\TerminalStyles, and a repo checkout to write
+        # docs/screenshots into. A PSGallery consumer has none of the three, so
+        # it could only ever fail for the people receiving it -- and README and
+        # CONTRIBUTING both tell theme authors to run it from a clone anyway.
+        # Comments stripped first. The allowlist carries a note explaining why
+        # scripts/ is excluded, and that note necessarily names the file -- so
+        # asserting over the raw block would match the explanation rather than
+        # an entry, and pass or fail for the wrong reason.
+        $raw   = [regex]::Match($script:publish, '(?s)\$allowlist = @\((.*?)\n\)').Groups[1].Value
+        $entries = ($raw -split "`n" |
+            ForEach-Object { ($_ -replace '#.*$', '').Trim() } |
+            Where-Object { $_ }) -join "`n"
+        $entries | Should -Not -BeNullOrEmpty
+        $entries | Should -Not -Match 'capture-screenshots'
+        $entries | Should -Not -Match "'scripts"
+    }
+
+    It 'still ships everything the module needs to import' {
+        $allow = [regex]::Match($script:publish, '(?s)\$allowlist = @\((.*?)\n\)').Groups[1].Value
+        foreach ($needed in 'TerminalStyles.psd1', 'TerminalStyles.psm1',
+                            'tstyles.ps1', 'terminals.ps1', 'lib', 'styles', 'shell', 'fonts.json') {
+            $allow | Should -Match ([regex]::Escape("'$needed'")) -Because "$needed is load-bearing"
+        }
+    }
+}
+
+Describe 'the completed gifs migration does not pretend it can re-run' {
+
+    It 'says it has already run rather than claiming to be idempotent' {
+        # It snapshots styles/<name>/background.* as its first step, and those
+        # are blocked from main by .gitignore -- so it could not re-run, while
+        # its header said "Idempotent: safe to re-run".
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $src = [System.IO.File]::ReadAllText(
+            (Join-Path $repoRoot 'scripts/setup-gifs-branch.ps1'), [System.Text.UTF8Encoding]::new($false))
+        $src | Should -Match 'ALREADY RUN'
+        $src | Should -Not -Match 'Idempotent: safe to re-run'
+    }
+
+    It 'reports the no-op instead of throwing on it' {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $src = [System.IO.File]::ReadAllText(
+            (Join-Path $repoRoot 'scripts/setup-gifs-branch.ps1'), [System.Text.UTF8Encoding]::new($false))
+        $src | Should -Not -Match 'throw "No background\.\* files found'
+        $src | Should -Match 'Nothing to migrate -- this already ran'
+    }
+}
