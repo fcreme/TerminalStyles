@@ -10,6 +10,40 @@
 # Get-SchemeOscPacket is the other half: the same scheme rendered as escape
 # sequences, which is how every terminal except Windows Terminal is themed.
 
+function ConvertTo-NormalHex {
+    <#
+    .SYNOPSIS
+    Canonical `#rrggbb` for any hex colour this project can carry, else $null.
+
+    .DESCRIPTION
+    Accepts `#rgb`, `#rrggbb` and `#rrggbbaa` (with or without the leading `#`)
+    and returns lowercase `#rrggbb`. Alpha is dropped: no consumer here can
+    carry it -- OSC has nowhere to put it and Windows Terminal's scheme slots
+    are six-digit.
+
+    Two slots used to disagree about what counts as a colour. Get-AdjustedScheme
+    tested `^#?[0-9a-fA-F]{6}$`, so a shorthand `#013` was passed through the
+    tuner UNCHANGED while its neighbours brightened -- and `#RGB` is valid
+    XParseColor, so the terminal genuinely applied the frozen value and it
+    genuinely refused to move with the knob. Get-SchemeSwatch tested a stricter
+    `^[0-9a-f]{6}$`, so it dropped the slot from the preview row and quietly
+    substituted a different one, hiding the fact from the only colour feedback
+    the tuner shows. A save then baked the frozen value in permanently.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()]$Hex)
+
+    if ($null -eq $Hex) { return $null }
+    $h = ([string]$Hex).Trim().TrimStart('#')
+    if ($h -notmatch '^[0-9a-fA-F]+$') { return $null }
+    switch ($h.Length) {
+        3 { return ('#{0}{0}{1}{1}{2}{2}' -f $h[0], $h[1], $h[2]).ToLowerInvariant() }
+        6 { return "#$($h.ToLowerInvariant())" }
+        8 { return "#$($h.Substring(0, 6).ToLowerInvariant())" }
+        default { return $null }
+    }
+}
+
 function Get-SchemeSwatch {
     # Returns a one-line ANSI swatch (up to 5 colored blocks) summarising a
     # theme. Picks slots that actually distinguish themes from each other --
@@ -39,11 +73,14 @@ function Get-SchemeSwatch {
     foreach ($hex in $candidates) {
         if ($picks.Count -ge 5) { break }
         if (-not $hex) { continue }
-        $key = ([string]$hex).TrimStart('#').ToLowerInvariant()
-        if ($key -notmatch '^[0-9a-f]{6}$') { continue }
+        # Same notion of "a colour" the adjuster uses, so a slot cannot be
+        # silently dropped from the preview while it is being adjusted.
+        $norm = ConvertTo-NormalHex -Hex $hex
+        if (-not $norm) { continue }
+        $key = $norm.TrimStart('#')
         if ($seen.ContainsKey($key)) { continue }
         $seen[$key] = $true
-        $picks += $hex
+        $picks += $norm
     }
     $sb = New-Object System.Text.StringBuilder
     foreach ($hex in $picks) {
@@ -137,8 +174,16 @@ function Get-AdjustedScheme {
     foreach ($prop in $Scheme.PSObject.Properties) {
         $name = $prop.Name
         $val  = $prop.Value
-        if (($name -in $slots) -and ($val -is [string]) -and ($val -match '^#?[0-9a-fA-F]{6}$')) {
-            $val = Convert-HexAdjust -Hex $val -Brightness $Brightness -Saturation $Saturation
+        # Normalised first, so shorthand and 8-digit hex move with the knobs
+        # instead of freezing while their neighbours adjust. Anything the
+        # normaliser does not understand is still passed through untouched.
+        if (($name -in $slots) -and ($val -is [string])) {
+            $norm = ConvertTo-NormalHex -Hex $val
+            if ($norm) {
+                $adjusted = Convert-HexAdjust -Hex $norm -Brightness $Brightness -Saturation $Saturation
+                # Preserve the author's leading-# convention for this slot.
+                $val = if (([string]$val).StartsWith('#')) { $adjusted } else { $adjusted.TrimStart('#') }
+            }
         }
         $out | Add-Member -NotePropertyName $name -NotePropertyValue $val -Force
     }
@@ -156,13 +201,25 @@ function Get-SchemeOscPacket {
     $palette = 'black','red','green','yellow','blue','purple','cyan','white',
                'brightBlack','brightRed','brightGreen','brightYellow',
                'brightBlue','brightPurple','brightCyan','brightWhite'
+    # Every value is normalised before it reaches the string. A scheme slot is
+    # attacker-influenced input -- README documents dropping a third-party style
+    # folder into the styles dir -- and this packet is not just written to the
+    # terminal once: Set-ShellStyleState persists it to current-style.osc, which
+    # every new zsh/bash shell replays. A background of
+    # "#000000<BEL><ESC>]52;c;..." closed OSC 11 early and made the remainder a
+    # second, attacker-chosen sequence, re-executed on every shell start.
+    # ConvertTo-NormalHex admits only hex, so nothing can escape the sequence.
     $sb = [System.Text.StringBuilder]::new()
-    if ($Scheme.foreground)          { [void]$sb.Append("$E]10;$($Scheme.foreground)$BEL") }
-    if ($Scheme.background)          { [void]$sb.Append("$E]11;$($Scheme.background)$BEL") }
-    if ($Scheme.cursorColor)         { [void]$sb.Append("$E]12;$($Scheme.cursorColor)$BEL") }
-    if ($Scheme.selectionBackground) { [void]$sb.Append("$E]17;$($Scheme.selectionBackground)$BEL") }
+    $fg  = ConvertTo-NormalHex -Hex $Scheme.foreground
+    $bg  = ConvertTo-NormalHex -Hex $Scheme.background
+    $cur = ConvertTo-NormalHex -Hex $Scheme.cursorColor
+    $sel = ConvertTo-NormalHex -Hex $Scheme.selectionBackground
+    if ($fg)  { [void]$sb.Append("$E]10;$fg$BEL") }
+    if ($bg)  { [void]$sb.Append("$E]11;$bg$BEL") }
+    if ($cur) { [void]$sb.Append("$E]12;$cur$BEL") }
+    if ($sel) { [void]$sb.Append("$E]17;$sel$BEL") }
     for ($p = 0; $p -lt $palette.Count; $p++) {
-        $color = $Scheme.($palette[$p])
+        $color = ConvertTo-NormalHex -Hex $Scheme.($palette[$p])
         if ($color) { [void]$sb.Append("$E]4;${p};${color}$BEL") }
     }
     return $sb.ToString()
