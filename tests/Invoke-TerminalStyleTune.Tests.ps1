@@ -75,16 +75,39 @@ Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
             Should -Invoke Write-SettingsAtomic -Times 0
         }
 
+        # The two below were live assertions until the tuner grew its
+        # IsInputRedirected guard. They could only ever reach the notice by
+        # riding the very crash that guard now prevents: under Pester stdin is
+        # always redirected, so every run drove the tuner into
+        # [Console]::KeyAvailable and swallowed the exception in `catch { }`.
+        # The branch needs a real console, so they are source assertions now --
+        # the same trade Picker-NonWT.Tests.ps1 documents for the picker.
+
+        # Asserted on the AST, not on the source text: the function CARRIES a
+        # comment quoting the wrong wording ("promising 'a new window shows
+        # them' sent the user to ..."), so a plain -Not -Match over
+        # ScriptBlock.ToString() fails on the comment that documents the fix.
+        # Only what Write-Host is actually handed counts.
+        BeforeAll {
+            function script:Get-TunerWriteHostText {
+                $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
+                $cmds = @($ast.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.CommandAst] -and
+                    $n.GetCommandName() -eq 'Write-Host' }, $true))
+                $out = foreach ($c in $cmds) {
+                    $c.FindAll({ param($n)
+                        $n -is [System.Management.Automation.Language.StringConstantExpressionAst] }, $true) |
+                        ForEach-Object { $_.Value }
+                }
+                return @($out)
+            }
+        }
+
         It 'warns that opacity and font will not preview' {
             # Setting expectations matters more here than usual: two of the five
             # knobs move on screen and three do not, and a user who does not know
             # that will read the stillness as the tuner being broken.
-            Mock Get-TerminalKind { 'AppleTerminal' }
-            Mock Show-UpdateNoticeIfAvailable {}
-            Mock Write-Host {}
-            Mock Start-Sleep {}
-            try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
-            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'cannot show them' }
+            (script:Get-TunerWriteHostText) -match 'cannot show them' | Should -Not -BeNullOrEmpty
         }
 
         It 'does not promise a new window will show opacity or font' {
@@ -93,12 +116,72 @@ Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
             # background image and nothing else, and no escape sequence carries a
             # font or an opacity. The advice sent the user to open a window and
             # compare an unchanged font against the screenshot.
+            (script:Get-TunerWriteHostText) -match 'new window shows them' | Should -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'the tuner guards on a non-console session' {
+    InModuleScope TerminalStyles {
+        It 'explains itself instead of throwing .NET console internals' {
+            # Regression: the tuner printed its notice, slept 900ms, wrote the
+            # first preview, repainted the terminal with the OSC packet, cleared
+            # the screen and drew the whole five-knob menu -- and only THEN died
+            # on [Console]::KeyAvailable with "Cannot see if a key has been
+            # pressed ... Try Console.In.Peek", exiting 0 so the shell shim
+            # reported success. Anything running tstyles with stdin detached --
+            # a pipe, a redirect, a CI step, an agent shell -- hit it, and lost
+            # its scrollback to the Clear-Host on the way. The picker was fixed
+            # for this in 0.8.0; the tuner kept the bug.
             Mock Get-TerminalKind { 'AppleTerminal' }
             Mock Show-UpdateNoticeIfAvailable {}
             Mock Write-Host {}
-            Mock Start-Sleep {}
-            try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
-            Should -Not -Invoke Write-Host -ParameterFilter { "$Object" -match 'new window shows them' }
+            Mock Start-Sleep { throw 'the tuner must not sleep before bailing out' }
+            # Clear-Host must NOT run: the guard returns before the tuner takes
+            # over the screen, so the user's scrollback survives.
+            Mock Clear-Host { throw 'the tuner must not clear the screen before bailing out' }
+            Mock Get-AdjustedScheme { throw 'the tuner must not build a preview without a console' }
+            Mock Write-SettingsAtomic { throw 'the tuner must not write settings.json without a console' }
+
+            if ([Console]::IsInputRedirected) {
+                { Invoke-TerminalStyleTune -StyleName 'eva' } | Should -Not -Throw
+                Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'needs an interactive terminal' }
+            } else {
+                Set-ItResult -Skipped -Because 'this test run has a real console attached'
+            }
+        }
+
+        It 'guards before it touches the screen, not after' {
+            # Ordering is the whole fix: the crash itself was survivable, the
+            # repainted terminal and the wiped scrollback were not. Pinned on
+            # the AST -- the guard's own comment names Clear-Host, so comparing
+            # source-text offsets finds the comment and passes/fails on prose.
+            $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
+
+            $guard = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.IfStatementAst] -and
+                $n.Clauses[0].Item1.Extent.Text -match 'IsInputRedirected' }, $true))
+            $guard.Count | Should -Be 1 -Because 'the tuner must have exactly one redirected-input guard'
+            $guardAt = $guard[0].Extent.StartOffset
+
+            foreach ($name in 'Clear-Host', 'Start-Sleep') {
+                $calls = @($ast.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.CommandAst] -and
+                    $n.GetCommandName() -eq $name }, $true))
+                $calls.Count | Should -BeGreaterThan 0 -Because "$name should still be reachable after the guard"
+                foreach ($c in $calls) {
+                    $c.Extent.StartOffset | Should -BeGreaterThan $guardAt -Because "the guard must run before $name"
+                }
+            }
+
+            # ...and before anything repaints the live terminal over OSC.
+            $writes = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.InvokeMemberExpressionAst] -and
+                $n.Expression.Extent.Text -match 'Console\]::Out' }, $true))
+            $writes.Count | Should -BeGreaterThan 0
+            foreach ($w in $writes) {
+                $w.Extent.StartOffset | Should -BeGreaterThan $guardAt -Because 'the guard must run before the terminal is repainted'
+            }
         }
     }
 }
@@ -196,8 +279,15 @@ Describe 'cancelling the tuner puts the terminal back' {
             # escape sequences. Esc dropped the user to a stock palette instead
             # of the style they opened the tuner on.
             $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match 'Get-SchemeOscPacket -Scheme \$baseScheme'
             $src | Should -Match '\$restoreBaseLook = \{'
+            # ...and it restores the style the user OPENED, not the working base.
+            # Those differ for a tuned style: tuning 'eva-night' resolves its
+            # base 'eva' as the working base, so restoring $baseScheme repainted
+            # the terminal as eva and called it "Reverted." -- leaving the user
+            # on a style they had never chosen.
+            $block = [regex]::Match($src, '(?s)\$restoreBaseLook = \{.*?\n    \}').Value
+            $block | Should -Match 'Get-SchemeOscPacket -Scheme \$openedScheme'
+            $block | Should -Not -Match 'Get-SchemeOscPacket -Scheme \$baseScheme'
         }
 
         It 'routes every exit path through the same restore' {

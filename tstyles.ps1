@@ -259,6 +259,93 @@ function Invoke-TerminalStylesStateMigration {
 }
 
 
+# Every word Invoke-TerminalStyle dispatches BEFORE it considers a style name.
+# A style called one of these can be created and will list, tab-complete and
+# show in the picker -- and can never be applied, because the dispatch arm wins.
+# Naming a style `reset` was the sharp case: `tstyles reset` ran Reset-StyleDirect
+# (OSC reset, cleared the style record and shell state, deleted current-style.ps1)
+# and reported "Reset <terminal> to its unstyled default."
+$script:TStylesSubcommands = @(
+    'font', 'help', 'list', 'ls', 'current', 'random', 'register', 'reset',
+    'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
+
+function Test-StyleNameIsSingleSegment {
+    <#
+    .SYNOPSIS
+    Is $Name one directory name, rather than a path?
+
+    .DESCRIPTION
+    The gate every name-to-path conversion passes through. It rejects ONLY what
+    stops a name being a single path segment -- it is deliberately not a
+    taste test.
+
+    Why it exists: the tuner composes its scratch directory under the data root
+    and removes it, whole and recursive, in a finally block. `.tune-preview` and
+    `styles` are both single-segment children of that root, so a name reaching
+    up a level makes the two paths the same directory -- the scratch dir IS the
+    style dir -- and `tstyles tune ../styles/eva` deleted styles/eva on the way
+    out, reporting "Reverted." and exiting 0. A tune.json `base` carrying the
+    same thing did it with nothing unusual typed.
+
+    Why it is not the stricter rule the tuner applies to names it CREATES: a
+    hand-authored style is just a folder the user drops in, and README's
+    "Adding your own style" puts no constraint on what it is called. Rejecting
+    spaces or non-ASCII here would strand every such style in a state worse
+    than not existing -- Get-AvailableStyles enumerates directories with no
+    filter, so `My Theme` would still list, still tab-complete, and then fail
+    at every use site (apply, tune, current, the shell-startup re-emit,
+    background inheritance). Reject paths, not names.
+
+    Returns $true/$false; never throws.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) { return $false }
+    if ($Name -eq '.' -or $Name -eq '..')    { return $false }
+    if ($Name.IndexOfAny([char[]]@('/', '\')) -ge 0) { return $false }
+    if ($Name.IndexOfAny([System.IO.Path]::GetInvalidFileNameChars()) -ge 0) { return $false }
+    # Control characters are legal in a POSIX filename and never intended here.
+    if ($Name -match '[\x00-\x1f\x7f]')      { return $false }
+    # One path segment cannot exceed this on any filesystem the project targets.
+    if ($Name.Length -gt 255)                { return $false }
+    return $true
+}
+
+function Test-StyleNameValid {
+    <#
+    .SYNOPSIS
+    Is $Name acceptable for a style this tool is about to CREATE?
+
+    .DESCRIPTION
+    Stricter than Test-StyleNameIsSingleSegment, and applied only where the
+    tool invents a new directory rather than resolving one that already exists
+    -- today that is the tuner's Save-As prompt, which has enforced
+    `^[A-Za-z0-9._-]+$` since it was written.
+
+    Two things the character class alone still admits are excluded. `.` and
+    `..` match it and are not names but directories: saving under either wrote
+    the style's four files into the styles directory itself or its parent,
+    producing something `tstyles list` could never show. And a name long enough
+    to push the path past the OS limit threw a raw .NET path exception from
+    inside Save-TunedStyle, after the user had already committed to the save.
+
+    Resolving an EXISTING style deliberately does not use this -- see
+    Test-StyleNameIsSingleSegment for why.
+
+    Returns $true/$false; never throws.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Name)
+
+    if (-not (Test-StyleNameIsSingleSegment -Name $Name)) { return $false }
+    if ($Name.Length -gt 64) { return $false }
+    # A subcommand name produces a style that can never be applied: the dispatch
+    # arm for it runs first, so `tstyles <name>` does the subcommand instead.
+    if ($script:TStylesSubcommands -contains $Name.ToLowerInvariant()) { return $false }
+    return ($Name -match '^[A-Za-z0-9._-]+$')
+}
+
 function Get-StyleDir {
     # Resolves a style name to its on-disk directory, checking the user
     # dir first ($DataRoot\styles\<name>\) then the bundled dir
@@ -266,6 +353,19 @@ function Get-StyleDir {
     # scheme.json for that name. User-wins matches Get-AvailableStyles'
     # union-and-dedup precedence.
     param([Parameter(Mandatory)][string]$StyleName)
+
+    # The choke point. Every path built from a style name -- the style dir
+    # itself, the tuner's scratch dir, the background cache -- starts from a
+    # name that resolved here, so refusing a name that is not a single
+    # directory segment here keeps a separator out of all of them. Callers
+    # already handle $null as "no such style", which is the honest answer:
+    # `../styles/eva` is not a style, and treating it as one let the tuner
+    # delete the real one.
+    #
+    # The SEGMENT test, not the stricter create-time one: a hand-authored style
+    # is whatever folder name the user chose, and rejecting spaces or non-ASCII
+    # here would break styles that already work and that README invites.
+    if (-not (Test-StyleNameIsSingleSegment -Name $StyleName)) { return $null }
 
     $userDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
     if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) { return $userDir }
@@ -353,7 +453,11 @@ function Test-StyleResolved {
                 $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
                 if ($tune.base) {
                     $baseDir = Get-StyleDir -StyleName $tune.base
-                    if ($baseDir -and ($baseDir -ne $StyleDir)) {
+                    # Compared the way the host filesystem compares, so that on a
+                    # case-sensitive volume a base differing from the style only
+                    # in case is still a different directory. See
+                    # Test-SameStyleDirectory for why -eq/-ne is wrong here.
+                    if ($baseDir -and -not (Test-SameStyleDirectory -A $baseDir -B $StyleDir)) {
                         return (Test-StyleResolved -StyleDir $baseDir -NoInherit)
                     }
                 }
@@ -1107,8 +1211,7 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # argument completers across aliases automatically).
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    $subcommands = @('font', 'help', 'list', 'ls', 'current', 'random', 'register', 'reset',
-                     'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
+    $subcommands = $script:TStylesSubcommands
     # Get-AvailableStyles already unions $DataRoot\styles\ + $ModuleRoot\styles\
     # with user-wins dedup -- single source of truth for what `tstyles <name>`
     # can target.

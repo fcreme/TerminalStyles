@@ -228,20 +228,46 @@ Describe 'tstyles reset honours a profile name given positionally' {
 Describe 'every dispatched subcommand is discoverable' {
     InModuleScope TerminalStyles {
 
-        It "offers 'ls' in tab-completion, since it is dispatched" {
+        It "offers every dispatched subcommand in tab-completion" {
             # `ls` has been an accepted alias for `list` while being absent from
             # the completer -- so it worked only if you already knew it existed.
-            #
-            # The completer list is registered at TOP LEVEL, after
-            # Invoke-TerminalStyle ends, so it is not in that function's
-            # scriptblock. Read the file.
+            # This used to check that one name against the completer's own
+            # inline list. The list is now $script:TStylesSubcommands, shared by
+            # the completer and by Test-StyleNameValid (which rejects these as
+            # style names, since the dispatch arm would win over any style so
+            # named). Assert the whole set, which is what the Describe claims.
+            $dispatched = [regex]::Matches(
+                (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString(),
+                "\`$Arg -eq '([a-z-]+)'") | ForEach-Object { $_.Groups[1].Value }
+            $dispatched = @($dispatched | Sort-Object -Unique)
+            $dispatched | Should -Contain 'ls' -Because 'the alias must still be dispatched'
+            $dispatched.Count | Should -BeGreaterThan 5
+
+            foreach ($sub in $dispatched) {
+                $script:TStylesSubcommands | Should -Contain $sub `
+                    -Because "'$sub' is dispatched, so it must tab-complete and must not be usable as a style name"
+            }
+        }
+
+        It 'uses one list for the completer and the style-name rejection' {
+            # Two literals would drift, and the drift is silent in both
+            # directions: a missing completer entry hides a real subcommand,
+            # and a missing rejection lets someone save a style that lists,
+            # tab-completes and can never be applied.
             $repoRoot = Split-Path $PSScriptRoot -Parent
             $file = [System.IO.File]::ReadAllText((Join-Path $repoRoot 'tstyles.ps1'),
                 [System.Text.UTF8Encoding]::new($false))
-            (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString() | Should -Match "\`$Arg -eq 'ls'"
-            $completer = [regex]::Match($file, '(?s)\$subcommands = @\((.*?)\)').Value
-            $completer | Should -Not -BeNullOrEmpty
-            $completer | Should -Match "'ls'"
+            $file | Should -Match '\$subcommands = \$script:TStylesSubcommands'
+            ([regex]::Matches($file, '\$script:TStylesSubcommands = @\(')).Count | Should -Be 1
+        }
+
+        It 'refuses to save a style named after a subcommand' {
+            foreach ($sub in $script:TStylesSubcommands) {
+                Test-StyleNameValid -Name $sub | Should -BeFalse -Because "'tstyles $sub' would run the subcommand"
+            }
+            # Case-insensitively, since the dispatch is.
+            Test-StyleNameValid -Name 'RESET' | Should -BeFalse
+            Test-StyleNameValid -Name 'eva-night' | Should -BeTrue
         }
     }
 }

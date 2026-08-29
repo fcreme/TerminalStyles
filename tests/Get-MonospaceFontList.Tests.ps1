@@ -120,11 +120,37 @@ Describe 'Get-MonospaceFontList always hands back an array' {
             "$($f[0])".Length | Should -BeGreaterThan 1
         }
 
-        It 'the tuner wraps the call as well' {
-            # Belt and braces: the comma in the function fixes every call site,
-            # and the @() at the call site makes the contract visible there.
+        It 'the tuner must NOT wrap the call in @()' {
+            # This used to assert the opposite, as "belt and braces". The two
+            # halves do not compose -- they cancel. `return ,@(...)` emits the
+            # list as one object; @() around it does not re-enumerate that
+            # object, it nests it. The tuner's $fontList.Count became 1 with the
+            # whole array as element 0, so `% $fontList.Count` was always 0 (the
+            # knob could not move) and the first Left/Right assigned an Object[]
+            # to $fontFace, which [string]$FontFace refuses -- a terminating
+            # parameter-binding error that lost the whole tuning session.
             $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match '\$fontList = @\(Get-MonospaceFontList'
+            $src | Should -Not -Match '@\(Get-MonospaceFontList' -Because 'the wrapper nests the list instead of flattening it'
+            $src | Should -Match '\$fontList = Get-MonospaceFontList'
+        }
+
+        It 'the tuner call site yields font names the knob can cycle' {
+            # The behaviour the source-text check above is a proxy for, driven
+            # through the same seams the rest of this file uses. Binds the list
+            # exactly as lib/tune.ps1 does, then presses Right once.
+            $fontFace = 'Cascadia Code'
+            $fontList = Get-MonospaceFontList -Current $fontFace `
+                -Installed @('Cascadia Code','Fira Code','Hack') -MonospaceNames @()
+
+            $fontList.Count | Should -BeGreaterThan 1 -Because 'a nested list collapses to Count 1'
+            $fontList[0]    | Should -BeOfType [string]
+
+            $fontIdx  = [Math]::Max(0, [array]::IndexOf($fontList, $fontFace))
+            $fontIdx  = ($fontIdx + 1) % $fontList.Count      # one RightArrow
+            $fontFace = $fontList[$fontIdx]
+
+            $fontFace | Should -BeOfType [string] -Because 'an Object[] here kills the tuner on the first keypress'
+            $fontFace | Should -Not -Be 'Cascadia Code' -Because 'the knob must actually move'
         }
     }
 }
