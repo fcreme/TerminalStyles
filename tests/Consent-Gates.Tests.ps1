@@ -126,8 +126,15 @@ Describe 'the destructive commands route their consent through the gate' {
             Mock Test-InteractiveConsole { $false }
             Mock Write-Host {}
             # Anything that would actually destroy something fails the test.
-            Mock Remove-Item        { throw 'uninstall must not remove anything without consent' }
-            Mock Uninstall-PSResource { throw 'uninstall must not touch the module without consent' }
+            Mock Remove-Item { throw 'uninstall must not remove anything without consent' }
+            # Only where it exists. Uninstall-PSResource ships with
+            # PSResourceGet, which is pwsh 7+; on Windows PowerShell 5.1 Pester's
+            # Mock itself throws CommandNotFoundException, so an unconditional
+            # mock fails the test on the one engine it was meant to protect.
+            # Remove-Item above is the assertion that matters either way.
+            if (Get-Command Uninstall-PSResource -ErrorAction SilentlyContinue) {
+                Mock Uninstall-PSResource { throw 'uninstall must not touch the module without consent' }
+            }
 
             $saved = $script:TStylesDataRoot
             try {
