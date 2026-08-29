@@ -110,5 +110,53 @@ Describe 'Resolve-FontPackage' {
             @($out).Count | Should -Be 1
             (Split-Path -Leaf $out[0]) | Should -Be 'Direct-Regular.ttf'
         }
+
+        It 'names a direct download from the URL PATH, not the whole URL: <url>' -ForEach @(
+            @{ url = 'https://x/Direct-Regular.ttf?raw=1' }
+            @{ url = 'https://x/Direct-Regular.ttf?a=1&b=2' }
+            @{ url = 'https://x/Direct-Regular.ttf#v2' }
+        ) {
+            # The extension test already stripped the query -- so the branch
+            # fired -- while the destination name did not, and the file landed
+            # as 'Direct-Regular.ttf?raw=1'. See the consequence below. A '#'
+            # failed the other way round: it stayed in the extension, the
+            # branch did not fire, and a bare .ttf went to ZipFile::OpenRead.
+            $ttf = Join-Path $TestDrive 'q.ttf'
+            [System.IO.File]::WriteAllText($ttf, 'DIRECTFONT')
+            $h = (Get-FileHash -Path $ttf -Algorithm SHA256).Hash.ToLowerInvariant()
+            $font = [pscustomobject]@{ name='Direct'; url=$url; sha256=$h; files=@() }
+
+            $cache = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $out = Resolve-FontPackage -Font $font -CacheRoot $cache -DownloadPath $ttf
+
+            @($out).Count | Should -Be 1
+            (Split-Path -Leaf $out[0]) | Should -Be 'Direct-Regular.ttf'
+        }
+
+        It 'a direct download with a query string is still findable once installed' {
+            # Why the name matters, and the reason this is not cosmetic.
+            # Get-InstalledFontFamily only counts files whose extension is one
+            # of ttf/otf/ttc/otc, so a file installed as 'Font.ttf?raw=1' was
+            # invisible to it forever after: `tstyles font <name>` reported the
+            # install as successful and the font as still missing, then
+            # downloaded and installed it again on the next run, and every run
+            # after that.
+            $ttf = Join-Path $TestDrive 'v.ttf'
+            [System.IO.File]::WriteAllText($ttf, 'DIRECTFONT')
+            $h = (Get-FileHash -Path $ttf -Algorithm SHA256).Hash.ToLowerInvariant()
+            $font = [pscustomobject]@{ name='Direct'; url='https://x/Iosevka-Regular.ttf?raw=1'; sha256=$h; files=@() }
+
+            $cache = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $out = Resolve-FontPackage -Font $font -CacheRoot $cache -DownloadPath $ttf
+
+            $fontsDir = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $null = Install-Font -FontFiles $out -FontsDir $fontsDir `
+                -RegistryRoot 'HKCU:\Software\TerminalStylesTest\Fonts'
+
+            $seen = Get-InstalledFontFamily -Platform 'MacOS' -SearchPath @($fontsDir)
+            $seen | Should -Contain 'Iosevka' `
+                -Because 'a font the tool just installed must not read as missing on the next run'
+            Test-FontInstalled -Family 'Iosevka' -Installed $seen | Should -BeTrue
+        }
     }
 }

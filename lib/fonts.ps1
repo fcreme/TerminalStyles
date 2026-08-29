@@ -370,10 +370,25 @@ function Resolve-FontPackage {
     # that passed -DownloadPath, i.e. the tests. Every catalogue entry today is
     # a .zip with a 'files' list, so nothing was broken; it was waiting for the
     # first person to add a font published as a bare .ttf.
-    $extSource = if ($DownloadPath) { $DownloadPath } else { "$($Font.url)" }
-    $ext = [System.IO.Path]::GetExtension(($extSource -split '\?')[0]).ToLowerInvariant()
+    #
+    # The URL minus any ?query or #fragment, used for BOTH the extension test
+    # and the name the file is written under. Stripping it for one and not the
+    # other is how a name like 'Font.ttf?raw=1' reached the disk: the branch
+    # fired, and then the installed file had no font extension at all, so
+    # Get-InstalledFontFamily's filter never saw it again -- `tstyles font`
+    # reported the install as successful and the font as still missing, and
+    # re-downloaded it on every run. On Windows it does not even get that far:
+    # '?' is not a legal filename character, so the copy throws. A '#' was the
+    # mirror image -- it stayed in the extension, so the branch did not fire at
+    # all and a bare .ttf went to ZipFile::OpenRead instead.
+    #
+    # $DownloadPath is a local path, never a URL: it is not stripped, since
+    # both characters are legal in a filename.
+    $urlPath   = ("$($Font.url)" -split '[?#]')[0]
+    $extSource = if ($DownloadPath) { $DownloadPath } else { $urlPath }
+    $ext = [System.IO.Path]::GetExtension($extSource).ToLowerInvariant()
     if ((-not $Font.files -or @($Font.files).Count -eq 0) -and ($ext -in '.ttf','.otf','.ttc')) {
-        $dest = Join-Path $extractDir (Split-Path -Leaf $Font.url)
+        $dest = Join-Path $extractDir (Split-Path -Leaf $urlPath)
         Copy-Item -LiteralPath $archive -Destination $dest -Force
         [string[]]$out = @($dest)
         return ,$out

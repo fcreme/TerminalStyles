@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- a font published as a bare `.ttf` behind a URL carrying `?raw=1` installed under a name nothing could find again. `Resolve-FontPackage`'s direct-download branch stripped the query string when it tested the extension -- so the branch fired -- and then built the destination name from the raw URL, writing `Font.ttf?raw=1` to disk. `Get-InstalledFontFamily` counts only files whose extension is `ttf`/`otf`/`ttc`/`otc`, so the font was invisible to the tool from that moment on: `tstyles font <name>` reported the install as successful and the font as still missing, then downloaded and installed it again on every subsequent run. On Windows it never got that far -- `?` is not a legal filename character, so the copy threw. A `#fragment` failed the other way round: it stayed in the extension, so the branch did not fire at all and a bare `.ttf` was handed to `ZipFile::OpenRead`. One query-stripped URL path now backs both the extension test and the name. Latent today, since all six catalogue entries are zips -- the same standing this branch's previous defect had
+
 ## [0.8.18] - 2026-08-29
 
 ### Fixed
