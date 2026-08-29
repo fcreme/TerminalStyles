@@ -155,7 +155,26 @@ function Invoke-FontFirstRunPrompt {
     # it never repeats; silent in non-interactive sessions.
     $marker = Join-Path $script:TStylesDataRoot '.fonts-prompted'
     $markerPresent = Test-Path -LiteralPath $marker
-    if (-not (Test-ShouldPromptFonts -MarkerPresent $markerPresent -Interactive ([Environment]::UserInteractive))) {
+
+    # [Environment]::UserInteractive is NOT enough, and on its own it burned the
+    # one thing this function owns. It reports $true whenever the process has a
+    # console -- including when stdin or stdout is a pipe or a file -- so a bare
+    # `tstyles` with stdin redirected reached the Read-Host below, which returns
+    # empty at EOF rather than throwing, and then wrote the marker anyway. The
+    # offer is one-time by design, so it was gone: the question went into the
+    # redirect, nobody saw it, the answer was nobody's, and no interactive
+    # session was ever asked again. Same shape as the update notice the tuner
+    # printed and immediately wiped while still burning its 24-hour throttle.
+    #
+    # Both directions matter. Redirected stdin means the answer is not the
+    # user's; redirected stdout means the question is not visible, and a
+    # Read-Host then blocks a real console on a prompt nobody can read. The
+    # picker and the tuner already guard this way -- this is the third
+    # Read-Host/keyboard path in the project and the only one that did not.
+    $interactive = [Environment]::UserInteractive -and
+                   -not [Console]::IsInputRedirected -and
+                   -not [Console]::IsOutputRedirected
+    if (-not (Test-ShouldPromptFonts -MarkerPresent $markerPresent -Interactive $interactive)) {
         return
     }
 
