@@ -522,15 +522,26 @@ function Show-FontList {
         [string[]]$Installed
     )
     if (-not $Catalog) { $Catalog = @(Get-FontCatalog) }
+
+    # One enumeration for the whole list. Test-FontInstalled enumerates for
+    # itself when -Installed is absent, so calling it bare per entry walked
+    # every font directory once PER CATALOGUE ENTRY -- and off Windows that
+    # walk is recursive over ~/Library/Fonts, /Library/Fonts and both
+    # /System/Library/Fonts trees (672 files on the machine this was measured
+    # on, six times over: 378ms against 113ms for one shared pass). On Windows
+    # it is a fresh InstalledFontCollection each time. The cost is linear in
+    # the catalogue, so every font added made `tstyles font` slower for
+    # everyone. The -Installed seam existed for exactly this and the one real
+    # caller was not using it.
+    if (-not $PSBoundParameters.ContainsKey('Installed')) {
+        $Installed = Get-InstalledFontFamily
+    }
+
     Write-Host ""
     Write-Host "  Available coding fonts ([+] installed, [ ] installable):" -ForegroundColor Cyan
     Write-Host ""
     foreach ($f in $Catalog) {
-        $isIn = if ($PSBoundParameters.ContainsKey('Installed')) {
-            Test-FontInstalled -Family $f.family -Installed $Installed
-        } else {
-            Test-FontInstalled -Family $f.family
-        }
+        $isIn = Test-FontInstalled -Family $f.family -Installed $Installed
         $mark = if ($isIn) { '[+]' } else { '[ ]' }
         Write-Host ("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license)
     }
