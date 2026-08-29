@@ -519,15 +519,43 @@ function Get-ShellRcCandidate {
     # The rc files worth registering in, with the shell each belongs to.
     # ~/.bash_profile is included because macOS Terminal.app starts bash as a
     # LOGIN shell, which reads .bash_profile and never .bashrc.
-    param([string]$HomeDir = $HOME)
+    param(
+        # Test seam: real callers omit it and the live $HOME is used.
+        [string]$HomeDir = $HOME,
+        # The zsh config directory, normally $env:ZDOTDIR. Its own seam,
+        # because -HomeDir alone could not sandbox it -- see below.
+        [string]$ZDotDir
+    )
+
+    # -HomeDir means a SANDBOX, and the ambient $env:ZDOTDIR is not part of it.
+    #
+    # This read used to be $env:ZDOTDIR directly, which made -HomeDir a seam
+    # that leaked: three of the four candidates honoured it and the fourth
+    # reached straight past it into the caller's real environment. The test
+    # suite paid for that. tests/Uninstall-ReversesShellInit.Tests.ps1 calls
+    # shell-init with -HomeDir pointed at a TestDrive, and on any machine with
+    # ZDOTDIR set -- the standard XDG zsh layout, and every dotfile framework
+    # that relocates zsh config, which is exactly the setup this candidate was
+    # ADDED for -- running the suite appended a loader block to the developer's
+    # own zsh config, pointing at a Pester temp path that is deleted when the
+    # run ends. Nothing removed it; the run reported PASS=27 FAIL=0.
+    #
+    # So a caller that sandboxes the home and says nothing about the zsh config
+    # dir gets no ZDOTDIR candidate at all. A caller that wants one names it.
+    # Callers that sandbox neither -- `tstyles shell-init`, and uninstall's
+    # bare call -- still get the live environment, so the feature is unchanged
+    # for every real user.
+    if (-not $PSBoundParameters.ContainsKey('ZDotDir')) {
+        $ZDotDir = if ($PSBoundParameters.ContainsKey('HomeDir')) { $null } else { $env:ZDOTDIR }
+    }
 
     # $ZDOTDIR first when it is set: zsh reads $ZDOTDIR/.zshrc and does NOT read
     # ~/.zshrc, so for anyone with a relocated config (the standard XDG layout,
     # and every dotfile framework that uses one) the block went into a file zsh
     # never opens. shell-init reported success and no shell ever loaded it.
     $zdot = @()
-    if ($env:ZDOTDIR -and (Test-Path -LiteralPath $env:ZDOTDIR)) {
-        $zdotRc = Join-Path $env:ZDOTDIR '.zshrc'
+    if ($ZDotDir -and (Test-Path -LiteralPath $ZDotDir)) {
+        $zdotRc = Join-Path $ZDotDir '.zshrc'
         if ($zdotRc -ne (Join-Path $HomeDir '.zshrc')) {
             $zdot = @([pscustomobject]@{ Shell = 'zsh'; Path = $zdotRc })
         }
@@ -675,10 +703,21 @@ function Invoke-TerminalStylesShellInit {
         [switch]$Force,
         [switch]$Remove,
         # Test seam: real callers omit it and the live $HOME is used.
-        [string]$HomeDir = $HOME
+        [string]$HomeDir = $HOME,
+        # The zsh config dir. Omitted by real callers, who get $env:ZDOTDIR.
+        [string]$ZDotDir
     )
 
-    $candidates = Get-ShellRcCandidate -HomeDir $HomeDir
+    # Forwarded by what the caller actually BOUND, not by value. All three
+    # cases -- bare, sandboxed, and explicitly named -- are then decided in one
+    # place, Get-ShellRcCandidate, where each is directly testable. Resolving
+    # here as well would duplicate the rule in a second frame, and only one of
+    # the two could be covered by a test that does not write to the real $HOME.
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+    if ($PSBoundParameters.ContainsKey('ZDotDir')) { $splat.ZDotDir = $ZDotDir }
+
+    $candidates = Get-ShellRcCandidate @splat
 
     if ($Remove) {
         # Each status reported for what it is. A failure and a malformed block

@@ -265,22 +265,117 @@ Describe 'shell-init finds the rc file zsh actually reads' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             $z = Join-Path $h '.config/zsh'
             New-Item -ItemType Directory -Path $z -Force | Out-Null
-            $prev = $env:ZDOTDIR
-            try {
-                $env:ZDOTDIR = $z
-                @(Get-ShellRcCandidate -HomeDir $h | ForEach-Object { $_.Path }) |
-                    Should -Contain (Join-Path $z '.zshrc')
-            } finally { $env:ZDOTDIR = $prev }
+
+            # Named, not set in the environment. These two used to assign
+            # $env:ZDOTDIR and restore it in a finally -- correct as far as it
+            # went, but it made the ambient variable the interface, and the
+            # next test file to sandbox -HomeDir without knowing that wrote a
+            # loader block into the developer's own zsh config. The parameter
+            # is the interface now.
+            @(Get-ShellRcCandidate -HomeDir $h -ZDotDir $z | ForEach-Object { $_.Path }) |
+                Should -Contain (Join-Path $z '.zshrc')
         }
 
         It 'does not duplicate it when ZDOTDIR is just $HOME' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $paths = @(Get-ShellRcCandidate -HomeDir $h -ZDotDir $h | ForEach-Object { $_.Path })
+            @($paths | Where-Object { $_ -eq (Join-Path $h '.zshrc') }).Count | Should -Be 1
+        }
+
+        It 'a sandboxed -HomeDir does not reach the ambient $env:ZDOTDIR' {
+            # The seam itself. -HomeDir is what every test in this suite uses
+            # to stay inside TestDrive, and one candidate of the four used to
+            # ignore it and read the live environment, so running the suite on
+            # any machine with ZDOTDIR set -- the XDG layout this candidate
+            # exists to support -- permanently appended a loader block to the
+            # developer's real .zshrc, pointing at a Pester temp directory that
+            # is deleted when the run ends. Nothing removed it and the run
+            # reported all green.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $outside = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $outside -Force | Out-Null
+
             $prev = $env:ZDOTDIR
             try {
-                $env:ZDOTDIR = $h
+                $env:ZDOTDIR = $outside
                 $paths = @(Get-ShellRcCandidate -HomeDir $h | ForEach-Object { $_.Path })
-                @($paths | Where-Object { $_ -eq (Join-Path $h '.zshrc') }).Count | Should -Be 1
+                $paths | Should -Not -Contain (Join-Path $outside '.zshrc') `
+                    -Because 'a sandboxed home must not reach a zsh config dir outside it'
+                foreach ($p in $paths) {
+                    $p | Should -BeLike "$h*" -Because 'every candidate must sit inside the sandbox'
+                }
+            } finally { $env:ZDOTDIR = $prev }
+        }
+
+        It 'shell-init with a sandboxed -HomeDir writes nothing outside it' {
+            # End to end through the entry point the offending test file calls,
+            # which is where the leak actually did its damage.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $outside = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $outside -Force | Out-Null
+            $victim = Join-Path $outside '.zshrc'
+            [System.IO.File]::WriteAllText($victim, "# a developer's real zsh config`nexport EDITOR=vim`n")
+            $before = [System.IO.File]::ReadAllText($victim)
+
+            $prev = $env:ZDOTDIR
+            try {
+                $env:ZDOTDIR = $outside
+                Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            } finally { $env:ZDOTDIR = $prev }
+
+            [System.IO.File]::ReadAllText($victim) | Should -Be $before `
+                -Because 'running the test suite must not edit the developer''s own shell config'
+        }
+
+        It 'still registers in $ZDOTDIR when the caller names one' {
+            # The other direction: the sandbox rule must not disable the
+            # feature for a caller that asks for it, or for a real user.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $z = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $z -Force | Out-Null
+
+            # The rc file must EXIST. shell-init registers in the files it
+            # finds, and when it finds none at all it falls back to creating
+            # one for the login shell -- picked from $env:SHELL. Leaving both
+            # directories empty therefore made this assertion depend on the
+            # ambient shell: it passed on a zsh machine and failed on bash,
+            # which is every CI leg here (ubuntu's runner shell is bash, and on
+            # Windows $env:SHELL is not set at all, so the check short-circuits
+            # to bash). Creating the file first makes the registration
+            # deterministic and tests the thing this It is named for.
+            $zshrc = Join-Path $z '.zshrc'
+            [System.IO.File]::WriteAllText($zshrc, "# a relocated zsh config`n")
+
+            Invoke-TerminalStylesShellInit -HomeDir $h -ZDotDir $z -Force *> $null
+
+            [System.IO.File]::ReadAllText($zshrc) | Should -Match 'TerminalStyles BEGIN'
+        }
+
+        It 'a bare call still reads the live $env:ZDOTDIR' {
+            # The branch every REAL user takes, and the one the rest of this
+            # Describe stopped covering when the other tests moved onto the
+            # -ZDotDir parameter. Without this, deleting $ZDOTDIR support
+            # outright left the entire suite green -- verified by mutation:
+            # replacing the ambient read with $null scored PASS=1249 FAIL=0,
+            # identical to the unmutated tree, while the built module silently
+            # registered in ~/.zshrc and told the user to source a file zsh
+            # never opens. That is the 0.8.18 defect, undetectable.
+            #
+            # Read-only on purpose: it asks for the candidate LIST and writes
+            # nothing, so it can exercise the unsandboxed path safely.
+            $z = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $z -Force | Out-Null
+
+            $prev = $env:ZDOTDIR
+            try {
+                $env:ZDOTDIR = $z
+                @(Get-ShellRcCandidate | ForEach-Object { $_.Path }) |
+                    Should -Contain (Join-Path $z '.zshrc') `
+                    -Because 'a caller that sandboxes nothing must still get the live ZDOTDIR'
             } finally { $env:ZDOTDIR = $prev }
         }
     }

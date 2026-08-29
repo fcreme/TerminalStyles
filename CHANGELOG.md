@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **running the test suite rewrote the developer's own `$ZDOTDIR/.zshrc`.** `-HomeDir` is the seam every shell test uses to stay inside `TestDrive`, and three of the four rc candidates honoured it while the fourth read the live `$env:ZDOTDIR` and reached straight past it. So on any machine using the standard XDG zsh layout -- the setup that candidate was ADDED for in 0.8.18 -- one run of `tests/Uninstall-ReversesShellInit.Tests.ps1` appended a loader block to the contributor's real zsh config, pointing at a Pester temp directory that is deleted when the run ends, and reported PASS=27 FAIL=0. Nothing removed it. `-HomeDir` now means a sandbox: a caller that overrides it and says nothing about the zsh config dir gets no `$ZDOTDIR` candidate, and one that wants it names it. All three cases are decided in one place and each is covered, including the bare call every real user takes -- deleting `$ZDOTDIR` support outright now fails the suite, where an earlier draft of this fix left it green
+
 ## [0.8.18] - 2026-08-29
 
 ### Fixed
