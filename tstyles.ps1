@@ -987,6 +987,13 @@ function Invoke-TerminalStyle {
                     $isPwshTarget = $true
                 }
             }
+
+            # Same reason as the non-WT arm below, and as Apply-StyleDirect's
+            # Windows Terminal path: a style with no profile.ps1 leaves nothing
+            # for Get-CurrentStyleName to byte-compare, so without a record
+            # `tstyles current` reports no active style right after the picker
+            # applied one.
+            Set-CurrentStyleRecord -StyleName $styles[$idx].Name -Kind $termKind
         } else {
             # Record the confirmed style so a new tab comes up in it -- the OSC
             # preview alone would die with this tab.

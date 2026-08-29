@@ -413,6 +413,20 @@ function Apply-StyleDirect {
         }
     }
 
+    # Record the choice. Get-CurrentStyleName answers by byte-comparing
+    # current-style.ps1 against each style's profile.ps1, and falls back to this
+    # record when there is nothing to compare -- which is exactly the case for a
+    # style that ships no profile.ps1, and for -KeepPrompt. Without it the
+    # branch above DELETES current-style.ps1 and nothing else remembers, so
+    # `tstyles current` printed "(no bundled style currently active)", `tstyles
+    # list` showed no `*`, the picker opened at index 0 and a bare `tstyles
+    # tune` errored "No active style detected" -- all while settings.json
+    # plainly carried the style's colorScheme. Tuned styles reach that state
+    # routinely: Save-TunedStyle only writes profile.ps1 when the base has one.
+    # Best-effort by contract (Set-CurrentStyleRecord is try//catch internally),
+    # so it cannot take down an apply that has already succeeded.
+    Set-CurrentStyleRecord -StyleName $StyleName -Kind 'WindowsTerminal'
+
     Write-Host ""
     Write-Host "  Style applied: " -NoNewline
     Write-Host $StyleName -ForegroundColor Green
@@ -538,6 +552,12 @@ function Reset-StyleDirect {
     }
 
     Write-SettingsFile -Path $settingsPath -Settings $settings
+
+    # The other half of recording it on apply. Without this a reset stripped the
+    # fields from settings.json and left the record standing, so `tstyles
+    # current` would name a style that is no longer applied -- trading one wrong
+    # answer for the opposite one. The non-WT reset above has always done this.
+    Clear-CurrentStyleRecord
 
     # Clear the active style's prompt so the user's own prompt returns.
     if (Test-Path -LiteralPath $script:TStylesCurrent) {
