@@ -332,6 +332,18 @@ function Get-UninstallPlan {
             # Never let a manifest line escape the data root, however it got there.
             $items = @($items | Where-Object { $_ -notmatch '(^|[\\/])\.\.([\\/]|$)' -and
                                                $_ -notmatch '^([a-zA-Z]:|[\\/])' })
+            # A style the install shipped, that the user has since tuned in
+            # place, is no longer only the install's to remove. Saving a tune
+            # with "[1] Overwrite" writes it under a BUNDLED name -- which is
+            # the option's purpose -- and that name is exactly what the manifest
+            # always contains, so uninstall deleted the tuned style one line
+            # after printing "PRESERVE user state ... pass -DeleteData to wipe".
+            # A Save-As tune under a fresh name survived, which made the loss
+            # silent and inconsistent. tune.json marks it as the user's.
+            $items = @($items | Where-Object {
+                if ($_ -notmatch '^styles[\\/][^\\/]+[\\/]?$') { return $true }
+                -not (Test-Path -LiteralPath (Join-Path (Join-Path $DataDir $_) 'tune.json'))
+            })
             if ($items.Count -gt 0) {
                 return @{ Items = @($items + $script:TStylesStagedRuntimeFiles + '.installed-files')
                           Source = 'manifest' }

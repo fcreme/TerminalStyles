@@ -475,7 +475,35 @@ function Sync-InstallTree {
         }
     }
 
-    Copy-Item -Path (Join-Path $ExtractedRoot '*') -Destination $InstallDir -Recurse -Force
+    # Everything except styles/, which is merged one style at a time below.
+    foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
+        if ($entry.PSIsContainer -and $entry.Name -eq 'styles') { continue }
+        Copy-Item -LiteralPath $entry.FullName -Destination $InstallDir -Recurse -Force
+    }
+
+    # styles/ is shared ground, and a bulk overwrite here reverted the user's
+    # work. Saving a tune with "[1] Overwrite" puts it under a BUNDLED name --
+    # that is the whole point of the option -- so the shipped copy of that name
+    # landed straight on top of it: scheme.json, theme.json and profile.ps1 back
+    # to stock, while tune.json (which ships with nothing) survived and went on
+    # claiming the knob values that had just been erased. Re-tuning could not
+    # recover it either, because Resolve-TuneSeed hits its self-reference guard
+    # on such a style and comes up neutral. A style carrying tune.json is the
+    # user's, so leave it exactly where it is.
+    $srcStyles = Join-Path $ExtractedRoot 'styles'
+    if (Test-Path -LiteralPath $srcStyles) {
+        $dstStyles = Join-Path $InstallDir 'styles'
+        if (-not (Test-Path -LiteralPath $dstStyles)) {
+            New-Item -ItemType Directory -Path $dstStyles -Force | Out-Null
+        }
+        foreach ($item in Get-ChildItem -LiteralPath $srcStyles -Force) {
+            if ($item.PSIsContainer -and
+                (Test-Path -LiteralPath (Join-Path (Join-Path $dstStyles $item.Name) 'tune.json'))) {
+                continue
+            }
+            Copy-Item -LiteralPath $item.FullName -Destination $dstStyles -Recurse -Force
+        }
+    }
 
     Write-InstallManifest -ExtractedRoot $ExtractedRoot -InstallDir $InstallDir
 }
