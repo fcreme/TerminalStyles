@@ -145,12 +145,27 @@ later (one Windows Terminal reload).
 The **font face** knob cycles every monospace font installed on your machine
 (curated favorites first), so your own coding fonts show up automatically.
 
-On save you choose **Overwrite** (shadows the theme you tuned) or **Save
-as** a new name. The result lands in your user-styles dir as a full style
-— so it shows up in `tstyles list`, the picker, and tab-completion, and
-survives updates. It inherits the base theme's background, and a small
-`tune.json` remembers your adjustments so `tstyles tune <name>` resumes
-where you left off.
+On save you choose **Overwrite** or **Save as** a new name. What Overwrite
+means depends on where the style lives, and the prompt says which: for a
+**bundled** theme it shadows the original, which stays in the module and
+comes back if you delete your copy; for a theme that exists only in your
+user-styles dir it *replaces* that theme, so it asks first.
+
+Either way the result lands in your user-styles dir as a full style — so it
+shows up in `tstyles list`, the picker, and tab-completion, and survives
+`tstyles update` and `tstyles uninstall` even when it carries a bundled
+theme's name. It inherits the base theme's background, and a small
+`tune.json` records what you chose.
+
+After a **Save as**, `tstyles tune <new-name>` resumes where you left off:
+the brightness and saturation you set come back on the sliders. After an
+**Overwrite** they do not, and this is deliberate — the colors are already
+baked into the style itself, so re-applying the same adjustments on top
+would darken or saturate it twice over. Re-tuning an overwritten theme
+starts from neutral against its current colors; the opacity and font you
+saved still come back. For the same reason, if the theme you tuned *from*
+has itself changed since, the tuner says so and starts from its current
+colors rather than stacking one set of adjustments on another.
 
 ### Installing a coding font
 
