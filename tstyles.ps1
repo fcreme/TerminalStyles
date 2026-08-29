@@ -608,6 +608,28 @@ function Invoke-TerminalStyle {
     # which mangles non-ASCII profile names (e.g. "Símbolo del sistema").
     # The mangled string then round-trips through ConvertTo-Json + WriteAllText
     # as UTF-8, doubling the byte count of non-ASCII chars on every call.
+    # One validator for both the target we were handed and the one the prompt
+    # further down produces. Merge-StyleIntoSettings returns the settings
+    # UNTOUCHED for a name that is not in profiles.list, and the picker then
+    # wrote them anyway -- and that write is not a no-op, because re-serializing
+    # the object ConvertFrom-WTJson parsed drops every // and /* */ comment and
+    # every trailing comma the user wrote. So `tstyles -Target 'NoSuchProfile'`
+    # deleted the comments out of settings.json, applied nothing, printed
+    # "Style applied" in green, and recorded the style -- after which `tstyles
+    # current` and the `*` in `tstyles list` both named a style Windows
+    # Terminal had never been told about. Apply-StyleDirect has guarded this
+    # since 0.8.17; the picker form never did.
+    $validateTarget = {
+        param([string]$Name)
+        if ($Name -eq 'defaults') { return $true }
+        $entry = $originalSettings.profiles.list | Where-Object name -eq $Name | Select-Object -First 1
+        if ($entry) { return $true }
+        $available = @('defaults') + @($originalSettings.profiles.list.name | Where-Object { $_ })
+        Write-Error ("Windows Terminal profile '$Name' not found. Available: " +
+                     ($available -join ', '))
+        return $false
+    }
+
     $originalJson     = $null
     $originalSettings = $null
     if ($useSettingsFile) {
@@ -615,12 +637,12 @@ function Invoke-TerminalStyle {
         $originalSettings = ConvertFrom-WTJson $originalJson
 
         if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
-        if (-not $Target) {
-            Write-Host "Could not auto-detect the current Windows Terminal profile."
-            Write-Host "Available: $((@('defaults') + @($originalSettings.profiles.list.name)) -join ', ')"
-            $Target = (Read-Host "Target profile").Trim()
-            if (-not $Target) { return }
-        }
+
+        # Validate whatever we have BEFORE the console guard below, so an
+        # interactive typo gets the real error rather than a message about
+        # terminals. The prompt for a MISSING target is a different matter and
+        # lives below that guard -- see there.
+        if ($Target -and -not (& $validateTarget $Target)) { return }
     }
 
     # Single choke point for every settings.json write in the picker. Off
@@ -644,16 +666,54 @@ function Invoke-TerminalStyle {
     # is ".NET: Cannot see if a key has been pressed ... Try Console.In.Peek",
     # thrown AFTER the menu has been drawn, which reads like the picker broke
     # rather than like it needs a terminal. Check up front and say so.
-    if ([Console]::IsInputRedirected) {
+    #
+    # Output counts too, and for a worse reason than input. With stdout
+    # redirected -- `tstyles > log.txt`, `tstyles | tee`, any wrapper capturing
+    # the command -- stdin is still a console, so the input check above does not
+    # fire and the picker runs: Clear-Host, the menu, the swatches and every
+    # per-keystroke OSC repaint go into the file while the terminal shows
+    # nothing at all and the shell merely appears to hang. Measured on a pty:
+    # 42 bytes to the terminal, 6291 bytes to the file, four full menu frames,
+    # two ESC[3J scrollback wipes, and one "Style applied" -- keystrokes were
+    # read and acted on the whole time, so arrow keys wrote settings.json and
+    # Enter applied a style the user never saw highlighted. The tuner was given
+    # this guard in 0.8.18 with a comment describing the same failure; the
+    # picker, which is the other half of that pair, never got it.
+    if ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected) {
         Write-Host ""
         Write-Host "  The style picker needs an interactive terminal." -ForegroundColor Yellow
-        Write-Host "  This session's input is redirected, so there are no keystrokes to read."
+        if ([Console]::IsInputRedirected) {
+            Write-Host "  This session's input is redirected, so there are no keystrokes to read."
+        } else {
+            Write-Host "  This session's output is redirected, so the menu would go to the"
+            Write-Host "  capture instead of the screen -- you would be picking blind."
+        }
         Write-Host ""
         Write-Host "  Apply a style directly instead:" -ForegroundColor DarkGray
         Write-Host "    tstyles <name>     " -NoNewline -ForegroundColor DarkGray
         Write-Host "(tstyles list shows them all)" -ForegroundColor DarkGray
         Write-Host ""
         return
+    }
+
+    # Asking which profile to style is itself an interactive prompt, so it
+    # belongs BELOW the guard, not above it. It used to sit 65 lines higher,
+    # which meant the guard could not do its job on the very case that needs it
+    # most: with stdout redirected and stdin a console, `tstyles > log.txt`
+    # printed "Could not auto-detect the current Windows Terminal profile" and
+    # "Target profile:" into the capture file and then blocked forever on an
+    # invisible question -- the terminal received 7 bytes and the process had to
+    # be killed. With stdin redirected too it was worse: Read-Host returns $null
+    # at EOF, so .Trim() threw "You cannot call a method on a null-valued
+    # expression" -- a raw .NET error from the very line the guard exists to
+    # replace with an explanation.
+    if ($useSettingsFile -and -not $Target) {
+        Write-Host "Could not auto-detect the current Windows Terminal profile."
+        Write-Host "Available: $((@('defaults') + @($originalSettings.profiles.list.name)) -join ', ')"
+        $Target = (Read-Host "Target profile").Trim()
+        if (-not $Target) { return }
+        # The answer is a name the user typed, so it gets the same check.
+        if (-not (& $validateTarget $Target)) { return }
     }
 
     $pickerTargetLabel = if ($useSettingsFile) { "'$Target'" }

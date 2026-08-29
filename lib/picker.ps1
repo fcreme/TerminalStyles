@@ -168,9 +168,13 @@ function Invoke-FontFirstRunPrompt {
     #
     # Both directions matter. Redirected stdin means the answer is not the
     # user's; redirected stdout means the question is not visible, and a
-    # Read-Host then blocks a real console on a prompt nobody can read. The
-    # picker and the tuner already guard this way -- this is the third
-    # Read-Host/keyboard path in the project and the only one that did not.
+    # Read-Host then blocks a real console on a prompt nobody can read.
+    #
+    # This comment used to claim "the picker and the tuner already guard this
+    # way". Only the tuner did: the picker checked stdin alone, so `tstyles >
+    # file` drove an invisible menu and applied a style blind. Both check both
+    # now -- but the claim was written from intent rather than from the code,
+    # and was wrong on the day it was written.
     $interactive = [Environment]::UserInteractive -and
                    -not [Console]::IsInputRedirected -and
                    -not [Console]::IsOutputRedirected
