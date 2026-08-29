@@ -285,6 +285,11 @@ $loaderEnd
         }
 
         $final = ($existing.TrimEnd() + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart()
+        # Same first-touch rule the bootstrap installer has always applied to
+        # $PROFILE. The module half never did, so `tstyles register` rewrote a
+        # hand-maintained profile with no copy kept.
+        $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $existing -BlockPattern ([regex]::Escape($loaderBegin))
+        if ($bak) { Write-Host "  Backed up your existing $($t.Label) profile to: $bak" -ForegroundColor Gray }
         [System.IO.File]::WriteAllText($t.ProfilePath, $final, [System.Text.UTF8Encoding]::new($false))
 
         Write-Host "  Registered in $($t.ProfilePath)" -ForegroundColor Green

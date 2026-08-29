@@ -589,6 +589,53 @@ function Get-RcFileEncoding {
     return [System.Text.Encoding]::GetEncoding(28591)
 }
 
+function Save-FirstTouchBackup {
+    <#
+    .SYNOPSIS
+    Back up a user's own config file the FIRST time TerminalStyles edits it.
+
+    .DESCRIPTION
+    Every rc file and $PROFILE this project writes is a file the USER owns and
+    that predates us. install.ps1 has backed one up since it was written --
+    `<path>.bak-<timestamp>`, once, skipped when the loader block is already
+    there, pinned by tests/Install-Hardening.Tests.ps1 -- and the module half
+    never did. So `tstyles shell-init` and `tstyles register` rewrote a
+    hand-maintained .zshrc or profile.ps1 with no copy kept anywhere, and
+    `shell-remove` rewrote it again on the way out.
+
+    FIRST TOUCH is the whole rule, and the reason is that a backup taken later
+    is worth less: once our block is in the file, a fresh copy would capture a
+    file that already carries it. The pristine version -- the one the user
+    would actually want back -- exists only before we first write. That is also
+    why the block being present means SKIP rather than "back up again".
+
+    Returns the backup path when one was written, else $null. Never throws: a
+    failed backup must not stop the operation, which is itself recoverable.
+
+    NOTE the guard order. `$Content -match ''` is TRUE for every string, so a
+    bare `-match $BlockPattern` with an empty pattern would report "already
+    ours" and silently skip the backup on every call -- the exact opposite of
+    the intent. The `$BlockPattern -and` is load-bearing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Content,
+        # Matches when the file already carries our block. Empty/absent means
+        # "cannot tell", which errs toward taking the backup.
+        [AllowEmptyString()][string]$BlockPattern
+    )
+
+    if ($BlockPattern -and $Content -match $BlockPattern) { return $null }
+    if (-not (Test-Path -LiteralPath $Path)) { return $null }
+
+    try {
+        $bak = "$Path.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+        Copy-Item -LiteralPath $Path -Destination $bak -Force -ErrorAction Stop
+        return $bak
+    } catch { return $null }
+}
+
 function Register-ShellLoader {
     # Add (or refresh) the loader block in one rc file. Returns the action taken
     # so the caller can report it: 'added', 'updated', 'unchanged', 'skipped',
@@ -639,9 +686,14 @@ function Register-ShellLoader {
     # back, so every init/remove cycle grew the file by a line -- shell-remove
     # was not the byte-exact reversal it is documented to be.
     $sep = if ($content -and -not $content.EndsWith("`n")) { "`n" } else { '' }
+    # First touch: this is the one moment the user's pristine file still exists.
+    # The refresh path above does not back up, and should not -- the block is
+    # already there, so a copy would capture a file that carries it.
+    $bak = Save-FirstTouchBackup -Path $Path -Content $content -BlockPattern ([regex]::Escape($begin))
     try {
         [System.IO.File]::WriteAllText($Path, $content + $sep + $block.Trim() + "`n", $enc)
     } catch { return 'failed' }
+    if ($bak) { Write-Host "    backed up your original to: $bak" -ForegroundColor DarkGray }
     return 'added'
 }
 

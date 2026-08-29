@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tstyles shell-init` and `tstyles register` rewrote your own `.zshrc` and `$PROFILE` with no copy kept.** `install.ps1` has backed those up since it was written -- `<path>.bak-<timestamp>`, taken once and skipped when the loader block is already present, with a test pinning it -- and the module half never did. Same project, same file, two standards of care depending on which entry point you reached. `Save-FirstTouchBackup` now applies the installer's rule to both: the copy is taken the FIRST time we write, because once our block is in the file a fresh copy would only capture a file that already carries it, and the version worth keeping is the one that existed before we touched it. Re-running does not pile up backups
+
 ### Fixed
 
 - **a mistyped `-Target` destroyed the one-line undo on `tstyles reset` and `tstyles font`.** Both copied settings.json over settings.json.bak and only THEN resolved the profile, so they printed "nothing to reset" / "profile not found" having already spent the user's backup of their last real apply. 0.8.17 fixed exactly this ordering for `tstyles <style> -Target`; the two siblings kept it. Resolution now happens first everywhere, and the rule is structural rather than conventional: the single `Save-SettingsBackup` writer takes the resolved target as a MANDATORY parameter, so a caller physically cannot take the backup before it has resolved one, and a lint asserts no function calls it above its resolve
