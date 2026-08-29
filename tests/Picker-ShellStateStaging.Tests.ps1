@@ -351,9 +351,47 @@ Describe 'the background prefetch cannot leave a truncated cache entry' {
         # a .no-background marker, so these are unambiguous here.
         $fn  = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
         $src = $fn.Extent.Text
-        $src | Should -Match "kind\s*=\s*'absent'"
         $src | Should -Match 'UtcNow'
         $src | Should -Not -Match "New-Item -ItemType File -Path \(Join-Path \`$cacheDir '\.no-background'\)"
+    }
+
+    It 'classifies the marker instead of always calling it absent' {
+        # This assertion used to read `kind\s*=\s*'absent'`, which was scaffolding
+        # for the dated-marker check above and quietly became a PIN ON A BUG: it
+        # required the very hardcoding that made one offline picker run mark
+        # every style as having no background for 30 days.
+        #
+        # 'absent' buys a 30-day TTL and 'unreachable' one hour
+        # (Test-BackgroundProbeSuppressed), so the classification is the whole
+        # difference between a negative cache that heals on reconnect and one
+        # that has to be deleted by hand.
+        # Asserted against the CODE, not the function's source text. Matching
+        # $fn.Extent.Text includes comments, and the comment block added beside
+        # this fix contains both 'absent' and 'unreachable' in quotes -- so the
+        # first draft of this test was satisfied by its own prose. Mutating the
+        # marker to always say 'unreachable', which destroys the 30-day cache
+        # for genuinely-absent backgrounds, left the whole suite green.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+
+        # The one hashtable/property assignment that sets the marker's kind.
+        $kind = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandExpressionAst] -or
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] }, $true))
+
+        $pairs = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.HashtableAst] }, $true) |
+            ForEach-Object { $_.KeyValuePairs } |
+            Where-Object { "$($_.Item1.Extent.Text)".Trim() -eq 'kind' })
+
+        $pairs.Count | Should -Be 1 -Because 'the prefetch job sets the marker kind in exactly one place'
+        $expr = $pairs[0].Item2.Extent.Text
+
+        $expr | Should -Match '\$sawUnreachable' `
+            -Because 'the kind must be decided from what actually failed, not fixed'
+        $expr | Should -Match "'unreachable'" `
+            -Because 'a network that could not be reached must not be cached as a stable absence'
+        $expr | Should -Match "'absent'" `
+            -Because 'a real 404 is still worth remembering for a month, so both branches must survive'
     }
 }
 

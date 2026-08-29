@@ -835,6 +835,10 @@ function Invoke-TerminalStyle {
                 }
                 $remoteBase = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$styleName"
                 $success = $false
+                # Did anything fail for a reason other than "the server answered
+                # and the file is not there"? That distinction decides the
+                # marker's TTL below, and getting it wrong costs a month.
+                $sawUnreachable = $false
                 foreach ($ext in 'gif','png','jpg','jpeg') {
                     $local = Join-Path $cacheDir "background.$ext"
                     # Download to a sibling .part and rename into place only once
@@ -854,9 +858,26 @@ function Invoke-TerminalStyle {
                             $success = $true
                             break
                         } else {
+                            # The server answered with nothing. Not a clean 404,
+                            # so it does not earn the 30-day TTL.
+                            $sawUnreachable = $true
                             Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
                         }
                     } catch {
+                        # Test-HttpNotFound's test, inlined: this job runs in its
+                        # own runspace with no access to the module's functions,
+                        # which is exactly why the classification was skipped
+                        # here in the first place. A 404 carries a .Response with
+                        # a StatusCode; a transport failure -- offline, DNS, a
+                        # dead proxy, a captive portal, a firewall, a 5xx -- has
+                        # no .Response at all. Keep the two in sync with
+                        # Test-HttpNotFound in the background library.
+                        $notFound = $false
+                        try {
+                            $resp = $_.Exception.Response
+                            if ($resp) { $notFound = ([int]$resp.StatusCode -eq 404) }
+                        } catch { }
+                        if (-not $notFound) { $sawUnreachable = $true }
                         if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
                     }
                 }
@@ -864,10 +885,29 @@ function Invoke-TerminalStyle {
                     # Dated marker, matching Get-StyleBundledBackground's format.
                     # An undated one reads as expired (0.8.6), so the prefetch's
                     # negative caching was silently doing nothing.
+                    #
+                    # And CLASSIFIED, which it was not. This hardcoded 'absent',
+                    # which Test-BackgroundProbeSuppressed gives a 30-day TTL
+                    # against one hour for 'unreachable' -- so opening the picker
+                    # once on a network that could not be reached (offline, VPN
+                    # down, captive portal, dead proxy, a firewall in front of
+                    # raw.githubusercontent.com) marked every style as having no
+                    # background, for a month, on every code path that reads
+                    # them: the picker, `tstyles <name>`, `tstyles random`,
+                    # apply.ps1 and Terminal.app's profile writer. Nothing
+                    # re-probed when the network came back, and the only
+                    # documented way to clear it was `tstyles uninstall
+                    # -DeleteData`, which also destroys tuned styles and the
+                    # active-style record.
+                    #
+                    # background.ps1's header states the rule -- "an absent asset
+                    # is a stable fact worth remembering, an unreachable network
+                    # is not" -- and the synchronous path has obeyed it since
+                    # 0.8.6. The prefetch is the sibling that never did.
                     try {
                         $marker = [pscustomobject]@{
                             schemaVersion = 1
-                            kind          = 'absent'
+                            kind          = $(if ($sawUnreachable) { 'unreachable' } else { 'absent' })
                             at            = [datetime]::UtcNow.ToString('o')
                         }
                         [System.IO.File]::WriteAllText((Join-Path $cacheDir '.no-background'),
