@@ -128,3 +128,41 @@ Describe 'Get-MonospaceFontList always hands back an array' {
         }
     }
 }
+
+Describe 'Get-MonospaceFontList offers the families the module already knows' {
+    InModuleScope TerminalStyles {
+        # Off Windows there is no glyph measurement (System.Drawing.Common has no
+        # GDI+ there), so the list was the curated favourites plus a name-pattern
+        # hit-set: \b(mono|mononoki|code)\b. That silently dropped every
+        # monospace family not named for it -- and three of them, MonoLisa,
+        # Iosevka and Cousine, are in $script:TStylesKnownFontNames, which
+        # Get-InstalledFontFamily uses to canonicalise installed filenames. The
+        # module went out of its way to name them, then the font knob discarded
+        # them, while README promised "every monospace font installed on your
+        # machine ... so your own coding fonts show up automatically".
+        It 'includes an installed family known by canonical name but not by pattern: <font>' -ForEach @(
+            @{ font = 'Iosevka' }
+            @{ font = 'Cousine' }
+            @{ font = 'MonoLisa' }
+        ) {
+            $list = Get-MonospaceFontList -MonospaceNames $null `
+                -Installed @('Iosevka', 'Cousine', 'MonoLisa', 'Arial', 'Helvetica')
+            $list | Should -Contain $font
+        }
+
+        It 'still keeps proportional families out' {
+            $list = Get-MonospaceFontList -MonospaceNames $null `
+                -Installed @('Iosevka', 'Arial', 'Helvetica', 'Comic Sans MS')
+            $list | Should -Not -Contain 'Arial'
+            $list | Should -Not -Contain 'Helvetica'
+            $list | Should -Not -Contain 'Comic Sans MS'
+        }
+
+        It 'still finds families by the name pattern' {
+            $list = Get-MonospaceFontList -MonospaceNames $null `
+                -Installed @('Some Mono', 'Another Code', 'Arial')
+            $list | Should -Contain 'Some Mono'
+            $list | Should -Contain 'Another Code'
+        }
+    }
+}

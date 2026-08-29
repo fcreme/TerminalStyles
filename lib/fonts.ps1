@@ -116,9 +116,24 @@ function Get-MonospaceFontList {
             # name says it is monospace -- the near-universal convention for a
             # coding font. A mono font named otherwise is missed, which is a
             # smaller cost than filling the tuner with proportional faces.
-            $MonospaceNames = @($Installed | Where-Object {
-                $_ -and $_ -notin $favorites -and $_ -match '(?i)\b(mono|mononoki|code)\b'
+            # Two sources, unioned. The name pattern is a heuristic and misses
+            # every monospace family not named for it -- Iosevka, Cousine,
+            # Inconsolata, Terminus, Hasklig, Anonymous Pro, PragmataPro,
+            # MonoLisa. The second source is not a heuristic at all:
+            # $script:TStylesKnownFontNames is a hand-curated table of monospace
+            # families, and Get-InstalledFontFamily has already resolved
+            # installed filenames onto those canonical names -- so a hit there
+            # is known-good with no glyph measurement needed. MonoLisa, Iosevka
+            # and Cousine were the sharp case: the module went out of its way to
+            # canonicalise them and then the font knob discarded them, while
+            # README promised "every monospace font installed on your machine".
+            $known = @($Installed | Where-Object {
+                $_ -and $script:TStylesKnownFontNames.ContainsValue($_)
             })
+            $byName = @($Installed | Where-Object {
+                $_ -and $_ -match '(?i)\b(mono|mononoki|code)\b'
+            })
+            $MonospaceNames = @($known + $byName | Where-Object { $_ -notin $favorites } | Sort-Object -Unique)
         }
     }
 
