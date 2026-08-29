@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.18] - 2026-08-29
+
 ### Fixed
 
 - **a scheme value could smuggle an arbitrary escape sequence into every new shell.** `Get-SchemeOscPacket` interpolated slot values into OSC sequences with no validation, and README documents dropping a third-party style folder into the styles dir. A `background` of `#000000<BEL><ESC>]52;c;...` closed OSC 11 early and made the remainder a second, attacker-chosen sequence -- and this packet is not written once: `Set-ShellStyleState` persists it to `current-style.osc`, which every new zsh/bash shell replays, so it re-executed on every shell start indefinitely. Every value is normalised to `#rrggbb` before it reaches the string now, so nothing can escape the sequence
@@ -428,7 +430,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.17...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.18...HEAD
+[0.8.18]: https://github.com/fcreme/TerminalStyles/compare/v0.8.17...v0.8.18
 [0.8.17]: https://github.com/fcreme/TerminalStyles/compare/v0.8.16...v0.8.17
 [0.8.16]: https://github.com/fcreme/TerminalStyles/compare/v0.8.15...v0.8.16
 [0.8.15]: https://github.com/fcreme/TerminalStyles/compare/v0.8.14...v0.8.15
