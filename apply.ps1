@@ -50,17 +50,44 @@ $TStylesNoAutoLoad = $true
 . (Join-Path $PSScriptRoot 'tstyles.ps1')
 
 function Read-Choice {
-    param([string]$Title, [string[]]$Options)
+    param([string]$Title, [string[]]$Options, [string]$Flag)
+
+    # The guard is the FIRST statement, deliberately, because this function is
+    # the funnel for both interactive entry points -- the style list and the
+    # profile list -- so one check here covers both.
+    #
+    # Without it the loop below never terminated. Read-Host at EOF returns
+    # AutomationNull, which never matches '^\d+$', so `pwsh -File apply.ps1`
+    # with stdin redirected printed "Invalid choice." forever: measured at
+    # ~800,000 lines in 6 seconds, still running when it was killed. That is
+    # reachable from a CI step, a dotfiles manager, or anything running this
+    # script with stdin detached -- and apply.ps1 ships to the PowerShell
+    # Gallery, so it is not a dev-only script.
+    #
+    # A hard error naming the flag, rather than a default: there is no
+    # defensible guess for "which style did you want".
+    if (-not (Test-InteractiveConsole)) {
+        $msg = "apply.ps1 needs $Flag when there is no interactive console to ask at."
+        throw ($msg + " Available: " + ($Options -join ', '))
+    }
+
     Write-Host ""
     Write-Host $Title -ForegroundColor Cyan
     for ($i = 0; $i -lt $Options.Count; $i++) {
         Write-Host ("  {0}. {1}" -f ($i + 1), $Options[$i])
     }
     while ($true) {
-        $answer = Read-Host "Pick a number"
+        # Cast: see the guard above. Bare, this comparison is falsy against
+        # AutomationNull and the loop spins.
+        $answer = "$(Read-Host 'Pick a number')"
         if ($answer -match '^\d+$') {
             $n = [int]$answer
             if ($n -ge 1 -and $n -le $Options.Count) { return $Options[$n - 1] }
+        }
+        # A console that reaches EOF mid-session cannot answer the re-prompt
+        # either, so stop rather than spin.
+        if ($null -eq $answer -or $answer -eq '') {
+            throw "No answer given for: $Title"
         }
         Write-Host "Invalid choice." -ForegroundColor Yellow
     }
@@ -79,7 +106,7 @@ Write-Host "------------------------" -ForegroundColor Cyan
 # --- Style selection ---
 $styles = Get-AvailableStyles
 if (-not $Style) {
-    $Style = Read-Choice 'Available styles:' @($styles.Name)
+    $Style = Read-Choice 'Available styles:' @($styles.Name) -Flag '-Style'
 }
 $styleDir = ($styles | Where-Object Name -eq $Style | Select-Object -First 1).FullName
 if (-not $styleDir) {
@@ -101,7 +128,7 @@ $settings = ConvertFrom-WTJson ([System.IO.File]::ReadAllText($SettingsPath, [Sy
 # --- Target profile selection ---
 $profileNames = @('defaults') + @($settings.profiles.list | ForEach-Object { $_.name })
 if (-not $Target) {
-    $Target = Read-Choice 'Which Windows Terminal profile to apply this style to?' $profileNames
+    $Target = Read-Choice 'Which Windows Terminal profile to apply this style to?' $profileNames -Flag '-Target'
 }
 if ($Target -ne 'defaults' -and -not ($settings.profiles.list | Where-Object name -eq $Target)) {
     throw "Profile '$Target' not found. Available: $($profileNames -join ', ')"
@@ -116,12 +143,22 @@ Write-Host "Target: $Target" -ForegroundColor Green
 # place rather than deleting it.
 $bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
 
-if (-not $bgProvided) {
+# The ONE prompt here whose non-interactive answer is a sensible default rather
+# than an error: $bgProvided = $false already means "work it out from the
+# style", which is exactly what a blank answer below selects. So a
+# non-interactive run takes that path silently instead of asking.
+#
+# It used to ask regardless, and `(Read-Host ...).Trim()` throws on the
+# AutomationNull returned at EOF -- so the header's own documented
+# non-interactive invocation, `-Style X -Target Y` with no -BackgroundImage,
+# died with "You cannot call a method on a null-valued expression" before
+# writing anything or taking a backup.
+if (-not $bgProvided -and (Test-InteractiveConsole)) {
     $bundledBg = Get-StyleBundledBackground -StyleDir $styleDir
     Write-Host ""
     $hint = if ($bundledBg) { "blank = use bundled '$([System.IO.Path]::GetFileName($bundledBg))', 'none' = no background" }
             else            { "blank = no background" }
-    $answer = (Read-Host "Background image absolute path ($hint)").Trim()
+    $answer = "$(Read-Host "Background image absolute path ($hint)")".Trim()
     if ($answer -eq '') {
         # Let the merge resolve the bundled image itself -- and, when the style
         # ships none, decide by ownership whether an existing background is ours

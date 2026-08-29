@@ -175,15 +175,15 @@ function Invoke-FontFirstRunPrompt {
     # file` drove an invisible menu and applied a style blind. Both check both
     # now -- but the claim was written from intent rather than from the code,
     # and was wrong on the day it was written.
-    $interactive = [Environment]::UserInteractive -and
-                   -not [Console]::IsInputRedirected -and
-                   -not [Console]::IsOutputRedirected
+    # One spelling, shared with every other gate in the project -- and mockable,
+    # which the three .NET statics are not.
+    $interactive = Test-InteractiveConsole
     if (-not (Test-ShouldPromptFonts -MarkerPresent $markerPresent -Interactive $interactive)) {
         return
     }
 
     $ans = Read-Host "Install a set of recommended coding fonts now? [y/N]"
-    if ($ans -match '^(?i)y') {
+    if ("$ans" -match '^(?i)y') {
         try {
             $catalog = @(Get-FontCatalog)
             foreach ($f in $catalog) {

@@ -1075,7 +1075,7 @@ function Invoke-TerminalStyleTune {
         if ($choice -eq '1') {
             # Gated the same way Save As gates the same outcome.
             if ($overwriteReplaces) {
-                $warn = (Read-Host "  '$StyleName' will be replaced and cannot be undone. Continue? [y/N]").Trim()
+                $warn = "$(Read-Host "  '$StyleName' will be replaced and cannot be undone. Continue? [y/N]")".Trim()
                 if ($warn -notmatch '^(?i)y') {
                     Write-Host "  Cancelled." -ForegroundColor Gray
                 } else {
@@ -1109,12 +1109,12 @@ function Invoke-TerminalStyleTune {
                 # one and stay silent about the destructive one.
                 $userDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $candidate
                 if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) {
-                    $warn = (Read-Host "  '$candidate' already exists and will be REPLACED. Continue? [y/N]").Trim()
+                    $warn = "$(Read-Host "  '$candidate' already exists and will be REPLACED. Continue? [y/N]")".Trim()
                     if ($warn -notmatch '^(?i)y') { continue }
                 } else {
                     $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $candidate
                     if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) {
-                        $warn = (Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]").Trim()
+                        $warn = "$(Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]")".Trim()
                         if ($warn -notmatch '^(?i)y') { continue }
                     }
                 }

@@ -571,6 +571,37 @@ function Test-PolicyResolved {
 }
 
 # --- Offer to fix Restricted/AllSigned execution policy for an engine ---
+function Test-InteractiveConsole {
+    <#
+    .SYNOPSIS
+    Is there a real human at a real console on both ends of this session?
+
+    .DESCRIPTION
+    One spelling of a question the project had been asking four different ways:
+    IsInputRedirected alone (the tuner), IsInput -or IsOutput (the picker),
+    UserInteractive -and neither (the font offer), and UserInteractive alone
+    (install.ps1) -- which tests nothing about redirection at all and is why
+    `iwr | iex` with stdin detached still reached a prompt.
+
+    All three inputs are parameters so the predicate is testable. The .NET
+    statics cannot be mocked, which is exactly why the guards that used them
+    directly could only be pinned by AST assertions -- and why the picker's
+    first such test passed while its guard sat below the prompt it was meant
+    to protect. This function CAN be mocked, so the gates above it get real
+    behavioural tests.
+
+    KEEP IN SYNC with the copy in install.ps1 (bootstrap has no module).
+    tests/Bootstrap-ModuleSync.Tests.ps1 enforces token-identity.
+    #>
+    [CmdletBinding()]
+    param(
+        [bool]$UserInteractive  = [Environment]::UserInteractive,
+        [bool]$InputRedirected  = [Console]::IsInputRedirected,
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
+    )
+    return ($UserInteractive -and -not $InputRedirected -and -not $OutputRedirected)
+}
+
 function Resolve-ExecutionPolicy {
     param(
         [Parameter(Mandatory)][string]$Exe,
@@ -585,14 +616,27 @@ function Resolve-ExecutionPolicy {
     Write-Host "  ! Script execution is disabled for $Label (effective policy: $($EffectivePolicy.Trim()))." -ForegroundColor Yellow
     Write-Host "    Without changing this, the TerminalStyles loader cannot run on shell startup." -ForegroundColor Yellow
 
-    if (-not [Environment]::UserInteractive) {
+    # [Environment]::UserInteractive alone was NOT a redirection test. It is
+    # $true on .NET Core/Unix always, and $true in any Windows console process
+    # whatever its streams are doing -- so this never fired for the case it was
+    # written for, and the documented `iwr -useb ... | iex` bootstrap with stdin
+    # detached (CI, a provisioning script, `tstyles update` on a bootstrap
+    # install) walked straight into the prompt below and changed the machine's
+    # execution policy with nobody having answered.
+    if (-not (Test-InteractiveConsole)) {
         Write-Host "    Non-interactive session -- skipping the prompt. To fix, run in ${Label}:" -ForegroundColor DarkGray
         Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Cyan
         return
     }
 
-    $ans = Read-Host "    Set CurrentUser policy to RemoteSigned for $Label? [Y/n]"
-    if (-not ([string]::IsNullOrWhiteSpace($ans) -or $ans -match '^(?i)y')) {
+    # ${Label}, not $Label: "$Label?" parses the trailing ? as part of the
+    # variable name, so the prompt rendered with the engine name missing
+    # entirely -- "Set CurrentUser policy to RemoteSigned for  [Y/n]".
+    $ans = Read-Host "    Set CurrentUser policy to RemoteSigned for ${Label}? [Y/n]"
+    # $null -eq $ans first. This is a THIRD fail-open spelling: at EOF $ans is
+    # AutomationNull, IsNullOrWhiteSpace($ans) is $true, so the blank-means-yes
+    # default fires and the policy is set. Belt to the guard's braces.
+    if ($null -eq $ans -or -not ([string]::IsNullOrWhiteSpace($ans) -or "$ans" -match '^(?i)y')) {
         Write-Host "    Skipped. To fix later, run in ${Label}:" -ForegroundColor DarkGray
         Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Cyan
         return

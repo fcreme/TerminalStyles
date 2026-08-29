@@ -21,6 +21,12 @@ BeforeAll {
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
 }
 
+# These exercise the WRITE, not the consent gate, so they pass -Yes. Without it
+# they now refuse: Pester's host is redirected, and the confirm prompt no longer
+# assumes yes when nobody can answer. That change is the point -- `tstyles
+# register < /dev/null` used to write the loader into both engines' $PROFILE
+# files unattended, because `$ans -match '^(?i)n'` is FALSY against the
+# AutomationNull that Read-Host returns at EOF.
 Describe 'Invoke-TerminalStylesRegister' {
     InModuleScope TerminalStyles {
         BeforeEach {
@@ -41,7 +47,7 @@ Describe 'Invoke-TerminalStylesRegister' {
                 Exists      = $false
                 HasLoader   = $false
             }
-            Invoke-TerminalStylesRegister -Targets @($target)
+            Invoke-TerminalStylesRegister -Targets @($target) -Yes
 
             Test-Path -LiteralPath $script:fakeProfile | Should -BeTrue
             $content = [System.IO.File]::ReadAllText($script:fakeProfile, [System.Text.UTF8Encoding]::new($false))
@@ -61,7 +67,7 @@ Describe 'Invoke-TerminalStylesRegister' {
                 Exists      = $true
                 HasLoader   = $true
             }
-            Invoke-TerminalStylesRegister -Targets @($target)
+            Invoke-TerminalStylesRegister -Targets @($target) -Yes
 
             # Content unchanged
             $after = [System.IO.File]::ReadAllText($script:fakeProfile, [System.Text.UTF8Encoding]::new($false))
@@ -82,7 +88,7 @@ Describe 'Invoke-TerminalStylesRegister' {
                 Exists      = $true
                 HasLoader   = $true
             }
-            Invoke-TerminalStylesRegister -Force -Targets @($target)
+            Invoke-TerminalStylesRegister -Force -Targets @($target) -Yes
 
             $after = [System.IO.File]::ReadAllText($script:fakeProfile, [System.Text.UTF8Encoding]::new($false))
             # Exactly one BEGIN/END block

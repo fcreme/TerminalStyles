@@ -176,7 +176,10 @@ function Invoke-TerminalStylesRegister {
     [CmdletBinding()]
     param(
         [switch]$Force,
-        [object[]]$Targets
+        [object[]]$Targets,
+        # Pre-granted consent, for automation that means it. Without this a
+        # session with no console refuses rather than assuming yes.
+        [switch]$Yes
     )
 
     $loaderBegin = '# ===== TerminalStyles BEGIN ====='
@@ -257,8 +260,11 @@ $loaderEnd
     Write-Host "The loader is one line wrapped in BEGIN/END markers:" -ForegroundColor Gray
     Write-Host "  Import-Module TerminalStyles -DisableNameChecking" -ForegroundColor Cyan
     Write-Host ""
-    $ans = Read-Host "Continue? [Y/n]"
-    if ($ans -match '^(?i)n') {
+    # `$ans -match '^(?i)n'` was falsy at EOF -- AutomationNull compares as an
+    # empty collection -- so `tstyles register < /dev/null` wrote the loader
+    # into BOTH engines' $PROFILE files with nobody having answered.
+    if (-not (Confirm-Action -Question 'Continue? [y/N]' -Yes:$Yes `
+                -Consequence "writes the loader block into $($toWrite.Count) PowerShell profile file(s)")) {
         Write-Host "Cancelled." -ForegroundColor Gray
         return
     }
@@ -367,7 +373,10 @@ function Get-UninstallPlan {
 function Invoke-TerminalStylesUninstall {
     [CmdletBinding()]
     param(
-        [switch]$DeleteData    # also remove %LOCALAPPDATA%\TerminalStyles\ (user state)
+        [switch]$DeleteData,   # also remove %LOCALAPPDATA%\TerminalStyles\ (user state)
+        # Pre-granted consent. Required for a non-interactive uninstall, which
+        # used to happen by accident whenever stdin was at EOF.
+        [switch]$Yes
     )
 
     $dataDir = Get-TStylesDataRoot
@@ -391,8 +400,15 @@ function Invoke-TerminalStylesUninstall {
     }
     Write-Host "  - Will NOT modify Windows Terminal's settings.json." -ForegroundColor Yellow
     Write-Host ""
-    $ans = Read-Host "Continue? [y/N]"
-    if ($ans -notmatch '^(?i)y') {
+    # The sharp one. `$ans -notmatch '^(?i)y'` is ALSO falsy at EOF, so this
+    # "[y/N]" prompt -- which reads as fail-safe -- ran a complete uninstall
+    # unattended: install-managed files gone from the data root, the loader
+    # stripped out of the user's rc files and both $PROFILE files. With
+    # -DeleteData it would have removed the data root outright, taking the
+    # user's own authored and tuned styles with it.
+    $consequence = if ($DeleteData) { "DELETES $dataDir entirely, including your own styles" }
+                   else             { "removes install-managed files and the shell loader" }
+    if (-not (Confirm-Action -Question 'Continue? [y/N]' -Yes:$Yes -Consequence $consequence)) {
         Write-Host "Cancelled." -ForegroundColor Gray
         return
     }

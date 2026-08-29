@@ -53,6 +53,98 @@ function Get-PowerShellEngineCandidate {
     )
 }
 
+function Test-InteractiveConsole {
+    <#
+    .SYNOPSIS
+    Is there a real human at a real console on both ends of this session?
+
+    .DESCRIPTION
+    One spelling of a question the project had been asking four different ways:
+    IsInputRedirected alone (the tuner), IsInput -or IsOutput (the picker),
+    UserInteractive -and neither (the font offer), and UserInteractive alone
+    (install.ps1) -- which tests nothing about redirection at all and is why
+    `iwr | iex` with stdin detached still reached a prompt.
+
+    All three inputs are parameters so the predicate is testable. The .NET
+    statics cannot be mocked, which is exactly why the guards that used them
+    directly could only be pinned by AST assertions -- and why the picker's
+    first such test passed while its guard sat below the prompt it was meant
+    to protect. This function CAN be mocked, so the gates above it get real
+    behavioural tests.
+
+    KEEP IN SYNC with the copy in install.ps1 (bootstrap has no module).
+    tests/Bootstrap-ModuleSync.Tests.ps1 enforces token-identity.
+    #>
+    [CmdletBinding()]
+    param(
+        [bool]$UserInteractive  = [Environment]::UserInteractive,
+        [bool]$InputRedirected  = [Console]::IsInputRedirected,
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
+    )
+    return ($UserInteractive -and -not $InputRedirected -and -not $OutputRedirected)
+}
+
+function Confirm-Action {
+    <#
+    .SYNOPSIS
+    Ask a yes/no question, and REFUSE rather than assume when nobody can answer.
+
+    .DESCRIPTION
+    The one definition of consent in this project, because the hand-rolled
+    versions were unsafe in a way that reads as safe.
+
+    Read-Host at EOF does not return $null -- it returns AutomationNull, which
+    PowerShell treats as an EMPTY COLLECTION in a binary operator. So
+    `$ans -notmatch '^(?i)y'` and `$ans -match '^(?i)n'` BOTH evaluate to an
+    empty Object[], which is falsy. Measured:
+
+        $ans -notmatch '^(?i)y'  ->  Object[] {}  ->  False
+        $ans -match    '^(?i)n'  ->  Object[] {}  ->  False
+
+    Both polarities therefore took the ACT branch with nobody having answered.
+    A "[y/N]" prompt looks like it fails safe and does not: `tstyles uninstall`
+    with stdin at EOF ran a complete uninstall unattended, and with -DeleteData
+    would have deleted the data root including the user's own tuned styles.
+
+    Two defences, deliberately belt and braces. The guard refuses when there is
+    no console to answer at -- covering a redirected STDOUT too, where stdin is
+    a console and the question would be asked where nobody can read it. And the
+    answer is compared as a STRING, so an EOF answer still fails safe if the
+    gate is ever reached another way.
+
+    -Yes is the escape hatch for automation that genuinely means it, which is
+    what makes refusing here acceptable rather than merely obstructive.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Question,
+        # What the user is about to lose or change, printed when refusing so a
+        # scripted run says why it stopped rather than just stopping.
+        [string]$Consequence,
+        # Pre-granted consent: skip the prompt and proceed.
+        [switch]$Yes
+    )
+
+    if ($Yes) { return $true }
+
+    if (-not (Test-InteractiveConsole)) {
+        Write-Host ""
+        Write-Host "  Refusing to continue without confirmation." -ForegroundColor Yellow
+        Write-Host "  This session has no interactive console, so the question below could not be asked:"
+        Write-Host "    $Question"
+        if ($Consequence) { Write-Host "    ($Consequence)" -ForegroundColor DarkGray }
+        Write-Host ""
+        Write-Host "  Pass -Yes to confirm without being asked." -ForegroundColor DarkGray
+        Write-Host ""
+        return $false
+    }
+
+    $ans = Read-Host $Question
+    # Cast first. See the AutomationNull note above: an uncast comparison here
+    # is falsy in BOTH directions, so neither polarity can be trusted.
+    return ("$ans" -match '^(?i)y')
+}
+
 function Get-TStylesDataRoot {
     # Stable per-user data dir. Survives module version upgrades (PSResourceGet
     # installs a new version to a sibling dir; state stays here). For bootstrap-
@@ -516,7 +608,12 @@ function Invoke-TerminalStyle {
         # style, cached backgrounds, tuned styles, shell staging). Without it
         # uninstall removes only install-managed files and leaves user state,
         # so a reinstall picks up where you left off.
-        [switch]$DeleteData
+        [switch]$DeleteData,
+        # Pre-granted consent for the confirm prompts on `register` and
+        # `uninstall`. Those prompts now REFUSE rather than assume when there
+        # is no console to answer at, so automation that genuinely means it
+        # says so with this.
+        [switch]$Yes
     )
 
     $bgProvided = $PSBoundParameters.ContainsKey('BackgroundImage')
@@ -542,10 +639,10 @@ function Invoke-TerminalStyle {
     }
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
-    if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force; return }
+    if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force -Yes:$Yes; return }
     if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
     if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
-    if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData; return }
+    if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData -Yes:$Yes; return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
     if ($Arg) {
