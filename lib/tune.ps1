@@ -139,16 +139,80 @@ function Test-PathCaseInsensitive {
     try {
         $pExists = Test-Path -LiteralPath $Path
         $oExists = Test-Path -LiteralPath $Other
-        # One spelling exists and the other resolves too => case-insensitive.
+        # Both spellings resolve. Whether they resolve to ONE directory is
+        # answered by canonicalising each and comparing Ordinal.
+        #
+        # Not by comparing (Get-Item).FullName, which is what this did first:
+        # that only works on .NET Core, where the provider hands back the name
+        # as the directory actually spells it. On .NET Framework -- Windows
+        # PowerShell 5.1, which this module supports and CI covers -- FullName
+        # echoes the caller's own casing straight back, so the two spellings
+        # compared UNEQUAL on plain NTFS and the probe reported a
+        # case-sensitive volume on the most case-insensitive one there is.
+        # Green on pwsh 7 and red on 5.1, on the same machine and the same
+        # directory.
         if ($pExists -and $oExists) {
-            $ip = (Get-Item -LiteralPath $Path  -Force).FullName
-            $io = (Get-Item -LiteralPath $Other -Force).FullName
-            return [string]::Equals($ip, $io, [System.StringComparison]::Ordinal)
+            $cp = Get-CanonicalPathCase -Path $Path
+            $co = Get-CanonicalPathCase -Path $Other
+            if ($cp -and $co) {
+                return [string]::Equals($cp, $co, [System.StringComparison]::Ordinal)
+            }
         }
         if ($pExists -or $oExists) { return $false }
     } catch { }
 
     return ((Get-TStylesPlatform) -ne 'Linux')
+}
+
+function Get-CanonicalPathCase {
+    <#
+    .SYNOPSIS
+    A path spelled the way the filesystem spells it, or $null if it cannot be walked.
+
+    .DESCRIPTION
+    Rebuilds the path one segment at a time from the names its parent directory
+    actually lists, which is the only spelling both PowerShell engines agree
+    on. There is no framework call for this: [Path]::GetFullPath does not touch
+    the disk, and Get-Item's FullName is canonical only on .NET Core.
+
+    An exact (Ordinal) match for a segment always wins over a case-insensitive
+    one. That is what keeps the answer right on a case-SENSITIVE volume, where
+    `eva` and `Eva` are two real entries and matching case-insensitively could
+    otherwise canonicalise both onto whichever the listing happened to yield
+    first -- turning two directories into one, which is the failure this whole
+    function exists to prevent.
+
+    Returns $null when any segment cannot be listed or matched; callers treat
+    that as "cannot tell" and fall back.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+
+    try {
+        $full = [System.IO.Path]::GetFullPath($Path)
+        $root = [System.IO.Path]::GetPathRoot($full)
+        if (-not $root) { return $null }
+
+        $rest = $full.Substring($root.Length)
+        $segments = $rest.Split([char[]]@('/', '\'), [System.StringSplitOptions]::RemoveEmptyEntries)
+        if ($segments.Count -eq 0) { return $root }
+
+        $cur = $root
+        foreach ($seg in $segments) {
+            $entries = @(Get-ChildItem -LiteralPath $cur -Force -ErrorAction Stop)
+            $match = $entries | Where-Object {
+                [string]::Equals($_.Name, $seg, [System.StringComparison]::Ordinal)
+            } | Select-Object -First 1
+            if (-not $match) {
+                $match = $entries | Where-Object {
+                    [string]::Equals($_.Name, $seg, [System.StringComparison]::OrdinalIgnoreCase)
+                } | Select-Object -First 1
+            }
+            if (-not $match) { return $null }
+            $cur = Join-Path $cur $match.Name
+        }
+        return $cur
+    } catch { return $null }
 }
 
 function Get-StyleSchemeFingerprint {

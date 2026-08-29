@@ -90,3 +90,36 @@ Describe 'Test-SameStyleDirectory' {
         }
     }
 }
+
+Describe 'Get-CanonicalPathCase' {
+    InModuleScope TerminalStyles {
+        It 'returns the spelling the directory has on disk, not the one it was asked with' {
+            # The probe above is only as good as this. Comparing
+            # (Get-Item).FullName instead looked identical on pwsh 7 and was
+            # wrong on Windows PowerShell 5.1, where .NET Framework echoes the
+            # caller's casing back rather than the directory's own -- so two
+            # spellings of one NTFS directory compared unequal and
+            # Test-SameStyleDirectory called a case-insensitive volume
+            # case-sensitive.
+            $dir = Join-Path $TestDrive ('Canon-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            New-Item -ItemType Directory -Path $dir -Force | Out-Null
+            $expected = [System.IO.Path]::GetFullPath($dir)
+            $shouted  = Join-Path (Split-Path $dir -Parent) ((Split-Path $dir -Leaf).ToUpperInvariant())
+
+            Get-CanonicalPathCase -Path $dir | Should -Be $expected
+
+            # Only meaningful where the volume is case-insensitive; where it is
+            # not, the shouted spelling is a different directory and there is
+            # nothing to canonicalise.
+            if (Test-Path -LiteralPath $shouted) {
+                Get-CanonicalPathCase -Path $shouted | Should -Be $expected `
+                    -Because 'the on-disk spelling is the canonical one, whatever was typed'
+            }
+        }
+
+        It 'returns nothing for a path that cannot be walked' {
+            Get-CanonicalPathCase -Path (Join-Path $TestDrive 'no-such-dir-anywhere') |
+                Should -BeNullOrEmpty
+        }
+    }
+}
