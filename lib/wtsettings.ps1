@@ -183,6 +183,130 @@ function Test-ManagedBackgroundPath {
     return $false
 }
 
+function Get-StyleSettingsPayload {
+    <#
+    .SYNOPSIS
+    Does this style have anything to write into settings.json?
+
+    .DESCRIPTION
+    The style half of the rule the -Target guard covers for profiles: find out
+    BEFORE touching the user's file whether the operation can do anything.
+
+    Merge-StyleIntoSettings returns the settings object UNTOUCHED for a style
+    with no theme.json -- correctly, because a colour scheme is only reachable
+    through a profile's colorScheme key, which theme.json carries, so writing
+    the scheme anyway would strand it where Reset can never remove it. But
+    every caller then wrote the returned object regardless, and that write is
+    not a no-op: re-serializing what ConvertFrom-WTJson parsed drops every //
+    and /* */ comment the user wrote. So applying a scheme-only style destroyed
+    the comments in settings.json, applied nothing, and reported "Style
+    applied" in green.
+
+    A style with scheme.json and no theme.json is LEGAL -- README documents
+    theme.json as optional, and off Windows Terminal scheme.json is the whole
+    style -- so this is not an error, it is "nothing for THIS writer to do".
+    A missing scheme.json is different: the directory changed under us, and
+    the caller should say so rather than throw from inside the merge.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$StyleDir)
+
+    if (-not (Test-Path -LiteralPath (Join-Path $StyleDir 'scheme.json'))) {
+        return [pscustomobject]@{ Ok = $false; Missing = 'scheme.json' }
+    }
+    if (-not (Test-Path -LiteralPath (Join-Path $StyleDir 'theme.json'))) {
+        return [pscustomobject]@{ Ok = $false; Missing = 'theme.json' }
+    }
+    return [pscustomobject]@{ Ok = $true; Missing = $null }
+}
+
+function Resolve-WTProfileTarget {
+    <#
+    .SYNOPSIS
+    Resolve a -Target name against settings.json. Reports nothing; decides only.
+
+    .DESCRIPTION
+    One rule, four callers. Apply, reset, font and the picker each resolved the
+    target themselves, and each did it at a different point relative to the
+    damage -- which is how a mistyped -Target came to destroy the rolling
+    backup on two of them while erroring cleanly on a third.
+
+    Ok vs Entry is a real distinction, not a convenience. 'defaults' is always
+    ADDRESSABLE (an apply creates the block lazily) so Ok is $true, but it has
+    no Entry until the block exists -- and reset has nothing to strip from a
+    profile that is not there. Callers that write want Ok; callers that modify
+    an existing entry want Entry.
+
+    Available is for the caller's error message, so every one of them can name
+    the same set of real profiles.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()]$Settings,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$TargetName
+    )
+
+    $list = @()
+    try { $list = @($Settings.profiles.list) } catch { $list = @() }
+    $available = @('defaults') + @($list | ForEach-Object { $_.name } | Where-Object { $_ })
+
+    if ($TargetName -eq 'defaults') {
+        $entry = $null
+        try {
+            if ($Settings.profiles.PSObject.Properties.Match('defaults').Count) {
+                $entry = $Settings.profiles.defaults
+            }
+        } catch { }
+        return [pscustomobject]@{ Ok = $true; Entry = $entry; IsDefaults = $true; Available = $available }
+    }
+
+    $entry = $list | Where-Object name -eq $TargetName | Select-Object -First 1
+    return [pscustomobject]@{
+        Ok = [bool]$entry; Entry = $entry; IsDefaults = $false; Available = $available
+    }
+}
+
+function Save-SettingsBackup {
+    <#
+    .SYNOPSIS
+    Take the rolling settings.json.bak -- only once the operation is known possible.
+
+    .DESCRIPTION
+    Taking this backup is itself DESTRUCTIVE: there is one .bak, and writing it
+    consumes the user's undo of their last real apply. So a command that turns
+    out to do nothing must not take it.
+
+    That is why -ResolvedTarget is MANDATORY and is checked here. It is not
+    defensive typing -- it is the invariant made structural. A caller cannot
+    take the backup before resolving the target, because it has nothing to pass
+    until it has. `tstyles reset -Target <typo>` and `tstyles font <name>
+    -Target <typo>` both used to copy settings.json over the backup and only
+    then discover the profile did not exist, printing "nothing to reset" over
+    the wreckage of the user's one-line undo.
+
+    Copy-Item rather than a read/write round-trip, so the bytes are preserved
+    exactly -- a BOM included.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        # The result of Resolve-WTProfileTarget for the operation about to run.
+        [Parameter(Mandatory)][AllowNull()]$ResolvedTarget,
+        # The picker and the tuner take this as crash-recovery behind a menu
+        # that redraws every frame; announcing it would be noise.
+        [switch]$Quiet
+    )
+
+    if (-not $ResolvedTarget -or -not $ResolvedTarget.Ok) {
+        throw "Save-SettingsBackup called before the target was known to be valid. This is a bug: the backup consumes the user's undo, so it must be taken only once the operation is known to be possible."
+    }
+
+    Copy-Item -LiteralPath $Path -Destination "$Path.bak" -Force -ErrorAction Stop
+    if (-not $Quiet) {
+        Write-Host "Backed up settings to: $Path.bak" -ForegroundColor Gray
+    }
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
@@ -332,8 +456,15 @@ function Write-SettingsAtomic {
         }
     } catch {
         # Best-effort fallback (cross-volume temp, Replace unsupported, etc.).
-        [System.IO.File]::WriteAllText($Path, $Json, $enc)
-        if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        # The cleanup is in a finally because the fallback can throw too -- a
+        # read-only or locked settings.json fails BOTH the Replace and the
+        # WriteAllText, and the exception then escaped past the cleanup line,
+        # leaving a .tstmp beside the user's settings.json on every attempt.
+        try {
+            [System.IO.File]::WriteAllText($Path, $Json, $enc)
+        } finally {
+            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        }
     }
 }
 

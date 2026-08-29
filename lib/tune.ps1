@@ -928,7 +928,11 @@ function Invoke-TerminalStyleTune {
     # leaves a recoverable copy (the in-memory $originalJson snapshot dies with
     # the process). Same rolling .bak the direct-apply/reset paths write.
     # Crash-recovery copy -- only meaningful where a settings.json is written.
-    if ($tuneUsesSettings) { try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { } }
+    # Same single writer as the picker and the direct apply.
+    if ($tuneUsesSettings) {
+        $resolvedForBackup = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $target
+        try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedForBackup -Quiet } catch { }
+    }
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle

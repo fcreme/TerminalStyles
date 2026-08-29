@@ -718,12 +718,10 @@ function Invoke-TerminalStyle {
     # since 0.8.17; the picker form never did.
     $validateTarget = {
         param([string]$Name)
-        if ($Name -eq 'defaults') { return $true }
-        $entry = $originalSettings.profiles.list | Where-Object name -eq $Name | Select-Object -First 1
-        if ($entry) { return $true }
-        $available = @('defaults') + @($originalSettings.profiles.list.name | Where-Object { $_ })
+        $resolved = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $Name
+        if ($resolved.Ok) { return $true }
         Write-Error ("Windows Terminal profile '$Name' not found. Available: " +
-                     ($available -join ', '))
+                     ($resolved.Available -join ', '))
         return $false
     }
 
@@ -1027,7 +1025,14 @@ function Invoke-TerminalStyle {
     # last-previewed theme with no recoverable original; this .bak (same one the
     # direct-apply/reset paths roll) is that recovery copy.
     # Crash-recovery copy -- only meaningful when a settings.json exists.
-    if ($useSettingsFile) { try { [System.IO.File]::WriteAllText("$settingsPath.bak", $originalJson, [System.Text.UTF8Encoding]::new($false)) } catch { } }
+    # Through the one writer, so there is a single place that knows a backup
+    # may only be taken once the operation is possible -- and so a BOM survives,
+    # which the WriteAllText round-trip this replaced would have dropped. The
+    # target was validated well above; $resolvedForBackup carries that proof.
+    if ($useSettingsFile) {
+        $resolvedForBackup = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $Target
+        try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedForBackup -Quiet } catch { }
+    }
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle

@@ -32,6 +32,12 @@ Describe 'Apply-StyleDirect -KeepPrompt' {
             New-Item -ItemType Directory -Path $script:styleDir -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'scheme.json'),
                 '{"name":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+            # theme.json too: without it the style is scheme-only, which now
+            # correctly writes NOTHING to settings.json (and takes no backup),
+            # because Merge-StyleIntoSettings has nothing to merge. The fixture
+            # was modelling a style that could never really apply.
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'theme.json'),
+                '{"colorScheme":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
             [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'profile.ps1'),
                 '# fakeStyle prompt', [System.Text.UTF8Encoding]::new($false))
 

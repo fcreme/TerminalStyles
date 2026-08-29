@@ -49,6 +49,15 @@ Describe 'Apply-StyleDirect backup behavior' {
                 '{"name":"fakeScheme"}',
                 [System.Text.UTF8Encoding]::new($false)
             )
+            # theme.json too: without it the style is scheme-only, which now
+            # correctly writes NOTHING to settings.json (and takes no backup),
+            # because Merge-StyleIntoSettings has nothing to merge. The fixture
+            # was modelling a style that could never really apply.
+            [System.IO.File]::WriteAllText(
+                (Join-Path $script:styleDir 'theme.json'),
+                '{"colorScheme":"fakeScheme"}',
+                [System.Text.UTF8Encoding]::new($false)
+            )
 
             # Pin the terminal to Windows Terminal: these assertions are about the
             # settings.json merge path, which only runs on WT. Without this the

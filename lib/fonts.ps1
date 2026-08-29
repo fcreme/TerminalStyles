@@ -594,13 +594,23 @@ function Invoke-TerminalStyleFont {
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) { Write-Host "Could not locate Windows Terminal settings.json." -ForegroundColor Red; return }
-    if (-not $Target) {
-        $json = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-        $Target = Get-CurrentWTProfileName -Settings (ConvertFrom-WTJson $json)
-    }
+    # Parsed once and reused: the auto-detect below and the target check share it.
+    $settingsJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+    $settingsObj  = ConvertFrom-WTJson $settingsJson
+    if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settingsObj }
     if (-not $Target) { Write-Host "Could not detect the current profile; pass -Target '<name>'." -ForegroundColor Yellow; return }
 
-    try { [System.IO.File]::WriteAllText("$settingsPath.bak", [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false)), [System.Text.UTF8Encoding]::new($false)) } catch { }
+    # Resolve BEFORE the backup. This was the other way round, so `tstyles font
+    # <name> -Target <typo>` overwrote settings.json.bak with a copy of the
+    # current file and only then reported the profile missing -- spending the
+    # user's undo of their last real apply on a command that changed nothing.
+    $resolvedTarget = Resolve-WTProfileTarget -Settings $settingsObj -TargetName $Target
+    if (-not $resolvedTarget.Ok) {
+        Write-Host "Profile '$Target' not found in settings.json. Available: $($resolvedTarget.Available -join ', ')" -ForegroundColor Yellow
+        return
+    }
+
+    try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget -Quiet } catch { }
     if (Set-ProfileFont -SettingsPath $settingsPath -TargetName $Target -Family $font.family) {
         Write-Host "  Applied '$($font.family)' to '$Target'. Open a new tab to see it." -ForegroundColor Green
     } else {

@@ -176,21 +176,39 @@ if ($BackgroundImage -and -not (Test-Path -LiteralPath $BackgroundImage)) {
     Write-Warning "Background image path doesn't exist: $BackgroundImage (will still apply the setting)"
 }
 
-# --- Backup settings.json ---
-# Timestamped, unlike the module's rolling .bak: this script is the scriptable
-# path, so it keeps a full audit trail of every run.
-$bak = "$SettingsPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-Copy-Item -LiteralPath $SettingsPath -Destination $bak
-Write-Host "Backed up settings to: $bak" -ForegroundColor Gray
+# --- Is there anything to write? ---
+# Merge-StyleIntoSettings returns the settings UNTOUCHED for a style with no
+# theme.json, and this script used to write them anyway -- which re-serializes
+# the parsed object and drops every JSONC comment in the user's settings.json,
+# while printing "settings.json updated." in green. A scheme-only style is
+# legal (README documents theme.json as optional), so this is not an error;
+# there is simply nothing here for Windows Terminal.
+$payload = Get-StyleSettingsPayload -StyleDir $styleDir
+if ($payload.Missing -eq 'scheme.json') {
+    throw "Style '$Style' has no scheme.json -- nothing to apply."
+}
 
-# --- Merge scheme + theme (the module's own merge, not a fork of it) ---
-$settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
-    -TargetName $Target -BackgroundImage $BackgroundImage `
-    -BackgroundImageProvided $bgProvided
+if ($payload.Ok) {
+    # --- Backup settings.json ---
+    # Timestamped, unlike the module's rolling .bak: this script is the
+    # scriptable path, so it keeps a full audit trail of every run. Taken only
+    # once we know there is a write to make, so a no-op run does not add a
+    # backup file for a change that never happened.
+    $bak = "$SettingsPath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    Copy-Item -LiteralPath $SettingsPath -Destination $bak
+    Write-Host "Backed up settings to: $bak" -ForegroundColor Gray
 
-# --- Save settings.json (UTF-8 no BOM, atomic, full depth) ---
-Write-SettingsFile -Path $SettingsPath -Settings $settings
-Write-Host "settings.json updated." -ForegroundColor Green
+    # --- Merge scheme + theme (the module's own merge, not a fork of it) ---
+    $settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
+        -TargetName $Target -BackgroundImage $BackgroundImage `
+        -BackgroundImageProvided $bgProvided
+
+    # --- Save settings.json (UTF-8 no BOM, atomic, full depth) ---
+    Write-SettingsFile -Path $SettingsPath -Settings $settings
+    Write-Host "settings.json updated." -ForegroundColor Green
+} else {
+    Write-Host "'$Style' ships no theme.json, so settings.json was not changed." -ForegroundColor DarkGray
+}
 
 # --- Install profile.ps1 (if applicable) ---
 $profilePs1 = Join-Path $styleDir 'profile.ps1'

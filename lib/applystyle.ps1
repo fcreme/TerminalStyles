@@ -359,35 +359,47 @@ function Apply-StyleDirect {
     # object, and ConvertFrom-WTJson has already stripped every comment the user
     # wrote in their settings.json. A misspelled profile name silently and
     # irreversibly deleted their JSONC comments.
-    if ($Target -ne 'defaults') {
-        $targetEntry = $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
-        if (-not $targetEntry) {
-            $available = @('defaults') + @($settings.profiles.list.name | Where-Object { $_ })
-            Write-Error ("Windows Terminal profile '$Target' not found. Available: " +
-                         ($available -join ', '))
-            return
+    $resolvedTarget = Resolve-WTProfileTarget -Settings $settings -TargetName $Target
+    if (-not $resolvedTarget.Ok) {
+        Write-Error ("Windows Terminal profile '$Target' not found. Available: " +
+                     ($resolvedTarget.Available -join ', '))
+        return
+    }
+
+    # The style half of the same rule. Merge-StyleIntoSettings returns the
+    # settings UNTOUCHED for a style with no theme.json -- deliberately, since a
+    # scheme is only reachable through a profile's colorScheme key -- and this
+    # function used to write them anyway, which re-serializes the parsed object
+    # and drops every JSONC comment the user wrote. So applying a scheme-only
+    # style (legal: README documents theme.json as optional) destroyed the
+    # comments, applied nothing, and reported "Style applied" in green. Same
+    # defect the -Target guard above was added for, through the door beside it.
+    $payload = Get-StyleSettingsPayload -StyleDir $styleDir
+    if ($payload.Missing -eq 'scheme.json') {
+        Write-Error "Style '$StyleName' has no scheme.json -- nothing to apply."
+        return
+    }
+    if (-not $payload.Ok) {
+        # theme.json absent: nothing for Windows Terminal's settings.json, but
+        # the prompt/banner half below is still the style's whole job off WT.
+        Write-Host "  '$StyleName' ships no theme.json, so nothing was written to settings.json." -ForegroundColor DarkGray
+    } else {
+        # Rolling backup: the on-disk settings.json to settings.json.bak before
+        # any mutation. One file, overwritten on each direct apply -- a one-line
+        # undo without filling LocalState with timestamped backups. Taken only
+        # now, because taking it consumes the user's undo of their LAST apply,
+        # so a command that turns out to write nothing must not spend it.
+        try {
+            Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget
+        } catch {
+            Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
         }
-    }
 
-    # Rolling backup: copy the on-disk settings.json to settings.json.bak
-    # before any mutation. Single file, overwritten on each direct apply --
-    # gives the user a one-line undo without filling LocalState with timestamped
-    # backups over time. The picker doesn't need this (Esc reverts in-memory);
-    # apply.ps1 keeps its own timestamped audit trail. -ErrorAction Stop so
-    # non-terminating errors (permission denied, etc.) enter the catch block
-    # rather than silently logging via $Error.
-    $bakPath = "$settingsPath.bak"
-    try {
-        Copy-Item -LiteralPath $settingsPath -Destination $bakPath -Force -ErrorAction Stop
-        Write-Host "Backed up settings to: $bakPath" -ForegroundColor Gray
-    } catch {
-        Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
+        $settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
+            -TargetName $Target -BackgroundImage $BackgroundImage `
+            -BackgroundImageProvided $BackgroundImageProvided
+        Write-SettingsFile -Path $settingsPath -Settings $settings
     }
-
-    $settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
-        -TargetName $Target -BackgroundImage $BackgroundImage `
-        -BackgroundImageProvided $BackgroundImageProvided
-    Write-SettingsFile -Path $settingsPath -Settings $settings
 
     # Detect pwsh target for profile.ps1 install + live reload
     $isPwshTarget = $false
@@ -506,24 +518,23 @@ function Reset-StyleDirect {
         return
     }
 
-    # Rolling backup (same safety net as Apply-StyleDirect).
-    $bakPath = "$settingsPath.bak"
-    try {
-        Copy-Item -LiteralPath $settingsPath -Destination $bakPath -Force -ErrorAction Stop
-        Write-Host "Backed up settings to: $bakPath" -ForegroundColor Gray
-    } catch {
-        Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
-    }
-
-    # Resolve the profile entry (same resolution as Merge-StyleIntoSettings).
-    $entry = if ($Target -eq 'defaults') {
-        if ($settings.profiles.PSObject.Properties.Match('defaults').Count) { $settings.profiles.defaults } else { $null }
-    } else {
-        $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
-    }
+    # Resolve BEFORE the backup, not after. This was the other way round, so a
+    # mistyped -Target copied settings.json over settings.json.bak and only then
+    # discovered the profile did not exist -- printing "nothing to reset" having
+    # just destroyed the user's undo of their last real apply. Entry, not Ok:
+    # 'defaults' is addressable for an apply (created lazily) but has nothing to
+    # strip when the block is absent.
+    $resolvedTarget = Resolve-WTProfileTarget -Settings $settings -TargetName $Target
+    $entry = $resolvedTarget.Entry
     if (-not $entry) {
         Write-Host "Profile '$Target' not found in settings.json -- nothing to reset." -ForegroundColor Yellow
         return
+    }
+
+    try {
+        Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget
+    } catch {
+        Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
     }
 
     # Capture the scheme name before stripping (for orphan cleanup).
@@ -551,7 +562,14 @@ function Reset-StyleDirect {
         }
     }
 
-    Write-SettingsFile -Path $settingsPath -Settings $settings
+    # Only when something actually changed. A reset on a profile that was never
+    # styled printed "'<name>' had no TerminalStyles fields -- already plain."
+    # and then rewrote settings.json anyway, which re-serializes the parsed
+    # object and drops every JSONC comment in it. The most likely way a curious
+    # user tries this command was also the one that cost them their comments.
+    if ($strippedAny) {
+        Write-SettingsFile -Path $settingsPath -Settings $settings
+    }
 
     # The other half of recording it on apply. Without this a reset stripped the
     # fields from settings.json and left the record standing, so `tstyles
