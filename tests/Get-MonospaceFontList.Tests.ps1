@@ -166,6 +166,18 @@ Describe 'Get-MonospaceFontList offers the families the module already knows' {
         # module went out of its way to name them, then the font knob discarded
         # them, while README promised "every monospace font installed on your
         # machine ... so your own coding fonts show up automatically".
+        #
+        # The platform is mocked, not left to the runner. These cases pass
+        # -MonospaceNames $null on purpose -- that is what asks the function to
+        # work the list out for itself, which is the code under test -- and on
+        # Windows that branch measures glyph widths through GDI+ instead.
+        # Synthetic -Installed names are not installed fonts, so every one of
+        # them failed measurement, the list fell through to its Consolas
+        # fallback, and all four cases failed on both Windows jobs while
+        # passing on macOS and Linux. Claiming MacOS pins the branch these
+        # assertions are about on every runner.
+        BeforeEach { Mock Get-TStylesPlatform { 'MacOS' } }
+
         It 'includes an installed family known by canonical name but not by pattern: <font>' -ForEach @(
             @{ font = 'Iosevka' }
             @{ font = 'Cousine' }
