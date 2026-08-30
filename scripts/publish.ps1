@@ -68,6 +68,81 @@ foreach ($relPath in $plan) {
 # lets -WhatIf runs (which never prompt for a key) catch manifest issues.
 $manifest = Test-ModuleManifest (Join-Path $stageRoot 'TerminalStyles.psd1')
 
+# --- 2b. Prove the staged tree actually WORKS, not just that it parses ---
+#
+# Test-ModuleManifest validates metadata and never executes the RootModule, so
+# it is blind to the failure that matters here: the module dot-sources lib/*.ps1
+# by enumeration, and a lib file missing from the stage still yields a manifest
+# that validates AND a module that IMPORTS CLEANLY -- it only dies at first use.
+# Measured on this very script: with lib/applystyle.ps1 deleted from the stage,
+# Test-ModuleManifest returned 0.8.18, Import-Module succeeded and exported all
+# three public commands, and only `Apply-StyleDirect` came back "not
+# recognized". That package would have shipped, immutably.
+#
+# So: import the STAGED tree in a clean child process and assert that every
+# function its own shipped sources define is actually present afterwards. That
+# catches a dropped file, a file that fails to parse, and a file the allowlist
+# forgot -- none of which the manifest check can see.
+$smokeScript = Join-Path ([System.IO.Path]::GetTempPath()) ("tstyles-smoke-" + [guid]::NewGuid().ToString('n') + ".ps1")
+@'
+param([Parameter(Mandatory)][string]$StageRoot, [Parameter(Mandatory)][string]$RepoRoot)
+$ErrorActionPreference = 'Stop'
+Import-Module (Join-Path $StageRoot 'TerminalStyles.psd1') -DisableNameChecking -Force
+$mod = Get-Module TerminalStyles
+
+# Every function the staged sources define...
+$defined = @()
+# Expected functions come from the REPO, not the stage. Reading them from the
+# stage is circular: a file the allowlist dropped takes its functions out of the
+# expectation as well as out of the package, so the check passes on exactly the
+# package it exists to reject. (Verified: the first version of this gate passed
+# with lib/applystyle.ps1 removed.)
+#
+# Only the files the MODULE dot-sources. apply.ps1 is a standalone script and
+# styles/*/profile.ps1 define a shell prompt -- neither is loaded by an import,
+# so requiring their functions would fail on a perfectly good package.
+$moduleSources = @(
+    (Join-Path $RepoRoot 'tstyles.ps1')
+    (Join-Path $RepoRoot 'terminals.ps1')
+) + @(Get-ChildItem -LiteralPath (Join-Path $RepoRoot 'lib') -Filter '*.ps1' -File -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.FullName })
+foreach ($f in ($moduleSources | Where-Object { Test-Path -LiteralPath $_ } | ForEach-Object { Get-Item -LiteralPath $_ })) {
+    $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null)
+    $defined += @($ast.FindAll({ param($n)
+        $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
+        ForEach-Object { $_.Name })
+}
+$defined = @($defined | Sort-Object -Unique)
+
+# ...must be reachable inside the module after import.
+$missing = @()
+foreach ($n in $defined) {
+    $found = & $mod { param($x) Get-Command -Name $x -ErrorAction SilentlyContinue } $n
+    if (-not $found) { $missing += $n }
+}
+if ($missing.Count) {
+    throw ("Staged module is missing functions the repo defines. Not reachable after import: " + ($missing -join ', '))
+}
+
+foreach ($name in 'Invoke-TerminalStyle', 'Invoke-TerminalStylesUpdate', 'tstyles') {
+    if (-not (Get-Command -Module TerminalStyles -Name $name -ErrorAction SilentlyContinue)) {
+        throw "Staged module does not export '$name'."
+    }
+}
+"ok $($defined.Count)"
+'@ | Set-Content -LiteralPath $smokeScript -Encoding UTF8 -WhatIf:$false
+
+try {
+    $engine = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+    $smokeOut = & $engine -NoProfile -NonInteractive -File $smokeScript -StageRoot $stageRoot -RepoRoot $repoRoot 2>&1
+    if ($LASTEXITCODE -ne 0 -or "$smokeOut" -notmatch 'ok \d+') {
+        throw "Staged-module smoke test failed: $smokeOut"
+    }
+} finally {
+    Remove-Item -LiteralPath $smokeScript -Force -ErrorAction SilentlyContinue -WhatIf:$false
+}
+Write-Host "  Smoke test: staged module imports and every shipped function resolves." -ForegroundColor DarkGray
+
 Write-Host ''
 Write-Host "Staged TerminalStyles $($manifest.Version) at:" -ForegroundColor Cyan
 Write-Host "  $stageRoot" -ForegroundColor Gray
