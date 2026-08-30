@@ -130,7 +130,7 @@ $profileNames = @('defaults') + @($settings.profiles.list | ForEach-Object { $_.
 if (-not $Target) {
     $Target = Read-Choice 'Which Windows Terminal profile to apply this style to?' $profileNames -Flag '-Target'
 }
-if ($Target -ne 'defaults' -and -not ($settings.profiles.list | Where-Object name -eq $Target)) {
+if (-not (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Ok) {
     throw "Profile '$Target' not found. Available: $($profileNames -join ', ')"
 }
 Write-Host "Target: $Target" -ForegroundColor Green
@@ -218,7 +218,8 @@ if ($hasProfile -and -not $KeepPrompt) {
     if ($Target -eq 'defaults') {
         $isPwshTarget = $true
     } else {
-        $entry = $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
+        # Shared resolver, as in the module's own apply path.
+        $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Entry
         $cmd = "$($entry.commandline)"
         $src = "$($entry.source)"
         if ($src -eq 'Windows.Terminal.PowershellCore' -or $cmd -match '(?i)\bpwsh\.exe\b' -or $cmd -match '(?i)\bpowershell\.exe\b') {

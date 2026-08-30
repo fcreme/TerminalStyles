@@ -131,13 +131,50 @@ function Get-StyleBundledBackground {
             # after a network error, but a Ctrl+C or a killed process never
             # reaches it -- and that would strand a truncated image as this
             # style's background for good.
-            $part = "$local.part"
+            # Per-writer temp name. This used to be a bare "$local.part", and
+            # the picker's prefetch job derives its temp from the same cache
+            # dir -- so on a first run the two raced on ONE path. The loser's
+            # .part vanished mid-flight, Get-Item returned $null, and
+            # `$null.Length -gt 0` took the "server sent an empty file" branch
+            # instead of the catch -- so this call reported no background for a
+            # style that has one. Measured: 3 of 4 consecutive picker runs lost
+            # the race.
+            #
+            # Scope of the damage, precisely, because it is easy to overstate:
+            # when the loser lost because the WINNER renamed the image into
+            # place, the bogus 'absent' marker is never read again -- the cached
+            # -file check at the top of this function returns first. The cost is
+            # that ONE call: a preview or apply that writes a WT profile with no
+            # backgroundImage, which persists in settings.json until the next
+            # apply. The 30-day marker only bites in the other ordering, where
+            # the sibling's catch unlinks an in-flight temp and no image lands
+            # at all.
+            #
+            # Deterministic rather than a GUID, so a killed process leaves at
+            # most one stale temp per writer per extension, which the next run
+            # overwrites -- GUIDs would accumulate in the cache dir forever.
+            $part = "$local.part-sync"
             try {
                 Invoke-WebRequest -Uri $url -OutFile $part -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
-                if ((Get-Item -LiteralPath $part -ErrorAction SilentlyContinue).Length -gt 0) {
+                $got = Get-Item -LiteralPath $part -ErrorAction SilentlyContinue
+                if ($null -eq $got) {
+                    # The temp is GONE, not empty. The request succeeded, so
+                    # the server did not say "not there" -- something removed
+                    # the file underneath us. That is inconclusive, and the
+                    # distinction is the whole point of $definitelyAbsent:
+                    # calling it absent buys a 30-DAY marker for a style that
+                    # may well have a background.
+                    #
+                    # It used to fall into the else below, because
+                    # `$null.Length -gt 0` is simply false -- so a lost race
+                    # was recorded as a definite absence.
+                    $definitelyAbsent = $false
+                } elseif ($got.Length -gt 0) {
                     Move-Item -LiteralPath $part -Destination $local -Force
                     return $local
                 } else {
+                    # A real zero-byte response. The server answered; there is
+                    # just nothing in it.
                     Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue
                 }
             } catch {

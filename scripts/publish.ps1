@@ -82,6 +82,25 @@ if (-not $PSCmdlet.ShouldProcess($stageRoot, "Publish-PSResource to $Repository"
 
 # --- 4. Resolve the API key (prompt if not provided) ---
 if (-not $ApiKey) {
+    # Refuse before prompting when there is no console. Read-Host
+    # -AsSecureString at EOF is worse than the plain form: it does not return an
+    # empty SecureString and it does not raise a catchable error -- it stops the
+    # pipeline abruptly, so a trap never fires, a try/catch never catches, and
+    # the script simply ends. Publishing from CI or any wrapper with stdin
+    # detached therefore looked like a silent success: no key, no publish, no
+    # error, exit as if done.
+    #
+    # Inlined rather than calling the module's Test-InteractiveConsole: this is
+    # a standalone maintainer script that deliberately does not load
+    # TerminalStyles (it stages and publishes the module, so importing the
+    # thing under test would be circular). Keep the expression identical to
+    # Test-InteractiveConsole in tstyles.ps1.
+    $hasConsole = [Environment]::UserInteractive -and
+                  -not [Console]::IsInputRedirected -and
+                  -not [Console]::IsOutputRedirected
+    if (-not $hasConsole) {
+        throw "No console to prompt for the PSGallery API key. Pass -ApiKey explicitly when running non-interactively."
+    }
     $secure = Read-Host "PSGallery API key (input hidden)" -AsSecureString
     $ApiKey = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
         [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secure))

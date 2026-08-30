@@ -333,7 +333,11 @@ Describe 'the background prefetch cannot leave a truncated cache entry' {
         # background permanently.
         $fn  = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
         $src = $fn.Extent.Text
-        $src | Should -Match '\$part = "\$local\.part"'
+        # Prefix, not the exact literal: the two writers now carry distinct
+        # suffixes because sharing one temp path made them race. What this
+        # assertion is for is "downloads to a temp and renames", which the
+        # prefix still pins.
+        $src | Should -Match '\$part = "\$local\.part'
         $src | Should -Match 'Invoke-WebRequest -Uri "\$remoteBase\.\$ext" -OutFile \$part'
         $src | Should -Match 'Move-Item -LiteralPath \$part -Destination \$local -Force'
     }

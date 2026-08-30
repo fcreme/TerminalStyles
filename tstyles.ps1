@@ -944,7 +944,14 @@ function Invoke-TerminalStyle {
                     # GIF became that style's background permanently, since
                     # nothing revalidates a file that exists. A killed job now
                     # leaves only a .part, which no reader looks for.
-                    $part = "$local.part"
+                    # Distinct from the synchronous resolver's temp name: both
+                    # derive from the same cache dir, and sharing one path made
+                    # them race on a first picker run -- the loser reported "no
+                    # background" for a style whose image had just finished
+                    # downloading. See Get-StyleBundledBackground for the exact
+                    # scope of the damage; it is one call in the common
+                    # ordering, not a 30-day suppression.
+                    $part = "$local.part-job"
                     try {
                         Invoke-WebRequest -Uri "$remoteBase.$ext" -OutFile $part `
                             -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
@@ -1284,7 +1291,9 @@ function Invoke-TerminalStyle {
             if ($Target -eq 'defaults') {
                 $isPwshTarget = $true
             } else {
-                $entry = $originalSettings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
+                # Shared resolver, so the picker inspects the same profile it
+                # styled -- see Resolve-WTProfileTarget on same-named profiles.
+                $entry = (Resolve-WTProfileTarget -Settings $originalSettings -TargetName $Target).Entry
                 $cmd = "$($entry.commandline)"
                 $src = "$($entry.source)"
                 if ($src -eq 'Windows.Terminal.PowershellCore' -or

@@ -497,7 +497,10 @@ function Set-ProfileFont {
         }
         $entry = $settings.profiles.defaults
     } else {
-        $entry = $settings.profiles.list | Where-Object name -eq $TargetName | Select-Object -First 1
+        # Shared resolver: with two profiles of the same name, first-match put
+        # the font on whichever came first in the list rather than the one the
+        # session is running in.
+        $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $TargetName).Entry
         if (-not $entry) { return $false }
     }
 

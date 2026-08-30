@@ -366,6 +366,16 @@ function Apply-StyleDirect {
         return
     }
 
+    # Say so when the name was not unique. The resolver breaks the tie with the
+    # session's own GUID, which is almost always what the user wants -- but
+    # "almost always" is worth one line, because the alternative is a silent
+    # choice between two profiles the user cannot tell apart from the outside.
+    # Without this, Ambiguous would be a field nothing reads.
+    if ($resolvedTarget.Ambiguous) {
+        Write-Host "  Note: more than one profile is named '$Target'." -ForegroundColor DarkGray
+        Write-Host "  Applied to the one this session is running in." -ForegroundColor DarkGray
+    }
+
     # The style half of the same rule. Merge-StyleIntoSettings returns the
     # settings UNTOUCHED for a style with no theme.json -- deliberately, since a
     # scheme is only reachable through a profile's colorScheme key -- and this
@@ -406,7 +416,11 @@ function Apply-StyleDirect {
     if ($Target -eq 'defaults') {
         $isPwshTarget = $true
     } else {
-        $entry = $settings.profiles.list | Where-Object name -eq $Target | Select-Object -First 1
+        # Same resolver as the merge, so the pwsh detection inspects the
+        # profile the style was actually written to. With two same-named
+        # profiles this read the wrong one's commandline and could install (or
+        # skip) the prompt on the strength of it.
+        $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Entry
         $cmd = "$($entry.commandline)"
         $src = "$($entry.source)"
         if ($src -eq 'Windows.Terminal.PowershellCore' -or

@@ -243,7 +243,13 @@ function Resolve-WTProfileTarget {
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowNull()]$Settings,
-        [Parameter(Mandatory)][AllowEmptyString()][string]$TargetName
+        [Parameter(Mandatory)][AllowEmptyString()][string]$TargetName,
+        # The session's own profile GUID. Used ONLY to disambiguate between
+        # profiles that share $TargetName -- never to override a different
+        # -Target the user asked for explicitly. Ambient default with a seam,
+        # like Test-InteractiveConsole, so every caller gets it right without
+        # threading it through five call sites.
+        [AllowEmptyString()][string]$PreferGuid = $env:WT_PROFILE_ID
     )
 
     $list = @()
@@ -257,12 +263,40 @@ function Resolve-WTProfileTarget {
                 $entry = $Settings.profiles.defaults
             }
         } catch { }
-        return [pscustomobject]@{ Ok = $true; Entry = $entry; IsDefaults = $true; Available = $available }
+        return [pscustomobject]@{ Ok = $true; Entry = $entry; IsDefaults = $true; Available = $available; Ambiguous = $false }
     }
 
-    $entry = $list | Where-Object name -eq $TargetName | Select-Object -First 1
+    # NOT $matches: that is an AUTOMATIC variable, rewritten by every -match
+    # in the same scope. Correct here only because this function uses none --
+    # and one -match added above the reads below would silently replace the
+    # profile list with regex capture strings. Measured: a 2-element list
+    # became a 1-element list of [String] after a single unrelated -match.
+    $named = @($list | Where-Object name -eq $TargetName)
+
+    # Windows Terminal allows two profiles with the SAME name and different
+    # GUIDs -- a hand-copied profile, or a dynamic/fragment profile colliding
+    # with a manually defined one. Every resolution here was
+    # `Select-Object -First 1`, and Get-CurrentWTProfileName finds the session's
+    # entry by $env:WT_PROFILE_ID and then returns only its NAME, throwing the
+    # GUID away. So `tstyles <style>` in the SECOND of two same-named profiles
+    # styled the first one: the user's own window was unchanged, an unrelated
+    # profile was silently restyled, "Style applied" printed in green, and
+    # -Target could not rescue it because the two are indistinguishable by name.
+    # `tstyles reset` then stripped the same wrong profile.
+    #
+    # The GUID only breaks a tie. If it names a profile whose name is NOT
+    # $TargetName, the user asked for a different profile than the one they are
+    # sitting in, and that request wins.
+    $entry = $null
+    if ($PreferGuid -and $named.Count -gt 1) {
+        $entry = $named | Where-Object { $_.guid -eq $PreferGuid } | Select-Object -First 1
+    }
+    if (-not $entry) { $entry = $named | Select-Object -First 1 }
+
     return [pscustomobject]@{
         Ok = [bool]$entry; Entry = $entry; IsDefaults = $false; Available = $available
+        # True when the name alone was not enough to identify a profile.
+        Ambiguous = ($named.Count -gt 1)
     }
 }
 
@@ -322,10 +356,15 @@ function Merge-StyleIntoSettings {
     # cause us to inject the color scheme -- that would leave an orphan scheme in
     # settings.json that Reset's cleanup can never remove (no profile references
     # it). 'defaults' is created lazily below, only when there's a theme to write.
+    # Through the shared resolver, so the merge writes to the SAME profile every
+    # other path resolved -- including the GUID tie-break above. Its own
+    # first-match lookup is what actually wrote the style onto the wrong one of
+    # two same-named profiles.
     $namedEntry = $null
     if ($TargetName -ne 'defaults') {
-        $namedEntry = $Settings.profiles.list | Where-Object name -eq $TargetName | Select-Object -First 1
-        if (-not $namedEntry) { return $Settings }   # missing named target: leave settings untouched
+        $resolved = Resolve-WTProfileTarget -Settings $Settings -TargetName $TargetName
+        if (-not $resolved.Ok) { return $Settings }   # missing named target: leave settings untouched
+        $namedEntry = $resolved.Entry
     }
 
     # Everything that could still make us bail happens BEFORE the scheme is

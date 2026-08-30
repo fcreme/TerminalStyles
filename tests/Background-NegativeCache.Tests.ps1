@@ -232,7 +232,9 @@ Describe 'a fetch cannot leave a truncated cache entry' {
             # catch cleans up after a network error, but a Ctrl+C or killed
             # process never reaches it. Matches the picker prefetch's approach.
             $src = (Get-Command Get-StyleBundledBackground).ScriptBlock.ToString()
-            $src | Should -Match '\$part = "\$local\.part"'
+            # Prefix only -- see the note in Picker-ShellStateStaging: the
+            # synchronous and prefetch writers must NOT share a temp name.
+            $src | Should -Match '\$part = "\$local\.part'
             $src | Should -Match '-OutFile \$part'
             $src | Should -Match 'Move-Item -LiteralPath \$part -Destination \$local -Force'
         }
