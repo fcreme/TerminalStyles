@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.19] - 2026-08-30
+
 ### Fixed
 
 - **a drifted base permanently severed a tuned style's background.** A tuned style stores deltas, so 0.8.18 added a fingerprint check that drops them when the base has been re-baked rather than double-applying. But dropping the deltas also dropped the ANCESTRY: the seed left the base as the style itself, so the next save wrote `"base": "<the style>"` into tune.json, `Get-TunedBaseBackground`'s one-hop self-reference guard returned `$null`, and the style lost its background for good. Bundled styles ship no image beside them -- the GIF lives in the data-root cache under the BASE's name -- so inheritance was the only route to it, and the next apply took `Merge-StyleIntoSettings`' `bgAction = 'remove'` and stripped every background field off the profile. Nothing on screen mentioned it, and there was no way back: `base` was self, so every future re-tune rewrote the same self-reference. Where a style's colours are MEASURED from and what it DESCENDS from are two questions that coincide until the base drifts; they are recorded separately now, and the fingerprint is taken from the lineage base's current scheme so saving through a drift resolves it instead of making it permanent
@@ -463,7 +465,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.18...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.19...HEAD
+[0.8.19]: https://github.com/fcreme/TerminalStyles/compare/v0.8.18...v0.8.19
 [0.8.18]: https://github.com/fcreme/TerminalStyles/compare/v0.8.17...v0.8.18
 [0.8.17]: https://github.com/fcreme/TerminalStyles/compare/v0.8.16...v0.8.17
 [0.8.16]: https://github.com/fcreme/TerminalStyles/compare/v0.8.15...v0.8.16
