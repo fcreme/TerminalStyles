@@ -83,6 +83,32 @@ $manifest = Test-ModuleManifest (Join-Path $stageRoot 'TerminalStyles.psd1')
 # function its own shipped sources define is actually present afterwards. That
 # catches a dropped file, a file that fails to parse, and a file the allowlist
 # forgot -- none of which the manifest check can see.
+# --- 2a. The release must describe the tree it is shipping ---
+#
+# Entries under [Unreleased] are normal BETWEEN releases -- that is what the
+# section is for. At publish time they are not: they mean the working tree
+# carries changes the version's release notes do not mention, and PSGallery
+# versions are immutable, so the mismatch is permanent.
+#
+# This happened twice in one day. 0.8.18's heading was cut and then five more
+# commits landed under [Unreleased]; publishing at that moment would have
+# shipped those five as "0.8.18" with notes describing only half of it. Both
+# times it was caught by reading the file, once minutes before an upload.
+$changelogPath = Join-Path $repoRoot 'CHANGELOG.md'
+if (Test-Path -LiteralPath $changelogPath) {
+    $log = Get-Content -LiteralPath $changelogPath -Raw
+    $unrel = [regex]::Match($log, '(?ms)^## \[Unreleased\]\s*(.*?)(?=^## \[)')
+    if ($unrel.Success) {
+        $pending = @([regex]::Matches($unrel.Groups[1].Value, '(?m)^- '))
+        if ($pending.Count -gt 0) {
+            throw ("CHANGELOG.md still has $($pending.Count) entr$(if($pending.Count -eq 1){'y'}else{'ies'}) under " +
+                   "[Unreleased]. Publishing now would ship them as $($manifest.Version) with release notes " +
+                   "that do not mention them, and that cannot be corrected afterwards. Fold them into the " +
+                   "$($manifest.Version) section (or cut a new version) first.")
+        }
+    }
+}
+
 $smokeScript = Join-Path ([System.IO.Path]::GetTempPath()) ("tstyles-smoke-" + [guid]::NewGuid().ToString('n') + ".ps1")
 @'
 param([Parameter(Mandatory)][string]$StageRoot, [Parameter(Mandatory)][string]$RepoRoot)

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- the version, the CHANGELOG and the release notes could disagree, and nothing noticed. That drifted twice in one day: 0.8.18's heading was cut and then five more commits landed under `[Unreleased]`, so the tree carried work the release notes did not mention -- caught by hand both times, once minutes before an irreversible upload. A test now asserts they describe the same release (a dated section for the manifest's version, notes opening with that version, both compare links present, every section linked and every link sectioned), and `publish.ps1` refuses to upload while `[Unreleased]` still holds entries, because at publish time those are exactly the changes the release notes are about to omit forever
+- CI could only be reached by pushing to `main`. Two of the four legs are Windows and the project is developed on a Mac, so a branch push ran nothing until a PR existed and work had to reach mainline in order to be verified -- which is how a Windows PowerShell 5.1 regression and a macOS-only test bug both landed on `main` before CI saw them. It now runs on any branch, and on `workflow_dispatch` so a tree can be checked without pushing at all
+
 ## [0.8.19] - 2026-08-30
 
 ### Fixed

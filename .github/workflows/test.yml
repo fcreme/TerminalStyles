@@ -1,10 +1,17 @@
 name: Tests
 
 on:
+  # Any branch, not just main. Two of the four legs are Windows, and this
+  # project is developed on a Mac -- so pushing to a branch was the only way to
+  # get a Windows result, and that path ran nothing until a PR existed. Work
+  # therefore reached mainline to be verified, which is backwards: a WinPS 5.1
+  # regression and a macOS-only test bug both landed on main before CI saw
+  # them.
   push:
-    branches: [main]
   pull_request:
     branches: [main]
+  # And on demand, so a tree can be checked without any push at all.
+  workflow_dispatch:
 
 jobs:
   pester:
