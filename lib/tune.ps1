@@ -46,7 +46,16 @@ function New-TunedThemeObject {
     $theme | Add-Member -NotePropertyName colorScheme -NotePropertyValue $ColorScheme -Force
     $theme | Add-Member -NotePropertyName opacity     -NotePropertyValue $Opacity     -Force
 
-    $font = if ($theme.PSObject.Properties.Match('font').Count) { $theme.font } else { [pscustomobject]@{} }
+    # The same guard the outer object gets above, one level down. `font` is a
+    # user-writable key in a user-writable file (README documents theme.json as
+    # optional and hand-authorable), so it can perfectly well hold a string, a
+    # number, an array or null -- e.g. {"font":"Menlo"}. Add-Member then hangs
+    # `face` and `size` off that scalar as ADAPTED members, which ConvertTo-Json
+    # does not serialise: the saved style kept the bogus value and carried
+    # neither of the tuner's two font knobs, while the tuner reported the save
+    # succeeded and had shown the chosen font on screen the whole time.
+    $font = if ($theme.PSObject.Properties.Match('font').Count) { $theme.font } else { $null }
+    if ($font -isnot [System.Management.Automation.PSCustomObject]) { $font = [pscustomobject]@{} }
     $font | Add-Member -NotePropertyName face -NotePropertyValue $FontFace -Force
     $font | Add-Member -NotePropertyName size -NotePropertyValue $FontSize -Force
     $theme | Add-Member -NotePropertyName font -NotePropertyValue $font -Force
@@ -259,6 +268,12 @@ function Save-TunedStyle {
         [Parameter(Mandatory)][string]$SaveName,
         [Parameter(Mandatory)][string]$BaseStyleDir,
         [Parameter(Mandatory)][string]$BaseName,
+        # What tune.json records as this style's ancestor, and whose scheme the
+        # fingerprint is taken from. Defaults to the base the deltas were
+        # measured against; they differ only when a drifted base means the
+        # colours come from the style itself while the lineage must survive.
+        [string]$LineageBase,
+        [string]$LineageBaseDir,
         [int]$Brightness, [int]$Saturation, [int]$Opacity,
         [string]$FontFace, [int]$FontSize
     )
@@ -348,12 +363,18 @@ function Save-TunedStyle {
         }
     }
 
+    if (-not $LineageBase)    { $LineageBase    = $BaseName }
+    if (-not $LineageBaseDir) { $LineageBaseDir = $BaseStyleDir }
+
     $tune = [pscustomobject]@{
         schemaVersion = 1
-        base          = $BaseName
+        base          = $LineageBase
         # What the deltas below were measured against. Checked on re-tune so a
         # base that has since been re-baked cannot silently double-apply them.
-        baseFingerprint = (Get-StyleSchemeFingerprint -StyleDir $BaseStyleDir)
+        # Of the LINEAGE base as it stands now. Recording the style's own
+        # fingerprint here would make the very next re-tune report drift again,
+        # permanently.
+        baseFingerprint = (Get-StyleSchemeFingerprint -StyleDir $LineageBaseDir)
         brightness    = $Brightness
         saturation    = $Saturation
         opacity       = $Opacity
@@ -410,6 +431,11 @@ function Resolve-TuneSeed {
         # Set when a recorded base was found but has changed since the save, so
         # the caller can say why the knobs came up neutral instead of leaving
         # the user to wonder where their adjustments went.
+        # Where the style DESCENDS from, as distinct from where its colours are
+        # being measured from. The two diverge on drift: the colours then come
+        # from the style itself, but the lineage must still point at the base or
+        # background inheritance is severed. Defaults to the same thing.
+        LineageBase = $null; LineageBaseDir = $null
         BaseChanged = $false
         # The name of the base that moved, for the notice. Distinct from
         # BaseName, which stays the style itself when the deltas are dropped.
@@ -498,6 +524,21 @@ function Resolve-TuneSeed {
                     # theme.json), so without this the on-screen notice named
                     # the style the user was tuning and read as self-contradictory.
                     $seed.ChangedBaseName = [string]$tune.base
+                    # Keep the LINEAGE even though the deltas are dropped.
+                    # Without this the save below recorded the style as its own
+                    # base, and Get-TunedBaseBackground's one-hop
+                    # self-reference guard then returned $null for ever. That
+                    # matters because a bundled style ships no background file
+                    # beside it -- the GIF lives in the data-root cache under
+                    # the BASE's name -- so inheritance was the tuned style's
+                    # only route to its background. Losing it made the next
+                    # apply take Merge-StyleIntoSettings' bgAction='remove' and
+                    # strip every background field off the profile, with
+                    # nothing on screen mentioning it, and no way back: `base`
+                    # was self, so every future re-tune rewrote the same
+                    # self-reference.
+                    $seed.LineageBase    = [string]$tune.base
+                    $seed.LineageBaseDir = $resolvedBaseDir
                 }
 
                 if (-not $baseIsSelf -and -not $baseMoved) {
@@ -688,6 +729,10 @@ function Invoke-TerminalStyleTune {
     $seed = Resolve-TuneSeed -StyleName $StyleName -StyleDir $styleDir
     $baseName   = $seed.BaseName
     $baseDir    = $seed.BaseDir
+    # Normally identical to the above; different only after a drifted base,
+    # where the colours come from the style and the lineage from the base.
+    $lineageBase    = if ($seed.LineageBase)    { $seed.LineageBase }    else { $seed.BaseName }
+    $lineageBaseDir = if ($seed.LineageBaseDir) { $seed.LineageBaseDir } else { $seed.BaseDir }
     $brightness = $seed.Brightness
     $saturation = $seed.Saturation
     $opacity    = $seed.Opacity
@@ -1202,6 +1247,7 @@ function Invoke-TerminalStyleTune {
         $finalScheme = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
         Save-TunedStyle -AdjustedScheme $finalScheme -SaveName $saveName `
             -BaseStyleDir $baseDir -BaseName $baseName `
+            -LineageBase $lineageBase -LineageBaseDir $lineageBaseDir `
             -Brightness $brightness -Saturation $saturation -Opacity $opacity `
             -FontFace $fontFace -FontSize $fontSize | Out-Null
 
