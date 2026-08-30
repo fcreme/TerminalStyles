@@ -128,23 +128,90 @@ Describe 'the tuner menu stays legible at every brightness' {
             $block | Should -Match '\$ui = & \$chrome \$adjusted'
         }
 
-        It 'holds contrast where the old ConsoleColor chrome fell to 1:1' {
-            # gitbash at +55 measured exactly 1.000:1 with the old chrome --
-            # white == #ffffff == the background, so the menu vanished.
-            $scheme = Get-Content (Join-Path $script:styleRoot 'gitbash/scheme.json') -Raw | ConvertFrom-Json
+        It 'keeps every chrome role legible across every style and every brightness' {
+            # The real test, driving the SHIPPED $chrome. What this replaced
+            # compared the background against a hardcoded '#282828' -- a colour
+            # $chrome never returns -- and sampled only brightness 0/20/55/100
+            # on gitbash, all of which are positive, where that style's
+            # background stays #ffffff and the light branch is always taken. So
+            # the entire other branch was untested, and the menu could (and did)
+            # go invisible in the middle of the luminance range with this test
+            # green: gitbash at -55 gives a #b9b9b9 background where the row the
+            # user is dragging measured 1.35:1, and forest +95, rain +85 and
+            # snowday +95 all reached exactly 1.00:1.
+            $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
+            $assign = $ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Left.Extent.Text -eq '$chrome' }, $true) | Select-Object -First 1
+            $assign | Should -Not -BeNullOrEmpty -Because 'the tuner must still derive its chrome'
+            $sbAst = $assign.Right.Find({ param($n)
+                $n -is [System.Management.Automation.Language.ScriptBlockExpressionAst] }, $true)
+            $chrome = [scriptblock]::Create($sbAst.ScriptBlock.Extent.Text.Trim('{', '}'))
 
-            foreach ($b in 0, 20, 55, 100) {
-                $adj = Get-AdjustedScheme -Scheme $scheme -Brightness $b
-                # what the OLD chrome resolved to for a non-selected row
-                $old = script:Get-ContrastRatio $adj.background $adj.white
-                # what the NEW chrome picks: dark ink on a light background
-                $new = script:Get-ContrastRatio $adj.background '#282828'
+            # Two assertions per role, because a single fixed floor is the
+            # wrong shape here. Contrast against a MID-luminance background is
+            # physically capped: at the crossover (L ~= 0.18) the best any
+            # colour can do is about 4.6:1, so demanding 6.5 there would fail
+            # on correct code. What can be demanded is (a) always readable, and
+            # (b) the fit gets close to whatever the background actually allows.
+            $hardFloor = @{ Title = 4.0; Sel = 4.0; Row = 4.0; Dim = 3.5; Warn = 4.0 }
+            $wanted    = @{ Title = 7.0; Sel = 7.0; Row = 6.0; Dim = 4.5; Warn = 6.0 }
 
-                $new | Should -BeGreaterThan 4.5 -Because "at brightness $b the menu must stay readable"
-                if ($b -ge 55) {
-                    $old | Should -BeLessThan 1.1 -Because "this is the regression being fixed (brightness $b)"
+            $styles = @(Get-ChildItem -LiteralPath $script:styleRoot -Directory)
+            $styles.Count | Should -BeGreaterThan 10 -Because 'the sweep must cover the bundled set'
+
+            $worst = 99.0; $worstAt = ''
+            $checked = 0
+            foreach ($st in $styles) {
+                $schemePath = Join-Path $st.FullName 'scheme.json'
+                if (-not (Test-Path -LiteralPath $schemePath)) { continue }
+                $scheme = Get-Content $schemePath -Raw | ConvertFrom-Json
+                foreach ($b in -100, -75, -55, -40, -20, 0, 20, 40, 55, 75, 95, 100) {
+                    $adj = Get-AdjustedScheme -Scheme $scheme -Brightness $b
+                    $ui  = & $chrome $adj
+                    foreach ($role in $wanted.Keys) {
+                        $m = [regex]::Match([string]$ui.$role, '38;2;(\d+);(\d+);(\d+)')
+                        $m.Success | Should -BeTrue -Because "$role must be truecolor, not a ConsoleColor"
+                        $fg = '#{0:x2}{1:x2}{2:x2}' -f [int]$m.Groups[1].Value, [int]$m.Groups[2].Value, [int]$m.Groups[3].Value
+                        $r  = script:Get-ContrastRatio $adj.background $fg
+
+                        # The ceiling this background allows against ANY colour.
+                        $bl   = script:Get-RelLuminance $adj.background
+                        $ceil = [Math]::Max(1.05 / ($bl + 0.05), ($bl + 0.05) / 0.05)
+                        $goal = [Math]::Min($wanted[$role], $ceil * 0.9)
+
+                        $checked++
+                        if ($r -lt $worst) { $worst = $r; $worstAt = "$($st.Name) b=$b $role" }
+                        $r | Should -BeGreaterThan $hardFloor[$role] `
+                            -Because "$($st.Name) at brightness $b must keep $role readable (got $([Math]::Round($r,2)):1)"
+                        $r | Should -BeGreaterThan $goal `
+                            -Because "$($st.Name) at brightness ${b}: $role should use the headroom this background allows (ceiling $([Math]::Round($ceil,1)):1, got $([Math]::Round($r,2)):1)"
+                    }
                 }
             }
+            # Anti-vacuity floor. The first version of this test iterated
+            # `$floors.Keys` after that variable had been renamed away, so the
+            # loop body never ran and the whole thing passed against the very
+            # chrome it was written to reject.
+            $checked | Should -BeGreaterThan 500 -Because 'the sweep must actually have measured something'
+            Write-Verbose "worst chrome contrast: $([Math]::Round($worst,2)):1 at $worstAt" -Verbose:$false
+        }
+
+        It 'paints the SAVE prompt with the same fitted chrome, not ConsoleColors' {
+            # The 0.8.18 fix stopped at $drawMenu. The save screen is drawn while
+            # the OSC retint is still live -- the palette is restored later, in
+            # $restoreBaseLook -- so -ForegroundColor Cyan/Gray there wrote
+            # brightCyan and white onto slots the tuner had just retinted. On
+            # gitbash at +55 the heading measured 1.25:1 and "Cancelled." exactly
+            # 1.000:1, on the one screen where a destructive prompt must be read.
+            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $idx = $src.IndexOf('Save tuned')
+            $idx | Should -BeGreaterThan 0
+            $tail = $src.Substring($idx)
+
+            $tail | Should -Match '\$saveUi' -Because 'the save screen must use the fitted chrome'
+            $tail | Should -Not -Match '-ForegroundColor (Cyan|Gray|DarkGray|White)' `
+                -Because 'those map onto palette slots the tuner has just retinted'
         }
     }
 }

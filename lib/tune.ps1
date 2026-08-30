@@ -863,29 +863,79 @@ function Invoke-TerminalStyleTune {
     $chrome = {
         param($Scheme)
         $bgHex = ConvertTo-NormalHex -Hex $Scheme.background
-        $lum = 0.5
+        $bg = @(0, 0, 0)
         if ($bgHex) {
             $h = $bgHex.TrimStart('#')
-            $c = @(0, 2, 4) | ForEach-Object {
-                $v = [Convert]::ToInt32($h.Substring($_, 2), 16) / 255.0
+            $bg = @(0, 2, 4) | ForEach-Object { [Convert]::ToInt32($h.Substring($_, 2), 16) }
+        }
+
+        # Relative luminance, WCAG.
+        $lumOf = {
+            param($rgb)
+            $c = $rgb | ForEach-Object {
+                $v = $_ / 255.0
                 if ($v -le 0.03928) { $v / 12.92 } else { [Math]::Pow(($v + 0.055) / 1.055, 2.4) }
             }
-            $lum = 0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]
+            0.2126 * $c[0] + 0.7152 * $c[1] + 0.0722 * $c[2]
         }
-        $sgr = { param($r, $g, $b) "$([char]27)[38;2;$r;$g;${b}m" }
-        if ($lum -gt 0.5) {
-            # light background -> dark chrome
-            [pscustomobject]@{
-                Title = (& $sgr 0 90 110); Dim = (& $sgr 105 105 105)
-                Sel   = (& $sgr 150 90 0);  Row = (& $sgr 40 40 40)
-                Warn  = (& $sgr 150 60 0);  Reset = "$([char]27)[0m"
+        $bgLum = & $lumOf $bg
+
+        # Two FIXED palettes chosen on a single `$lum -gt 0.5` bit is what this
+        # replaced, and it only worked at the extremes. A background in the
+        # middle of the range takes one branch or the other and neither has any
+        # contrast against it: measured on the shipped code, gitbash at
+        # brightness -55 gives #b9b9b9 (luminance 0.485), which selects the
+        # DARK-background palette -- light-grey ink on light grey, 1.35:1 for
+        # the row the user is dragging. forest +95, rain +85 and snowday +95
+        # reached exactly 1.00:1. Every one of the 16 bundled styles has a
+        # brightness where the menu disappeared.
+        #
+        # So fit each colour to THIS background instead of picking a preset:
+        # keep the role's hue, then walk it toward whichever extreme is further
+        # from the background until it clears the target ratio. The hue is
+        # cosmetic; being readable is not.
+        $fit = {
+            param($rgb, $target)
+            # Direction by which extreme actually has more headroom, NOT by
+            # `is the background dark`. Those are different questions and the
+            # difference is the whole bug: against a background at luminance
+            # 0.485, walking toward white tops out at (1.05)/(0.485+0.05) =
+            # 1.96:1 -- pure white is still barely legible -- while walking
+            # toward black reaches (0.485+0.05)/0.05 = 10.7:1. A `-lt 0.5`
+            # test sends the chrome the wrong way for every background between
+            # about 0.18 and 0.5, which is exactly the mid band where the
+            # shipped code lost the menu.
+            #
+            # The crossover is where the two ceilings meet:
+            #   1.05/(L+0.05) = (L+0.05)/0.05  =>  L = sqrt(0.0525) - 0.05
+            $ceilWhite = 1.05 / ($bgLum + 0.05)
+            $ceilBlack = ($bgLum + 0.05) / 0.05
+            $toWhite = ($ceilWhite -ge $ceilBlack)
+            $best = $rgb
+            for ($i = 0; $i -le 24; $i++) {
+                $t = $i / 24.0
+                $cand = $rgb | ForEach-Object {
+                    if ($toWhite) { [int][Math]::Round($_ + (255 - $_) * $t) }
+                    else          { [int][Math]::Round($_ * (1 - $t)) }
+                }
+                $l = & $lumOf $cand
+                $hi = [Math]::Max($l, $bgLum); $lo = [Math]::Min($l, $bgLum)
+                $best = $cand
+                if ((($hi + 0.05) / ($lo + 0.05)) -ge $target) { break }
             }
-        } else {
-            [pscustomobject]@{
-                Title = (& $sgr 120 220 235); Dim = (& $sgr 150 150 150)
-                Sel   = (& $sgr 250 210 90);  Row = (& $sgr 215 215 215)
-                Warn  = (& $sgr 250 190 80);  Reset = "$([char]27)[0m"
-            }
+            $best
+        }
+
+        $sgr = { param($rgb) "$([char]27)[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m" }
+        # Selected row and title carry the most meaning, so they get the most
+        # contrast; Dim is allowed to sit lower because it is supporting text.
+        [pscustomobject]@{
+            Title = (& $sgr (& $fit @(90, 200, 220) 7.0))
+            Sel   = (& $sgr (& $fit @(250, 195, 70) 7.0))
+            Row   = (& $sgr (& $fit @(160, 160, 160) 6.0))
+            Dim   = (& $sgr (& $fit @(130, 130, 130) 4.5))
+            Warn  = (& $sgr (& $fit @(240, 130, 60) 6.0))
+            Reset = "$([char]27)[0m"
         }
     }
 
@@ -1052,9 +1102,22 @@ function Invoke-TerminalStyleTune {
         }
 
         # --- Confirmed: Save / Save As prompt ---
+        # Painted with the SAME fitted chrome as the menu. It used to use
+        # -ForegroundColor Cyan/Gray, which PowerShell maps onto SGR 96/37 --
+        # brightCyan and white, two of the palette slots the tuner has just
+        # retinted over OSC. The 0.8.18 contrast fix stopped at $drawMenu, 160
+        # lines above, so this screen kept the defect: on gitbash at +55 the
+        # heading rendered at 1.25:1 and "Cancelled." at exactly 1.000:1. That
+        # is the one screen where the user has to read a destructive prompt and
+        # answer it, and declining looked identical to the tool doing nothing.
+        #
+        # The OSC retint is still live here -- the palette is only restored
+        # later, in $restoreBaseLook -- so truecolor is the only safe way to
+        # write on this screen.
+        $saveUi = & $chrome $adjusted
         Clear-Host
         Write-Host ""
-        Write-Host "  Save tuned '$StyleName'?" -ForegroundColor Cyan
+        Write-Host ($saveUi.Title + "  Save tuned '$StyleName'?" + $saveUi.Reset)
 
         # Which collision option [1] actually is depends on where this style
         # lives, and the two outcomes are not comparable. A BUNDLED style is
@@ -1081,7 +1144,7 @@ function Invoke-TerminalStyleTune {
             if ($overwriteReplaces) {
                 $warn = "$(Read-Host "  '$StyleName' will be replaced and cannot be undone. Continue? [y/N]")".Trim()
                 if ($warn -notmatch '^(?i)y') {
-                    Write-Host "  Cancelled." -ForegroundColor Gray
+                    Write-Host ($saveUi.Dim + "  Cancelled." + $saveUi.Reset)
                 } else {
                     $saveName = $StyleName
                 }
@@ -1091,7 +1154,7 @@ function Invoke-TerminalStyleTune {
         } else {
             while (-not $saveName) {
                 $candidate = (Read-Host "  New style name").Trim()
-                if (-not $candidate) { Write-Host "  Cancelled." -ForegroundColor Gray; break }
+                if (-not $candidate) { Write-Host ($saveUi.Dim + "  Cancelled." + $saveUi.Reset); break }
                 # Test-StyleNameValid, not a local regex: the character class on
                 # its own still admits `.` and `..`, which are not names but
                 # directories -- a save under either wrote the style's four
@@ -1100,7 +1163,7 @@ function Invoke-TerminalStyleTune {
                 # long enough to throw a raw .NET path exception from inside
                 # Save-TunedStyle, after the user had committed to the save.
                 if (-not (Test-StyleNameValid -Name $candidate)) {
-                    Write-Host "  Use letters, digits, dot, underscore, or hyphen (max 64, and not '.' or '..')." -ForegroundColor Yellow
+                    Write-Host ($saveUi.Warn + "  Use letters, digits, dot, underscore, or hyphen (max 64, and not '.' or '..')." + $saveUi.Reset)
                     continue
                 }
                 # Two different collisions, and only one of them loses work.
