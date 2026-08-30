@@ -436,6 +436,9 @@ function Resolve-TuneSeed {
         # from the style itself, but the lineage must still point at the base or
         # background inheritance is severed. Defaults to the same thing.
         LineageBase = $null; LineageBaseDir = $null
+        # The recorded base could not be resolved at all, as opposed to having
+        # merely changed. The notice wording differs and so does the advice.
+        BaseMissing = $false
         BaseChanged = $false
         # The name of the base that moved, for the notice. Distinct from
         # BaseName, which stays the style itself when the deltas are dropped.
@@ -505,8 +508,31 @@ function Resolve-TuneSeed {
                 # name differing only in case. The helper two functions above
                 # exists for exactly this decision and was being used by
                 # Save-TunedStyle alone.
-                $baseIsSelf = (-not $resolvedBaseDir) -or
-                              (Test-SameStyleDirectory -A $resolvedBaseDir -B $StyleDir)
+                # "The base is GONE" and "the base is this style" are two
+                # different facts, and folding them together lost the user's
+                # work in silence. A base can disappear the ordinary way -- the
+                # README invites hand-authored styles in this directory, so a
+                # folder can simply be removed -- and when it did, the deltas
+                # were dropped with NO notice at all: BaseChanged stayed false,
+                # ChangedBaseName stayed empty, and the tuner opened on neutral
+                # knobs as though the style had never been tuned. Measured:
+                # brightness -35 / saturation 10 became 0 / 0, reported nothing,
+                # and the next save wrote base = self, severing the background
+                # inheritance for good. That is the same loss the drift fix
+                # above prevents, reached through a different door.
+                $baseMissing = (-not $resolvedBaseDir)
+                $baseIsSelf  = $baseMissing -or
+                               (Test-SameStyleDirectory -A $resolvedBaseDir -B $StyleDir)
+                if ($baseMissing -and $tune.base) {
+                    # Say so, and KEEP the name. The base may well come back --
+                    # a bundled style revealed again after a shadowing copy is
+                    # removed, a reinstall, an update -- and recording the style
+                    # as its own base would make that unrecoverable.
+                    $seed.BaseChanged     = $true
+                    $seed.BaseMissing     = $true
+                    $seed.ChangedBaseName = [string]$tune.base
+                    $seed.LineageBase     = [string]$tune.base
+                }
                 if (-not $baseIsSelf -and $recordedFp) {
                     $currentFp = Get-StyleSchemeFingerprint -StyleDir $resolvedBaseDir
                     # $null means the base could not be READ -- a lock, a
@@ -740,6 +766,7 @@ function Invoke-TerminalStyleTune {
     $fontSize   = $seed.FontSize
     $baseChanged = $seed.BaseChanged
     $changedBaseName = $seed.ChangedBaseName
+    $baseMissing     = $seed.BaseMissing
 
     $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
@@ -997,7 +1024,15 @@ function Invoke-TerminalStyleTune {
             # the base was re-baked under this style, so the saved deltas no
             # longer describe a distance from it and re-applying them would
             # double the tune.
-            Write-Host "$($ui.Warn)  '$changedBaseName' has changed since this style was tuned -- starting from its current colours.$($ui.Reset)"
+            # A base that has MOVED and a base that is GONE need different
+            # sentences: one tells you why the knobs look different, the other
+            # tells you the values are not recorded anywhere else any more.
+            if ($baseMissing) {
+                Write-Host "$($ui.Warn)  '$changedBaseName' is gone, so the adjustments measured against it are not shown.$($ui.Reset)"
+                Write-Host "$($ui.Dim)  Restore that style to get them back; saving now records this style's own colours.$($ui.Reset)"
+            } else {
+                Write-Host "$($ui.Warn)  '$changedBaseName' has changed since this style was tuned -- starting from its current colours.$($ui.Reset)"
+            }
         }
         Write-Host ""
         $rows = @(

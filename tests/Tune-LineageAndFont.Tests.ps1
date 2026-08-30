@@ -94,6 +94,31 @@ Describe 'a drifted base does not cost the style its ancestry' {
                 -Because 'the cached background lives under the BASE name; self-reference severs it for good'
         }
 
+        It 'says so when the base is GONE, and keeps the name so it can come back' {
+            # "The base changed" and "the base is gone" were folded together by
+            # `$baseIsSelf = (-not $resolvedBaseDir) -or ...`, so deleting a base
+            # dropped the child's deltas in COMPLETE silence: BaseChanged stayed
+            # false, ChangedBaseName stayed empty, and the tuner opened on
+            # neutral knobs as though the style had never been tuned. Measured
+            # before the fix: brightness -35 / saturation 10 became 0 / 0 with no
+            # notice, and the next save wrote base = self, severing the
+            # background inheritance permanently.
+            #
+            # A base can go the ordinary way -- README invites hand-authored
+            # styles in this directory, so a folder can simply be removed.
+            $before = Resolve-TuneSeed -StyleName 'eva-night' -StyleDir $script:nightDir
+            $before.Brightness | Should -Be -35 -Because 'the deltas are recorded while the base exists'
+
+            Remove-Item -LiteralPath $script:evaDir -Recurse -Force
+
+            $after = Resolve-TuneSeed -StyleName 'eva-night' -StyleDir $script:nightDir
+            $after.BaseMissing     | Should -BeTrue  -Because 'gone is not the same as unchanged'
+            $after.BaseChanged     | Should -BeTrue  -Because 'the user must be told the knobs were reset'
+            $after.ChangedBaseName | Should -Be 'eva' -Because 'the notice has to name the base that vanished'
+            $after.LineageBase     | Should -Be 'eva' `
+                -Because 'recording the style as its own base would make a returning base unrecoverable'
+        }
+
         It 'does not report drift for ever after saving through it' {
             [System.IO.File]::WriteAllText((Join-Path $script:evaDir 'scheme.json'),
                 '{"name":"eva","background":"#1a1016","foreground":"#ffe8e8"}')
