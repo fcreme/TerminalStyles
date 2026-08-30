@@ -102,6 +102,18 @@ Describe 'Invoke-StylePickerLoop' {
         Context 'integration with real settings I/O' {
 
             BeforeEach {
+                # Sandbox the data root. This Context drives the REAL settings
+                # I/O, and resolving a style's background derives its cache
+                # directory from $script:TStylesDataRoot -- which is the live
+                # install unless it is overridden here. Without this the suite
+                # wrote cache/beta/.no-background into the developer's own
+                # ~/Library/Application Support/TerminalStyles on every run.
+                # Same seam-leak shape as the $ZDOTDIR escape: the test
+                # sandboxes the files it can see and one resolver reaches past
+                # TestDrive into the real environment.
+                $script:savedDataRoot = $script:TStylesDataRoot
+                $script:TStylesDataRoot = $TestDrive
+
                 # Two fake styles so DownArrow can move 0 -> 1.
                 $script:dirA = Join-Path $TestDrive 'styles\alpha'
                 $script:dirB = Join-Path $TestDrive 'styles\beta'
@@ -141,6 +153,8 @@ Describe 'Invoke-StylePickerLoop' {
                     Write-SettingsAtomic -Path $script:settingsPath -Json $script:originalJson
                 }
             }
+
+            AfterEach { $script:TStylesDataRoot = $script:savedDataRoot }
 
             It 'restores the byte-exact original settings.json on Esc (after a preview)' {
                 $originalBytes = [System.IO.File]::ReadAllBytes($script:settingsPath)
