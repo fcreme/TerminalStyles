@@ -34,7 +34,13 @@ function Get-TerminalStyleHelpData {
             Name = 'reset'; Usage = 'reset [-Target <name>]'; Summary = 'Revert a profile to its unstyled default'
             Detail = @("Strips the colors, cursor, font, opacity, and background a style added",
                        "to the target profile, and restores your own prompt. The inverse of",
-                       "applying a style. Writes a settings.json.bak first.")
+                       "applying a style.",
+                       "",
+                       "On Windows Terminal that means editing settings.json, and a",
+                       "settings.json.bak is written first. Elsewhere there is no",
+                       "settings.json to strip: the reset is an escape sequence handing",
+                       "color control back to the terminal's own profile, so there is",
+                       "nothing to back up and no .bak is written.")
             Keys = @(); Examples = @('tstyles reset', "tstyles reset -Target 'Ubuntu'")
         }
         [pscustomobject]@{
@@ -71,8 +77,12 @@ function Get-TerminalStyleHelpData {
         [pscustomobject]@{
             Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font and apply it to the active profile'
             Detail = @("With no argument, lists available coding fonts with installed/installable",
-                       "markers. With a font name, installs it (if not already present) and",
-                       "applies it to the active Windows Terminal profile.")
+                       "markers. With a font name, installs it (if not already present) and,",
+                       "on Windows Terminal, applies it to the active profile.",
+                       "",
+                       "Every other terminal takes its font from its own preferences, so",
+                       "the font is installed for you to select there by hand -- tstyles",
+                       "says so rather than applying it.")
             Keys = @(); Examples = @('tstyles font', 'tstyles font ''JetBrains Mono''')
         }
         [pscustomobject]@{
@@ -168,8 +178,12 @@ function Show-TerminalStyleHelp {
 
     # Overview. Module version is best-effort (no disk I/O); omitted if absent.
     $ver = $ExecutionContext.SessionState.Module.Version
-    $title = if ($ver) { "tstyles - themed styles for Windows Terminal (v$ver)" }
-             else       { "tstyles - themed styles for Windows Terminal" }
+    # Not "for Windows Terminal". This module styles Terminal.app, iTerm2,
+    # kitty, WezTerm, Ghostty, Alacritty and VS Code as well, and the line was
+    # the first thing a macOS or Linux user read -- naming the one terminal
+    # they were not using.
+    $title = if ($ver) { "tstyles - themed styles for your terminal (v$ver)" }
+             else       { "tstyles - themed styles for your terminal" }
 
     Write-Host ""
     Write-Host $title -ForegroundColor Cyan

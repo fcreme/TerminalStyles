@@ -73,3 +73,50 @@ Describe 'Show-TerminalStyleHelp' {
         }
     }
 }
+
+Describe 'help does not promise Windows Terminal behaviour to everyone else' {
+    # The existing tests here check the SHAPE of the help -- that every command
+    # has a Name, Usage and Summary, that lookup is case-insensitive. Nothing
+    # checked whether what it says is true, and on macOS and Linux three things
+    # were not:
+    #
+    #   * the overview title read "themed styles for Windows Terminal", which
+    #     was the first line a user of Terminal.app, iTerm2, kitty, WezTerm,
+    #     Ghostty, Alacritty or VS Code read;
+    #   * `reset` promised "Writes a settings.json.bak first", and off Windows
+    #     Terminal Reset-StyleNonWT writes no backup and there is no
+    #     settings.json at all -- a safety net offered where none exists;
+    #   * `font` said it "applies it to the active Windows Terminal profile",
+    #     while Invoke-TerminalStyleFont prints, correctly, that the terminal
+    #     takes its font from its own preferences and it cannot.
+    #
+    # In all three the runtime was already platform-correct. Only the help lied.
+    InModuleScope TerminalStyles {
+
+        It 'the overview title does not name one terminal as though it were the only one' {
+            $out = Show-TerminalStyleHelp 6>&1 | Out-String
+            $title = ($out -split "`r?`n" | Where-Object { $_ -match 'tstyles - ' } | Select-Object -First 1)
+            $title | Should -Not -BeNullOrEmpty
+            $title | Should -Not -Match 'Windows Terminal' `
+                -Because 'this module styles eight other terminals, and says so in the README'
+        }
+
+        It 'the reset topic does not promise a backup that only Windows Terminal gets' {
+            $reset = (Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'reset' })
+            $detail = ($reset.Detail -join ' ')
+            if ($detail -match 'settings\.json\.bak') {
+                $detail | Should -Match '(?i)(elsewhere|outside|other terminals?|non-|no \.bak)' `
+                    -Because 'off Windows Terminal there is no settings.json and no .bak is written'
+            }
+        }
+
+        It 'the font topic does not claim to apply a font every terminal will accept' {
+            $font = (Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'font' })
+            $detail = ($font.Detail -join ' ')
+            if ($detail -match '(?i)appl(y|ies)') {
+                $detail | Should -Match '(?i)(own preferences|by hand|select|Windows Terminal,)' `
+                    -Because 'every other terminal takes its font from its own settings'
+            }
+        }
+    }
+}

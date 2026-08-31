@@ -520,7 +520,13 @@ For dotfiles managers, CI, or anything that needs a one-shot apply (no
 menu), there's a direct script:
 
 ```powershell
-pwsh -File "$env:LOCALAPPDATA\TerminalStyles\apply.ps1" -Style umbrella -Target "PowerShell" -BackgroundImage "C:\img.gif"
+# apply.ps1 ships inside the module, whose location differs by install
+# method (and changes with every update on a PSGallery install), so ask
+# the module where it is rather than hard-coding a path:
+$base = Split-Path (Get-Module -ListAvailable TerminalStyles |
+                    Sort-Object Version -Descending |
+                    Select-Object -First 1).Path -Parent
+pwsh -File (Join-Path $base 'apply.ps1') -Style umbrella -Target "PowerShell" -BackgroundImage "C:\img.gif"
 ```
 
 `apply.ps1` is the same logic as the interactive picker but driven

@@ -248,9 +248,11 @@ testing locally in `powershell.exe` saves a round trip.
   `$script:TStylesThemeFields` near the top of `tstyles.ps1` define
   which profile fields a style owns. Merge and reset both consume
   them — touch the constants, not the call sites.
-- **`apply.ps1` duplicates six functions from `tstyles.ps1`**, each
-  marked with a `keep in sync` comment. Until the open deduplication
-  issue lands, a fix to one copy must be applied to both.
+- **`apply.ps1` does NOT duplicate the library.** It used to carry
+  copy-pasted forks of six functions, each with a `keep in sync` note;
+  two drifted anyway and lost user data. Since 0.8.7 it dot-sources
+  `lib/` like everything else, and the comment at the top of the file
+  records which forks went wrong and how. Do not reintroduce one.
 
 ## Pull request expectations
 
