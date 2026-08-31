@@ -94,7 +94,9 @@ function Get-StyleOrigin {
         the directory tells the truth. A style resolved out of the user root is
         yours; one resolved out of the module root is bundled; a user style whose
         name also exists bundled is a SHADOW -- deleting it reveals the original
-        rather than removing the name.
+        rather than removing the name. The manifest is still consulted first,
+        because a coexisting bootstrap install puts SHIPPED styles in the data
+        root and the path alone would call all sixteen of them the user's.
 
       ONE root (bootstrap)
         the directory says nothing, so ask the install manifest, which lists what
@@ -134,6 +136,31 @@ function Get-StyleOrigin {
         } catch { }
 
         if (-not $inUser) { return 'bundled' }
+
+        # Sitting in the user root is not proof the USER put it there, and the
+        # manifest in that same directory already knows which of us did.
+        #
+        # A bootstrap install writes its whole tree -- styles/ included -- into
+        # what is also the data root, and README documents that a bootstrap and
+        # a PSGallery install can coexist. When they do, the module root is the
+        # versioned PSGallery directory and every SHIPPED style resolves out of
+        # the data root instead, so all sixteen looked exactly like styles the
+        # user had made: `tstyles list` badged them 'yours (shadows bundled)'
+        # and `tstyles delete eva` offered to move eva to the trash, saying
+        # 'your style'. `tstyles uninstall` on the PSGallery side leaves that
+        # state behind, so it is reachable without ever installing twice on
+        # purpose.
+        #
+        # A tuned copy is still the user's: an Overwrite save writes tune.json
+        # under a bundled name, and 'shadow' already says "yours, shadowing
+        # bundled". Only an UNtuned style the installer admits placing is
+        # reclassified. With no manifest $Claim is $null, not an empty list, so
+        # an ordinary PSGallery install -- where the data root holds only what
+        # the user made -- keeps deciding by path exactly as before.
+        if (-not $hasTune -and $null -ne $Claim -and ($Claim -contains $Name)) {
+            return 'bundled'
+        }
+
         $bundledTwin = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $Name
         if (Test-Path -LiteralPath (Join-Path $bundledTwin 'scheme.json')) { return 'shadow' }
         return 'yours'

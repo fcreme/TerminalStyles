@@ -254,3 +254,82 @@ Describe 'delete is wired into the command surface' {
         $src.IndexOf("`$Arg -eq 'delete'") | Should -BeLessThan $src.IndexOf('$styleMatch = Get-AvailableStyles')
     }
 }
+
+Describe 'the SPLIT-root layout is not proof of ownership either' {
+    # The file header records the premise that was wrong on a bootstrap install:
+    # the path cannot tell a user's style from a bundled one, because both roots
+    # are the same directory. The split-root branch was written on the mirror
+    # image of that premise -- that when the roots DO differ, the path can be
+    # trusted absolutely -- and that is wrong in the case README documents at
+    # line 81: a bootstrap and a PSGallery install coexisting.
+    #
+    # There, the loaded module is the versioned PSGallery directory while the
+    # bootstrap's whole tree -- styles/ and its .installed-files manifest --
+    # still sits in the data root. Every SHIPPED style then resolves out of the
+    # data root and looked exactly like a style the user had made: `tstyles
+    # list` badged all sixteen 'yours (shadows bundled)', and `tstyles delete
+    # eva` offered to move eva to the trash calling it 'your style'. That is the
+    # claim-ownership-on-a-guess failure this function's own docstring forbids.
+    #
+    # `tstyles uninstall` on the PSGallery side leaves exactly this state, so it
+    # is reachable without ever deliberately installing twice.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+
+            $script:caseRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:dataRoot = Join-Path $script:caseRoot 'data'
+            $script:modRoot  = Join-Path $script:caseRoot 'mod'
+            foreach ($d in @((Join-Path $script:dataRoot 'styles/eva'),
+                             (Join-Path $script:modRoot  'styles/eva'))) {
+                New-Item -ItemType Directory -Path $d -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), '{}')
+            }
+            $script:TStylesDataRoot   = $script:dataRoot
+            $script:TStylesModuleRoot = $script:modRoot
+            $script:evaDir = Join-Path $script:dataRoot 'styles/eva'
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        It 'the roots really are separate in this fixture' {
+            Test-StylesRootsAreOne | Should -BeFalse -Because 'otherwise the test exercises the other branch'
+        }
+
+        It 'a shipped style the installer admits placing is bundled, not the user''s' {
+            [System.IO.File]::WriteAllText((Join-Path $script:dataRoot '.installed-files'), "styles/eva`n")
+            Get-StyleOrigin -Name 'eva' -StyleDir $script:evaDir |
+                Should -Be 'bundled' -Because 'the manifest in that same directory says the installer wrote it'
+        }
+
+        It 'a TUNED copy stays the user''s even when the manifest claims the name' {
+            # An Overwrite save writes tune.json under a bundled name. 'shadow'
+            # already means "yours, shadowing bundled", and that must survive.
+            [System.IO.File]::WriteAllText((Join-Path $script:dataRoot '.installed-files'), "styles/eva`n")
+            [System.IO.File]::WriteAllText((Join-Path $script:evaDir 'tune.json'), '{"base":"eva"}')
+            Get-StyleOrigin -Name 'eva' -StyleDir $script:evaDir |
+                Should -Be 'shadow' -Because 'the user overwrote it; the manifest does not get to take it back'
+        }
+
+        It 'with no manifest the path still decides, so a plain PSGallery install is unchanged' {
+            # Get-InstalledStyleClaim returns $null -- not an empty list -- when
+            # it cannot say, which is what keeps the ordinary case on the old
+            # path. An empty list here would reclassify nothing but would also
+            # mean "the installer placed nothing", which is a different claim.
+            Get-InstalledStyleClaim | Should -BeNullOrEmpty
+            Get-StyleOrigin -Name 'eva' -StyleDir $script:evaDir |
+                Should -Be 'shadow' -Because 'without a manifest the data root holds only what the user made'
+        }
+
+        It 'a style the manifest does not name is still the user''s' {
+            [System.IO.File]::WriteAllText((Join-Path $script:dataRoot '.installed-files'), "styles/eva`n")
+            $mine = Join-Path $script:dataRoot 'styles/mine'
+            New-Item -ItemType Directory -Path $mine -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $mine 'scheme.json'), '{}')
+            Get-StyleOrigin -Name 'mine' -StyleDir $mine | Should -Be 'yours'
+        }
+    }
+}

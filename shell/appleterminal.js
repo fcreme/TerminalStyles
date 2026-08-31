@@ -36,10 +36,28 @@ function writeFile(path, text) {
 function archivedColor(hex) {
     // "#rrggbb" -> base64 NSKeyedArchiver archive of an NSColor.
     //
-    // colorWithCalibratedRed..., NOT colorWithSRGBRed...: the sRGB constructor
-    // archives the full ICC profile with every color, which is ~5 KB each and
-    // would bloat a 20-color profile to 100 KB. The calibrated form is 245
-    // bytes and is what Terminal writes itself.
+    // colorWithDeviceRed..., NOT colorWithSRGBRed... and NOT
+    // colorWithCalibratedRed...
+    //
+    // The sRGB constructor archives the full ICC profile with every color --
+    // 4824 base64 chars each, which would bloat a 20-color profile to ~100 KB.
+    // That is the reason this was never sRGB, and it still holds.
+    //
+    // But calibrated was the wrong way to avoid it. NSCalibratedRGBColorSpace
+    // is Apple generic RGB at gamma 1.8, so AppKit color-manages the values on
+    // the way to the screen and they do not land where scheme.json put them:
+    // eva's cursor #ff3d5a drew as #ff586d, its red #c41e3a as #d1344a, and a
+    // mid-grey #808080 lightened to #929292 -- up to 27/255 on a channel. Every
+    // other consumer of the same hex treats it as a literal sRGB value: the OSC
+    // packet in lib/color.ps1, Windows Terminal's settings.json, the picker's
+    // live preview. So `-NewWindow`, documented as carrying the FULL style,
+    // showed a different palette from the same style in the current window --
+    // and README suggests making that profile the Terminal.app default, which
+    // made the wrong one permanent.
+    //
+    // Device RGB round-trips every hex exactly (#ff3d5a -> #ff3d5a) and
+    // archives to 328 base64 chars, byte-for-byte the same size as calibrated.
+    // The size argument never applied to it.
     var h = hex.replace('#', '');
     // Validate BEFORE parseInt. parseInt('zz', 16) is NaN, NSColor accepts NaN
     // components without complaint, and the archive then carries
@@ -51,7 +69,7 @@ function archivedColor(hex) {
     var r = parseInt(h.substr(0, 2), 16) / 255;
     var g = parseInt(h.substr(2, 2), 16) / 255;
     var b = parseInt(h.substr(4, 2), 16) / 255;
-    var color = $.NSColor.colorWithCalibratedRedGreenBlueAlpha(r, g, b, 1.0);
+    var color = $.NSColor.colorWithDeviceRedGreenBlueAlpha(r, g, b, 1.0);
     return $.NSKeyedArchiver.archivedDataWithRootObject(color)
         .base64EncodedStringWithOptions(0).js;
 }
