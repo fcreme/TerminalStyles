@@ -33,8 +33,13 @@ Describe 'tstyles help tab completion' {
     It "offers 'help' as a subcommand" {
         $repoRoot = Split-Path $PSScriptRoot -Parent
         Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
-        $matches = (TabExpansion2 -inputScript 'tstyles hel' -cursorColumn 11).CompletionMatches.CompletionText
-        $matches | Should -Contain 'help'
+        # Not $matches: that is an automatic variable, replaced by every -match
+        # in scope. Harmless as written -- the assertion follows immediately --
+        # but one -match between these two lines would silently swap the
+        # completion list for regex captures, and the failure would read as
+        # "tab completion broke".
+        $completions = (TabExpansion2 -inputScript 'tstyles hel' -cursorColumn 11).CompletionMatches.CompletionText
+        $completions | Should -Contain 'help'
     }
 }
 
