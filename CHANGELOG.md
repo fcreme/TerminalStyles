@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- a project page at `docs/index.html`, ready for GitHub Pages. The hero is a terminal you arrow through with the up and down keys: picking a theme repaints the terminal AND the page's own accent, which is the tool's own mechanic rather than a description of it. Every palette is read from that theme's real `scheme.json` and every banner from its `prompt.sh`, so the previews are the styles themselves rather than mockups. The animated captures come from the `gifs` branch, and the honest capability table -- including the dashes that describe what this tool does not yet write -- is carried over from the README rather than softened
+
 ## [0.8.20] - 2026-08-31
 
 ### Added
