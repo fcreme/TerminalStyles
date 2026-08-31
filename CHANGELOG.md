@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.20] - 2026-08-31
+
 ### Added
 
 - **`tstyles delete <name>`** removes a style you made, and `tstyles list` now marks which styles are yours. The tuner makes creating a style a two-keystroke affair and every result lands in your styles dir as a full style that lists, tab-completes and appears in the picker -- but until now the only way to remove one was `tstyles uninstall -DeleteData`, which destroys the entire data root. Delete MOVES the folder to `.deleted/<name>-<timestamp>` and keeps it for 7 days rather than erasing it, so a mistake is undone by moving it back; the cached background and any Terminal.app profile are left alone. The confirmation itemises what is about to happen first, including naming any style tuned from this one and the exact brightness and saturation it will lose
@@ -477,7 +479,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.19...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.20...HEAD
+[0.8.20]: https://github.com/fcreme/TerminalStyles/compare/v0.8.19...v0.8.20
 [0.8.19]: https://github.com/fcreme/TerminalStyles/compare/v0.8.18...v0.8.19
 [0.8.18]: https://github.com/fcreme/TerminalStyles/compare/v0.8.17...v0.8.18
 [0.8.17]: https://github.com/fcreme/TerminalStyles/compare/v0.8.16...v0.8.17
