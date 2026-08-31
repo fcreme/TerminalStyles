@@ -199,6 +199,11 @@ Describe 'the generated tstyles-cli.ps1 shim' {
             Copy-Item -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'shell/tstyles.sh') `
                       -Destination (Join-Path $awkward 'shell/tstyles.sh') -Force
             $script:TStylesModuleRoot = $awkward
+            # BOOTSTRAP layout on purpose. Only a bootstrap install bakes the
+            # module path into the shim -- a PSGallery one imports by name, so
+            # there is no path to escape and this assertion would hold
+            # vacuously against any escaping at all.
+            Mock Get-TStylesDataRoot { $script:TStylesModuleRoot }
 
             Sync-ShellRuntime | Out-Null
             $cliPath = Get-ShellCliPath
@@ -213,6 +218,11 @@ Describe 'the generated tstyles-cli.ps1 shim' {
             Copy-Item -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'shell/tstyles.sh') `
                       -Destination (Join-Path $awkward 'shell/tstyles.sh') -Force
             $script:TStylesModuleRoot = $awkward
+            # BOOTSTRAP layout on purpose. Only a bootstrap install bakes the
+            # module path into the shim -- a PSGallery one imports by name, so
+            # there is no path to escape and this assertion would hold
+            # vacuously against any escaping at all.
+            Mock Get-TStylesDataRoot { $script:TStylesModuleRoot }
             Sync-ShellRuntime | Out-Null
             $cli = [System.IO.File]::ReadAllText((Get-ShellCliPath), [System.Text.UTF8Encoding]::new($false))
             $cli | Should -Match "o''brien2"

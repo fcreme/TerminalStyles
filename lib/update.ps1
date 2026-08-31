@@ -184,9 +184,38 @@ function Invoke-TerminalStylesRegister {
 
     $loaderBegin = '# ===== TerminalStyles BEGIN ====='
     $loaderEnd   = '# ===== TerminalStyles END ====='
+
+    # By NAME only when the module is somewhere PowerShell will look. A
+    # bootstrap install is not on $env:PSModulePath -- which is exactly why
+    # install.ps1 writes the full-path form, and why Get-ShellRcCandidate's
+    # neighbours in terminals.ps1 say so out loud -- so `Import-Module
+    # TerminalStyles` there resolves to nothing.
+    #
+    # This wrote the by-name form unconditionally, and it uses the same
+    # BEGIN/END markers the installer does, so `tstyles register -Force` on a
+    # bootstrap install stripped the loader that worked and replaced it with one
+    # that does not. It then printed "Registered in <profile>" and
+    # "TerminalStyles will auto-load on every new shell tab", while every new
+    # tab in fact opened with a red "no valid module file was found in any
+    # module directory" and no tstyles command at all. Recovery meant editing
+    # $PROFILE by hand, which nothing told the user.
+    #
+    # The two forms below must stay identical to install.ps1's -- there is a
+    # test that compares them, because install.ps1 is fetched and piped to iex
+    # before the module exists and so cannot dot-source this file.
+    $loaderImport = if ((Get-TerminalStylesInstallKind) -eq 'Bootstrap') {
+        if ((Get-TStylesPlatform) -eq 'Windows') {
+            'Import-Module "$env:LOCALAPPDATA\TerminalStyles\TerminalStyles.psd1" -DisableNameChecking'
+        } else {
+            'Import-Module "{0}" -DisableNameChecking' -f (Join-Path $script:TStylesModuleRoot 'TerminalStyles.psd1')
+        }
+    } else {
+        'Import-Module TerminalStyles -DisableNameChecking'
+    }
+
     $loaderBody  = @"
 $loaderBegin
-Import-Module TerminalStyles -DisableNameChecking
+$loaderImport
 $loaderEnd
 "@
 

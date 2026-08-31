@@ -380,3 +380,69 @@ Describe 'shell-init finds the rc file zsh actually reads' {
         }
     }
 }
+
+Describe 'the shell shim does not pin a PSGallery install to one version' {
+    # The shim bakes an absolute Import-Module into $DataRoot/tstyles-cli.ps1.
+    # That is REQUIRED for a bootstrap install, which is not on
+    # $env:PSModulePath. It is wrong for a PSGallery install, whose module root
+    # is version-stamped and whose updates install ALONGSIDE rather than in
+    # place -- 0.8.17, 0.8.18 and 0.8.19 sitting side by side is the ordinary
+    # state of that directory.
+    #
+    # Baking the versioned path in pinned the shell's `tstyles` to whichever
+    # version was current when shell-init last ran. `tstyles update` from zsh
+    # ran Update-PSResource, printed "Update complete", and the next `tstyles`
+    # still executed the old code -- so the user silently kept every bug that
+    # release fixed and never saw a new bundled style.
+    #
+    # The old comment claimed regeneration on every apply refreshed the path.
+    # It cannot: the regeneration runs inside the module the shim just loaded,
+    # so it rewrites the same stale root. A fixed point, with no way out from
+    # the shell.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:shimData = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:shimData -Force | Out-Null
+            $script:TStylesDataRoot = $script:shimData
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        It 'a PSGallery install imports by NAME, so autoload picks the newest version' {
+            Mock Get-TStylesDataRoot { Join-Path $TestDrive 'some-other-data-root' }
+            Get-TerminalStylesInstallKind | Should -Be 'PSResourceGet' -Because 'the fixture must set the branch under test'
+
+            Sync-ShellRuntime | Should -BeTrue
+            $shim = [System.IO.File]::ReadAllText((Get-ShellCliPath))
+
+            $shim | Should -Match '(?m)^Import-Module TerminalStyles -DisableNameChecking\s*$'
+            $shim | Should -Not -Match 'TerminalStyles\.psd1' `
+                -Because 'a version-stamped path is exactly what pins the shell to an old release'
+        }
+
+        It 'a BOOTSTRAP install still gets the absolute path, which it needs' {
+            Mock Get-TStylesDataRoot { $script:TStylesModuleRoot }
+            Get-TerminalStylesInstallKind | Should -Be 'Bootstrap'
+
+            Sync-ShellRuntime | Should -BeTrue
+            $shim = [System.IO.File]::ReadAllText((Get-ShellCliPath))
+
+            $shim | Should -Match 'TerminalStyles\.psd1' `
+                -Because 'the bootstrap directory is not on $env:PSModulePath'
+        }
+
+        It 'the shim still suppresses the auto-load side effects either way' {
+            # `tstyles list` from zsh used to repaint the terminal and print the
+            # previous style's banner before listing anything. Whatever the
+            # import form, that guard has to survive.
+            Mock Get-TStylesDataRoot { Join-Path $TestDrive 'yet-another-root' }
+            Sync-ShellRuntime | Out-Null
+            [System.IO.File]::ReadAllText((Get-ShellCliPath)) |
+                Should -Match '\$global:TStylesNoAutoLoad\s*=\s*\$true'
+        }
+    }
+}
