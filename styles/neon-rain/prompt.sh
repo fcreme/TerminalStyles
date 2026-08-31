@@ -13,10 +13,10 @@
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
 _ts_D=$(ts_raw '90;104;120')
-_ts_G=$(ts_raw '94;224;144')       pG=$(ts_c '94;224;144')
-_ts_W=$(ts_raw '216;228;240')      pW=$(ts_c '216;228;240')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
-_ts_Y=$(ts_raw '240;200;80')       pY=$(ts_c '240;200;80')
+_ts_G=$(ts_raw '94;224;144')       _ts_pG=$(ts_c '94;224;144')
+_ts_W=$(ts_raw '216;228;240')      _ts_pW=$(ts_c '216;228;240')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
+_ts_Y=$(ts_raw '240;200;80')       _ts_pY=$(ts_c '240;200;80')
 
 ts_title 'NEON RAIN // DISTRICT-05'
 
@@ -31,4 +31,4 @@ printf '%s\n' "${_ts_D}|  ${_ts_Y}\"The neon never sleeps.\"${_ts_W}            
 printf '%s\n' "${_ts_D}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pY}[NEON-RAIN${pW} // ${pG}{USER}${pY}]${pX} ${pY}[CWD: ${pW}{CWD}${pY}]${pX}{NL}${pY}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pY}[NEON-RAIN${_ts_pW} // ${_ts_pG}{USER}${_ts_pY}]${_ts_pX} ${_ts_pY}[CWD: ${_ts_pW}{CWD}${_ts_pY}]${_ts_pX}{NL}${_ts_pY}>${_ts_pX} ")"

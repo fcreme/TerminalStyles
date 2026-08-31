@@ -9,10 +9,17 @@ function global:prompt {
     $Esc  = [char]27
     $Teal = "$Esc[38;2;122;153;153m"
     $X    = "$Esc[0m"
-    $leaf = if ($PWD.Path -eq $HOME) {
-        Split-Path -Leaf $HOME
+    # The zsh/bash half is {LEAF}, which ts_prompt_expand maps to %1~ / \W.
+    # Matching %1~ takes two steps, and this had neither: abbreviate $HOME to
+    # ~ FIRST, then keep the last component -- except where that leaves only
+    # one, which zsh prints whole ('~', '/tmp', '/'). Before: sitting in $HOME
+    # printed the home folder's name where zsh printed '~', and /tmp printed
+    # 'tmp' where zsh printed '/tmp'.
+    $abbr = $PWD.Path -replace ('^' + [regex]::Escape($HOME) + '(?=$|[\\/])'), '~'
+    $leaf = if ($abbr -eq '~' -or ($abbr -replace '^[\\/]', '') -notmatch '[\\/]') {
+        $abbr
     } else {
-        Split-Path -Leaf $PWD.Path
+        Split-Path -Leaf $abbr
     }
     "$leaf $($Teal)`$$($X) "
 }
@@ -25,7 +32,16 @@ if (Get-Module -ListAvailable PSReadLine) {
         Set-PSReadLineOption -PredictionSource History -ErrorAction Stop
         Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction Stop
     } catch { }
-    Set-PSReadLineOption -EditMode Windows
+    # Windows only. It is already the default there, and on macOS/Linux --
+    # where PSReadLine defaults to Emacs -- EditMode Windows UNBINDS Ctrl+E,
+    # Ctrl+K, Ctrl+U and Ctrl+D, and turns Ctrl+A into SelectAll. Applying a
+    # colour theme silently took away Ctrl+D (end session) and Ctrl+U (clear
+    # line); no style README mentions edit mode and nothing on screen explains
+    # it. 5.1 predates $IsWindows and is Windows by definition, hence the
+    # version test first -- the same order as Get-TStylesPlatform.
+    if (($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows) {
+        Set-PSReadLineOption -EditMode Windows
+    }
     Set-PSReadLineOption -Colors @{
         Command   = '#D5D5D5'
         Parameter = '#7A9999'

@@ -6,7 +6,11 @@
 
 $Host.UI.RawUI.WindowTitle = 'GARDEN RAIN'
 
-function global:prompt { "PS $($PWD.Path)> " }
+function global:prompt {
+    # ~-abbreviated to match the zsh/bash half, where {CWD} maps to %~ / \w.
+    $cwd = $PWD.Path -replace ('^' + [regex]::Escape($HOME) + '(?=$|[\\/])'), '~'
+    "PS $cwd> "
+}
 
 if (Get-Module -ListAvailable PSReadLine) {
     Import-Module PSReadLine -ErrorAction SilentlyContinue
@@ -14,7 +18,16 @@ if (Get-Module -ListAvailable PSReadLine) {
         Set-PSReadLineOption -PredictionSource History -ErrorAction Stop
         Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction Stop
     } catch { }
-    Set-PSReadLineOption -EditMode Windows
+    # Windows only. It is already the default there, and on macOS/Linux --
+    # where PSReadLine defaults to Emacs -- EditMode Windows UNBINDS Ctrl+E,
+    # Ctrl+K, Ctrl+U and Ctrl+D, and turns Ctrl+A into SelectAll. Applying a
+    # colour theme silently took away Ctrl+D (end session) and Ctrl+U (clear
+    # line); no style README mentions edit mode and nothing on screen explains
+    # it. 5.1 predates $IsWindows and is Windows by definition, hence the
+    # version test first -- the same order as Get-TStylesPlatform.
+    if (($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows) {
+        Set-PSReadLineOption -EditMode Windows
+    }
     Set-PSReadLineOption -Colors @{
         Command   = '#C8D4DC'
         Parameter = '#5EC47A'

@@ -12,10 +12,10 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-_ts_C=$(ts_raw '0;204;255')        pC=$(ts_c '0;204;255')
-_ts_P=$(ts_raw '255;123;138')      pP=$(ts_c '255;123;138')
-_ts_W=$(ts_raw '184;240;255')      pW=$(ts_c '184;240;255')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
+_ts_C=$(ts_raw '0;204;255')        _ts_pC=$(ts_c '0;204;255')
+_ts_P=$(ts_raw '255;123;138')      _ts_pP=$(ts_c '255;123;138')
+_ts_W=$(ts_raw '184;240;255')      _ts_pW=$(ts_c '184;240;255')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
 
 ts_title 'EX MACHINA // BLUEBOOK'
 
@@ -30,4 +30,4 @@ printf '%s\n' "${_ts_C}|  ${_ts_W}STATUS: CONSCIOUS  ::  TRUST: ${_ts_P}??${_ts_
 printf '%s\n' "${_ts_C}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pP}[AVA${pC} // BLUEBOOK${pP}]${pX} ${pC}[LOC: ${pW}{CWD}${pC}]${pX}{NL}${pC}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pP}[AVA${_ts_pC} // BLUEBOOK${_ts_pP}]${_ts_pX} ${_ts_pC}[LOC: ${_ts_pW}{CWD}${_ts_pC}]${_ts_pX}{NL}${_ts_pC}>${_ts_pX} ")"

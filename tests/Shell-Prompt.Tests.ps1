@@ -196,12 +196,70 @@ Describe 'a style prompt does not clobber the user''s shell variables' {
         $path = Join-Path (Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'styles') $_) 'prompt.sh'
         $text = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
 
-        $bare = @([regex]::Matches($text, '(?m)^([A-Za-z_][A-Za-z0-9_]*)=') |
+        # NOT anchored at ^. It was, and the styles put a second assignment in
+        # the second column of the same physical line --
+        # `_ts_R=$(ts_raw '...')        pR=$(ts_c '...')` -- so the lint saw
+        # only `_ts_R`, reported green, and nine styles went on clobbering the
+        # user's $pX, $pW, $pMist and friends for four releases after the
+        # CHANGELOG said the defect was closed.
+        $bare = @([regex]::Matches($text, '(?m)(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=') |
             ForEach-Object { $_.Groups[1].Value } |
             Where-Object { $_ -notmatch '^(TS_|_ts_)' } |
             Sort-Object -Unique)
 
         $bare | Should -BeNullOrEmpty `
             -Because "$_ would overwrite the user's own $($bare -join ', ') on every new shell"
+    }
+}
+
+Describe 'a style leaks nothing into the user shell -- measured, not linted' {
+    # The regex lint above is a proxy, and every proxy has a blind spot: it was
+    # anchored at ^ and missed a second assignment in the second column, so it
+    # certified nine leaking styles as clean for four releases. Widening it
+    # closes THAT shape. It does not close the next one -- `eval`, a `for` loop,
+    # `read x`, a heredoc, `typeset x=` all assign without matching.
+    #
+    # So this asks the only authority that cannot be fooled by formatting: a
+    # real zsh. Source the file and diff the variable table across it. Whatever
+    # the syntax, a name that exists afterwards and did not before is a name the
+    # user just lost.
+    BeforeDiscovery {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $script:LeakStyles = @(
+            Get-ChildItem -LiteralPath (Join-Path $repoRoot 'styles') -Directory |
+                Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'prompt.sh') } |
+                ForEach-Object { $_.Name })
+
+        # Decided HERE, at discovery. A -Skip reading a variable set in
+        # BeforeAll gets $null, which is falsy, so the test neither runs nor
+        # reports as skipped -- it silently passes. This suite has been bitten
+        # by that once already.
+        $script:NoZsh = -not (Get-Command zsh -ErrorAction SilentlyContinue)
+    }
+
+    It '<_> defines no bare name in a real zsh' -ForEach $script:LeakStyles -Skip:$script:NoZsh {
+        $repoRoot  = Split-Path $PSScriptRoot -Parent
+        $promptSh  = Join-Path (Join-Path (Join-Path $repoRoot 'styles') $_) 'prompt.sh'
+        $runtimeSh = Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh'
+
+        # `typeset +m '*'` prints names only. The two capture variables are
+        # themselves new names, so they are filtered with the namespaced ones.
+        $script = @(
+            "source ${runtimeSh} >/dev/null 2>&1"
+            'ts_before=$(typeset +m "*" 2>/dev/null)'
+            "source ${promptSh} >/dev/null 2>&1"
+            'ts_after=$(typeset +m "*" 2>/dev/null)'
+            'comm -13 <(print -r -- "$ts_before" | sort -u) <(print -r -- "$ts_after" | sort -u)'
+        ) -join "`n"
+
+        $sf = Join-Path $TestDrive ("leak-$_.zsh")
+        [System.IO.File]::WriteAllText($sf, $script, [System.Text.UTF8Encoding]::new($false))
+
+        $out = & zsh -f $sf 2>$null
+        $leaked = @($out | Where-Object { $_ -and $_ -notmatch '^(TS_|_ts_|ts_before$|ts_after$)' } |
+                   Sort-Object -Unique)
+
+        $leaked -join ', ' | Should -BeNullOrEmpty `
+            -Because "sourcing $_/prompt.sh replaced the user's own $($leaked -join ', ')"
     }
 }

@@ -12,10 +12,10 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-_ts_Mist=$(ts_raw '200;197;220')   pMist=$(ts_c '200;197;220')
-_ts_Moss=$(ts_raw '200;184;80')    pMoss=$(ts_c '200;184;80')
-_ts_Slate=$(ts_raw '156;160;204')  pSlate=$(ts_c '156;160;204')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
+_ts_Mist=$(ts_raw '200;197;220')   _ts_pMist=$(ts_c '200;197;220')
+_ts_Moss=$(ts_raw '200;184;80')    _ts_pMoss=$(ts_c '200;184;80')
+_ts_Slate=$(ts_raw '156;160;204')  _ts_pSlate=$(ts_c '156;160;204')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
 
 ts_title 'RAIN // HIGHLAND'
 
@@ -30,4 +30,4 @@ printf '%s\n' "${_ts_Slate}|  ${_ts_Mist}STILL NO SIGN OF THE OTHERS.           
 printf '%s\n' "${_ts_Slate}+--------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pSlate}[TRAVELER${pMoss} // RAIN${pSlate}]${pX} ${pSlate}[LOC: ${pMist}{CWD}${pSlate}]${pX}{NL}${pSlate}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pSlate}[TRAVELER${_ts_pMoss} // RAIN${_ts_pSlate}]${_ts_pX} ${_ts_pSlate}[LOC: ${_ts_pMist}{CWD}${_ts_pSlate}]${_ts_pX}{NL}${_ts_pSlate}>${_ts_pX} ")"

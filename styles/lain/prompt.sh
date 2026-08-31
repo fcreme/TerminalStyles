@@ -13,11 +13,11 @@
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
 _ts_D=$(ts_raw '90;88;112')
-_ts_M=$(ts_raw '208;168;216')      pM=$(ts_c '208;168;216')
-_ts_P=$(ts_raw '224;144;184')      pP=$(ts_c '224;144;184')
+_ts_M=$(ts_raw '208;168;216')      _ts_pM=$(ts_c '208;168;216')
+_ts_P=$(ts_raw '224;144;184')      _ts_pP=$(ts_c '224;144;184')
 _ts_R=$(ts_raw '176;64;80')
-_ts_W=$(ts_raw '216;212;224')      pW=$(ts_c '216;212;224')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
+_ts_W=$(ts_raw '216;212;224')      _ts_pW=$(ts_c '216;212;224')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
 
 ts_title 'NAVI // PROTOCOL 7'
 
@@ -32,4 +32,4 @@ printf '%s\n' "${_ts_D}|  ${_ts_M}\"Present day, present time. Hahaha.\"${_ts_W}
 printf '%s\n' "${_ts_D}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pP}[LAIN${pM} // WIRED${pP}]${pX} ${pP}[${pW}{CWD}${pP}]${pX}{NL}${pP}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pP}[LAIN${_ts_pM} // WIRED${_ts_pP}]${_ts_pX} ${_ts_pP}[${_ts_pW}{CWD}${_ts_pP}]${_ts_pX}{NL}${_ts_pP}>${_ts_pX} ")"

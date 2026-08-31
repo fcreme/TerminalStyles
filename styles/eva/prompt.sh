@@ -12,10 +12,10 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-_ts_R=$(ts_raw '255;61;90')        pR=$(ts_c '255;61;90')
-_ts_W=$(ts_raw '255;232;232')      pW=$(ts_c '255;232;232')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
-_ts_Y=$(ts_raw '232;197;71')       pY=$(ts_c '232;197;71')
+_ts_R=$(ts_raw '255;61;90')        _ts_pR=$(ts_c '255;61;90')
+_ts_W=$(ts_raw '255;232;232')      _ts_pW=$(ts_c '255;232;232')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
+_ts_Y=$(ts_raw '232;197;71')       _ts_pY=$(ts_c '232;197;71')
 
 ts_title 'EVA // NERV'
 
@@ -30,4 +30,4 @@ printf '%s\n' "${_ts_R}|  ${_ts_Y}ANTA BAKA?${_ts_W}                            
 printf '%s\n' "${_ts_R}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pR}[PILOT${pY} // EVA-02${pR}]${pX} ${pR}[LOC: ${pW}{CWD}${pR}]${pX}{NL}${pR}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pR}[PILOT${_ts_pY} // EVA-02${_ts_pR}]${_ts_pX} ${_ts_pR}[LOC: ${_ts_pW}{CWD}${_ts_pR}]${_ts_pX}{NL}${_ts_pR}>${_ts_pX} ")"

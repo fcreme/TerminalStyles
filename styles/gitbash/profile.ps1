@@ -19,8 +19,12 @@ function global:prompt {
     $Gray    = "$Esc[38;2;56;56;56m"
     $X       = "$Esc[0m"
 
-    $user     = $env:USERNAME
-    $hostname = $env:COMPUTERNAME
+    # $env:USERNAME and $env:COMPUTERNAME are Windows-only; pwsh on macOS and
+    # Linux sets neither, so this rendered as "@ MINGW64 <path>" with the
+    # identity blank -- on the one style whose entire point is that line. The
+    # zsh/bash half uses {USER}/{HOST}, which resolve correctly everywhere.
+    $user     = if ($env:USERNAME) { $env:USERNAME } else { [Environment]::UserName }
+    $hostname = if ($env:COMPUTERNAME) { $env:COMPUTERNAME } else { [Environment]::MachineName }
 
     # Path: substitute $HOME prefix with '~', then convert backslashes to
     # forward slashes for the authentic Git-Bash look.
@@ -53,7 +57,16 @@ if (Get-Module -ListAvailable PSReadLine) {
         Set-PSReadLineOption -PredictionSource History -ErrorAction Stop
         Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction Stop
     } catch { }
-    Set-PSReadLineOption -EditMode Windows
+    # Windows only. It is already the default there, and on macOS/Linux --
+    # where PSReadLine defaults to Emacs -- EditMode Windows UNBINDS Ctrl+E,
+    # Ctrl+K, Ctrl+U and Ctrl+D, and turns Ctrl+A into SelectAll. Applying a
+    # colour theme silently took away Ctrl+D (end session) and Ctrl+U (clear
+    # line); no style README mentions edit mode and nothing on screen explains
+    # it. 5.1 predates $IsWindows and is Windows by definition, hence the
+    # version test first -- the same order as Get-TStylesPlatform.
+    if (($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows) {
+        Set-PSReadLineOption -EditMode Windows
+    }
     Set-PSReadLineOption -Colors @{
         Command   = '#383838'
         Parameter = '#0000BB'

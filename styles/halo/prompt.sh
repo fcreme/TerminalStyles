@@ -15,10 +15,10 @@
 _ts_pB=$(ts_c '72;104;216')
 _ts_D=$(ts_raw '90;48;72')
 _ts_L=$(ts_raw '192;160;240')
-_ts_O=$(ts_raw '255;104;80')       pO=$(ts_c '255;104;80')
+_ts_O=$(ts_raw '255;104;80')       _ts_pO=$(ts_c '255;104;80')
 _ts_W=$(ts_raw '240;216;192')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
-_ts_Y=$(ts_raw '240;208;64')       pY=$(ts_c '240;208;64')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
+_ts_Y=$(ts_raw '240;208;64')       _ts_pY=$(ts_c '240;208;64')
 
 ts_title 'HALO // EXT3'
 
@@ -33,4 +33,4 @@ printf '%s\n' "${_ts_D}|  ${_ts_O}\"Look up. Look closer.\"${_ts_W}             
 printf '%s\n' "${_ts_D}+----------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pO}[HALO${pY} // EXT3${pO}]${pX} ${pO}[${_ts_pB}{CWD}${pO}]${pX}{NL}${pO}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pO}[HALO${_ts_pY} // EXT3${_ts_pO}]${_ts_pX} ${_ts_pO}[${_ts_pB}{CWD}${_ts_pO}]${_ts_pX}{NL}${_ts_pO}>${_ts_pX} ")"

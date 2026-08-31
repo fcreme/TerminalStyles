@@ -12,9 +12,9 @@
 # banner, which is ordinary output, and a ts_c-wrapped one for the prompt,
 # where non-printing bytes must be marked or the shell miscounts the
 # prompt width and redraws over it.
-_ts_R=$(ts_raw '180;30;30')        pR=$(ts_c '180;30;30')
-_ts_W=$(ts_raw '232;220;200')      pW=$(ts_c '232;220;200')
-_ts_X=$(ts_rawx)                   pX=$(ts_x)
+_ts_R=$(ts_raw '180;30;30')        _ts_pR=$(ts_c '180;30;30')
+_ts_W=$(ts_raw '232;220;200')      _ts_pW=$(ts_c '232;220;200')
+_ts_X=$(ts_rawx)                   _ts_pX=$(ts_x)
 
 ts_title 'UMBRELLA TERMINAL'
 
@@ -28,4 +28,4 @@ printf '%s\n' "${_ts_R}|  ${_ts_W}CLEARANCE: PERSONAL  ::  STATUS: FINE   ${_ts_
 printf '%s\n' "${_ts_R}+------------------------------------------+${_ts_X}"
 printf '%s\n' ""
 
-ts_prompt_apply "$(ts_prompt_expand "${pR}[UMBRELLA // OPERATOR: ${pW}{USER}${pR}]${pX}{NL}${pR}[CWD: ${pW}{CWD}${pR}]${pX}{NL}${pR}>${pX} ")"
+ts_prompt_apply "$(ts_prompt_expand "${_ts_pR}[UMBRELLA // OPERATOR: ${_ts_pW}{USER}${_ts_pR}]${_ts_pX}{NL}${_ts_pR}[CWD: ${_ts_pW}{CWD}${_ts_pR}]${_ts_pX}{NL}${_ts_pR}>${_ts_pX} ")"

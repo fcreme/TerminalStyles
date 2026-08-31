@@ -11,6 +11,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - a project page at `docs/index.html`, ready for GitHub Pages. The hero is a terminal you arrow through with the up and down keys: picking a theme repaints the terminal AND the page's own accent, which is the tool's own mechanic rather than a description of it. Every palette is read from that theme's real `scheme.json` and every banner from its `prompt.sh`, so the previews are the styles themselves rather than mockups. The animated captures come from the `gifs` branch, and the honest capability table -- including the dashes that describe what this tool does not yet write -- is carried over from the README rather than softened
 
+### Fixed
+
+- **nine styles overwrote the user's own shell variables on every new tab, four releases after the CHANGELOG said they had stopped.** The 0.8.17 fix namespaced every assignment under `_ts_`, but only the FIRST one on each line: the styles keep a second copy in the second column of the same physical line (`_ts_R=$(ts_raw '...')        pR=$(ts_c '...')`), and the lint guarding the rule anchored its regex at `^`, so it never looked past the first column and reported green the whole time. `$pX`, `$pR`, `$pW`, `$pY`, `$pC`, `$pP`, `$pM`, `$pB`, `$pG`, `$pO`, `$pMist`, `$pMoss` and `$pSlate` were replaced with ANSI escape strings in eva, ex-machina, halo, lain, marquee, neon-rain, rain, tombraider and umbrella
+- **applying any style on macOS or Linux silently disabled Ctrl+D, Ctrl+U, Ctrl+E and Ctrl+K.** All sixteen `profile.ps1` files set `-EditMode Windows` unconditionally. That is already the default on Windows, but PSReadLine defaults to Emacs on Unix, where the switch unbinds those four keys outright and turns Ctrl+A into SelectAll -- so a colour theme took away Ctrl+D (end session) and Ctrl+U (clear line), on every new tab, with nothing on screen to explain it and no README mentioning edit mode
+- **gitbash rendered `@ MINGW64 <path>` on macOS and Linux, with the identity blank** -- on the one style whose whole point is that line. It reads `$env:USERNAME` and `$env:COMPUTERNAME`, which only Windows sets; neon-rain (`[NEON-RAIN // ]`) and umbrella (`[UMBRELLA // OPERATOR: ]`) had the same hole. The zsh/bash halves use `{USER}`/`{HOST}` and were always right
+- **fourteen styles printed an absolute path in PowerShell where their shell half printed a `~`-abbreviated one**, because `{CWD}` maps to `%~` in zsh and `\w` in bash while `$PWD.Path` abbreviates nothing. sober had the inverse of the same bug twice over: it took the leaf of `$HOME` rather than `~`, and took it before abbreviating rather than after, so the home directory showed as the user's own folder name and `/tmp` as `tmp`
+
+  All sixteen styles now render byte-identically in both halves, which is what every `prompt.sh` header has promised since 0.8.0 and what nothing checked until now.
+
+### Changed
+
+- the shell-namespace lint no longer anchors at `^`, and is now backed by a test that sources each `prompt.sh` in a real zsh and diffs the variable table across it. A static pattern can always be stepped around -- by a second column, an `eval`, a `for` loop, a heredoc -- and this one was. Sourcing the file and asking the shell what changed cannot be
+
 ## [0.8.20] - 2026-08-31
 
 ### Added
