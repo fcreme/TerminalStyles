@@ -13,6 +13,11 @@ function Show-StyleList {
     Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     $styles = Get-AvailableStyles
+    # Read once for the whole listing rather than per row, the same seam
+    # Show-FontList uses for its installed-font set.
+    $claim = Get-InstalledStyleClaim
+    $rootsAreOne = Test-StylesRootsAreOne
+    $anyYours = $false
     Write-Host ""
     Write-Host "Available styles:" -ForegroundColor Cyan
     foreach ($s in $styles) {
@@ -29,13 +34,31 @@ function Show-StyleList {
         } catch {
             $swatch = "$([char]27)[38;2;160;160;160m(unreadable scheme.json)$([char]27)[0m"
         }
-        Write-Host ("  {0} {1,-16}  {2}" -f $marker, $s.Name, $swatch)
+        # Which styles are YOURS. Deliberately trailing text rather than a
+        # column: the picker draws rows at the same width and its viewport
+        # budget is already 23 rows in a 24-row window.
+        #
+        # An 'unknown' origin gets no badge at all -- on an install with no
+        # readable .installed-files the tool cannot prove who owns a style, and
+        # claiming it is yours is the error that would offer to delete the
+        # bundled set. Degrades to no badge on any failure, like the swatch above.
+        $badge = ''
+        try {
+            switch (Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim -RootsAreOne $rootsAreOne) {
+                'yours'  { $badge = "  $([char]27)[38;2;160;160;160myours$([char]27)[0m"; $anyYours = $true }
+                'shadow' { $badge = "  $([char]27)[38;2;160;160;160myours (shadows bundled)$([char]27)[0m"; $anyYours = $true }
+            }
+        } catch { }
+        Write-Host ("  {0} {1,-16}  {2}{3}" -f $marker, $s.Name, $swatch, $badge)
     }
     Write-Host ""
     if ($current) {
         Write-Host "$([char]27)[38;2;160;160;160m  (* = currently active)$([char]27)[0m"
     } else {
         Write-Host "$([char]27)[38;2;160;160;160m  (no bundled style currently active)$([char]27)[0m"
+    }
+    if ($anyYours) {
+        Write-Host "$([char]27)[38;2;160;160;160m  (yours = you made it; delete one with: tstyles delete <name>)$([char]27)[0m"
     }
     Write-Host ""
 }

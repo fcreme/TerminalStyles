@@ -55,6 +55,20 @@ function Get-TerminalStyleHelpData {
             Examples = @('tstyles tune', 'tstyles tune eva')
         }
         [pscustomobject]@{
+            Name = 'delete'; Usage = 'delete [name]'; Summary = 'Delete a style you made (bundled styles are refused)'
+            Detail = @("With no name, lists the styles this command can act on.",
+                       "",
+                       "The folder is MOVED to .deleted/<name>-<timestamp> in your data dir",
+                       "and kept for 7 days, so a mistake is undone by moving it back. The",
+                       "cached background and any Terminal.app profile are left alone.",
+                       "",
+                       "If your style shadows a bundled one of the same name, deleting yours",
+                       "does not remove the name -- it reveals the bundled style again. The",
+                       "confirmation says which of the two will happen, and names any style",
+                       "tuned from this one that loses its adjustments.")
+            Keys = @(); Examples = @('tstyles delete', 'tstyles delete my-theme')
+        }
+        [pscustomobject]@{
             Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font and apply it to the active profile'
             Detail = @("With no argument, lists available coding fonts with installed/installable",
                        "markers. With a font name, installs it (if not already present) and",

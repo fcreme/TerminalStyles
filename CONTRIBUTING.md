@@ -29,6 +29,7 @@ lib/                  the rest of the library, one file per subsystem:
   color.ps1             HSL maths and the OSC packets built from it
   fonts.ps1             the font catalogue, detection, download, install
   applystyle.ps1        apply / reset, and list / current / random
+  deletestyle.ps1       style deletion, and the bundled-vs-yours question
   tune.ps1              `tstyles tune` and the style it saves
   picker.ps1            the picker's testable pieces
   help.ps1              `tstyles help`

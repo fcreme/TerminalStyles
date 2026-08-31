@@ -113,11 +113,12 @@ you ran `tstyles`.
 
 ```powershell
 tstyles umbrella                  # Apply a specific style directly (no picker)
-tstyles list                      # List all themes; '*' marks the active one
+tstyles list                      # List all themes; '*' marks the active one, 'yours' marks yours
 tstyles current                   # Print just the active style name
 tstyles random                    # Pick a random style and apply it
 tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
+tstyles delete [name]             # Delete a style you made (bundled styles are refused)
 tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.

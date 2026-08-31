@@ -358,8 +358,8 @@ function Invoke-TerminalStylesStateMigration {
 # (OSC reset, cleared the style record and shell state, deleted current-style.ps1)
 # and reported "Reset <terminal> to its unstyled default."
 $script:TStylesSubcommands = @(
-    'font', 'help', 'list', 'ls', 'current', 'random', 'register', 'reset',
-    'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
+    'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
+    'reset', 'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
 
 function Test-StyleNameIsSingleSegment {
     <#
@@ -642,6 +642,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force -Yes:$Yes; return }
     if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
     if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
+    if ($Arg -eq 'delete')               { Invoke-TerminalStyleDelete -Name $SubArg -Target $Target -Yes:$Yes; return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData -Yes:$Yes; return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
@@ -1420,6 +1421,22 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # Tab completion: complete the positional Arg with subcommands + style names.
 # Applies to both the function and the tstyles alias (PowerShell extends
 # argument completers across aliases automatically).
+# The second positional has never had completion: the only completer below is
+# registered on -Arg. That is tolerable for `tune <name>`, where getting it
+# wrong costs nothing, and not for `delete <name>`, where the argument is the
+# whole point and a typo is the difference between a refusal and the wrong
+# style. Offers only what delete will actually accept.
+Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName SubArg -ScriptBlock {
+    param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
+    if ("$($fakeBoundParameters['Arg'])" -ne 'delete') { return }
+    $claim = Get-InstalledStyleClaim
+    $one   = Test-StylesRootsAreOne
+    @(Get-AvailableStyles | Where-Object {
+        (Get-StyleOrigin -Name $_.Name -StyleDir $_.FullName -Claim $claim -RootsAreOne $one) -in @('yours', 'shadow')
+    } | ForEach-Object Name | Where-Object { $_ -like "$wordToComplete*" } | Sort-Object) |
+        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+}
+
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
     $subcommands = $script:TStylesSubcommands
