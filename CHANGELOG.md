@@ -36,6 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - the shell-namespace lint no longer anchors at `^`, and is now backed by a test that sources each `prompt.sh` in a real zsh and diffs the variable table across it. A static pattern can always be stepped around -- by a second column, an `eval`, a `for` loop, a heredoc -- and this one was. Sourcing the file and asking the shell what changed cannot be
+- the CI legs check out with `actions/checkout@v5`. All four were annotating every run with "Node.js 20 is deprecated ... being forced to run on Node.js 24": still green, but green on a compatibility shim GitHub has said it will withdraw, and the failure when it goes would hit all four legs at once and have nothing to do with whatever was pushed
 
 ## [0.8.20] - 2026-08-31
 
