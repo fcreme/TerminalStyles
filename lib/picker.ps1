@@ -42,6 +42,32 @@ function Get-PickerViewport {
     return @{ First = $first; Count = $visible; More = $true }
 }
 
+
+function Test-ShouldRestoreWindowTitle {
+    # Is there a window title worth putting back?
+    #
+    # The picker and the tuner both snapshot $Host.UI.RawUI.WindowTitle before
+    # they take over the screen and write it back if the user cancels. That is
+    # only a restore on a host that ANSWERS the getter. Terminal.app and iTerm2
+    # return an empty string -- the title is the terminal's to know, not the
+    # host's -- so "restoring" it assigned '' and wiped whatever the window was
+    # showing: on cancel, the previous style's title (set by its own profile.ps1
+    # or ts_title) vanished, which is a worse end state than not restoring at all.
+    #
+    # So: a title we never read is not a title we can put back. Leave the window
+    # alone and let whatever set it keep it. Windows Terminal returns a real
+    # title and is unaffected.
+    #
+    # Whitespace counts as nothing for the same reason it reads as nothing --
+    # assigning it blanks the window just as surely as ''.
+    #
+    # Pure, so the decision is testable without a host that has a title bar.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Title)
+
+    return -not [string]::IsNullOrWhiteSpace($Title)
+}
+
 function Invoke-StylePickerLoop {
     # The interactive picker's selection loop, with all I/O / rendering / input
     # injected as seams so it can be driven by tests. Owns ONLY the highlight

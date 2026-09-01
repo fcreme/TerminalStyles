@@ -912,6 +912,24 @@ function Invoke-TerminalStylesShellInit {
                     $touched += [pscustomobject]@{ Path = $bp.Path
                                                    Action = (Register-ShellLoader -Path $bp.Path -Force:$Force) }
                 } catch { }
+            } elseif (Test-Path -LiteralPath $dotProfile) {
+                # ~/.profile exists, so we must not create a .bash_profile: bash
+                # reads the FIRST of .bash_profile, .bash_login, .profile and
+                # stops, and a new .bash_profile would shadow a file they are
+                # already using. The block above declines for that reason -- but
+                # declining was all it did, which left the loader in the .bashrc
+                # just created and login bash reading a ~/.profile that never
+                # sources it. That is the bug this whole branch exists to avoid,
+                # surviving in the one layout the branch did not cover.
+                #
+                # ~/.profile is not a candidate (it is sh's, not bash's, and
+                # registering in it unasked would reach past the shells this tool
+                # claims), so nothing else in this function will have touched it.
+                # Here it is the only file the login shell will read.
+                $action = Register-ShellLoader -Path $dotProfile -Force:$Force
+                if ($action -ne 'skipped') {
+                    $touched += [pscustomobject]@{ Path = $dotProfile; Action = $action }
+                }
             }
         }
     }

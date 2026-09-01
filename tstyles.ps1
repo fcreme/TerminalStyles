@@ -1389,9 +1389,12 @@ function Invoke-TerminalStyle {
         # Restore the original window title on cancel / exception. The
         # confirm path already had the selected theme's profile.ps1
         # dot-sourced (which sets its own title), so we only restore when
-        # the user didn't confirm.
+        # the user didn't confirm -- and only when there was a title to put
+        # back; see Test-ShouldRestoreWindowTitle for the hosts that report none.
         if (-not $confirmed) {
-            $Host.UI.RawUI.WindowTitle = $originalTitle
+            if (Test-ShouldRestoreWindowTitle -Title $originalTitle) {
+                $Host.UI.RawUI.WindowTitle = $originalTitle
+            }
 
             # Ctrl+C, or anything that throws out of the loop, skips the Escape
             # branch entirely -- so the last previewed style stayed applied,
