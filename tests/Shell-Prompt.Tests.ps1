@@ -263,3 +263,45 @@ Describe 'a style leaks nothing into the user shell -- measured, not linted' {
             -Because "sourcing $_/prompt.sh replaced the user's own $($leaked -join ', ')"
     }
 }
+
+Describe 'the runtime itself leaks nothing into the user shell -- measured, not linted' {
+    # The Describe above measures styles/<name>/prompt.sh. It never measured
+    # shell/tstyles.sh, which is sourced from the user's rc file on EVERY
+    # interactive shell -- so the one file guaranteed to run for every user was
+    # the one file outside the leak check. It was carrying TS_LOADED and
+    # TS_SHELL, bare names in the user's namespace, while the project enforced
+    # `_ts_` on the sixteen styles.
+    #
+    # TSTYLES_DATA is the deliberate exception and stays: the runtime reads it
+    # before deriving a default (`if [ -z "$TSTYLES_DATA" ]`), and this suite
+    # depends on that seam to point a shell at a scratch data root. It is a
+    # documented-by-use contract, not a leak. Anything else is.
+    BeforeDiscovery {
+        # Decided HERE, at discovery, for the reason spelled out above: a -Skip
+        # reading a BeforeAll variable gets $null and silently passes.
+        $script:NoZshRuntime = -not (Get-Command zsh -ErrorAction SilentlyContinue)
+    }
+
+    It 'defines no bare name in a real zsh' -Skip:$script:NoZshRuntime {
+        $repoRoot  = Split-Path $PSScriptRoot -Parent
+        $runtimeSh = Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh'
+
+        $script = @(
+            'ts_before=$(typeset +m "*" 2>/dev/null)'
+            "source ${runtimeSh} >/dev/null 2>&1"
+            'ts_after=$(typeset +m "*" 2>/dev/null)'
+            'comm -13 <(print -r -- "$ts_before" | sort -u) <(print -r -- "$ts_after" | sort -u)'
+        ) -join "`n"
+
+        $sf = Join-Path $TestDrive 'leak-runtime.zsh'
+        [System.IO.File]::WriteAllText($sf, $script, [System.Text.UTF8Encoding]::new($false))
+
+        $out = & zsh -f $sf 2>$null
+        $leaked = @($out | Where-Object {
+                       $_ -and $_ -notmatch '^(_ts_|ts_before$|ts_after$|TSTYLES_DATA$)'
+                   } | Sort-Object -Unique)
+
+        $leaked -join ', ' | Should -BeNullOrEmpty `
+            -Because "sourcing shell/tstyles.sh replaced the user's own $($leaked -join ', ')"
+    }
+}

@@ -287,7 +287,7 @@ echo READY
     It 'sets the guard only after the interactivity check' {
         $src = [System.IO.File]::ReadAllText($script:runtime, [System.Text.UTF8Encoding]::new($false))
         $body = [regex]::Match($src, '(?s)ts_load\(\) \{.*?\n\}').Value
-        $body.IndexOf('case "$-"') | Should -BeLessThan $body.IndexOf('TS_LOADED=1')
+        $body.IndexOf('case "$-"') | Should -BeLessThan $body.IndexOf('_ts_loaded=1')
     }
 }
 

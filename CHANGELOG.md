@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- the shell runtime no longer defines bare names in the user's shell. `shell/tstyles.sh` is sourced from the rc file on every interactive shell, so it is the one file guaranteed to run for every user -- and it was the one file outside the leak check added in 0.8.21, which measured only `styles/<name>/prompt.sh`. It carried `TS_LOADED` and `TS_SHELL` as bare names while the project enforced `_ts_` on all sixteen styles; they are now `_ts_loaded` and `_ts_shell`. `TSTYLES_DATA` deliberately stays: the runtime reads it before deriving a default, and the test suite uses that seam to point a shell at a scratch data root, so it is a contract rather than a leak. The measurement now covers the runtime too -- sourced in a real zsh with the variable table diffed across it, the same authority the style check uses, rather than a regex that a second column or an `eval` can step around
+
 ## [0.8.21] - 2026-09-02
 
 ### Added

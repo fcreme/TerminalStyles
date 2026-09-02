@@ -29,11 +29,11 @@ fi
 # --- Shell identification --------------------------------------------------
 # Set once, so the per-prompt path does no detection work.
 if [ -n "$ZSH_VERSION" ]; then
-    TS_SHELL='zsh'
+    _ts_shell='zsh'
 elif [ -n "$BASH_VERSION" ]; then
-    TS_SHELL='bash'
+    _ts_shell='bash'
 else
-    TS_SHELL='sh'
+    _ts_shell='sh'
 fi
 
 # --- Color helpers ---------------------------------------------------------
@@ -49,7 +49,7 @@ fi
 #
 # The ESC byte itself also differs: bash expands \033 (octal) inside PS1, but
 # zsh does not expand backslash escapes in PROMPT, so zsh needs a literal ESC.
-if [ "$TS_SHELL" = 'zsh' ]; then
+if [ "$_ts_shell" = 'zsh' ]; then
     ts_c() { printf '%%{\033[38;2;%sm%%}' "$1"; }
     ts_x() { printf '%%{\033[0m%%}'; }
 else
@@ -66,7 +66,7 @@ fi
 # What bash accepts post-expansion is the raw bytes it would have decoded to:
 # \001 and \002 around a real ESC. zsh re-scans substitution output for prompt
 # escapes under PROMPT_SUBST, so there %{...%} still works and these match ts_c.
-if [ "$TS_SHELL" = 'zsh' ]; then
+if [ "$_ts_shell" = 'zsh' ]; then
     ts_cs() { printf '%%{\033[38;2;%sm%%}' "$1"; }
     ts_xs() { printf '%%{\033[0m%%}'; }
 else
@@ -94,7 +94,7 @@ ts_rawx() { printf '\033[0m'; }
 # with a sed s|…|…| delimiter.
 ts_prompt_expand() {
     _ts_tpl="$1"
-    if [ "$TS_SHELL" = 'zsh' ]; then
+    if [ "$_ts_shell" = 'zsh' ]; then
         _ts_cwd='%~'      # full path, ~-abbreviated
         _ts_leaf='%1~'    # last component only
         _ts_user='%n'
@@ -131,7 +131,7 @@ ts_git_branch() {
     # "100", the CURRENT DIRECTORY (%d), then "one", and a '%(' swallowed the
     # rest of the prompt as a malformed ternary. Doubling makes each '%'
     # literal. bash does no such re-scan, so it is left alone there.
-    if [ "$TS_SHELL" = 'zsh' ]; then
+    if [ "$_ts_shell" = 'zsh' ]; then
         # The backslash matters: an unescaped % is a zsh glob pattern and
         # ${b//%/%%} appends rather than replaces (verified: 100%done ->
         # 100%done%%). ${b//\%/%%} is correct in both zsh and bash.
@@ -142,7 +142,7 @@ ts_git_branch() {
 
 ts_prompt_apply() {
     # Install $1 (an already-expanded template) as the shell's prompt.
-    if [ "$TS_SHELL" = 'zsh' ]; then
+    if [ "$_ts_shell" = 'zsh' ]; then
         # PROMPT_SUBST lets $(ts_git_branch) re-run on each prompt; without it
         # zsh would show the command substitution literally. It cannot expand
         # anything from the filesystem: the directory reaches the prompt as the
@@ -199,10 +199,10 @@ ts_load() {
     # TWICE on every new window. Set after the interactivity check, so a
     # non-interactive shell that returned above does not poison a later
     # interactive load in the same process.
-    if [ -n "$TS_LOADED" ]; then
+    if [ -n "$_ts_loaded" ]; then
         return 0
     fi
-    TS_LOADED=1
+    _ts_loaded=1
 
     # 1. Colors. The packet was rendered at apply time.
     if [ -r "$TSTYLES_DATA/current-style.osc" ]; then
