@@ -1315,7 +1315,9 @@ function Invoke-TerminalStyleTune {
             # covers an exception thrown mid-session (the key loop is not tested).
             # $restoreBaseLook may not exist yet if something threw very early.
             if ($restoreBaseLook) { & $restoreBaseLook }
-            $Host.UI.RawUI.WindowTitle = $originalTitle
+            if (Test-ShouldRestoreWindowTitle -Title $originalTitle) {
+                $Host.UI.RawUI.WindowTitle = $originalTitle
+            }
         }
         # Recursive and forced, so prove the target is really under the scratch
         # root before running it. This block deleted a user's style directory

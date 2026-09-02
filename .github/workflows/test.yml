@@ -26,7 +26,7 @@ jobs:
           - name: Windows PowerShell 5.1
             shell: powershell
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install Pester 5 (PSResourceGet)
         if: matrix.shell == 'pwsh'
@@ -103,7 +103,7 @@ jobs:
       matrix:
         os: [macos-latest, ubuntu-latest]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       # zsh is preinstalled on the macOS runners but not on the Ubuntu ones.
       # Shell-Prompt.Tests.ps1 skips whichever shell is absent, so this only

@@ -352,6 +352,37 @@ Describe 'bash login shells get the style' {
                 Should -Match 'TerminalStyles BEGIN'
         }
 
+        It 'uses an existing ~/.profile when there is no rc file at all' {
+            # The same rule as the test above, on the other branch. That one has
+            # a .bashrc, so the loader is registered before the "nothing existed"
+            # fallback is reached. Here NOTHING exists except ~/.profile, which
+            # is not an rc candidate -- so the fallback creates ~/.bashrc, and
+            # used to stop there: it declined to write a .bash_profile (correctly,
+            # it would shadow ~/.profile) but never registered in ~/.profile
+            # either. Login bash reads ~/.profile, which sources nothing, so the
+            # user got a green "added ~/.bashrc" and a shell that never loaded it
+            # -- the exact failure the fallback exists to prevent, in the one
+            # layout it did not cover.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $h '.profile'), "# .profile`n",
+                [System.Text.UTF8Encoding]::new($false))
+
+            # The fallback picks its target from $env:SHELL, so pin it: on a zsh
+            # machine this would take the zsh arm and test nothing.
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            } finally { $env:SHELL = $prev }
+
+            Test-Path -LiteralPath (Join-Path $h '.bash_profile') | Should -BeFalse `
+                -Because 'it would shadow the ~/.profile bash reads today'
+            [System.IO.File]::ReadAllText((Join-Path $h '.profile'), [System.Text.UTF8Encoding]::new($false)) |
+                Should -Match 'TerminalStyles BEGIN' `
+                -Because 'it is the only file this login shell will read'
+        }
+
         It 'leaves an existing .bash_profile alone apart from the block' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null
