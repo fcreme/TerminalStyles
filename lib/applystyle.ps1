@@ -568,14 +568,52 @@ function Reset-StyleDirect {
         return
     }
 
+    # Capture the scheme name before stripping (for orphan cleanup).
+    $schemeName = if ($entry.PSObject.Properties.Match('colorScheme').Count) { $entry.colorScheme } else { $null }
+
+    # Did WE style this profile? Ask before removing anything.
+    #
+    # $script:TStylesThemeFields is the list of keys an apply may write, and the
+    # strip below removed every one of them that was present -- with no record of
+    # which ones TerminalStyles had actually put there. That list is
+    # colorScheme, tabTitle, tabColor, cursorShape, useAcrylic, opacity,
+    # experimental.retroTerminalEffect, font, padding and the four
+    # backgroundImage keys: very nearly everything a user configures through the
+    # Windows Terminal settings UI. So `tstyles reset -Target 'PowerShell'` on a
+    # profile that had never been styled deleted the user's own acrylic, opacity,
+    # padding, cursor shape, font, wallpaper and tab title, and reported
+    # "Reset '<name>' to its unstyled default." in green. README says the
+    # opposite in as many words: "Fields you set on the profile by hand are left
+    # alone."
+    #
+    # The apply path already refuses the symmetric thing -- Test-ManagedBackgroundPath
+    # exists so that a background the USER set is not cleared by a style that
+    # ships none. Reset simply never asked the question.
+    #
+    # colorScheme naming one of our styles is the marker, because an apply always
+    # writes it and writes it last: there is no way to be styled by this tool and
+    # not carry it. A profile without it is one we never touched, and the honest
+    # answer is to change nothing rather than guess. This runs BEFORE the backup
+    # on purpose -- see Save-SettingsBackup below, whose rolling .bak is the
+    # user's only undo and must not be spent on a call that writes nothing.
+    $styledByUs = $false
+    if ($schemeName) {
+        $styledByUs = @(Get-AvailableStyles | Where-Object { $_.Name -eq $schemeName }).Count -gt 0
+    }
+    if (-not $styledByUs) {
+        Write-Host ("  '{0}' carries no TerminalStyles style -- nothing was changed." -f $Target) -ForegroundColor Yellow
+        if ($schemeName) {
+            Write-Host ("  Its colorScheme is '{0}', which is not a style this tool wrote." -f $schemeName) -ForegroundColor DarkGray
+        }
+        Write-Host "  Reset only removes what an apply put there; your own profile settings are left alone." -ForegroundColor DarkGray
+        return
+    }
+
     try {
         Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget
     } catch {
         Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
     }
-
-    # Capture the scheme name before stripping (for orphan cleanup).
-    $schemeName = if ($entry.PSObject.Properties.Match('colorScheme').Count) { $entry.colorScheme } else { $null }
 
     # Strip every TerminalStyles field that is present on the entry.
     $strippedAny = $false
