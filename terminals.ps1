@@ -593,6 +593,51 @@ function Get-ShellRcCandidate {
     )
 }
 
+
+function Get-ShellRcRemovalCandidate {
+    <#
+    .SYNOPSIS
+    Every rc file the loader could be IN -- a superset of the files it is
+    written to.
+
+    .DESCRIPTION
+    Registration and removal are not the same list, and treating them as one
+    left a block that nothing could ever take out.
+
+    `Get-ShellRcCandidate` is the REGISTRATION list, and ~/.profile is
+    deliberately not on it: it is sh's file rather than bash's, and writing to
+    it unasked would reach past the shells this tool claims. But shell-init
+    registers there anyway in the one case where it is the only file the login
+    shell will read -- a home with a ~/.profile and no .bash_profile, where
+    creating a .bash_profile would shadow a file already in use. Two branches
+    do this (the .bashrc-exists branch and the nothing-existed fallback).
+
+    Removal iterated the REGISTRATION list, so it never looked at ~/.profile.
+    `tstyles shell-remove` reported "removed from ~/.bashrc" and "Open a new tab
+    to get your original prompt back" while the block sat in ~/.profile, which
+    is precisely the file the login shell reads. After `tstyles uninstall` it
+    pointed at a deleted data root, on every login shell, with nothing left on
+    the machine to remove it and no message that it was there.
+
+    So: write to the narrow list, sweep the wide one. A file with no block
+    returns 'none' from Unregister-ShellLoader and a file that does not exist is
+    never created, so the extra entry costs nothing when it was never used.
+    #>
+    param(
+        # Same seams as Get-ShellRcCandidate, forwarded exactly -- binding
+        # -HomeDir there means a sandbox and suppresses the ambient $env:ZDOTDIR,
+        # and that rule has to survive the hop through here.
+        [string]$HomeDir = $HOME,
+        [string]$ZDotDir
+    )
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+    if ($PSBoundParameters.ContainsKey('ZDotDir')) { $splat.ZDotDir = $ZDotDir }
+
+    @(Get-ShellRcCandidate @splat) +
+    @([pscustomobject]@{ Shell = 'sh'; Path = (Join-Path $HomeDir '.profile') })
+}
+
 function Get-RcFileEncoding {
     <#
     .SYNOPSIS
@@ -797,6 +842,11 @@ function Invoke-TerminalStylesShellInit {
     $candidates = Get-ShellRcCandidate @splat
 
     if ($Remove) {
+        # The WIDE list: shell-init can register into ~/.profile, which is not a
+        # registration candidate. Sweeping the narrow list left that block in
+        # place while reporting the loader removed.
+        $candidates = Get-ShellRcRemovalCandidate @splat
+
         # Each status reported for what it is. A failure and a malformed block
         # both used to read as "nothing was registered", so the user was told
         # the loader was gone while every new shell still sourced it.

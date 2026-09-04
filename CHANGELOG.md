@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the loader block written into `~/.profile` could never be removed, by anything.** `tstyles shell-init` registers there in the one layout where it is the only file the login shell will read -- a home with a `~/.profile` and no `.bash_profile`, where creating one would shadow a file already in use. But `~/.profile` is not a REGISTRATION candidate (it is sh's file, not bash's, and writing to it unasked would reach past the shells this tool claims), and removal walked the registration list. So `tstyles shell-remove` printed "removed from ~/.bashrc" and "Open a new tab to get your original prompt back" while the block sat in `~/.profile` -- precisely the file the login shell reads -- and `tstyles uninstall` left it pointing at a data root it had just deleted, on every login shell, with nothing left on the machine able to remove it and no message that it was there. Removal now walks `Get-ShellRcRemovalCandidate`, a superset of what is written to; a file with no block is untouched and one that does not exist is never created, so the wider sweep costs nothing where it was never used.
+
+  The test that was supposed to guarantee this asserted that shell-init and uninstall both mention `Get-ShellRcCandidate`. Sharing a helper name is not symmetry, and it passed for the whole life of the bug. It is now backed by a round-trip across six rc layouts: run init, run remove, and count the markers left on disk.
+
 ### Changed
 
 - the shell runtime no longer defines bare names in the user's shell. `shell/tstyles.sh` is sourced from the rc file on every interactive shell, so it is the one file guaranteed to run for every user -- and it was the one file outside the leak check added in 0.8.21, which measured only `styles/<name>/prompt.sh`. It carried `TS_LOADED` and `TS_SHELL` as bare names while the project enforced `_ts_` on all sixteen styles; they are now `_ts_loaded` and `_ts_shell`. `TSTYLES_DATA` deliberately stays: the runtime reads it before deriving a default, and the test suite uses that seam to point a shell at a scratch data root, so it is a contract rather than a leak. The measurement now covers the runtime too -- sourced in a real zsh with the variable table diffed across it, the same authority the style check uses, rather than a regex that a second column or an `eval` can step around
