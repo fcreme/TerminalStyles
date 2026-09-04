@@ -93,8 +93,12 @@ Describe 'uninstall reverses shell-init' {
     InModuleScope TerminalStyles {
 
         It 'strips the loader from every rc file it registered into' {
+            # Get-ShellRcRemovalCandidate, not Get-ShellRcCandidate: the file set
+            # written to is a SUBSET of the file set that must be swept, because
+            # shell-init also registers into ~/.profile. Asserting the narrow name
+            # here is what let that block become unremovable.
             $src = (Get-Command Invoke-TerminalStylesUninstall).ScriptBlock.ToString()
-            $src | Should -Match 'Get-ShellRcCandidate'
+            $src | Should -Match 'Get-ShellRcRemovalCandidate'
             $src | Should -Match 'Unregister-ShellLoader'
         }
 
@@ -223,13 +227,35 @@ Describe 'Get-UninstallPlan' {
 Describe 'shell-init and uninstall agree on where the loader lives' {
     InModuleScope TerminalStyles {
 
-        It 'both walk Get-ShellRcCandidate' {
+        It 'both resolve their file list from the shared helpers' {
             # If uninstall ever hardcoded its own list, a candidate added to
             # shell-init would silently stop being removable.
+            #
+            # Removal deliberately walks the WIDER list: shell-init can register
+            # into ~/.profile, which is not a registration candidate. This
+            # assertion is a text lint and proves only that the names are
+            # referenced -- the behavioural proof that the two are actually
+            # inverse is the round-trip Describe below, which is what this one
+            # failed to catch.
             $init      = (Get-Command Invoke-TerminalStylesShellInit).ScriptBlock.ToString()
             $uninstall = (Get-Command Invoke-TerminalStylesUninstall).ScriptBlock.ToString()
             $init      | Should -Match 'Get-ShellRcCandidate'
-            $uninstall | Should -Match 'Get-ShellRcCandidate'
+            $init      | Should -Match 'Get-ShellRcRemovalCandidate'
+            $uninstall | Should -Match 'Get-ShellRcRemovalCandidate'
+        }
+
+        It 'the removal list is a superset of the registration list, plus ~/.profile' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+
+            $reg = @((Get-ShellRcCandidate        -HomeDir $h).Path)
+            $rem = @((Get-ShellRcRemovalCandidate -HomeDir $h).Path)
+
+            foreach ($p in $reg) {
+                $rem | Should -Contain $p -Because 'anything written must be sweepable'
+            }
+            $rem | Should -Contain (Join-Path $h '.profile') `
+                -Because 'shell-init registers there when it is the only file login bash reads'
         }
 
         It 'Get-ShellRcCandidate covers zsh and both bash rc files' {
@@ -237,6 +263,83 @@ Describe 'shell-init and uninstall agree on where the loader lives' {
             ($paths | Where-Object { $_ -like '*.zshrc' })        | Should -Not -BeNullOrEmpty
             ($paths | Where-Object { $_ -like '*.bashrc' })       | Should -Not -BeNullOrEmpty
             ($paths | Where-Object { $_ -like '*.bash_profile' }) | Should -Not -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'shell-init and shell-remove are actually inverse -- measured, not linted' {
+    # The lint above ("both walk Get-ShellRcCandidate") passed for the whole life
+    # of this bug. Sharing a helper name proves nothing about behaviour: shell-init
+    # registers into ~/.profile in two branches, ~/.profile was not on the list
+    # removal walked, and so `tstyles shell-remove` printed "removed from
+    # ~/.bashrc" and "Open a new tab to get your original prompt back" while the
+    # block stayed in the one file the login shell actually reads. After
+    # `tstyles uninstall` it pointed at a deleted data root, forever, with nothing
+    # left on the machine that could remove it.
+    #
+    # So do not ask what the source says. Run init, run remove, and count the
+    # markers left on disk -- across every rc layout that reaches a different
+    # branch of shell-init.
+    InModuleScope TerminalStyles {
+
+        It 'leaves no loader block behind for the <label> layout' -ForEach @(
+            @{ label = 'nothing at all';        files = @() }
+            @{ label = '~/.profile only';       files = @('.profile') }
+            @{ label = '.bashrc + ~/.profile';  files = @('.bashrc', '.profile') }
+            @{ label = '.bashrc only';          files = @('.bashrc') }
+            @{ label = '.zshrc only';           files = @('.zshrc') }
+            @{ label = 'bashrc + bash_profile'; files = @('.bashrc', '.bash_profile') }
+        ) {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            foreach ($f in $files) {
+                [System.IO.File]::WriteAllText((Join-Path $h $f), "# original $f`n",
+                    [System.Text.UTF8Encoding]::new($false))
+            }
+
+            # Pin $env:SHELL: the "nothing existed" fallback picks its target from
+            # it, so an ambient value would make this depend on the machine.
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $h -Force          *> $null
+                Invoke-TerminalStylesShellInit -HomeDir $h -Remove         *> $null
+            } finally { $env:SHELL = $prev }
+
+            $left = @(Get-ChildItem -LiteralPath $h -File -Force -ErrorAction SilentlyContinue |
+                Where-Object {
+                    [System.IO.File]::ReadAllText($_.FullName,
+                        [System.Text.UTF8Encoding]::new($false)) -match 'TerminalStyles BEGIN'
+                } | ForEach-Object { $_.Name })
+
+            $left -join ', ' | Should -BeNullOrEmpty `
+                -Because "shell-remove reported success, so nothing may still source the runtime (left in: $($left -join ', '))"
+        }
+
+        It 'gives the user back the file it found, for the <label> layout' -ForEach @(
+            @{ label = '~/.profile only';      files = @('.profile') }
+            @{ label = '.bashrc + ~/.profile'; files = @('.bashrc', '.profile') }
+        ) {
+            # Removing the block must not take the user's own lines with it.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            foreach ($f in $files) {
+                [System.IO.File]::WriteAllText((Join-Path $h $f), "# original $f`nexport MINE=1`n",
+                    [System.Text.UTF8Encoding]::new($false))
+            }
+
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $h -Force  *> $null
+                Invoke-TerminalStylesShellInit -HomeDir $h -Remove *> $null
+            } finally { $env:SHELL = $prev }
+
+            foreach ($f in $files) {
+                $text = [System.IO.File]::ReadAllText((Join-Path $h $f),
+                    [System.Text.UTF8Encoding]::new($false))
+                $text | Should -Match 'export MINE=1' -Because "$f was the user's file first"
+            }
         }
     }
 }

@@ -495,7 +495,9 @@ function Invoke-TerminalStylesUninstall {
     # `tstyles` command could no longer load the module. That left hand-editing
     # ~/.zshrc as the only recovery.
     $shellRemoved = 0
-    foreach ($c in (Get-ShellRcCandidate)) {
+    # The removal superset, not the registration list: shell-init can register
+    # into ~/.profile, and sweeping the narrow list orphaned that block forever.
+    foreach ($c in (Get-ShellRcRemovalCandidate)) {
         # Explicit comparison: Unregister-ShellLoader returns a STATUS now, and
         # every status -- including 'none' -- is a truthy string.
         if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed') {
