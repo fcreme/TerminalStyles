@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.22] - 2026-09-05
+
 ### Fixed
 
 - **`tstyles reset` deleted profile settings the user had made by hand, and said it had reset a style.** The strip removed every name in `$script:TStylesThemeFields` that was present on the target profile, with no record of which of them TerminalStyles had actually written. That list is `colorScheme`, `tabTitle`, `tabColor`, `cursorShape`, `useAcrylic`, `opacity`, `experimental.retroTerminalEffect`, `font`, `padding` and the four `backgroundImage` keys -- very nearly everything a user configures through the Windows Terminal settings UI. So running `tstyles reset -Target 'PowerShell'` on a profile that had never been styled deleted that user's own acrylic, opacity, padding, cursor shape, font, wallpaper and tab title, then printed "Reset 'PowerShell' to its unstyled default." in green. README has always promised the opposite in as many words: "Fields you set on the profile by hand are left alone." The apply path already refuses the symmetric thing -- `Test-ManagedBackgroundPath` exists precisely so a background the USER set is not cleared by a style that ships none -- and reset simply never asked the question.
@@ -525,7 +527,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.21...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.22...HEAD
+[0.8.22]: https://github.com/fcreme/TerminalStyles/compare/v0.8.21...v0.8.22
 [0.8.21]: https://github.com/fcreme/TerminalStyles/compare/v0.8.20...v0.8.21
 [0.8.20]: https://github.com/fcreme/TerminalStyles/compare/v0.8.19...v0.8.20
 [0.8.19]: https://github.com/fcreme/TerminalStyles/compare/v0.8.18...v0.8.19
