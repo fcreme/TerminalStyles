@@ -333,3 +333,103 @@ Describe 'the SPLIT-root layout is not proof of ownership either' {
         }
     }
 }
+
+# The trash sweep's clock. `tstyles delete` prints "Kept for 7 days at ..." and
+# `tstyles delete` with no name repeats it, but the sweep asked
+# $old.LastWriteTime how old a trashed style was. Move-Item renames within the
+# data root and a rename does not touch a directory's LastWriteTime, so that
+# value is when the style was last EDITED. A style tuned once and left alone for
+# a month landed in the trash already a month past the cutoff and the next
+# delete swept it -- the promised week spent before the user could act on it,
+# and shortest for exactly the styles they were least likely to have a copy of.
+Describe 'the trash sweep measures time since deletion, not since the style was edited' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            script:New-Style $script:root 'eva'  | Out-Null
+            script:New-Style $script:root 'mine' -Tuned | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n")
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        Context 'Get-StyleTrashTimestamp' {
+            It 'reads the deletion time out of the trash folder name' {
+                Get-StyleTrashTimestamp -Name 'mine-20260401-131415' -Fallback (Get-Date).AddDays(-30) |
+                    Should -Be ([datetime]::new(2026, 4, 1, 13, 14, 15))
+            }
+
+            It 'reads the stamp this tool appended, not digits inside the style name' {
+                # A user may name a style 'solarized-2024'. The pattern is
+                # anchored at the end, so the trailing stamp is the one read.
+                Get-StyleTrashTimestamp -Name 'solarized-2024-20260401-131415' -Fallback (Get-Date) |
+                    Should -Be ([datetime]::new(2026, 4, 1, 13, 14, 15))
+            }
+
+            It 'falls back for a name carrying no stamp' {
+                # Trash written before this existed, or a folder some other hand
+                # put there. Falling back is the previous behaviour; returning
+                # something far-future would make it unsweepable forever.
+                $fb = [datetime]::new(2020, 1, 2, 3, 4, 5)
+                Get-StyleTrashTimestamp -Name 'no-stamp-here' -Fallback $fb | Should -Be $fb
+            }
+
+            It 'falls back when the stamp is the right shape but not a real date' {
+                $fb = [datetime]::new(2020, 1, 2, 3, 4, 5)
+                Get-StyleTrashTimestamp -Name 'x-20261345-996655' -Fallback $fb | Should -Be $fb
+            }
+        }
+
+        Context 'the sweep itself' {
+            It 'keeps a style deleted seconds ago that had not been edited in a month' {
+                # The regression. Ages the style the way an untouched tuned
+                # style really is, then deletes it and runs the sweep by
+                # deleting a second one.
+                $aged = Get-StyleDir -StyleName 'mine'
+                (Get-Item -LiteralPath $aged).LastWriteTime = (Get-Date).AddDays(-30)
+
+                $plan = Get-StyleDeletePlan -Name 'mine'
+                $plan.Ok | Should -BeTrue
+                Move-StyleDirectoryToTrash -Plan $plan
+                Test-Path -LiteralPath $plan.TrashPath | Should -BeTrue
+
+                script:New-Style $script:root 'second' -Tuned | Out-Null
+                Move-StyleDirectoryToTrash -Plan (Get-StyleDeletePlan -Name 'second')
+
+                Test-Path -LiteralPath $plan.TrashPath |
+                    Should -BeTrue -Because 'it was deleted seconds ago, whatever its LastWriteTime says'
+            }
+
+            It 'sweeps trash whose stamp really is past the window' {
+                # The other direction: this folder was created just now, so its
+                # LastWriteTime is fresh and the old clock would have kept it.
+                # The stamp is what makes it old.
+                $trashRoot = Get-StyleTrashRoot
+                $ancient = Join-Path $trashRoot 'ancient-20200101-000000'
+                New-Item -ItemType Directory -Path $ancient -Force | Out-Null
+
+                Move-StyleDirectoryToTrash -Plan (Get-StyleDeletePlan -Name 'mine')
+
+                Test-Path -LiteralPath $ancient |
+                    Should -BeFalse -Because 'its name says it was deleted in 2020'
+            }
+
+            It 'keeps trash inside the window' {
+                $trashRoot = Get-StyleTrashRoot
+                $stamp  = (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss')
+                $recent = Join-Path $trashRoot "recent-$stamp"
+                New-Item -ItemType Directory -Path $recent -Force | Out-Null
+
+                Move-StyleDirectoryToTrash -Plan (Get-StyleDeletePlan -Name 'mine')
+
+                Test-Path -LiteralPath $recent | Should -BeTrue -Because '2 days is inside the 7-day window'
+            }
+        }
+    }
+}
