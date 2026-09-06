@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **a deleted style could be swept from the trash seconds after `tstyles delete` promised to keep it for seven days.** The sweep in `Move-StyleDirectoryToTrash` asked `$old.LastWriteTime` how long a folder had been in the trash, but the delete is a `Move-Item` within the data root -- a rename, which does not touch a directory's `LastWriteTime`. So the value it read was when the STYLE was last EDITED, which is the one thing it cannot be. A style tuned once and left alone for a month arrived in the trash already three weeks past the cutoff, and the next `tstyles delete` of any style removed it on the spot, having just printed "Kept for 7 days at ...". The window was shortest for exactly the styles least likely to exist anywhere else: a style edited today got the full seven days, one untouched for a month got none, and nothing about the failure was visible until the user went looking for a style they had been told was recoverable.
+
+  `Get-StyleDeletePlan` already stamps the trash folder name with the deletion time (`<name>-yyyyMMdd-HHmmss`), so the correct answer was on disk the whole time and is now read from there. Taking it from the name rather than re-stamping the moved folder also keeps the sweep from ever WRITING to a trashed item: setting `LastWriteTime` would follow a symlinked style directory and modify the link's target, which is the case `Move-StyleDirectoryToTrash` moves-as-a-link specifically to avoid. A folder whose name carries no stamp -- trash from before this, or a folder another hand put there -- still falls back to `LastWriteTime`, so nothing becomes unsweepable.
+
+  `Move-StyleDirectoryToTrash` had no test of any kind; it was one of twelve functions in the module with no test naming them, and the only destructive one among them.
+
 ## [0.8.22] - 2026-09-05
 
 ### Fixed
