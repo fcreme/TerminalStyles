@@ -362,6 +362,56 @@ function Show-StyleDeletePlan {
     Write-Host ""
 }
 
+function Get-StyleTrashTimestamp {
+    <#
+    .SYNOPSIS
+    When was this trashed style deleted? Read from its folder name, not its
+    LastWriteTime.
+
+    .DESCRIPTION
+    The sweep used $old.LastWriteTime as the deletion time. Move-Item renames
+    within the data root, and a rename does not touch the directory's
+    LastWriteTime -- so that timestamp is when the STYLE was last edited, which
+    is the one thing it cannot be. A style tuned once and left alone for a month
+    arrived in the trash already a month stale, and the next `tstyles delete` of
+    any style swept it on the spot, seconds after "Kept for 7 days at ..." said
+    otherwise. The longer a style had gone untouched -- the better the reason to
+    want it back -- the less of the promised window it actually got, and a style
+    edited today got the full seven days.
+
+    Get-StyleDeletePlan already stamps the trash folder name with the deletion
+    time (`<name>-yyyyMMdd-HHmmss`), so the answer was on disk the whole time.
+    Reading it from the name also means the sweep never has to WRITE to the
+    trashed item to keep its own clock: stamping LastWriteTime would follow a
+    symlinked style dir and modify the link's target, the exact thing
+    Move-StyleDirectoryToTrash moves-as-a-link to avoid.
+
+    Anything whose name does not carry a stamp -- trash from before this, or a
+    folder some other hand put there -- falls back to LastWriteTime, which is
+    the previous behaviour rather than a folder that can never be swept.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Name,
+        [Parameter(Mandatory)][datetime]$Fallback
+    )
+
+    # [regex]::Match rather than -match: the automatic $Matches is shared state,
+    # and the suite has already been bitten once by code that wrote to it.
+    $m = [regex]::Match($Name, '-(\d{8})-(\d{6})$')
+    if ($m.Success) {
+        $parsed = [datetime]::MinValue
+        if ([datetime]::TryParseExact(($m.Groups[1].Value + $m.Groups[2].Value),
+                                      'yyyyMMddHHmmss',
+                                      [cultureinfo]::InvariantCulture,
+                                      [System.Globalization.DateTimeStyles]::None,
+                                      [ref]$parsed)) {
+            return $parsed
+        }
+    }
+    return $Fallback
+}
+
 function Move-StyleDirectoryToTrash {
     <#
     .SYNOPSIS
@@ -388,7 +438,8 @@ function Move-StyleDirectoryToTrash {
     if (Test-Path -LiteralPath $trashRoot) {
         $cutoff = (Get-Date).AddDays(-$KeepDays)
         foreach ($old in @(Get-ChildItem -LiteralPath $trashRoot -Directory -Force -ErrorAction SilentlyContinue)) {
-            if ($old.LastWriteTime -ge $cutoff) { continue }
+            $deletedAt = Get-StyleTrashTimestamp -Name $old.Name -Fallback $old.LastWriteTime
+            if ($deletedAt -ge $cutoff) { continue }
             if (-not (Test-PathIsStyleDirChild -Path $old.FullName -Root $trashRoot)) { continue }
             try {
                 if ($old.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
