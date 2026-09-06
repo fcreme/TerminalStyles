@@ -256,7 +256,7 @@ function Get-StyleDeletePlan {
         Ok = $false; Reason = $null; Name = $Name; Dir = $null; Origin = $null
         IsLink = $false; RevealDir = $null; WasActive = $false
         Children = @(); KeptCache = $null; KeptProfile = $null
-        TrashPath = $null; Consequence = $null
+        TrashPath = $null; Consequence = $null; SweepTargets = @()
     }
 
     # Before Get-StyleDir: its parameter is a Mandatory [string], so an empty
@@ -303,6 +303,9 @@ function Get-StyleDeletePlan {
     $prof = Join-Path (Join-Path $script:TStylesDataRoot 'profiles') "$Name.terminal"
     if (Test-Path -LiteralPath $prof) { $plan.KeptProfile = $prof }
 
+    # What confirming this delete will also erase for good.
+    $plan.SweepTargets = @(Get-StyleTrashSweepTarget)
+
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $plan.TrashPath = Join-Path (Get-StyleTrashRoot) "$Name-$stamp"
 
@@ -313,6 +316,41 @@ function Get-StyleDeletePlan {
     }
     $plan.Ok = $true
     return $plan
+}
+
+function Get-StyleTrashSweepTarget {
+    <#
+    .SYNOPSIS
+    The trashed styles the next delete will remove for good.
+
+    .DESCRIPTION
+    The sweep decided this inline, so the only way to find out what a delete was
+    about to erase was to let it erase them. The consent listing therefore could
+    not mention it, and ended on "Nothing is erased: move the folder back to
+    undo." -- while pressing y ran a recursive Remove-Item over every trashed
+    style past the window. Measured: a style deleted weeks earlier and still
+    recoverable was gone the moment the user confirmed the deletion of an
+    unrelated one, having been told nothing would be.
+
+    Bounded trash is the point of the feature; the listing not saying so was the
+    defect. Pure -- it reads the trash root and writes nothing -- so the prompt
+    can name the folders before the question is asked, and
+    Move-StyleDirectoryToTrash sweeps exactly what was named because the rule
+    lives here rather than in both.
+    #>
+    [CmdletBinding()]
+    param([int]$KeepDays = 7, [datetime]$Now = (Get-Date))
+
+    $trashRoot = Get-StyleTrashRoot
+    if (-not (Test-Path -LiteralPath $trashRoot)) { return @() }
+
+    $cutoff = $Now.AddDays(-$KeepDays)
+    @(foreach ($old in @(Get-ChildItem -LiteralPath $trashRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+        if ((Get-StyleTrashTimestamp -Name $old.Name -Fallback $old.LastWriteTime) -ge $cutoff) { continue }
+        # Same containment proof the sweep itself insists on.
+        if (-not (Test-PathIsStyleDirChild -Path $old.FullName -Root $trashRoot)) { continue }
+        $old
+    })
 }
 
 function Show-StyleDeletePlan {
@@ -358,7 +396,16 @@ function Show-StyleDeletePlan {
     if ($Plan.IsLink) {
         Write-Host "  - This style is a symlink; only the link is moved, its target is untouched" -ForegroundColor Gray
     }
-    Write-Host "  - Nothing is erased: move the folder back to undo." -ForegroundColor Gray
+    # RED, because this is the one thing on the list that does not come back.
+    foreach ($sw in $Plan.SweepTargets) {
+        Write-Host ("  - ERASE {0}, deleted over 7 days ago" -f $sw.Name) -ForegroundColor Red
+    }
+    if ($Plan.SweepTargets.Count -gt 0) {
+        Write-Host "      the trash keeps 7 days; this delete is what clears the rest" -ForegroundColor DarkGray
+    }
+    # Scoped to THIS style. Unqualified, it was the opposite of what the line
+    # above describes.
+    Write-Host "  - Nothing of '$($Plan.Name)' is erased: move the folder back to undo." -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -434,13 +481,11 @@ function Move-StyleDirectoryToTrash {
 
     $trashRoot = Get-StyleTrashRoot
 
-    # Sweep first, and only inside the trash root.
+    # Sweep first, and only what Get-StyleTrashSweepTarget names -- the same
+    # function the consent listing read, so the user cannot be shown one set and
+    # have another removed.
     if (Test-Path -LiteralPath $trashRoot) {
-        $cutoff = (Get-Date).AddDays(-$KeepDays)
-        foreach ($old in @(Get-ChildItem -LiteralPath $trashRoot -Directory -Force -ErrorAction SilentlyContinue)) {
-            $deletedAt = Get-StyleTrashTimestamp -Name $old.Name -Fallback $old.LastWriteTime
-            if ($deletedAt -ge $cutoff) { continue }
-            if (-not (Test-PathIsStyleDirChild -Path $old.FullName -Root $trashRoot)) { continue }
+        foreach ($old in (Get-StyleTrashSweepTarget -KeepDays $KeepDays)) {
             try {
                 if ($old.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
                     [System.IO.Directory]::Delete($old.FullName, $false)
