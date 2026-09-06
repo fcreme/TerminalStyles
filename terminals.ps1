@@ -767,6 +767,53 @@ function Register-ShellLoader {
     return 'added'
 }
 
+function Test-ShellLoaderPresent {
+    <#
+    .SYNOPSIS
+    Is the loader block in this rc file? Reads; never writes.
+
+    .DESCRIPTION
+    Unregister-ShellLoader answers the same question, but only by stripping the
+    block. The uninstall consent listing has to name the files it is about to
+    change BEFORE the user has agreed to change anything, so it needs the
+    question asked on its own.
+
+    Same encoding as the rest of the rc handling, and an Ordinal Contains rather
+    than -match: the marker is a fixed string, and -match would write to the
+    automatic $Matches for a caller that never asked it to.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return $false }
+    try {
+        $content = [System.IO.File]::ReadAllText($Path, (Get-RcFileEncoding))
+    } catch { return $false }
+    return $content.Contains('# ===== TerminalStyles BEGIN =====')
+}
+
+function Get-UninstallShellRcTarget {
+    <#
+    .SYNOPSIS
+    The rc files an uninstall will actually strip the loader from.
+
+    .DESCRIPTION
+    The removal superset filtered down to the files that really carry a block,
+    so the consent listing names what will change and nothing else. Pure: it
+    reads the files and writes none of them.
+
+    Seams forwarded by what the caller BOUND, the same rule Get-ShellRcCandidate
+    documents -- binding -HomeDir means a sandbox and suppresses the ambient
+    $env:ZDOTDIR, and that has to survive every hop.
+    #>
+    [CmdletBinding()]
+    param([string]$HomeDir, [string]$ZDotDir)
+
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+    if ($PSBoundParameters.ContainsKey('ZDotDir')) { $splat.ZDotDir = $ZDotDir }
+
+    @(Get-ShellRcRemovalCandidate @splat | Where-Object { Test-ShellLoaderPresent -Path $_.Path })
+}
+
 function Unregister-ShellLoader {
     <#
     .SYNOPSIS

@@ -15,6 +15,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   `Move-StyleDirectoryToTrash` had no test of any kind; it was one of twelve functions in the module with no test naming them, and the only destructive one among them.
 
+- **`tstyles uninstall` asked for consent with a list that did not mention the shell rc files it was about to edit.** The command prints a bulleted summary and then asks "Continue? [y/N]". Step 2 of it strips the loader block from `~/.zshrc`, `~/.bashrc`, `~/.bash_profile` and `~/.profile` -- and the list named only the two PowerShell `$PROFILE` files. That step was ADDED because uninstall used to leave the shell side running after a "successful" removal; the behaviour was fixed in that release and the consent text was never updated, so the fix arrived as an unannounced edit to four more of the user's own dotfiles.
+
+  It is not a summary that is merely brief. The bullet above it names the two `$PROFILE` files precisely ("pwsh 7 and Windows PowerShell 5.1"), and the bullet below it promises what the command will NOT do ("Will NOT modify Windows Terminal's settings.json") -- a list that specific, that goes out of its way to bound itself, is one a reader is entitled to read as complete. The user agreed to it and then watched `Removed shell loader from ~/.zshrc` scroll past for a file the prompt had never mentioned. For anyone whose loader had gone into `~/.profile` it was the same file that took a release of its own to become removable at all.
+
+  The listing now names the rc files themselves, and only those that really carry a block -- which is knowable before consent, and is the difference between naming four files and naming the one that is actually about to change. `Test-ShellLoaderPresent` answers "is the block in this file" without stripping it, which is the question the prompt needed and which only `Unregister-ShellLoader` could answer before, by removing it.
+
+- `uninstall` and `shell-init` help described a narrower command than the one that runs. `uninstall`'s said "Removes the module and strips the `$PROFILE` loader" with no mention of the zsh/bash half; `shell-init`'s named `~/.zshrc`, `~/.bashrc` and `~/.bash_profile` while the command can also write to `~/.profile` -- in the one layout where that is the only file the login shell reads -- and to `$ZDOTDIR/.zshrc`. Both now name every file involved.
+
+### Changed
+
+- `Invoke-TerminalStylesUninstall` takes `-HomeDir`/`-ZDotDir` test seams, forwarded to the rc lookup on both the consent listing and the removal sweep. The rc half of uninstall resolves paths from the live `$HOME` independently of the data root, so it could not previously be exercised at all without editing the operator's own `~/.zshrc` -- which is why the omission above went four releases without a test noticing. The new tests refuse consent through a mocked `Confirm-Action` rather than by relying on console detection, so no bug in that detection can turn one of them into a real uninstall of the machine running the suite.
+
 ## [0.8.22] - 2026-09-05
 
 ### Fixed
