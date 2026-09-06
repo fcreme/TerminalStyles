@@ -433,3 +433,114 @@ Describe 'the trash sweep measures time since deletion, not since the style was 
         }
     }
 }
+
+# What the delete prompt discloses about the sweep.
+#
+# Show-StyleDeletePlan itemises everything that is about to happen and ended on
+# "Nothing is erased: move the folder back to undo." Confirming it runs the
+# sweep, which is a recursive Remove-Item over every trashed style past the
+# window -- so pressing y on that promise permanently destroyed a style the user
+# had deleted earlier and could still have recovered. Measured before the fix:
+# 'precious-20200101-000000' present before, gone after, with the prompt saying
+# nothing would be erased.
+#
+# Bounded trash is the point of the feature. Not saying so, on the one screen
+# that exists to say so, was the defect.
+Describe 'the delete prompt discloses what confirming it will erase' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            script:New-Style $script:root 'eva'  | Out-Null
+            script:New-Style $script:root 'mine' -Tuned | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n")
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        function script:New-Trash([string]$Name) {
+            $d = Join-Path (Get-StyleTrashRoot) $Name
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), '{}')
+            $d
+        }
+
+        Context 'Get-StyleTrashSweepTarget' {
+            It 'names a trashed style past the window' {
+                script:New-Trash 'precious-20200101-000000' | Out-Null
+                @(Get-StyleTrashSweepTarget).Name | Should -Be @('precious-20200101-000000')
+            }
+
+            It 'does not name one inside the window' {
+                script:New-Trash ("recent-" + (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss')) | Out-Null
+                @(Get-StyleTrashSweepTarget).Count | Should -Be 0
+            }
+
+            It 'returns empty when nothing has ever been deleted' {
+                Test-Path -LiteralPath (Get-StyleTrashRoot) | Should -BeFalse
+                @(Get-StyleTrashSweepTarget).Count | Should -Be 0
+            }
+
+            It 'reads without erasing -- it runs before consent' {
+                $d = script:New-Trash 'precious-20200101-000000'
+                Get-StyleTrashSweepTarget | Out-Null
+                [System.IO.Directory]::Exists($d) | Should -BeTrue
+            }
+        }
+
+        Context 'the listing' {
+            It 'names the trashed style that confirming will erase' {
+                script:New-Trash 'precious-20200101-000000' | Out-Null
+                $out = Show-StyleDeletePlan -Plan (Get-StyleDeletePlan -Name 'mine') 6>&1 | Out-String
+
+                $out | Should -Match 'ERASE precious-20200101-000000' `
+                    -Because 'it does not come back, so it belongs on the list'
+            }
+
+            It 'scopes the undo promise to the style being deleted' {
+                script:New-Trash 'precious-20200101-000000' | Out-Null
+                $out = Show-StyleDeletePlan -Plan (Get-StyleDeletePlan -Name 'mine') 6>&1 | Out-String
+
+                $out | Should -Match "Nothing of 'mine' is erased"
+                $out | Should -Not -Match '  - Nothing is erased' `
+                    -Because 'unqualified, it contradicts the ERASE line directly above it'
+            }
+
+            It 'says nothing about erasing when the trash holds nothing expired' {
+                script:New-Trash ("recent-" + (Get-Date).AddDays(-1).ToString('yyyyMMdd-HHmmss')) | Out-Null
+                $out = Show-StyleDeletePlan -Plan (Get-StyleDeletePlan -Name 'mine') 6>&1 | Out-String
+                # '- ERASE ', not 'ERASE': -Match is case-INSENSITIVE, so the
+                # bare word also matched "is erased" in the undo line below and
+                # failed on output that was correct.
+                $out | Should -Not -Match '- ERASE '
+            }
+
+            It 'planning still writes nothing, including the trash' {
+                $d = script:New-Trash 'precious-20200101-000000'
+                Get-StyleDeletePlan -Name 'mine' | Out-Null
+                [System.IO.Directory]::Exists($d) | Should -BeTrue
+            }
+        }
+
+        Context 'the listing and the sweep cannot drift apart' {
+            It 'erases exactly what the prompt named, and nothing else' {
+                $doomed  = script:New-Trash 'precious-20200101-000000'
+                $spared  = script:New-Trash ("recent-" + (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss'))
+
+                $plan  = Get-StyleDeletePlan -Name 'mine'
+                $named = @($plan.SweepTargets.Name)
+                $named | Should -Be @('precious-20200101-000000')
+
+                Move-StyleDirectoryToTrash -Plan $plan
+
+                [System.IO.Directory]::Exists($doomed) | Should -BeFalse -Because 'the prompt named it'
+                [System.IO.Directory]::Exists($spared) | Should -BeTrue  -Because 'the prompt did not'
+            }
+        }
+    }
+}
