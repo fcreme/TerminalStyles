@@ -109,7 +109,14 @@ Describe 'register and uninstall use the shared probe' {
             # pwsh and pwsh-preview report the same path on a macOS machine that
             # has both; processing it twice would print the malformed and
             # unwritable warnings twice for one file.
-            $paths = @((Get-PowerShellProfileTarget).ProfilePath)
+            #
+            # ForEach-Object, not @((...).ProfilePath): member access on an
+            # EMPTY array yields a single $null rather than nothing, so the
+            # first draft compared 1 against 0 and failed on every CI machine
+            # -- none of which has a $PROFILE file at all. Vacuous where there
+            # are no targets, which is the honest thing for it to be: it cannot
+            # create a $PROFILE to test against without writing to a real one.
+            $paths = @(Get-PowerShellProfileTarget | ForEach-Object { $_.ProfilePath })
             ($paths | Select-Object -Unique).Count | Should -Be $paths.Count
         }
 

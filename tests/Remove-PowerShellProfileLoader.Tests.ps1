@@ -127,12 +127,20 @@ Describe 'Remove-PowerShellProfileLoader' {
                 # The nix / chezmoi store case. Unguarded, this threw after the
                 # module and the rc blocks were already gone and before the
                 # user-state step ran.
+                # IsReadOnly rather than chmod: it is one .NET attribute on
+                # every platform the suite runs on, where chmod is an external
+                # binary that happens to be on the Windows runners because Git
+                # for Windows ships it.
                 $t = script:New-Profile 'p.ps1' ([byte[]]@())
-                chmod 444 $t.ProfilePath
+                $f = Get-Item -LiteralPath $t.ProfilePath -Force
+                $f.IsReadOnly = $true
                 try {
-                    { script:Say @($t) } | Should -Not -Throw
+                    { script:Say @($t) } | Should -Not -Throw `
+                        -Because 'it throws out of the middle of an uninstall otherwise'
                     script:Say @($t) | Should -Match 'could not write'
-                } finally { chmod 644 $t.ProfilePath }
+                    [System.IO.File]::ReadAllText($t.ProfilePath) |
+                        Should -Match 'TerminalStyles BEGIN' -Because 'the loader really is still there'
+                } finally { $f.IsReadOnly = $false }
             }
         }
 
