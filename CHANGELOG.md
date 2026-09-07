@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.23] - 2026-09-07
+
 ### Fixed
 
 - **the delete confirmation ended on "Nothing is erased" while confirming it destroyed styles you had deleted earlier.** `Show-StyleDeletePlan` itemises everything about to happen and closed with `- Nothing is erased: move the folder back to undo.` Pressing y then ran `Move-StyleDirectoryToTrash`, whose first act is a sweep -- a recursive `Remove-Item` over every trashed style past the seven-day window. Measured: a style trashed weeks earlier and still recoverable was present before the prompt and gone after it, on a screen that had just promised nothing would be erased. The one command that could destroy it was the one that said it could not, and the user was deleting something else entirely at the time.
@@ -551,7 +553,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.22...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.23...HEAD
+[0.8.23]: https://github.com/fcreme/TerminalStyles/compare/v0.8.22...v0.8.23
 [0.8.22]: https://github.com/fcreme/TerminalStyles/compare/v0.8.21...v0.8.22
 [0.8.21]: https://github.com/fcreme/TerminalStyles/compare/v0.8.20...v0.8.21
 [0.8.20]: https://github.com/fcreme/TerminalStyles/compare/v0.8.19...v0.8.20
