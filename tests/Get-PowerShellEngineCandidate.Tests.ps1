@@ -82,11 +82,45 @@ Describe 'register and uninstall use the shared probe' {
             $src | Should -Not -Match "'powershell\.exe'"
         }
 
-        It 'Invoke-TerminalStylesUninstall hardcodes no engine name' {
-            $src = (Get-Command Invoke-TerminalStylesUninstall).ScriptBlock.ToString()
+        It 'the uninstall side hardcodes no engine name' {
+            # Uninstall's $PROFILE discovery lives in Get-PowerShellProfileTarget
+            # now -- pulled out so the strip below it can be run against a
+            # sandbox at all. This assertion follows the discovery rather than
+            # the caller; asserting on Invoke-TerminalStylesUninstall's source
+            # would now pass or fail on where the code sits rather than on what
+            # it does.
+            $src = (Get-Command Get-PowerShellProfileTarget).ScriptBlock.ToString()
             $src | Should -Match 'Get-PowerShellEngineCandidate'
             $src | Should -Not -Match "'pwsh\.exe'"
             $src | Should -Not -Match "'powershell\.exe'"
+        }
+
+        It 'uninstall reaches its $PROFILE discovery' {
+            # The half a source grep cannot see: that the caller still calls it.
+            # Without this the check above is satisfied by a function nothing
+            # runs, which is how a passing suite hid the last two defects here.
+            (Get-Command Invoke-TerminalStylesUninstall).ScriptBlock.ToString() |
+                Should -Match 'Remove-PowerShellProfileLoader'
+            (Get-Command Remove-PowerShellProfileLoader).ScriptBlock.ToString() |
+                Should -Match 'Get-PowerShellProfileTarget'
+        }
+
+        It 'names each $PROFILE once, even when two engines share one' {
+            # pwsh and pwsh-preview report the same path on a macOS machine that
+            # has both; processing it twice would print the malformed and
+            # unwritable warnings twice for one file.
+            $paths = @((Get-PowerShellProfileTarget).ProfilePath)
+            ($paths | Select-Object -Unique).Count | Should -Be $paths.Count
+        }
+
+        It 'every discovered target carries a label from the shared probe' {
+            # Behavioural, not textual: whatever engines this machine has, each
+            # target names one of them.
+            $labels = @((Get-PowerShellEngineCandidate).Label)
+            foreach ($t in @(Get-PowerShellProfileTarget)) {
+                $labels | Should -Contain $t.Label
+                $t.ProfilePath | Should -Not -BeNullOrEmpty
+            }
         }
     }
 }
