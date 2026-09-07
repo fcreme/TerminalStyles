@@ -410,8 +410,20 @@ function Invoke-TerminalStylesUninstall {
         [switch]$DeleteData,   # also remove %LOCALAPPDATA%\TerminalStyles\ (user state)
         # Pre-granted consent. Required for a non-interactive uninstall, which
         # used to happen by accident whenever stdin was at EOF.
-        [switch]$Yes
+        [switch]$Yes,
+        # Test seams: real callers omit them and the live $HOME is used. Without
+        # these the rc half of this command could not be exercised at all --
+        # it resolves rc paths from the live $HOME independently of the data
+        # root, so a data-root-only sandbox still edits the operator's own
+        # ~/.zshrc. Forwarded by what the caller BOUND, the rule
+        # Get-ShellRcCandidate documents.
+        [string]$HomeDir,
+        [string]$ZDotDir
     )
+
+    $rcSplat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $rcSplat.HomeDir = $HomeDir }
+    if ($PSBoundParameters.ContainsKey('ZDotDir')) { $rcSplat.ZDotDir = $ZDotDir }
 
     $dataDir = Get-TStylesDataRoot
     $kind = Get-TerminalStylesInstallKind
@@ -427,6 +439,23 @@ function Invoke-TerminalStylesUninstall {
         }
     }
     Write-Host "  - Strip the loader block from pwsh 7 and Windows PowerShell 5.1 `$PROFILE files" -ForegroundColor Yellow
+    # The zsh/bash half of step 2, which this listing did not mention at all.
+    # Step 2 was ADDED because uninstall used to leave the shell side running;
+    # the behaviour was fixed and the consent text never caught up, so the
+    # command edited ~/.zshrc, ~/.bashrc, ~/.bash_profile and ~/.profile after
+    # a prompt that named only the two $PROFILE files -- and that named them
+    # precisely, and went on to promise what it would NOT touch, which is
+    # exactly what invites a reader to treat the list as complete. The files
+    # are printed rather than described: which of them carry a block is
+    # knowable here, and is the difference between naming four files and
+    # naming the one that is really about to change.
+    $shellRcTargets = @(Get-UninstallShellRcTarget @rcSplat)
+    if ($shellRcTargets.Count -gt 0) {
+        Write-Host "  - Strip the zsh/bash loader block from:" -ForegroundColor Yellow
+        foreach ($t in $shellRcTargets) {
+            Write-Host ("      {0}" -f $t.Path) -ForegroundColor Yellow
+        }
+    }
     if ($DeleteData) {
         Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp)" -ForegroundColor Red
     } else {
@@ -497,7 +526,7 @@ function Invoke-TerminalStylesUninstall {
     $shellRemoved = 0
     # The removal superset, not the registration list: shell-init can register
     # into ~/.profile, and sweeping the narrow list orphaned that block forever.
-    foreach ($c in (Get-ShellRcRemovalCandidate)) {
+    foreach ($c in (Get-ShellRcRemovalCandidate @rcSplat)) {
         # Explicit comparison: Unregister-ShellLoader returns a STATUS now, and
         # every status -- including 'none' -- is a truthy string.
         if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed') {

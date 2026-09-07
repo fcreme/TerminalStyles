@@ -98,6 +98,10 @@ function Get-TerminalStyleHelpData {
                        "or bash tab comes up in the applied style -- colors, prompt, and banner.",
                        "Also defines a 'tstyles' command for those shells.",
                        "",
+                       "Two files it does not name above, in the layouts that need them:",
+                       "your ~/.profile, when that is the only file your login shell reads,",
+                       "and `$ZDOTDIR/.zshrc when you keep zsh config outside your home.",
+                       "",
                        "Colors belong to the terminal rather than to any one shell, so without",
                        "this a zsh user still sees the palette but keeps their own prompt.",
                        "Re-run it any time; it refreshes the block instead of adding a second.")
@@ -118,8 +122,13 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'uninstall'; Usage = 'uninstall'; Summary = 'Remove the module (keeps your styles)'
-            Detail = @("Removes the module and strips the `$PROFILE loader. Your saved",
-                       "styles and state are preserved unless you pass -DeleteData.")
+            Detail = @("Removes the module and strips the `$PROFILE loader from both",
+                       "PowerShell engines. It also strips the zsh/bash loader block from",
+                       "your shell rc files -- the same files shell-remove sweeps -- so an",
+                       "uninstall does not leave a shell sourcing a runtime it just deleted.",
+                       "",
+                       "Your saved styles and state are preserved unless you pass -DeleteData.",
+                       "The confirmation names every rc file it is about to change.")
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
         }
         [pscustomobject]@{
