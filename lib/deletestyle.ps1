@@ -477,15 +477,23 @@ function Move-StyleDirectoryToTrash {
     cannot grow without bound -- the very complaint this feature exists to fix.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)]$Plan, [int]$KeepDays = 7)
+    param([Parameter(Mandatory)]$Plan)
 
     $trashRoot = Get-StyleTrashRoot
 
-    # Sweep first, and only what Get-StyleTrashSweepTarget names -- the same
-    # function the consent listing read, so the user cannot be shown one set and
-    # have another removed.
+    # Sweep the list the user was SHOWN, off the plan -- not a fresh one.
+    # Calling Get-StyleTrashSweepTarget again here would re-read the clock AFTER
+    # the prompt, and Confirm-Action blocks for as long as the user takes to
+    # read it: a folder sitting at six days and twenty-three hours when the
+    # listing was drawn crosses the window while they decide, and confirming
+    # erases it having never named it. That is this same defect one step later,
+    # and it is why the window is not a parameter here -- a second place to set
+    # it is a second answer to disagree with the first.
+    #
+    # A plan carrying no SweepTargets sweeps nothing, which is the safe
+    # direction to fail: the trash grows rather than losing something unnamed.
     if (Test-Path -LiteralPath $trashRoot) {
-        foreach ($old in (Get-StyleTrashSweepTarget -KeepDays $KeepDays)) {
+        foreach ($old in @($Plan.SweepTargets)) {
             try {
                 if ($old.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
                     [System.IO.Directory]::Delete($old.FullName, $false)

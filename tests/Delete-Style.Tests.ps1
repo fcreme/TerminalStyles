@@ -541,6 +541,27 @@ Describe 'the delete prompt discloses what confirming it will erase' {
                 [System.IO.Directory]::Exists($doomed) | Should -BeFalse -Because 'the prompt named it'
                 [System.IO.Directory]::Exists($spared) | Should -BeTrue  -Because 'the prompt did not'
             }
+            It 'erases nothing that appeared after the prompt was drawn' {
+                # Confirm-Action blocks for as long as the user takes to read
+                # the listing. Recomputing the sweep after it re-reads the
+                # clock, so a folder at six days and twenty-three hours when
+                # the prompt was drawn crosses the window while they decide and
+                # is erased having never been named -- this defect one step
+                # later. Measured against the first fix: prompt named [], and
+                # 'precious' was present before the move and gone after it.
+                #
+                # A folder that simply was not in the plan is the same thing and
+                # needs no clock to construct.
+                $plan = Get-StyleDeletePlan -Name 'mine'
+                @($plan.SweepTargets).Count | Should -Be 0 -Because 'the trash was empty when the prompt was drawn'
+
+                $late = script:New-Trash 'precious-20200101-000000'
+
+                Move-StyleDirectoryToTrash -Plan $plan
+
+                [System.IO.Directory]::Exists($late) | Should -BeTrue `
+                    -Because 'the consent the user gave named it nowhere'
+            }
         }
     }
 }
