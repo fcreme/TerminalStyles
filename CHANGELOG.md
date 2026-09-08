@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **on a machine whose locale is not Gregorian, the seven-day trash window was void, and `tstyles delete` erased styles seconds after promising to keep them.** `Get-StyleDeletePlan` named the trash folder with `Get-Date -Format 'yyyyMMdd-HHmmss'`, which formats through `CurrentCulture` and therefore through that culture's DEFAULT CALENDAR, while `Get-StyleTrashTimestamp` reads the name back pinned to `InvariantCulture`. Only the reader had ever been pinned. Under `ar-SA` (UmAlQura) today stamps as `14480326` and under `fa-IR` (Persian) as `14050617`; both parse cleanly as Gregorian years around 580 in the past, so the folder was already past the cutoff the instant it was created.
+
+  Measured end to end through the real command: `tstyles delete mine` printed `Kept for 7 days at .../.deleted/mine-14480326-033215`, and the very next `tstyles delete other` -- an unrelated style -- listed it in RED as `ERASE mine-14480326-033215, deleted over 7 days ago` and ran the recursive `Remove-Item` over it. `th-TH` (ThaiBuddhist) fails the opposite, harmless way: it stamps `2569`, so nothing in the trash is ever swept and the store grows without bound, which is the complaint the sweep exists to fix.
+
+  This is the defect 0.8.23 fixed, re-entering through a second channel. That fix moved the answer from `LastWriteTime` onto the folder name because "the correct answer was on disk the whole time" -- and it is, but only if both halves agree on which calendar the digits are in. The `no stamp -- fall back to LastWriteTime` escape hatch that release relies on never engaged either, because `14480326-033215` still matches the reader's `-(\d{8})-(\d{6})$` pattern perfectly. It is the shape most of this file is: two implementations of one rule, agreeing until they do not.
+
+  The four other `Get-Date -Format 'yyyyMMdd-HHmmss'` call sites in the project are backup filenames that nothing parses back, so they are cosmetic and are left alone. The tests around this built their own fixture names with the same culture-sensitive formatter, so they agreed with the bug under `en-US` and measured nothing about the pairing; they are pinned too. The new test FORCES `UmAlQuraCalendar` rather than trusting `ar-SA` to resolve to it, since that depends on ICU vs NLS and a test that is only decisive on some hosts is the kind this suite has been bitten by before -- and it asserts the calendar really is non-Gregorian first, so it cannot quietly become vacuous.
+
 ## [0.8.23] - 2026-09-07
 
 ### Fixed
