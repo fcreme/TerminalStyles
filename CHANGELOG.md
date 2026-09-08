@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the notice that exists to explain a plain background explained only half of the limit, so a user who did exactly what it said still got a surprise.** On Terminal.app an image cannot reach the window you are already in, so `Publish-StyleBackgroundProfile` writes the profile and tells you how to open it: "This style ships a background image, which Terminal.app can only show in a new window. To get it: `tstyles <name> -NewWindow`". Every bundled background in this project is an animated GIF, so "to get it" reads as a promise of the GIF -- and Terminal.app renders a still background, so `ConvertTo-AppleTerminalBackground` hands it the first frame instead (a profile pointing at a GIF renders blank, with no error anywhere).
+
+  So the one screen built to keep a plain result from being a mystery described where the image would appear and never that it would not move. Reported by a user who applied a style, ran `-NewWindow` exactly as instructed, and asked why they had a PNG. README has said it since the feature shipped; a grep of every `Write-Host` in `lib/`, `tstyles.ps1` and `terminals.ps1` found no runtime message that did.
+
+  Both branches now say so -- the hint and the one that actually opens the window, where the user is about to look straight at a still image. It is conditional on the source really being a `.gif`, keyed on the same extension `ConvertTo-AppleTerminalBackground` uses to decide whether to convert: a style shipping a static PNG loses nothing to animation, and telling that user their image would not move would be this same defect pointed the other way. Animated backgrounds remain a Windows Terminal capability, which the message now says out loud.
+
 ## [0.8.23] - 2026-09-07
 
 ### Fixed

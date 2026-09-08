@@ -154,3 +154,70 @@ Describe 'both apply paths deliver the background' {
         }
     }
 }
+
+# The notice must describe BOTH halves of the limit.
+#
+# It exists so a plain result is never a mystery, and it explained only WHERE
+# the image appears -- never that it will not move. Every bundled background is
+# an animated GIF, so "This style ships a background image ... to get it: tstyles
+# <name> -NewWindow" read as a promise of the GIF. ConvertTo-AppleTerminalBackground
+# then hands Terminal.app the first frame, because a profile pointing at a GIF
+# renders blank with no error.
+#
+# Reported by a user who applied a style, ran -NewWindow as instructed, and
+# asked why they had a PNG. The README says it (line 449); no runtime message
+# anywhere did -- a grep of every Write-Host in lib/, tstyles.ps1 and
+# terminals.ps1 found nothing about still-vs-animated.
+Describe 'the background notice says it will not animate' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:written = [System.Collections.ArrayList]::new()
+            Mock Write-Host { [void]$script:written.Add("$Object") }
+            Mock New-AppleTerminalProfile { '/tmp/generated.terminal' }
+            Mock Open-AppleTerminalProfile {}
+        }
+
+        It 'warns about the still frame in the hint' {
+            Mock Get-StyleBundledBackground { '/tmp/eva/background.gif' }
+            Publish-StyleBackgroundProfile -StyleName 'eva' -StyleDir '/tmp/eva' `
+                -Scheme ([pscustomobject]@{ background = '#000000' }) -Kind 'AppleTerminal' | Out-Null
+
+            $out = $script:written -join "`n"
+            $out | Should -Match 'first frame'
+            $out | Should -Match 'not the animation'
+            $out | Should -Match 'ships a background image' -Because 'the original half must survive'
+        }
+
+        It 'warns about it on the -NewWindow path too' {
+            # The path that actually opens the window is the one where the user
+            # is about to look straight at a still image.
+            Mock Get-StyleBundledBackground { '/tmp/eva/background.gif' }
+            Publish-StyleBackgroundProfile -StyleName 'eva' -StyleDir '/tmp/eva' `
+                -Scheme ([pscustomobject]@{ background = '#000000' }) -Kind 'AppleTerminal' `
+                -NewWindow | Out-Null
+
+            ($script:written -join "`n") | Should -Match "first frame"
+        }
+
+        It 'says nothing about animation for a style shipping a still image' {
+            # A PNG loses nothing to Terminal.app, and claiming it does would be
+            # this same defect pointed the other way.
+            Mock Get-StyleBundledBackground { '/tmp/plain/background.png' }
+            Publish-StyleBackgroundProfile -StyleName 'plain' -StyleDir '/tmp/plain' `
+                -Scheme ([pscustomobject]@{ background = '#000000' }) -Kind 'AppleTerminal' | Out-Null
+
+            $out = $script:written -join "`n"
+            $out | Should -Not -Match 'first frame'
+            $out | Should -Match 'ships a background image' -Because 'the new-window half still applies'
+        }
+
+        It 'matches what ConvertTo-AppleTerminalBackground actually converts' {
+            # The notice and the conversion must agree on what counts as
+            # animated, or one of them is lying. Both key on the .gif extension.
+            $png = Join-Path $TestDrive 'b.png'
+            [System.IO.File]::WriteAllText($png, 'x')
+            ConvertTo-AppleTerminalBackground -Path $png | Should -Be $png `
+                -Because 'a non-GIF is passed through untouched, so no frame is dropped'
+        }
+    }
+}
