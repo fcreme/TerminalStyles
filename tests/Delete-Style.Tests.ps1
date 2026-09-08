@@ -422,7 +422,7 @@ Describe 'the trash sweep measures time since deletion, not since the style was 
 
             It 'keeps trash inside the window' {
                 $trashRoot = Get-StyleTrashRoot
-                $stamp  = (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss')
+                $stamp  = (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss', [cultureinfo]::InvariantCulture)
                 $recent = Join-Path $trashRoot "recent-$stamp"
                 New-Item -ItemType Directory -Path $recent -Force | Out-Null
 
@@ -477,7 +477,7 @@ Describe 'the delete prompt discloses what confirming it will erase' {
             }
 
             It 'does not name one inside the window' {
-                script:New-Trash ("recent-" + (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss')) | Out-Null
+                script:New-Trash ("recent-" + (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss', [cultureinfo]::InvariantCulture)) | Out-Null
                 @(Get-StyleTrashSweepTarget).Count | Should -Be 0
             }
 
@@ -512,7 +512,7 @@ Describe 'the delete prompt discloses what confirming it will erase' {
             }
 
             It 'says nothing about erasing when the trash holds nothing expired' {
-                script:New-Trash ("recent-" + (Get-Date).AddDays(-1).ToString('yyyyMMdd-HHmmss')) | Out-Null
+                script:New-Trash ("recent-" + (Get-Date).AddDays(-1).ToString('yyyyMMdd-HHmmss', [cultureinfo]::InvariantCulture)) | Out-Null
                 $out = Show-StyleDeletePlan -Plan (Get-StyleDeletePlan -Name 'mine') 6>&1 | Out-String
                 # '- ERASE ', not 'ERASE': -Match is case-INSENSITIVE, so the
                 # bare word also matched "is erased" in the undo line below and
@@ -530,7 +530,7 @@ Describe 'the delete prompt discloses what confirming it will erase' {
         Context 'the listing and the sweep cannot drift apart' {
             It 'erases exactly what the prompt named, and nothing else' {
                 $doomed  = script:New-Trash 'precious-20200101-000000'
-                $spared  = script:New-Trash ("recent-" + (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss'))
+                $spared  = script:New-Trash ("recent-" + (Get-Date).AddDays(-2).ToString('yyyyMMdd-HHmmss', [cultureinfo]::InvariantCulture))
 
                 $plan  = Get-StyleDeletePlan -Name 'mine'
                 $named = @($plan.SweepTargets.Name)
@@ -562,6 +562,77 @@ Describe 'the delete prompt discloses what confirming it will erase' {
                 [System.IO.Directory]::Exists($late) | Should -BeTrue `
                     -Because 'the consent the user gave named it nowhere'
             }
+        }
+    }
+}
+
+# The stamp the delete writes and the stamp the sweep reads must be the same
+# calendar.
+#
+# Get-StyleDeletePlan wrote the trash folder name with `Get-Date -Format`, which
+# formats through CurrentCulture and therefore through that culture's DEFAULT
+# CALENDAR, while Get-StyleTrashTimestamp reads it back pinned to
+# InvariantCulture -- proleptic Gregorian. Only the reader had been pinned.
+#
+# Under ar-SA (UmAlQura) today stamps as 14480326 and under fa-IR (Persian) as
+# 14050617; both parse cleanly as Gregorian years around 580 in the past, so the
+# folder was expired the instant it was created. Measured end to end: `tstyles
+# delete mine` printed "Kept for 7 days at .../.deleted/mine-14480326-033215",
+# and the very next `tstyles delete other` listed it in RED as "deleted over 7
+# days ago" and destroyed it. th-TH (ThaiBuddhist) fails the other way, stamping
+# 2569 and making the trash unsweepable until 2576.
+#
+# The name still matched the reader's `-(\d{8})-(\d{6})$` pattern, so the
+# "no stamp -- fall back to LastWriteTime" escape hatch never engaged.
+#
+# The calendar is FORCED rather than taken from the culture's platform default:
+# whether ar-SA resolves to UmAlQura depends on ICU vs NLS, and a test that is
+# only decisive on some hosts is the kind this suite has been bitten by. This
+# way the assertion means the same thing on all four CI legs.
+Describe 'the trash stamp is written in the calendar the sweep reads' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            script:New-Style $script:root 'mine' -Tuned | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n")
+
+            $script:savedCulture = [System.Threading.Thread]::CurrentThread.CurrentCulture
+            $ci = [cultureinfo]([cultureinfo]::GetCultureInfo('ar-SA').Clone())
+            $ci.DateTimeFormat.Calendar = [System.Globalization.UmAlQuraCalendar]::new()
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = $ci
+        }
+        AfterEach {
+            [System.Threading.Thread]::CurrentThread.CurrentCulture = $script:savedCulture
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        It 'the forced calendar really is non-Gregorian' {
+            # Guards the guard: if this ever stops being true the two assertions
+            # below would pass while measuring nothing.
+            (Get-Date -Format 'yyyy') | Should -Not -Be (Get-Date).Year.ToString() `
+                -Because 'the whole point is a culture whose year differs from the Gregorian one'
+        }
+
+        It 'reads a stamp it just wrote back as roughly now' {
+            $plan = Get-StyleDeletePlan -Name 'mine'
+            $name = Split-Path $plan.TrashPath -Leaf
+
+            $read = Get-StyleTrashTimestamp -Name $name -Fallback ([datetime]'1900-01-01')
+            [math]::Abs(((Get-Date) - $read).TotalMinutes) | Should -BeLessThan 5 `
+                -Because 'the folder was named seconds ago, in whatever calendar'
+        }
+
+        It 'does not list a style deleted seconds ago as past the seven-day window' {
+            $plan = Get-StyleDeletePlan -Name 'mine'
+            Move-StyleDirectoryToTrash -Plan $plan
+
+            @(Get-StyleTrashSweepTarget).Name | Should -Not -Contain (Split-Path $plan.TrashPath -Leaf) `
+                -Because '"Kept for 7 days" was printed about it one statement ago'
         }
     }
 }

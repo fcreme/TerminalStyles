@@ -184,9 +184,24 @@ function Publish-StyleBackgroundProfile {
     $profilePath = New-AppleTerminalProfile -StyleName $StyleName -Scheme $Scheme -BackgroundImage $bundledBg
     if (-not $profilePath) { return $null }
 
+    # Say the OTHER half of the limit too. This notice exists so a plain result
+    # is never a mystery, and it explained only where the image appears -- not
+    # that it will not move. Every bundled background is an animated GIF, so
+    # "to get it" read as a promise of the GIF; ConvertTo-AppleTerminalBackground
+    # then hands Terminal.app the first frame, because a profile pointing at a
+    # GIF renders blank with no error. A user who does exactly what this screen
+    # tells them still gets a surprise, which is the thing it is here to prevent.
+    #
+    # Conditional on the source really being a GIF: a style shipping a static
+    # PNG loses nothing by animation, and saying so would be its own false claim.
+    $isGif = [System.IO.Path]::GetExtension($bundledBg).ToLowerInvariant() -eq '.gif'
+
     if ($NewWindow) {
         Write-Host ""
         Write-Host "  Opening a new window with the background image..." -ForegroundColor DarkGray
+        if ($isGif) {
+            Write-Host "  Terminal.app cannot animate, so this is the GIF's first frame." -ForegroundColor DarkGray
+        }
         try { Open-AppleTerminalProfile -Path $profilePath } catch {
             Write-Host "  Could not open the profile: $_" -ForegroundColor Yellow
         }
@@ -195,6 +210,10 @@ function Publish-StyleBackgroundProfile {
         Write-Host "  This style ships a background image, which Terminal.app can only show" -ForegroundColor DarkGray
         Write-Host "  in a new window. To get it:" -ForegroundColor DarkGray
         Write-Host "    tstyles $StyleName -NewWindow" -ForegroundColor Cyan
+        if ($isGif) {
+            Write-Host "  It will be the GIF's first frame, not the animation -- Terminal.app" -ForegroundColor DarkGray
+            Write-Host "  renders a still background. Animated backgrounds need Windows Terminal." -ForegroundColor DarkGray
+        }
     }
     return $profilePath
 }
