@@ -306,7 +306,19 @@ function Get-StyleDeletePlan {
     # What confirming this delete will also erase for good.
     $plan.SweepTargets = @(Get-StyleTrashSweepTarget)
 
-    $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
+    # InvariantCulture, because Get-StyleTrashTimestamp reads this back with it.
+    # `Get-Date -Format` formats through CurrentCulture, and therefore through
+    # that culture's DEFAULT CALENDAR: under ar-SA (UmAlQura) today stamps as
+    # 14480326 and under fa-IR (Persian) as 14050617, both of which parse
+    # cleanly as Gregorian years ~580 in the past -- so the folder was already
+    # expired the instant it was created, and the next delete of any style
+    # erased it having just printed "Kept for 7 days". th-TH (ThaiBuddhist)
+    # fails the other way, stamping 2569 and making the trash unsweepable.
+    #
+    # The name still matched the reader's `-(\d{8})-(\d{6})$` pattern, so the
+    # "no stamp -- fall back to LastWriteTime" escape hatch never engaged. Only
+    # the reader had been pinned; this is the other half of that pair.
+    $stamp = (Get-Date).ToString('yyyyMMdd-HHmmss', [cultureinfo]::InvariantCulture)
     $plan.TrashPath = Join-Path (Get-StyleTrashRoot) "$Name-$stamp"
 
     $plan.Consequence = if ($plan.RevealDir) {
