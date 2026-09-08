@@ -425,6 +425,10 @@ function Invoke-TerminalStylesUninstall {
     if ($PSBoundParameters.ContainsKey('HomeDir')) { $rcSplat.HomeDir = $HomeDir }
     if ($PSBoundParameters.ContainsKey('ZDotDir')) { $rcSplat.ZDotDir = $ZDotDir }
 
+    # Get-WezTermModulePath takes no -ZDotDir, so it gets its own splat.
+    $wezSplat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $wezSplat.HomeDir = $HomeDir }
+
     $dataDir = Get-TStylesDataRoot
     $kind = Get-TerminalStylesInstallKind
 
@@ -455,6 +459,13 @@ function Invoke-TerminalStylesUninstall {
         foreach ($t in $shellRcTargets) {
             Write-Host ("      {0}" -f $t.Path) -ForegroundColor Yellow
         }
+    }
+    $wezModule = Get-WezTermModulePath @wezSplat
+    if (Test-Path -LiteralPath $wezModule) {
+        Write-Host "  - Delete the generated WezTerm style module:" -ForegroundColor Yellow
+        Write-Host ("      {0}" -f $wezModule) -ForegroundColor Yellow
+        Write-Host "      (your wezterm.lua is NOT edited; its require line is pcall-guarded" -ForegroundColor DarkGray
+        Write-Host "       and becomes a no-op once this file is gone)" -ForegroundColor DarkGray
     }
     if ($DeleteData) {
         Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp)" -ForegroundColor Red
@@ -535,6 +546,24 @@ function Invoke-TerminalStylesUninstall {
         }
     }
     Clear-ShellStyleState
+
+    # The generated WezTerm module. Removal is a single delete because nothing
+    # of the user's was ever written into: their wezterm.lua carries only the
+    # pcall-guarded require they added by hand, which degrades to a no-op the
+    # moment this file stops existing. That is the property that made this
+    # design preferable to a marker block in a Lua program -- see the header of
+    # lib/wezterm.ps1.
+    $wezPath = Get-WezTermModulePath @wezSplat
+    if (Test-Path -LiteralPath $wezPath) {
+        try {
+            Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop
+            Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
+        } catch {
+            Write-Host "  ! could not remove $wezPath" -ForegroundColor Red
+            Write-Host "    Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Red
+        }
+    }
+
     if ($shellRemoved) {
         Write-Host "  Open a new zsh/bash tab to get your original prompt back." -ForegroundColor Gray
     }

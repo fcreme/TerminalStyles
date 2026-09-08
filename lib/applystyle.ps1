@@ -199,6 +199,68 @@ function Publish-StyleBackgroundProfile {
     return $profilePath
 }
 
+function Publish-StyleWezTermConfig {
+    <#
+    .SYNOPSIS
+    Write the WezTerm Lua module for this style, and say if it is not wired up.
+
+    .DESCRIPTION
+    A sibling of Publish-StyleBackgroundProfile rather than a branch inside it:
+    the two terminals share nothing but the moment they run, and the Terminal.app
+    path is the one people are using today. Both apply paths call both, and
+    tests/WezTerm-Writer.Tests.ps1 asserts that, so the duplication is measured
+    rather than trusted.
+
+    Returns the module path when one was written, else $null.
+
+    The notice is the same contract as the Terminal.app -NewWindow hint: a
+    capability this terminal reports must never produce a plain result the user
+    cannot explain. Here the missing piece is the one line only the user can add,
+    since nothing may edit their wezterm.lua -- see the header of lib/wezterm.ps1
+    for why appending to a Lua program is not the same as appending to an rc file.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [Parameter(Mandatory)]$Scheme,
+        $Theme,
+        [Parameter(Mandatory)][string]$Kind,
+        [string]$HomeDir
+    )
+
+    if ($Kind -ne 'WezTerm') { return $null }
+
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+
+    # The animated GIF itself -- the reason this writer exists. Unlike the
+    # Terminal.app path there is no still-frame conversion: WezTerm animates it.
+    $bg = Get-StyleBundledBackground -StyleDir $StyleDir
+
+    $status = Write-WezTermStyleModule -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
+                                       -BackgroundImage $bg @splat
+    $path = Get-WezTermModulePath @splat
+
+    if ($status -eq 'failed') {
+        Write-Host ""
+        Write-Host "  Could not write $path" -ForegroundColor Yellow
+        Write-Host "  WezTerm keeps your colors from this session, but a new window will not." -ForegroundColor DarkGray
+        return $null
+    }
+
+    if (-not (Test-WezTermStyleWired @splat)) {
+        Write-Host ""
+        Write-Host "  Wrote the WezTerm style to $path" -ForegroundColor DarkGray
+        Write-Host "  It does nothing until your wezterm.lua loads it. Add this line," -ForegroundColor DarkGray
+        Write-Host "  above the final `"return config`":" -ForegroundColor DarkGray
+        Write-Host "    $(Get-WezTermWiringLine)" -ForegroundColor Cyan
+        Write-Host "  Then every style you apply repaints the running window, background" -ForegroundColor DarkGray
+        Write-Host "  animation included." -ForegroundColor DarkGray
+    }
+    return $path
+}
+
 function Apply-StyleNonWT {
     # Apply a style on a terminal that is not Windows Terminal.
     #
@@ -304,6 +366,8 @@ function Apply-StyleNonWT {
 
     Publish-StyleBackgroundProfile -StyleName $StyleName -StyleDir $StyleDir `
         -Scheme $scheme -Kind $kind -NewWindow:$NewWindow | Out-Null
+    Publish-StyleWezTermConfig -StyleName $StyleName -StyleDir $StyleDir `
+        -Scheme $scheme -Theme $theme -Kind $kind | Out-Null
     Write-Host ""
 
     # Live reload of the prompt in THIS shell (matches the WT confirm path).
