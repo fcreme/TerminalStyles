@@ -1341,6 +1341,28 @@ function Invoke-TerminalStyle {
                                            -StyleDir $selectedStyle.FullName `
                                            -Scheme $schemes[$idx] `
                                            -Kind $termKind -NewWindow:$NewWindow | Out-Null
+
+            # ...and the WezTerm module, for the same reason and in the same
+            # breath. Every publisher the direct path calls has to be called
+            # here too; the comment above records what it cost the last time one
+            # of them was not. tests/WezTerm-Writer.Tests.ps1 asserts both paths
+            # reach both publishers, so this cannot quietly drift again.
+            #
+            # theme.json is read here rather than threaded down: the picker
+            # holds schemes for every style but never parsed a theme, and the
+            # WezTerm module carries font and padding as well as colours.
+            $wtTheme = $null
+            $wtThemePath = Join-Path $selectedStyle.FullName 'theme.json'
+            if (Test-Path -LiteralPath $wtThemePath) {
+                try {
+                    $wtTheme = [System.IO.File]::ReadAllText($wtThemePath,
+                        [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                } catch { $wtTheme = $null }
+            }
+            Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
+                                       -StyleDir $selectedStyle.FullName `
+                                       -Scheme $schemes[$idx] `
+                                       -Theme $wtTheme -Kind $termKind | Out-Null
         }
 
         # -KeepPrompt means "this style's colors, my prompt". Copying the

@@ -411,22 +411,50 @@ unaffected.
 | | Colors | Cursor | Font | Opacity | Background image | Tab color |
 |---|---|---|---|---|---|---|
 | Windows Terminal | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
+| WezTerm | ✅ | color only | ✅ | — | ✅ animated | — |
 | Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
 | iTerm2 | ✅ | color only | — | — | — | — |
-| Ghostty / WezTerm / kitty / Alacritty | ✅ | color only | — | — | — | — |
+| Ghostty / kitty / Alacritty | ✅ | color only | — | — | — | — |
 | VS Code terminal | ✅ | color only | — | — | — | — |
 
 Colors, including the cursor color, arrive as escape sequences and retint the
 window you are already in. Everything else has to be written into a config the
-terminal reads at startup, and TerminalStyles only knows how to write two of
-those: Windows Terminal's `settings.json` and Terminal.app's `.terminal`
-profile.
+terminal reads at startup, and TerminalStyles knows how to write three of
+those: Windows Terminal's `settings.json`, Terminal.app's `.terminal` profile,
+and WezTerm's generated Lua module.
 
 So the dashes above describe this tool, not the emulator. iTerm2 would honour a
-Dynamic Profile and WezTerm draws animated background images; nothing here
-writes either yet. They are marked `—` rather than `✅` on purpose — a claimed
-capability that no code delivers means a style reports success, paints nothing,
-and suppresses the notice that would have explained why.
+Dynamic Profile; nothing here writes one yet. They are marked `—` rather than
+`✅` on purpose — a claimed capability that no code delivers means a style
+reports success, paints nothing, and suppresses the notice that would have
+explained why.
+
+### Animated backgrounds on WezTerm
+
+WezTerm is the only terminal outside Windows that **animates** a background GIF,
+and every bundled style ships one. Terminal.app can show a still first frame at
+best, so this is the one way to see those backgrounds move on macOS or Linux.
+
+It needs one line in your own `wezterm.lua`, added by hand, above the final
+`return config`:
+
+```lua
+local ok, ts = pcall(require, 'terminalstyles')
+if ok then ts.apply_to_config(config) end
+```
+
+TerminalStyles never edits `wezterm.lua` itself. That file is a Lua *program*,
+not a config file: a syntax error in it does not degrade, it drops WezTerm to
+its default configuration until you find and fix it — and almost every
+`wezterm.lua` ends with `return config`, after which nothing may be appended.
+The `pcall` above is what bounds the damage the other way too: if the generated
+module is ever missing or broken, your own config still loads and you simply
+lose the style.
+
+Applying a style rewrites `~/.config/wezterm/terminalstyles.lua`, and because
+WezTerm watches every file it `require`s, the running window repaints on the
+spot — background animation included. No new window, no restart. `tstyles`
+prints the line above until it can see it in your config.
 
 Applying a style reports which parts the current terminal cannot show, so a
 plainer result is never a mystery.
@@ -487,10 +515,12 @@ is never touched: only images TerminalStyles itself installed are cleared.
   - **Windows Terminal** — the full feature set, including background images
   - **Terminal.app** — colors, cursor color, and prompt in the current window,
     plus a background image in a new one (`tstyles <name> -NewWindow`)
-  - **iTerm2**, **Ghostty**, **WezTerm**, **kitty**, **Alacritty**, and
-    anything else that speaks OSC 4/10/11/12 — colors, cursor color, and
-    prompt. Run `tstyles` and it reports what your terminal can and cannot
-    show.
+  - **WezTerm** — colors, cursor color, prompt, font, padding, and an
+    **animated** background image, live in the running window, after one line
+    of setup (see "Animated backgrounds on WezTerm")
+  - **iTerm2**, **Ghostty**, **kitty**, **Alacritty**, and anything else that
+    speaks OSC 4/10/11/12 — colors, cursor color, and prompt. Run `tstyles`
+    and it reports what your terminal can and cannot show.
 - **Either** Windows PowerShell 5.1 (ships with Windows) **or**
   [PowerShell 7+](https://github.com/PowerShell/PowerShell) (`pwsh`).
   Both engines work. On macOS: `brew install powershell`.
