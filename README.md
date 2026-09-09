@@ -121,6 +121,7 @@ tstyles tune [name]               # Live-tune brightness/saturation/opacity/font
 tstyles delete [name]             # Delete a style you made (bundled styles are refused)
 tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
+tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
 tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\TerminalStyles\ entirely.

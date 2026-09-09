@@ -121,6 +121,19 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles update')
         }
         [pscustomobject]@{
+            Name = 'profiles'; Usage = 'profiles [-Clean]'
+            Summary = 'Terminal.app profiles this tool has left behind (macOS)'
+            Detail = @("Opening a style with -NewWindow imports a .terminal profile into",
+                       "Terminal.app. Before this was fixed, every run imported ANOTHER copy --",
+                       "Terminal.app numbers the collisions, so a style opened four times left",
+                       "'eva', 'eva 1', 'eva 2' and 'eva 3' in your profile list for good.",
+                       "",
+                       "This lists them and, with -Clean, deletes the numbered ones. The",
+                       "unnumbered profile is never touched: it may be one you made yourself,",
+                       "and there is no way to prove otherwise.")
+            Keys = @(); Examples = @('tstyles profiles', 'tstyles profiles -Clean')
+        }
+        [pscustomobject]@{
             Name = 'uninstall'; Usage = 'uninstall'; Summary = 'Remove the module (keeps your styles)'
             Detail = @("Removes the module and strips the `$PROFILE loader from both",
                        "PowerShell engines. It also strips the zsh/bash loader block from",

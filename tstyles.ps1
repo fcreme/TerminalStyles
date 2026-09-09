@@ -359,7 +359,7 @@ function Invoke-TerminalStylesStateMigration {
 # and reported "Reset <terminal> to its unstyled default."
 $script:TStylesSubcommands = @(
     'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
-    'reset', 'shell-init', 'shell-remove', 'tune', 'update', 'uninstall')
+    'reset', 'shell-init', 'shell-remove', 'tune', 'update', 'uninstall', 'profiles')
 
 function Test-StyleNameIsSingleSegment {
     <#
@@ -609,6 +609,9 @@ function Invoke-TerminalStyle {
         # uninstall removes only install-managed files and leaves user state,
         # so a reinstall picks up where you left off.
         [switch]$DeleteData,
+        # `tstyles profiles -Clean`: remove the numbered Terminal.app profiles
+        # that repeated -NewWindow imports left behind.
+        [switch]$Clean,
         # Pre-granted consent for the confirm prompts on `register` and
         # `uninstall`. Those prompts now REFUSE rather than assume when there
         # is no console to answer at, so automation that genuinely means it
@@ -644,6 +647,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
     if ($Arg -eq 'delete')               { Invoke-TerminalStyleDelete -Name $SubArg -Target $Target -Yes:$Yes; return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData -Yes:$Yes; return }
+    if ($Arg -eq 'profiles')             { Invoke-TerminalStyleProfiles -Clean:$Clean -Yes:$Yes; return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
     if ($Arg) {

@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles <style> -NewWindow` added a permanent Terminal.app profile every single time it ran.** `Open-AppleTerminalProfile` was `& open $Path`, and `open` on a `.terminal` file does not UPDATE a profile of the same name -- it imports a second one, which Terminal.app resolves by appending a number. So the command documented as "a new window with the background image as well" also grew the user's profile list, silently, once per run, for the life of the install. Found on a machine with nine of them: `eva`, `eva 1`, `eva 2`, `eva 3`, `umbrella`, `umbrella 1`, `felitest`, `neon-rain`, `shorty` -- four evas from four `-NewWindow` runs. Nothing deduplicated, nothing updated in place, and `tstyles uninstall` does not remove them either, because it promises in as many words not to touch Terminal.app's settings. Neither did anything mention that the command wrote to Terminal.app's profile list at all.
+
+  The profile is now imported once and reused: a window is opened on the EXISTING settings set through AppleScript rather than by re-importing the file. That is the whole fix for the accumulation, but on its own it would have traded a duplicate for something worse -- a re-tuned style would open a window in the colours it no longer has, because the installed copy is not refreshed by regenerating the file. So an import record (`.appleterminal-imported.json`, the same idea as `.installed-files`) maps each profile name to the SHA256 of the `.terminal` file that produced it: unchanged, the installed profile is reused; changed, TerminalStyles deletes ITS copy and re-imports, which also keeps the new import from colliding with a name and being numbered.
+
+  The record is what makes the delete safe. Without one there is no way to tell a settings set this tool created from one the user made and happened to name after a style, and deleting the wrong one cannot be undone -- so a profile with no record is never touched, and gets the old numbered-copy behaviour instead. Every path falls back to `open` when Terminal.app cannot be asked, so nothing here can make the feature worse than it was.
+
+  Changes go through AppleScript rather than by writing `~/Library/Preferences/com.apple.Terminal.plist`: Terminal.app holds its preferences in memory and rewrites that file when it quits, so an external write to a running Terminal is silently reverted.
+
+### Added
+
+- `tstyles profiles`, which lists the Terminal.app profiles named after a style and, with `-Clean`, deletes the numbered duplicates left by every `-NewWindow` before the fix above. It removes ONLY the numbered ones: the unsuffixed `eva` may be a profile the user made themselves, and nothing can prove otherwise, while `eva 3` is a suffix Terminal.app appends on an import collision and so can only have come from a repeated import. The listing names every profile it will delete before asking -- the rule the uninstall consent listing had to learn in 0.8.23 -- and touches nothing else, including the default profile and any window already open.
+
 ## [0.8.23] - 2026-09-07
 
 ### Fixed
