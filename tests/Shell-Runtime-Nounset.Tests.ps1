@@ -49,6 +49,13 @@ BeforeDiscovery {
         if (-not $script:NoBash) { 'bash' }
         if (-not $script:NoZsh)  { 'zsh' }
     )
+    # Pester 6 FAILS DISCOVERY on an empty -ForEach rather than producing no
+    # tests, so on a Windows runner -- no bash, no zsh -- an empty $Shells took
+    # this whole file down with "Value can not be null or empty array", which is
+    # a red build for a platform the file has nothing to say about. A
+    # placeholder keeps discovery valid and the Its below skip on $NoBoth, so
+    # those legs report SKIPPED with a name that says why.
+    $script:ShellsOrNone = if ($script:Shells) { $script:Shells } else { @('no POSIX shell on this runner') }
     $script:StyleNames = @(
         Get-ChildItem -LiteralPath (Join-Path $repoRoot 'styles') -Directory |
             Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'prompt.sh') } |
@@ -137,7 +144,7 @@ printf 'shell=[%s] ts_c=[%s] ts_x=[%s] ts_cs=[%s] ts_raw=[%s] ts_prompt_expand=[
 
 Describe 'the runtime loads under set -u' {
 
-    It '<_> sources it in silence, with TSTYLES_DATA unset' -ForEach $script:Shells {
+    It '<_> sources it in silence, with TSTYLES_DATA unset' -ForEach $script:ShellsOrNone -Skip:$script:NoBoth {
         # The default-install shape. Before the fix: bash died on line 22 with
         # `TSTYLES_DATA: unbound variable` and exit 127; zsh aborted the source
         # with rc 126 and defined nothing at all.
@@ -151,7 +158,7 @@ $script:ReportBody
         $r.ExitCode | Should -Be 0 -Because "$($r.Shell) exited $($r.ExitCode): $($r.StdErr)"
     }
 
-    It '<_> ends up with every helper the styles call' -ForEach $script:Shells {
+    It '<_> ends up with every helper the styles call' -ForEach $script:ShellsOrNone -Skip:$script:NoBoth {
         # The half-loaded state is the part the error count hides: in bash the
         # aborted compound at line 52 takes ts_c/ts_x/ts_cs/ts_xs with it, so
         # the staged prompt.sh -- which calls all of them -- fails on every line
@@ -168,7 +175,7 @@ $script:ReportBody
             'ts_prompt_expand=[yes] ts_prompt_apply=[yes] ts_title=[yes] ts_load=[yes] tstyles=[yes]')
     }
 
-    It '<_> behaves the same with nounset OFF' -ForEach $script:Shells {
+    It '<_> behaves the same with nounset OFF' -ForEach $script:ShellsOrNone -Skip:$script:NoBoth {
         # The other half of the claim: ${VAR-} costs nothing when the option is
         # not set. If this ever diverges from the case above, the fix has
         # changed behaviour rather than added tolerance.
@@ -183,7 +190,7 @@ $script:ReportBody
             'ts_prompt_expand=[yes] ts_prompt_apply=[yes] ts_title=[yes] ts_load=[yes] tstyles=[yes]')
     }
 
-    It '<_> survives set -e as well' -ForEach $script:Shells {
+    It '<_> survives set -e as well' -ForEach $script:ShellsOrNone -Skip:$script:NoBoth {
         # errexit is the other option people put at the top of an rc file. The
         # loader block is already shaped for it (an `if`, not `[ -r x ] && . x`,
         # so an orphaned runtime does not make the rc file exit 1); this pins
@@ -254,7 +261,7 @@ Describe 'an interactive shell under set -u still gets its style' {
     #
     # Before the fix, this printed five "unbound variable" lines in bash / one
     # "parameter not set" in zsh, and left the shell's own default prompt.
-    It '<_> loads, prints no error, and installs the style prompt' -ForEach $script:Shells -Skip:$script:NoPty {
+    It '<_> loads, prints no error, and installs the style prompt' -ForEach $script:ShellsOrNone -Skip:($script:NoPty -or $script:NoBoth) {
         $shell = $_
         $exe   = (Get-Command $shell).Source
         $home2 = script:New-SandboxHome
@@ -304,5 +311,20 @@ exit
         $report = [regex]::Match($text, 'REPORT<(?<p>[^>]*)').Groups['p'].Value
         $report | Should -Match 'PILOT' `
             -Because "the EVA prompt must reach $shell; transcript was:`n$text"
+    }
+}
+
+# A file that skips everything is indistinguishable from a file that passes, so
+# say out loud where it is expected to have run. Windows has no POSIX shell and
+# is legitimately skipped above; a Unix runner that found neither shell is a
+# broken runner, not a clean run.
+Describe 'the nounset measurements actually ran somewhere' {
+    It 'found a shell to measure on a platform that has one' {
+        if ($IsWindows -or $PSVersionTable.PSVersion.Major -lt 6) {
+            Set-ItResult -Skipped -Because 'Windows has neither bash nor zsh; the Its above are skipped too'
+            return
+        }
+        @($script:Shells).Count | Should -BeGreaterThan 0 `
+            -Because 'on macOS or Linux at least one of bash/zsh must be found, or this file measured nothing'
     }
 }
