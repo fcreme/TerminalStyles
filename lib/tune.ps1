@@ -443,6 +443,21 @@ function Resolve-TuneSeed {
         # The name of the base that moved, for the notice. Distinct from
         # BaseName, which stays the style itself when the deltas are dropped.
         ChangedBaseName = $null
+        # There IS a tune.json and nothing usable came out of it: the read
+        # threw, the JSON did not parse, it names no base, or a recorded delta
+        # is not a number. A third state rather than a shade of the two above --
+        # BaseMissing means the base is named and gone, BaseChanged means it is
+        # there and re-baked, and both still have a name to put on screen and a
+        # lineage to carry forward. Here we do not know what the base was, so
+        # there is neither.
+        #
+        # Without it the fallback below seeded neutral knobs with every notice
+        # flag at its default, which is exactly the silence the deleted-base and
+        # drifted-base fixes closed: the tuner opened on brightness 0 /
+        # saturation 0 as though the style had never been tuned, and the next
+        # save rewrote tune.json with the style as its own base, severing the
+        # inherited background for good. Same loss, third door.
+        TuneUnusable = $false
     }
     $seededFromTune = $false
 
@@ -618,8 +633,25 @@ function Resolve-TuneSeed {
                     $seed.FontSize   = $fs
                     $seededFromTune  = $true
                 }
+            } else {
+                # Parsed, and there is no base in it to work from. A zero-length
+                # or whitespace-only file (ConvertFrom-Json hands back $null), a
+                # bare scalar or array, `{}`, or a `base` written as "" or null.
+                # None of those raises, so catching alone would have left this
+                # half of the door open -- and every one of them still drops
+                # whatever brightness/saturation the file did record.
+                $seed.TuneUnusable = $true
             }
-        } catch { }
+        } catch {
+            # The read threw (a lock, a permission denial, an antivirus hold, a
+            # directory where the file should be), the JSON did not parse, or one
+            # of the [int] casts above rejected a delta. Which of those it was
+            # does not change what the tuner can do about it -- there are no
+            # usable deltas and no trustworthy base name either way -- but it
+            # must not be swallowed, which is what this catch did for the whole
+            # life of the seed object.
+            $seed.TuneUnusable = $true
+        }
     }
 
     # When NOT seeded from a resolvable tune, take opacity/font from the working
@@ -767,6 +799,9 @@ function Invoke-TerminalStyleTune {
     $baseChanged = $seed.BaseChanged
     $changedBaseName = $seed.ChangedBaseName
     $baseMissing     = $seed.BaseMissing
+    # The style's own tune.json could not be used at all, so there is no base
+    # name to quote and the knobs came up neutral. Its own sentence, below.
+    $tuneUnusable    = $seed.TuneUnusable
 
     $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
@@ -1033,6 +1068,16 @@ function Invoke-TerminalStyleTune {
             } else {
                 Write-Host "$($ui.Warn)  '$changedBaseName' has changed since this style was tuned -- starting from its current colours.$($ui.Reset)"
             }
+        } elseif ($tuneUnusable) {
+            # The same silence, through a third door: tune.json is there and
+            # unusable, so the knobs came up neutral with nothing on screen to
+            # say why. No name is quoted, on purpose -- $changedBaseName is
+            # empty in this state, and reusing the branch above would have
+            # printed "'' is gone". The second line is the harder claim and the
+            # reason this needs saying before a key is pressed: with no lineage
+            # recovered, Save-TunedStyle records the style as its own base.
+            Write-Host "$($ui.Warn)  This style's tune.json could not be used, so any adjustments it recorded are not shown.$($ui.Reset)"
+            Write-Host "$($ui.Dim)  Repair or restore that file to get them back; saving now records this style as its own base.$($ui.Reset)"
         }
         Write-Host ""
         $rows = @(

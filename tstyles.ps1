@@ -704,6 +704,27 @@ function Invoke-TerminalStyle {
         return
     }
 
+    # Every scheme.json is parsed ONCE, here, and a style whose scheme.json does
+    # not parse is dropped before anything downstream is keyed by position --
+    # see Get-PickerStyleSet for the two failures an unguarded parse in the
+    # pre-load loop produced, one of which left the picker previewing and then
+    # APPLYING the previous style's palette under the broken style's name.
+    #
+    # It sits beside the "No styles found" check on purpose: both answer "is
+    # there anything here to pick from", and a style that cannot be parsed
+    # cannot be previewed or applied either, so both have to answer before the
+    # menu exists. The set that survives is named to the user in the frame
+    # itself ($unreadableNote below), which is the only place a picker message
+    # can be read -- everything printed above the menu is wiped by its Clear-Host.
+    $styleSet   = Get-PickerStyleSet -Styles $styles
+    $unreadable = @($styleSet.Unreadable)
+    $styles     = @($styleSet.Styles)
+    if (-not $styles) {
+        Write-Error ("No style has a readable scheme.json, so there is nothing to pick from. Unreadable: {0}" -f
+                     ($unreadable -join ', '))
+        return
+    }
+
     # Snapshot original (byte-exact for revert)
     # MUST be UTF-8 explicit: Get-Content -Raw in Windows PowerShell 5.1
     # defaults to the system ANSI codepage (Windows-1252 on Spanish locale),
@@ -831,13 +852,22 @@ function Invoke-TerminalStyle {
     # Start on the currently active style if we can detect one -- opening
     # the picker should land where the user already is, not at the first
     # alphabetical entry. Falls back to 0 for custom/unrecognized profiles.
+    #
+    # $currentIdx, not [bool]$currentName, is what "the user arrived in a style"
+    # means below: Get-CurrentStyleName can name a style the menu does not carry
+    # -- one whose scheme.json just failed the parse above, or one recorded and
+    # since deleted -- and index 0 is then some OTHER style. Esc would have
+    # re-emitted that one's palette while saying it was putting back what the
+    # user had.
     $idx = 0
+    $currentIdx  = -1
     $currentName = Get-CurrentStyleName
     if ($currentName) {
         for ($i = 0; $i -lt $styles.Count; $i++) {
-            if ($styles[$i].Name -eq $currentName) { $idx = $i; break }
+            if ($styles[$i].Name -eq $currentName) { $currentIdx = $i; break }
         }
     }
+    if ($currentIdx -ge 0) { $idx = $currentIdx }
     $confirmed = $false
 
     # What "revert" has to put back. On Windows Terminal it is the byte-exact
@@ -847,25 +877,31 @@ function Invoke-TerminalStyle {
     # arrived with, and only when there was one. $startIdx is captured here
     # because $idx is the live cursor and has moved by the time Esc arrives.
     $startIdx        = $idx
-    $hadCurrentStyle = [bool]$currentName
+    $hadCurrentStyle = ($currentIdx -ge 0)
     # A hashtable, not a [bool]: the revert runs inside a scriptblock, and a
     # plain assignment there would land in the scriptblock's own child scope and
     # never be seen out here. The finally block needs to know whether the revert
     # already happened.
     $pickerState     = @{ Reverted = $false }
 
-    # Pre-load each style's color swatch AND the parsed scheme object.
-    # Schemes are reused per-arrow to emit OSC color escapes (see the
-    # render loop below) so the terminal repaints colors in <5ms, well
-    # before the eventual settings.json write triggers Windows Terminal's
-    # full reload cycle.
-    $swatches = @{}
-    $schemes  = @{}
-    for ($i = 0; $i -lt $styles.Count; $i++) {
-        $sp = Join-Path $styles[$i].FullName 'scheme.json'
-        $scheme = [System.IO.File]::ReadAllText($sp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-        $swatches[$i] = Get-SchemeSwatch -Scheme $scheme
-        $schemes[$i]  = $scheme
+    # Each style's color swatch AND its parsed scheme object, both from the
+    # single guarded read above -- keyed by index into the filtered $styles, so
+    # every key here has a style and every style here has a scheme. Schemes are
+    # reused per-arrow to emit OSC color escapes (see the render loop below) so
+    # the terminal repaints colors in <5ms, well before the eventual
+    # settings.json write triggers Windows Terminal's full reload cycle.
+    $swatches = $styleSet.Swatches
+    $schemes  = $styleSet.Schemes
+
+    # What the frame says about the styles that are on disk but not in it. One
+    # line, constant for the life of the picker, so the in-place redraw keeps a
+    # fixed height; it names the folder when there is one to name, which is more
+    # than `tstyles list` does for the same file.
+    $unreadableNote = $null
+    if ($unreadable.Count -eq 1) {
+        $unreadableNote = "  ! {0} -- unreadable scheme.json, not shown" -f $unreadable[0]
+    } elseif ($unreadable.Count -gt 1) {
+        $unreadableNote = "  ! {0} styles -- unreadable scheme.json, not shown" -f $unreadable.Count
     }
 
     # Pre-load each style's tabTitle (from theme.json). settings.json's
@@ -1134,12 +1170,23 @@ function Invoke-TerminalStyle {
             Write-Host $pickerTargetLabel -ForegroundColor Cyan
             Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
             Write-Host "$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
+            # A style dropped by the parse above is reported HERE rather than
+            # before the menu, because the picker Clear-Host's on the way in and
+            # anything printed above the frame is wiped unread -- the same
+            # reason the update notice is held until the picker gives the screen
+            # back. Unlike the scroll indicators this row is not always emitted:
+            # it is a permanent row off the viewport budget for a line that is
+            # blank on every healthy install, and the frame only has to be the
+            # same height on every REDRAW, which it is -- $unreadableNote cannot
+            # change while the picker is up.
+            if ($unreadableNote) { Write-Host "$hintColor$unreadableNote$resetColor" }
             Write-Host ""
             # Rows the frame spends on anything that is not a style: the leading
             # blank, the header line, the two hint lines, the two always-present
             # scroll indicators, the trailing blank, and one spare so the shell's
-            # own prompt has somewhere to land.
-            $chrome = 8
+            # own prompt has somewhere to land -- plus the unreadable-styles
+            # line, when there is one.
+            $chrome = if ($unreadableNote) { 9 } else { 8 }
             # A non-positive WindowHeight means "I don't know", not "no room".
             # It reads as 0 under a pty whose size was never set -- some CI
             # runners, some SSH sessions before the first SIGWINCH -- and

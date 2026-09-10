@@ -17,6 +17,16 @@ BeforeAll {
 Describe 'Merge-StyleIntoSettings' {
     InModuleScope TerminalStyles {
         BeforeEach {
+            # Merge resolves the style's background itself when the caller
+            # provides none, and Get-StyleBundledBackground's third tier
+            # lazy-FETCHES it from the gifs branch into $DataRoot\cache\<name>.
+            # The style dir is named eva, so unsandboxed this file downloaded
+            # the real 3 MB eva.gif into the operator's own cache on every run
+            # -- a test writing to the machine's live state, and doing it over
+            # the network.
+            $script:savedDataRoot   = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $TestDrive
+
             $script:styleDir = Join-Path $TestDrive 'styles\eva'
             New-Item -ItemType Directory -Path $script:styleDir -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'scheme.json'),
@@ -26,6 +36,7 @@ Describe 'Merge-StyleIntoSettings' {
                 '{"colorScheme":"eva","opacity":90}',
                 [System.Text.UTF8Encoding]::new($false))
         }
+        AfterEach { $script:TStylesDataRoot = $script:savedDataRoot }
 
         It 'applies the scheme + theme to a valid named target' {
             $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @([pscustomobject]@{ name = 'PowerShell'; guid = '{x}' }) } }

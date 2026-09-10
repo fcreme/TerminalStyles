@@ -9,7 +9,9 @@
 #
 # The distinguishing fact: every background TerminalStyles writes lives under a
 # root it owns -- styles\<name>\background.* beneath the module root, or
-# cache\<name>\background.* beneath the data root.
+# cache\<name>\background.* beneath the data root -- and is written as an
+# ABSOLUTE path, which is what makes ownership answerable without reference to
+# the directory the process happens to be running in.
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
@@ -111,6 +113,47 @@ Describe 'Background carryover between styles' {
                 $other = Join-Path $TestDrive 'Modules\SomeOtherModule\1.0.0\background.gif'
                 Test-ManagedBackgroundPath -Path $other | Should -BeFalse
             }
+            It 'is not decided by the directory the process was launched in' {
+                # [Path]::GetFullPath resolves anything that is not an absolute
+                # path against [Environment]::CurrentDirectory -- the directory
+                # the PROCESS was started in, which Set-Location does not move
+                # (a child pwsh inherits it from the parent's location instead).
+                # Launch pwsh inside the clone or the data root, which
+                # `cd TerminalStyles; pwsh -File .\apply.ps1 ...` does, and the
+                # user's own 'desktopWallpaper' normalised to
+                # <cwd>\desktopWallpaper -- under a root, "ours", deleted.
+                #
+                # Set the ambient directory itself, NOT Set-Location: the two
+                # are different, and Set-Location would leave this case passing
+                # while measuring nothing.
+                $roots = @($script:TStylesModuleRoot, $script:TStylesDataRoot)
+                @($roots | Where-Object { $_ }).Count |
+                    Should -Be 2 -Because 'the fixture must supply two real roots for this case to be hostile'
+
+                $bundled = Join-Path $script:withBgDir 'background.gif'
+                $saved   = [System.Environment]::CurrentDirectory
+                foreach ($hostile in $roots) {
+                    New-Item -ItemType Directory -Path $hostile -Force | Out-Null
+                    try {
+                        [System.Environment]::CurrentDirectory = $hostile
+                        foreach ($theirs in @(
+                            'desktopWallpaper'                # WT's own keyword
+                            'my-wallpaper.png'                # a relative path
+                            '%USERPROFILE%\Pictures\bg.png'   # WT expands this; GetFullPath does not
+                            'C:bg.png'                        # rooted, but drive-RELATIVE on Windows
+                        )) {
+                            Test-ManagedBackgroundPath -Path $theirs |
+                                Should -BeFalse -Because "'$theirs' is the user's whatever the process working directory is (here: $hostile)"
+                        }
+                        # Control: the guard must still recognise what we wrote,
+                        # so a blanket $false cannot satisfy the case above.
+                        Test-ManagedBackgroundPath -Path $bundled |
+                            Should -BeTrue -Because "a bundled background is still ours from cwd $hostile"
+                    } finally {
+                        [System.Environment]::CurrentDirectory = $saved
+                    }
+                }
+            }
             It 'is false for a sibling directory that merely shares a name prefix' {
                 # "<dataroot>Evil\x.gif" must not count as living under "<dataroot>".
                 Test-ManagedBackgroundPath -Path ($script:TStylesDataRoot + "Evil\x.gif") | Should -BeFalse
@@ -174,6 +217,27 @@ Describe 'Background carryover between styles' {
                 $s = script:New-Settings -ProfileProps @{ backgroundImage = 'desktopWallpaper' }
                 $out = script:Merge -Settings $s -StyleDir $script:noBgDir
                 (script:GetProfile $out).backgroundImage | Should -Be 'desktopWallpaper'
+            }
+
+            It 'preserves the desktopWallpaper keyword when pwsh was launched inside a root' {
+                # The end-to-end half of "is not decided by the directory the
+                # process was launched in": the merge, not just the predicate.
+                $saved = [System.Environment]::CurrentDirectory
+                try {
+                    New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+                    [System.Environment]::CurrentDirectory = $script:TStylesDataRoot
+                    $s = script:New-Settings -ProfileProps @{
+                        backgroundImage        = 'desktopWallpaper'
+                        backgroundImageOpacity = 0.6
+                    }
+                    $out = script:Merge -Settings $s -StyleDir $script:noBgDir
+                    $p = script:GetProfile $out
+                    $p.colorScheme            | Should -Be 'nobg'
+                    $p.backgroundImage        | Should -Be 'desktopWallpaper'
+                    $p.backgroundImageOpacity | Should -Be 0.6
+                } finally {
+                    [System.Environment]::CurrentDirectory = $saved
+                }
             }
 
             It 'still applies a bundled background when the style ships one' {
