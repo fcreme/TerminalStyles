@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **every style deleted the user's own PSReadLine key bindings, on Windows, on every new tab.** All sixteen `styles/*/profile.ps1` called `Set-PSReadLineOption -EditMode Windows` behind a Windows-only guard. The comment above it in all sixteen files, and 0.8.21's CHANGELOG entry, both said this was costless because Windows mode is already the default there. Both were wrong. Supplying `-EditMode` at all makes PSReadLine throw away its dispatch tables and rebuild them from that mode's defaults -- the value is never compared against the current mode -- so every `Set-PSReadLineKeyHandler` the user had made in that session was deleted. Measured on PSReadLine 2.4.5 with the session already in Windows mode, so the call changed nothing:
+
+  ```
+  start                    : Alt+j=CustomAction; Ctrl+w=ForwardWord   total=65
+  after other shipped calls: Alt+j=CustomAction; Ctrl+w=ForwardWord   total=65
+  after -EditMode Windows  : Ctrl+w=BackwardKillWord                  total=63
+  ```
+
+  The module is imported from the END of `$PROFILE`, so the style always ran after the user's own bindings and the user always lost. 0.8.21 fixed the Unix half of this same statement -- where the switch additionally unbinds Ctrl+D, Ctrl+U, Ctrl+E and Ctrl+K -- and left the Windows half standing on the strength of that comment.
+
+  The statement is DELETED rather than guarded. On Windows it has exactly two reachable effects: erase the keymap and change nothing else, or erase the keymap while overriding a Vi or Emacs mode the user deliberately chose. A read-then-write guard removes only the first and leaves the second, which is the case a colour theme has least business touching. The other three `Set-PSReadLineOption` calls in those files -- `-PredictionSource`, `-PredictionViewStyle` and `-Colors` -- were measured to leave all 65 handlers intact and are unchanged.
+
+  The lint that was supposed to guard this matched the file's TEXT, and the shipped comment satisfied it; the replacement walks the AST for a `Set-PSReadLineOption` carrying an `-EditMode` parameter, and is joined by a runtime test that binds a key in a child engine, dot-sources the style, and asserts the binding survived.
+
 - **`tstyles uninstall` threw before it could ask for consent, on any machine, because two lines were lost in a merge.** `$wezSplat = @{}` and the `ContainsKey('HomeDir')` line beside it were dropped resolving the merge between the WezTerm writer and the `$PROFILE`-strip change -- both touched the same few lines at the top of `Invoke-TerminalStylesUninstall` -- while both USES of `@wezSplat` survived further down. `main` went red on the merge commit.
 
   The mechanism is worth recording, because it is the opposite of what everything in this project assumes. PowerShell does not object to splatting a variable that does not exist, and it does not pass "no arguments" either:
