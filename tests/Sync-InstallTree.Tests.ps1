@@ -9,8 +9,17 @@
 # megabytes) and every tuned style. The restore path also hardcoded a backslash
 # separator, so it could not have worked off Windows regardless.
 #
+# The second contract, from the two failure contexts at the bottom: a sync that
+# cannot finish leaves a WORKING install, or says in as many words that it did
+# not. Copying into staging before anything is removed is what buys the first
+# half; the two messages are the second half, and they are asserted because the
+# only caller, `tstyles update`, prints "You can retry manually" under both --
+# which on its own reads as "nothing was changed".
+#
 # The installer is dot-sourced with $TStylesInstallNoRun = $true so its functions
-# load WITHOUT running the download/install flow.
+# load WITHOUT running the download/install flow. Note the tests deliberately do
+# NOT set $ErrorActionPreference: the real installer does, but the guarantee has
+# to hold without it, so Sync-InstallTree sets its own.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -125,7 +134,8 @@ Describe 'Sync-InstallTree' {
 
     It 'removes a stale file from a shipped directory' {
         # docs/ is wholly install-owned, so a file dropped between releases must
-        # not linger. This is what the delete-then-copy is for.
+        # not linger. This is what replacing the whole entry -- rather than
+        # merging the new tree over the old one -- is for.
         New-Item -ItemType Directory -Path (Join-Path $script:installDir 'docs') -Force | Out-Null
         Set-Content -LiteralPath (Join-Path $script:installDir 'docs/GONE.md') -Value 'stale' -NoNewline
         Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
@@ -143,5 +153,93 @@ Describe 'Sync-InstallTree' {
         Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
         script:Content 'styles/eva/my-extra-note.txt' | Should -Be 'MINE'
         script:Content 'styles/eva/scheme.json'       | Should -Be 'NEW'
+    }
+
+    Context 'a downloaded file cannot be copied' {
+        # The failure this sync has to survive. It used to remove every
+        # install-owned entry in one loop and copy them back in the next, under
+        # the installer's $ErrorActionPreference = 'Stop' -- so one unreadable
+        # source file, or a disk that filled up part-way, ended the installer
+        # with TerminalStyles.psd1 already deleted and the $PROFILE loader still
+        # importing it. Every new tab then opened on "no valid module file was
+        # found" and had no `tstyles` to fix it with.
+        BeforeEach {
+            # The manifest the loader imports. The install seeded above ships an
+            # old tstyles.ps1 but no .psd1, and what a new tab finds is the whole
+            # point here, so give it the full set of shipped entries.
+            Set-Content -LiteralPath (Join-Path $script:installDir 'TerminalStyles.psd1') -Value 'OLD' -NoNewline
+            Set-Content -LiteralPath (Join-Path $script:installDir 'terminals.ps1')       -Value 'OLD' -NoNewline
+            New-Item -ItemType Directory -Path (Join-Path $script:installDir 'docs') -Force | Out-Null
+            Set-Content -LiteralPath (Join-Path $script:installDir 'docs/DEMO.md') -Value 'OLD' -NoNewline
+
+            # A real lock rather than a mocked Copy-Item: the downloaded file is
+            # held open with FileShare.None, which is exactly the cause the
+            # installer's own message already names ("another PowerShell tab,
+            # OneDrive, or antivirus"). .NET enforces the share mode on Windows
+            # and on Unix, so it is the same fault on all four CI legs.
+            $locked = Join-Path $script:extracted 'TerminalStyles.psm1'
+            $handle = [System.IO.File]::Open($locked, [System.IO.FileMode]::Open,
+                                             [System.IO.FileAccess]::Read, [System.IO.FileShare]::None)
+            $script:syncError = $null
+            try {
+                try   { Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir }
+                catch { $script:syncError = $_ }
+            } finally {
+                $handle.Dispose()
+            }
+        }
+
+        It 'fails, rather than reporting a half-finished install as done' {
+            # Guards the two below: if the lock did not bite on some platform the
+            # sync would succeed, and "the old files are still there" would be
+            # measuring nothing.
+            $script:syncError | Should -Not -BeNullOrEmpty
+        }
+
+        It 'leaves the previous install complete and still importable' {
+            script:Content 'TerminalStyles.psd1' | Should -Be 'OLD'
+            script:Content 'tstyles.ps1'         | Should -Be 'OLD'
+            script:Content 'terminals.ps1'       | Should -Be 'OLD'
+            script:Content 'docs/DEMO.md'        | Should -Be 'OLD'
+        }
+
+        It 'still leaves the user state alone' {
+            script:Content 'cache/eva/background.gif' | Should -Be 'MY-CACHED-GIF'
+            script:Content 'styles/felitest/tune.json' | Should -Be 'MY-TUNE'
+            script:Content 'current-style.json'        | Should -Be 'MY-RECORD'
+        }
+
+        It 'says nothing was removed, so the caller cannot imply the opposite' {
+            # `tstyles update` prints "Update failed: <this> / You can retry
+            # manually", which on its own reads as "nothing happened". It is only
+            # true because this message says it is.
+            "$script:syncError" | Should -BeLike '*was removed or replaced*'
+            "$script:syncError" | Should -Match ([regex]::Escape($script:installDir)) `
+                -Because 'the one thing the user has to be told is WHICH tree is intact'
+        }
+
+        It 'leaves no staging directory behind' {
+            @(Get-ChildItem -LiteralPath $TestDrive -Force -Directory |
+                Where-Object { $_.Name -like '*.staging-*' }).Count | Should -Be 0
+        }
+    }
+
+    Context 'the swap into place fails' {
+        It 'says the install may now be incomplete, and does not claim it is untouched' {
+            # There is no cross-platform way to make a rename fail for real -- a
+            # Windows handle blocks the unlink under it, a Unix one does not --
+            # so the fault goes in at the one call the swap makes. Should -Invoke
+            # is what keeps this from being a mock that never fires: before the
+            # fix nothing called Move-Item at all.
+            Mock Move-Item { throw 'The process cannot access the file because it is being used by another process.' }
+            $err = $null
+            try   { Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir }
+            catch { $err = $_ }
+
+            Should -Invoke Move-Item -Times 1
+            "$err" | Should -BeLike '*may now be incomplete*'
+            "$err" | Should -Not -BeLike '*was removed or replaced*' `
+                -Because 'the reassurance the staging half prints would be a lie here'
+        }
     }
 }
