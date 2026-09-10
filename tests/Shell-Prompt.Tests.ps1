@@ -273,7 +273,7 @@ Describe 'the runtime itself leaks nothing into the user shell -- measured, not 
     # `_ts_` on the sixteen styles.
     #
     # TSTYLES_DATA is the deliberate exception and stays: the runtime reads it
-    # before deriving a default (`if [ -z "$TSTYLES_DATA" ]`), and this suite
+    # before deriving a default (`if [ -z "${TSTYLES_DATA-}" ]`), and this suite
     # depends on that seam to point a shell at a scratch data root. It is a
     # documented-by-use contract, not a leak. Anything else is.
     BeforeDiscovery {

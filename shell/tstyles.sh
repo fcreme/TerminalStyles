@@ -16,10 +16,23 @@
 #
 # Portability: POSIX-ish shell, with the two shells' differences isolated in
 # ts_c / ts_prompt_apply below. Sourced by both, so no bashisms outside those.
+#
+# EVERY ambient read below uses ${VAR-}, never a bare $VAR. This file is sourced
+# from the user's rc file, so it inherits whatever shell options that rc has
+# already set -- and under `set -u` (nounset) an unset parameter is an ERROR, not
+# an empty string. The two shells then fail differently and both fail badly:
+# bash aborts the enclosing compound command and keeps going, so the file loads
+# HALF of itself (ts_c/ts_x are never defined, and the next four reads error in
+# turn); zsh aborts the whole `source` on the first one, so nothing is defined at
+# all -- not even the `tstyles` command. `${VAR-}` costs nothing when nounset is
+# off and is the difference between the runtime working and a wall of
+# "unbound variable" on every new tab. Wrapping the body in `set +u` instead
+# would be wrong: this file is sourced, so the option change would leak into the
+# user's own shell.
 
 # --- Data root -------------------------------------------------------------
 # Mirrors Get-TStylesDataRoot in tstyles.ps1 -- keep in sync.
-if [ -z "$TSTYLES_DATA" ]; then
+if [ -z "${TSTYLES_DATA-}" ]; then
     case "$(uname -s)" in
         Darwin) TSTYLES_DATA="$HOME/Library/Application Support/TerminalStyles" ;;
         *)      TSTYLES_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/TerminalStyles" ;;
@@ -28,9 +41,9 @@ fi
 
 # --- Shell identification --------------------------------------------------
 # Set once, so the per-prompt path does no detection work.
-if [ -n "$ZSH_VERSION" ]; then
+if [ -n "${ZSH_VERSION-}" ]; then
     _ts_shell='zsh'
-elif [ -n "$BASH_VERSION" ]; then
+elif [ -n "${BASH_VERSION-}" ]; then
     _ts_shell='bash'
 else
     _ts_shell='sh'
@@ -49,7 +62,7 @@ fi
 #
 # The ESC byte itself also differs: bash expands \033 (octal) inside PS1, but
 # zsh does not expand backslash escapes in PROMPT, so zsh needs a literal ESC.
-if [ "$_ts_shell" = 'zsh' ]; then
+if [ "${_ts_shell-}" = 'zsh' ]; then
     ts_c() { printf '%%{\033[38;2;%sm%%}' "$1"; }
     ts_x() { printf '%%{\033[0m%%}'; }
 else
@@ -66,7 +79,7 @@ fi
 # What bash accepts post-expansion is the raw bytes it would have decoded to:
 # \001 and \002 around a real ESC. zsh re-scans substitution output for prompt
 # escapes under PROMPT_SUBST, so there %{...%} still works and these match ts_c.
-if [ "$_ts_shell" = 'zsh' ]; then
+if [ "${_ts_shell-}" = 'zsh' ]; then
     ts_cs() { printf '%%{\033[38;2;%sm%%}' "$1"; }
     ts_xs() { printf '%%{\033[0m%%}'; }
 else
@@ -94,7 +107,7 @@ ts_rawx() { printf '\033[0m'; }
 # with a sed s|…|…| delimiter.
 ts_prompt_expand() {
     _ts_tpl="$1"
-    if [ "$_ts_shell" = 'zsh' ]; then
+    if [ "${_ts_shell-}" = 'zsh' ]; then
         _ts_cwd='%~'      # full path, ~-abbreviated
         _ts_leaf='%1~'    # last component only
         _ts_user='%n'
@@ -131,18 +144,22 @@ ts_git_branch() {
     # "100", the CURRENT DIRECTORY (%d), then "one", and a '%(' swallowed the
     # rest of the prompt as a malformed ternary. Doubling makes each '%'
     # literal. bash does no such re-scan, so it is left alone there.
-    if [ "$_ts_shell" = 'zsh' ]; then
+    if [ "${_ts_shell-}" = 'zsh' ]; then
         # The backslash matters: an unescaped % is a zsh glob pattern and
         # ${b//%/%%} appends rather than replaces (verified: 100%done ->
         # 100%done%%). ${b//\%/%%} is correct in both zsh and bash.
         _ts_b="${_ts_b//\%/%%}"
     fi
-    printf ' %s(%s)%s' "$TS_GIT_OPEN" "$_ts_b" "$TS_GIT_CLOSE"
+    # Only gitbash's prompt.sh sets these, and it sets both before this can run.
+    # Defaulted anyway: a template carrying {GITBRANCH} reaches this function
+    # from whatever style is staged, and an uncolored branch is a better answer
+    # than an error inside the prompt of every command.
+    printf ' %s(%s)%s' "${TS_GIT_OPEN-}" "$_ts_b" "${TS_GIT_CLOSE-}"
 }
 
 ts_prompt_apply() {
     # Install $1 (an already-expanded template) as the shell's prompt.
-    if [ "$_ts_shell" = 'zsh' ]; then
+    if [ "${_ts_shell-}" = 'zsh' ]; then
         # PROMPT_SUBST lets $(ts_git_branch) re-run on each prompt; without it
         # zsh would show the command substitution literally. It cannot expand
         # anything from the filesystem: the directory reaches the prompt as the
@@ -199,7 +216,7 @@ ts_load() {
     # TWICE on every new window. Set after the interactivity check, so a
     # non-interactive shell that returned above does not poison a later
     # interactive load in the same process.
-    if [ -n "$_ts_loaded" ]; then
+    if [ -n "${_ts_loaded-}" ]; then
         return 0
     fi
     _ts_loaded=1
