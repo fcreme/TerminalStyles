@@ -10,6 +10,9 @@
 #     opened the tuner on, which are different files for a tuned style.
 #   * A tuned style re-applied its deltas against a base that had since been
 #     re-baked, doubling the tune -- silently, and compounding each round.
+#   * A tune.json the seeder could not use -- unreadable, unparseable, or
+#     carrying no base -- reseeded the tuner to neutral with every notice flag
+#     at its default, so nothing on screen said the deltas had been dropped.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -100,6 +103,7 @@ Describe 'Resolve-TuneSeed commits all-or-nothing' {
             $seed.BaseName   | Should -Be 'eva'
             $seed.BaseDir    | Should -Be $script:evaDir
             $seed.Brightness | Should -Be -35
+            $seed.TuneUnusable | Should -BeFalse -Because 'the file was used, so there is nothing to report'
         }
 
         It 'does not half-apply a tune.json whose numbers are not numbers' {
@@ -119,6 +123,10 @@ Describe 'Resolve-TuneSeed commits all-or-nothing' {
             $seed.FontFace | Should -Be 'JetBrains Mono'
             $seed.FontSize | Should -Be 14
             $seed.Brightness | Should -Be 0
+            # ...and SAYS so. This assertion is the half that was missing: the
+            # recorded saturation 20 is dropped here too, and until the fix
+            # below nothing on screen mentioned it.
+            $seed.TuneUnusable | Should -BeTrue
         }
 
         It 'falls back cleanly when tune.json is not JSON at all' {
@@ -127,6 +135,10 @@ Describe 'Resolve-TuneSeed commits all-or-nothing' {
             $seed.BaseName | Should -Be 'eva-night'
             $seed.BaseDir  | Should -Be $script:nightDir
             $seed.Opacity  | Should -Be 75
+            # ...and SAYS it fell back. This test asserted only the fallback for
+            # the whole life of the silent-reseed defect below: falling back is
+            # right, doing it without a word is the loss.
+            $seed.TuneUnusable | Should -BeTrue
         }
     }
 }
@@ -360,6 +372,208 @@ Describe 'the one-hop guards compare paths the way the filesystem does' {
             $resSrc = (Get-Command Test-StyleResolved).ScriptBlock.ToString()
             $resSrc | Should -Match 'Test-SameStyleDirectory'
             $resSrc | Should -Not -Match '\$baseDir -ne \$StyleDir'
+        }
+    }
+}
+
+Describe 'a tune.json the seeder cannot use is not seeded over in silence' {
+    # Third door onto the loss the deleted-base and drifted-base fixes closed:
+    # the knobs come up neutral, the header says the style is its own base, and
+    # the next save writes that self-reference into tune.json for good. The
+    # difference was only ever whether anything on screen said so.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:enc = [System.Text.UTF8Encoding]::new($false)
+            $script:TStylesDataRoot   = Join-Path $TestDrive ('ud-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            $script:TStylesModuleRoot = Join-Path $TestDrive ('um-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            $script:styles = Join-Path $script:TStylesDataRoot 'styles'
+
+            $script:evaDir = Join-Path $script:styles 'eva'
+            New-Item -ItemType Directory -Path $script:evaDir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:evaDir 'scheme.json'),
+                '{"name":"eva","background":"#0a0006"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:evaDir 'theme.json'),
+                '{"opacity":100,"font":{"face":"Cascadia Code","size":11}}', $script:enc)
+
+            # A style the tuner really produced: base eva, brightness -35,
+            # saturation +10, opacity 85, Menlo 14.
+            $script:mineDir = Join-Path $script:styles 'mytheme'
+            New-Item -ItemType Directory -Path $script:mineDir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:mineDir 'scheme.json'),
+                '{"name":"mytheme","background":"#050003"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:mineDir 'theme.json'),
+                '{"opacity":85,"font":{"face":"Menlo","size":14}}', $script:enc)
+            $script:tunePath = Join-Path $script:mineDir 'tune.json'
+            $script:goodTune = '{"schemaVersion":1,"base":"eva","baseFingerprint":"' +
+                (Get-StyleSchemeFingerprint -StyleDir $script:evaDir) +
+                '","brightness":-35,"saturation":10,"opacity":85,"fontFace":"Menlo","fontSize":14}'
+            [System.IO.File]::WriteAllText($script:tunePath, $script:goodTune, $script:enc)
+        }
+
+        # Every one of these lands on the same fallback as a deleted base, with
+        # the same neutral knobs -- and reported nothing at all. Both halves are
+        # here on purpose, because they take different code to close, and that
+        # is what `quiet` records:
+        #   quiet=$true   the file PARSES and simply carries no usable `base`
+        #                 (ConvertFrom-Json hands back $null, a scalar, an array,
+        #                 or an object without one). Nothing is raised at all, so
+        #                 filling in the empty catch would have left every one of
+        #                 these exactly as silent as before. They need the else.
+        #   quiet=$false  something in the seeder's try block raises -- the read,
+        #                 the parse, or one of the [int] casts on a delta -- and
+        #                 the empty catch swallowed it. They need the catch.
+        It 'says so when tune.json is <label>' -ForEach @(
+            @{ label = 'zero length';                json = '';           quiet = $true }
+            @{ label = 'whitespace only';            json = "  `n ";      quiet = $true }
+            @{ label = 'a bare scalar';              json = '42';         quiet = $true }
+            @{ label = 'a bare string';              json = '"hello"';    quiet = $true }
+            @{ label = 'a JSON array';               json = '[1,2,3]';    quiet = $true }
+            @{ label = 'an empty object';            json = '{}';         quiet = $true }
+            @{ label = 'an object naming no base';   json = '{"schemaVersion":1,"brightness":-35,"saturation":10}'; quiet = $true }
+            @{ label = 'a base written as null';     json = '{"schemaVersion":1,"base":null,"brightness":-35,"saturation":10}'; quiet = $true }
+            @{ label = 'a base written as ""';       json = '{"schemaVersion":1,"base":"","brightness":-35,"saturation":10}'; quiet = $true }
+            @{ label = 'not JSON at all';            json = 'not json {{{'; quiet = $false }
+            @{ label = 'truncated mid-write';        json = '{"schemaVersion":1,"base":"eva","brightn'; quiet = $false }
+            @{ label = 'UTF-16 with no BOM';         json = '<<UTF16>>';  quiet = $false }
+            @{ label = 'carrying a delta that is not a number'; json = '{"schemaVersion":1,"base":"eva","brightness":"nope","saturation":10}'; quiet = $false }
+            @{ label = 'carrying a delta that overflows [int]'; json = '{"schemaVersion":1,"base":"eva","brightness":-35,"saturation":99999999999999}'; quiet = $false }
+        ) {
+            if ($json -eq '<<UTF16>>') {
+                # A byte-identical tune.json in UTF-16 with NO byte-order mark.
+                # The read is pinned to UTF-8, and StreamReader's BOM sniffing is
+                # what rescues the WITH-BOM case -- so that one round-trips and
+                # is not a door, while this one decodes to NUL-interleaved
+                # nonsense and fails the parse. Both were measured.
+                [System.IO.File]::WriteAllText($script:tunePath, $script:goodTune,
+                    [System.Text.UnicodeEncoding]::new($false, $false))
+            } else {
+                [System.IO.File]::WriteAllText($script:tunePath, $json, $script:enc)
+            }
+
+            # The `quiet` column is load-bearing, not decoration: it is the
+            # reason the fix is two branches rather than the one-line catch that
+            # was suggested for it. Measured rather than asserted in a comment,
+            # so a row cannot quietly move from one half to the other.
+            $parsedCleanlyWithNoBase = $false
+            try {
+                $probe = [System.IO.File]::ReadAllText($script:tunePath, [System.Text.UTF8Encoding]::new($false)) |
+                    ConvertFrom-Json
+                $parsedCleanlyWithNoBase = (-not $probe.base)
+            } catch { $parsedCleanlyWithNoBase = $false }
+            $parsedCleanlyWithNoBase | Should -Be $quiet `
+                -Because 'a catch alone closes only the half of this door that raises'
+
+            $seed = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+
+            $seed.TuneUnusable | Should -BeTrue `
+                -Because 'the tuner has nothing else to tell the user why the knobs came up neutral'
+            # The fallback itself is right and must stay: neutral deltas, the
+            # style as its own working base, opacity/font from its own theme.json.
+            $seed.BaseName   | Should -Be 'mytheme'
+            $seed.BaseDir    | Should -Be $script:mineDir
+            $seed.Brightness | Should -Be 0
+            $seed.Saturation | Should -Be 0
+            $seed.Opacity    | Should -Be 85
+            $seed.FontFace   | Should -Be 'Menlo'
+            # The notice claims "saving now records this style as its own base",
+            # and it is a claim: with no lineage recovered, that is exactly what
+            # Save-TunedStyle does (`if (-not $LineageBase) { $LineageBase = $BaseName }`).
+            # If a later change rescues the lineage here, the sentence has to change with it.
+            $seed.LineageBase | Should -BeNullOrEmpty
+        }
+
+        It 'says so when tune.json cannot be read at all' {
+            # A lock, a permission denial, an antivirus hold -- the cases this
+            # file already treats as first-class one level up, for the BASE's
+            # fingerprint ('stays quiet when the base cannot be read'). A
+            # directory in the file's place fails the read the same way on every
+            # platform, without a chmod that means nothing on Windows.
+            Remove-Item -LiteralPath $script:tunePath -Force
+            New-Item -ItemType Directory -Path $script:tunePath -Force | Out-Null
+
+            $seed = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+            $seed.TuneUnusable | Should -BeTrue
+            $seed.Brightness   | Should -Be 0
+            $seed.Opacity      | Should -Be 85 -Because 'the fallback still reads the style''s own theme.json'
+        }
+
+        # The other half of the rule, and the half that stops "set it always"
+        # from passing: neutral knobs are the CORRECT answer in several places,
+        # and two more doors already have notices of their own.
+        It 'stays quiet for <label>' -ForEach @(
+            @{ label = 'a well-formed tune.json';                    mutate = 'none' }
+            @{ label = 'a style with no tune.json at all';           mutate = 'delete' }
+            @{ label = 'an overwrite-saved style based on itself';   mutate = 'self' }
+            @{ label = 'a recorded base that was deleted';           mutate = 'ghost' }
+            @{ label = 'a recorded base that was re-baked';          mutate = 'drift' }
+        ) {
+            switch ($mutate) {
+                'none'   { }
+                'delete' { Remove-Item -LiteralPath $script:tunePath -Force }
+                'self'   { [System.IO.File]::WriteAllText($script:tunePath, ($script:goodTune -replace '"base":"eva"', '"base":"mytheme"'), $script:enc) }
+                'ghost'  { [System.IO.File]::WriteAllText($script:tunePath, ($script:goodTune -replace '"base":"eva"', '"base":"ghost"'), $script:enc) }
+                'drift'  { [System.IO.File]::WriteAllText($script:tunePath, ([regex]::Replace($script:goodTune, '"baseFingerprint":"[0-9a-f]+"', '"baseFingerprint":"deadbeef"')), $script:enc) }
+            }
+            $seed = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+            $seed.TuneUnusable | Should -BeFalse `
+                -Because 'the tune.json was used, absent, or already has a notice that names the base'
+        }
+
+        It 'leaves the two existing notices alone' {
+            # Three states, three answers -- a flag that fired alongside
+            # BaseMissing/BaseChanged would put two contradictory sentences on
+            # the same screen, and the tuner draws only the first of them.
+            [System.IO.File]::WriteAllText($script:tunePath, ($script:goodTune -replace '"base":"eva"', '"base":"ghost"'), $script:enc)
+            $ghost = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+            $ghost.BaseMissing     | Should -BeTrue
+            $ghost.BaseChanged     | Should -BeTrue
+            $ghost.ChangedBaseName | Should -Be 'ghost'
+            $ghost.TuneUnusable    | Should -BeFalse
+
+            [System.IO.File]::WriteAllText($script:tunePath, 'not json {{{', $script:enc)
+            $broken = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+            $broken.TuneUnusable    | Should -BeTrue
+            $broken.BaseMissing     | Should -BeFalse
+            $broken.BaseChanged     | Should -BeFalse -Because 'there is no base name to quote here, so the BaseMissing branch would print an empty one'
+            $broken.ChangedBaseName | Should -BeNullOrEmpty
+        }
+
+        It 'the tuner puts the flag on screen and nowhere else' {
+            # A structural test, deliberately, and the file already says why
+            # source-shaped tests are usually worthless (see the note in
+            # CLAUDE.md). This is the one thing the behavioural half above
+            # cannot reach: the sentence is drawn inside $drawMenu, a scriptblock
+            # local to Invoke-TerminalStyleTune, and the function returns on
+            # [Console]::IsInputRedirected long before it -- which is always true
+            # under Pester. Without something here, a seed flag that no screen
+            # ever reads passes the whole suite and ships the same silence with
+            # more code in it. The WORDING is not asserted here; it was checked
+            # by driving the real tuner on a pty against a corrupt tune.json.
+            $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
+
+            $reads = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.MemberExpressionAst] -and
+                $n.Member.Extent.Text -eq 'TuneUnusable' }, $true))
+            $reads.Count | Should -BeGreaterThan 0 -Because 'a flag nothing reads is the same silence with more code'
+
+            # The branch, AND something inside it that reaches the terminal. An
+            # empty `elseif ($tuneUnusable) { }` would satisfy a shape check and
+            # print exactly as much as the empty catch did.
+            $notices = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.IfStatementAst] }, $true) |
+                ForEach-Object { $_.Clauses } |
+                Where-Object {
+                    @($_.Item1.FindAll({ param($v)
+                        $v -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                        $v.VariablePath.UserPath -eq 'tuneUnusable' }, $true)).Count -gt 0
+                } |
+                Where-Object {
+                    @($_.Item2.FindAll({ param($c)
+                        $c -is [System.Management.Automation.Language.CommandAst] -and
+                        $c.GetCommandName() -eq 'Write-Host' }, $true)).Count -gt 0
+                })
+            $notices.Count | Should -BeGreaterThan 0 `
+                -Because 'the notice must be conditional on the state it describes, and must actually print'
         }
     }
 }
