@@ -545,6 +545,14 @@ function Invoke-TerminalStylesUninstall {
     $profileSplat = @{}
     if ($PSBoundParameters.ContainsKey('ProfileTarget')) { $profileSplat.Target = $ProfileTarget }
 
+    # Get-WezTermModulePath takes no -ZDotDir, so it gets its own splat rather
+    # than $rcSplat. These two lines were on the branch that added the WezTerm
+    # writer and were lost resolving the merge with the $PROFILE-strip change
+    # above, which touched the same few lines -- while both USES of $wezSplat
+    # survived further down the function.
+    $wezSplat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $wezSplat.HomeDir = $HomeDir }
+
     $dataDir = Get-TStylesDataRoot
     $kind = Get-TerminalStylesInstallKind
 
