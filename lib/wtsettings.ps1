@@ -142,9 +142,38 @@ function Test-ManagedBackgroundPath {
     #
     # This is what lets a bundle-less style clear the PREVIOUS style's
     # background without also clobbering a background the user chose.
+    #
+    # It is the ownership proof for a DELETE from a file the user owns, so it
+    # says "ours" only for an ABSOLUTE path under one of those roots -- see the
+    # guard below for the other shapes Windows Terminal accepts here.
     param([string]$Path)
 
     if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+
+    # Windows Terminal accepts more than absolute paths here: the keyword
+    # 'desktopWallpaper', a relative path, and environment-variable forms like
+    # '%USERPROFILE%\Pictures\bg.png'. None of those is a path this module could
+    # have written -- every background it writes is Join-Path'd onto an absolute
+    # $script:TStylesModuleRoot or $script:TStylesDataRoot -- so all of them are
+    # the user's, and saying so here is what keeps them.
+    #
+    # Saying so is also the only safe answer, because [Path]::GetFullPath below
+    # resolves a non-absolute value against the PROCESS working directory
+    # ([Environment]::CurrentDirectory, which Set-Location does NOT move -- a
+    # child pwsh inherits it from the parent's location instead). Launch pwsh
+    # inside the clone, the data root, or a ...\Modules\TerminalStyles parent --
+    # `cd TerminalStyles; pwsh -File .\apply.ps1 ...` does exactly that -- and
+    # 'desktopWallpaper' normalises to <cwd>\desktopWallpaper, lands under a
+    # root, and the user's own background is stripped by the guard that exists
+    # to protect it.
+    if (-not [System.IO.Path]::IsPathRooted($Path)) { return $false }
+    # Rooted is not quite enough on Windows: 'C:bg.png' carries a drive but no
+    # separator, so it resolves through THAT DRIVE's current directory and is
+    # CWD-dependent in the same way. [Path]::IsPathFullyQualified would rule out
+    # both shapes in one call, but it is .NET Core only and CI runs Windows
+    # PowerShell 5.1 on .NET Framework. On Unix nothing reaches this line but a
+    # leading '/', which cannot match.
+    if ($Path -match '^[A-Za-z]:(?![\\/])') { return $false }
 
     $roots = [System.Collections.Generic.List[string]]::new()
     foreach ($r in @($script:TStylesModuleRoot, $script:TStylesDataRoot)) {
@@ -165,9 +194,9 @@ function Test-ManagedBackgroundPath {
         if ([string]::IsNullOrWhiteSpace($root)) { continue }
         try {
             # GetFullPath normalises separators/casing-insensitive comparison and
-            # resolves any '..'; it does not require the file to exist. A WT
-            # keyword like 'desktopWallpaper' resolves against the CWD and so
-            # never lands under one of our roots.
+            # resolves any '..'; it does not require the file to exist. Only
+            # absolute paths get this far -- the guard above rejected everything
+            # whose resolution would depend on the process working directory.
             $full     = [System.IO.Path]::GetFullPath($Path)
             $fullRoot = [System.IO.Path]::GetFullPath($root).TrimEnd('\', '/') +
                         [System.IO.Path]::DirectorySeparatorChar
