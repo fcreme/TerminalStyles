@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **under `set -u` the shell runtime printed unbound-variable errors on every prompt and applied no style at all.** `shell/tstyles.sh` is sourced from the user's rc file on EVERY interactive shell, so it is the one file in this project guaranteed to run for every zsh and bash user -- and it read its ambient variables bare. With `nounset` set, which plenty of people put in their rc, sourcing it failed at the first read and never defined `ts_c`. Measured in a real bash under `set -eu`: `TSTYLES_DATA: unbound variable`, then `ZSH_VERSION`, `_ts_shell` twice, `_ts_loaded`, then `ts_c: command not found` three times, the banner printing anyway, and the shell falling back to bash's own default `PS1` -- eleven lines of error per tab, and no style. Every bare ambient read now uses the POSIX default-expansion form.
+
+  `$HOME` is deliberately left bare. bash does not synthesise it when the environment lacks one, so `${HOME-}` would turn a loud failure into the silently wrong absolute path `/Library/Application Support/TerminalStyles` -- and a bash with no `HOME` cannot find the `~/.bashrc` that sources this file in the first place, so the loader never runs on that path. A loud failure on an unreachable path beats a silent wrong answer.
+
+  `$TS_GIT_OPEN` / `$TS_GIT_CLOSE` were hardened although only gitbash defines them and it defines them first: the runtime owns `{GITBRANCH}` while one style owns its colours, which is the two-implementations-of-one-rule shape this file keeps being bitten by. An uncoloured branch name is a better answer than an error inside the prompt of every command.
+
+  `set -e` was measured and is NOT a problem, before the fix as well as after: the path already guards with `[ -t 1 ] || return 0`, `_ts_b=$(...) || return 0` and an explicit `return 0` after a `case` whose body can end false. The only errexit interaction that mattered was combined with nounset, and the new tests assert under `set -eu` rather than `set -u` alone.
+
 - **`tstyles uninstall` threw before it could ask for consent, on any machine, because two lines were lost in a merge.** `$wezSplat = @{}` and the `ContainsKey('HomeDir')` line beside it were dropped resolving the merge between the WezTerm writer and the `$PROFILE`-strip change -- both touched the same few lines at the top of `Invoke-TerminalStylesUninstall` -- while both USES of `@wezSplat` survived further down. `main` went red on the merge commit.
 
   The mechanism is worth recording, because it is the opposite of what everything in this project assumes. PowerShell does not object to splatting a variable that does not exist, and it does not pass "no arguments" either:
