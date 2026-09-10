@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **a tune.json the tuner could not read dropped the style's recorded adjustments and said nothing, and saving from there severed its lineage for good.** `Resolve-TuneSeed` reports `BaseMissing` when the base is named and gone, and `BaseChanged` when it is there and re-baked, so the tuner can explain why the knobs are not where the user left them. A tune.json that could not be USED took neither flag: a zero-length or whitespace-only file, a bare scalar or array, `{}`, a `base` written as `null` or `""`, a delta that is not a number, a file that is not JSON at all, and a read that threw on a lock or a permission denial all landed in an empty `catch` or fell past the last `if`. The tuner opened on brightness 0 / saturation 0 as though the style had never been tuned, with every notice flag at its default.
+
+  The loss then became permanent on the next save: `Save-TunedStyle`'s `if (-not $LineageBase) { $LineageBase = $BaseName }` writes the style as its OWN base, and `Get-TunedBaseBackground`'s self-reference guard returns `$null` for ever after. It is the same silence the deleted-base and drifted-base notices were added to close, arriving through a third door.
+
+  `TuneUnusable` is that third state rather than a shade of the other two, because there is no base name to quote and no lineage to carry forward -- reusing the `BaseChanged` branch would have printed `'' is gone`. The tuner says so before a key is pressed, and says the harder part out loud: saving now records this style as its own base. The `catch` that swallowed the whole class for the life of the seed object now sets the flag rather than nothing.
+
+  Narrower than first reported, and worth recording accurately: opacity and font come back CORRECTLY in this state, because the fallback reads the style's own `theme.json`, which the tuner itself wrote, and the tuned colours are already baked into `scheme.json`. What is actually lost is the record of the two deltas, and then the lineage.
+
 - **`tstyles uninstall` threw before it could ask for consent, on any machine, because two lines were lost in a merge.** `$wezSplat = @{}` and the `ContainsKey('HomeDir')` line beside it were dropped resolving the merge between the WezTerm writer and the `$PROFILE`-strip change -- both touched the same few lines at the top of `Invoke-TerminalStylesUninstall` -- while both USES of `@wezSplat` survived further down. `main` went red on the merge commit.
 
   The mechanism is worth recording, because it is the opposite of what everything in this project assumes. PowerShell does not object to splatting a variable that does not exist, and it does not pass "no arguments" either:
