@@ -362,7 +362,15 @@ function Register-LoaderInProfile {
 
     $escBegin = [regex]::Escape($LoaderBegin)
     $escEnd   = [regex]::Escape($LoaderEnd)
-    $blockPattern = "(?ms)$escBegin.*?$escEnd\r?\n?"
+    # Tempered: the span may not cross a second BEGIN. `.*?` under (?s) is lazy
+    # in the END only -- it still starts at the FIRST BEGIN in the file and runs
+    # to the first END after it -- so on a $PROFILE carrying a stray or
+    # duplicated marker the strip below deleted every line the user had written
+    # in between, and the first-touch backup above is skipped for any file that
+    # already carries a BEGIN. Same fix as terminals.ps1's Register-ShellLoader
+    # and lib/update.ps1's Invoke-TerminalStylesRegister; the installer is
+    # fetched and piped to iex, so it cannot share their copy.
+    $blockPattern = "(?ms)$escBegin(?:(?!$escBegin)[\s\S])*?$escEnd\r?\n?"
 
     $migrated = $false
     if ($existing.Trim().Length -gt 0) {

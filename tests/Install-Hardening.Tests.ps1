@@ -162,6 +162,29 @@ Describe 'Register-LoaderInProfile backup rule' {
             -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
         CountBaks | Should -Be 0
     }
+
+    It 'replaces only its own block when a stray BEGIN sits above it' {
+        # install.ps1 keeps its own copy of the marker pattern -- it is fetched
+        # and piped to iex before the module exists -- and had the same hole the
+        # module half did: `BEGIN .*? END` under (?s) starts at the FIRST BEGIN
+        # in the file and runs to the first END after it, so a $PROFILE carrying
+        # a stray or duplicated marker lost every line in between. And this is
+        # the branch that takes no backup, since the file already carries a
+        # BEGIN -- the test directly above pins that.
+        $stray = "$script:begin`r`nfunction prompt { 'keep-me> ' }`r`n"
+        [System.IO.File]::WriteAllText($script:profilePath, "# existing`r`n$stray$script:body`r`n", [System.Text.UTF8Encoding]::new($false))
+
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
+
+        $after = [System.IO.File]::ReadAllText($script:profilePath, [System.Text.UTF8Encoding]::new($false))
+        $after | Should -Match 'keep-me'
+        $after | Should -Match '# existing'
+        # One loader written, and the stray marker left where the user put it.
+        ([regex]::Matches($after, [regex]::Escape($script:end))).Count   | Should -Be 1
+        ([regex]::Matches($after, [regex]::Escape($script:begin))).Count | Should -Be 2
+        CountBaks | Should -Be 0
+    }
 }
 
 Describe 'Test-PolicyResolved' {
