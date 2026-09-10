@@ -364,6 +364,9 @@ function Publish-StyleBackgroundProfile {
     if ($NewWindow) {
         Write-Host ""
         Write-Host "  Opening a new window with the background image..." -ForegroundColor DarkGray
+        if ($isGif) {
+            Write-Host "  Terminal.app cannot animate, so this is the GIF's first frame." -ForegroundColor DarkGray
+        }
         try { Open-AppleTerminalProfile -Path $profilePath -Name $StyleName } catch {
             Write-Host "  Could not open the profile: $_" -ForegroundColor Yellow
         }
