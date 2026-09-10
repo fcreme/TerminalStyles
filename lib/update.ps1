@@ -262,8 +262,17 @@ $loaderEnd
         return
     }
 
-    # Detect existing loader block per target
-    $blockPattern = "(?ms)$([regex]::Escape($loaderBegin)).*?$([regex]::Escape($loaderEnd))\r?\n?"
+    # Detect existing loader block per target.
+    #
+    # The span may not cross a second BEGIN, the same tempering Register-ShellLoader
+    # carries and for the same reason: this pattern is also what -Force STRIPS with
+    # below, and `.*?` under (?s) runs from the first BEGIN to the first END
+    # anywhere after it. A $PROFILE with a stray or duplicated marker -- a hand
+    # edit, a merged dotfile, an interrupted write -- lost every one of the user's
+    # own lines in between, and lost them outright, since the strip replaces with
+    # nothing rather than with the block. No backup either: the first-touch rule
+    # skips a file that already carries a BEGIN.
+    $blockPattern = "(?ms)$([regex]::Escape($loaderBegin))(?:(?!$([regex]::Escape($loaderBegin)))[\s\S])*?$([regex]::Escape($loaderEnd))\r?\n?"
     foreach ($t in $targets) {
         if ($t.Exists) {
             $content = [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
