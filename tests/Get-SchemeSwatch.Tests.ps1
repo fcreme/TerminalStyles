@@ -9,8 +9,16 @@
 #   1. "All themes look like rainbows": prior picks (brightRed / yellow /
 #      brightGreen / brightCyan / brightPurple) sat in semantically fixed
 #      hue slots, so every theme rendered the same red->yellow->green->
-#      cyan->purple sequence regardless of palette. Now caught by the
-#      cross-theme distinguishability assertion.
+#      cyan->purple sequence regardless of palette. The cross-theme
+#      assertion below catches the degenerate form of that -- two themes
+#      whose swatch rows are byte-identical. It does NOT catch the shape
+#      the bug actually had: those five slots hold different hex per
+#      theme, so the rows look alike while their bytes differ, and the
+#      assertion stays green (measured: restore the old candidate list in
+#      Get-SchemeSwatch and only the malformed-colors test goes red).
+#      What rules that shape out today is the candidate ORDER in
+#      Get-SchemeSwatch, which leads with background / foreground /
+#      cursorColor -- unguarded here.
 #   2. Collapsed cells: themes with cursorColor == foreground (sober,
 #      gitbash) or cursorColor == brightRed (eva) used to render only 4
 #      unique colors instead of 5. Now caught by the per-theme unique-
@@ -31,8 +39,21 @@ BeforeDiscovery {
 }
 
 BeforeAll {
-    $repoRoot = Split-Path $PSScriptRoot -Parent
-    Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+    $script:repoRoot = Split-Path $PSScriptRoot -Parent
+    Import-Module (Join-Path $script:repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+    # Enumerated AGAIN here, deliberately. Pester runs BeforeDiscovery in the
+    # discovery scope, so the $themeNames above is $null by the time an It body
+    # executes -- `-ForEach` on the per-theme Contexts reads the discovery copy
+    # and is fine, a loop inside an It body is not. The cross-theme assertion
+    # below compared zero pairs, and reported green, for its whole life without
+    # this line: @($null) has Count 1, not 0, so its outer loop ran one iteration
+    # and its inner `for ($j = 1; $j -lt 1; ...)` never entered. Same trap, same
+    # cure, as tests/Lib-Loading.Tests.ps1 and tests/Bootstrap-ModuleSync.Tests.ps1.
+    $script:themeNames = @(
+        Get-ChildItem -Path (Join-Path $script:repoRoot 'styles') -Directory |
+            Where-Object { Test-Path (Join-Path $_.FullName 'scheme.json') } |
+            ForEach-Object { $_.Name } | Sort-Object
+    )
 }
 
 Describe 'Get-SchemeSwatch' {
@@ -81,8 +102,14 @@ Describe 'Get-SchemeSwatch' {
 
     Context 'Across all themes' {
         It 'every pair of themes produces a byte-distinct swatch' {
-            $repoRoot = Split-Path $PSScriptRoot -Parent
-            $signatures = InModuleScope TerminalStyles -Parameters @{ ThemeNames = $themeNames; RepoRoot = $repoRoot } {
+            $repoRoot = $script:repoRoot
+            $names = @($script:themeNames)
+            # Coverage before comparison. This is the suite's only cross-theme
+            # check of the picker's output, and an empty comparison passes
+            # silently, so the loop has to prove it ran before its verdict counts.
+            $names.Count | Should -BeGreaterThan 5 `
+                -Because 'the bundled themes have to reach the run phase for the comparison below to mean anything'
+            $signatures = InModuleScope TerminalStyles -Parameters @{ ThemeNames = $names; RepoRoot = $repoRoot } {
                 param($ThemeNames, $RepoRoot)
                 $sigs = @{}
                 foreach ($name in $ThemeNames) {
@@ -94,15 +121,20 @@ Describe 'Get-SchemeSwatch' {
                 }
                 $sigs
             }
-            $names = @($themeNames)
+            $signatures.Count | Should -Be $names.Count `
+                -Because 'a swatch has to be computed for every theme, not for none of them'
+            $pairs = 0
             $collisions = @()
             for ($i = 0; $i -lt $names.Count; $i++) {
                 for ($j = $i + 1; $j -lt $names.Count; $j++) {
+                    $pairs++
                     if ($signatures[$names[$i]] -eq $signatures[$names[$j]]) {
                         $collisions += "$($names[$i]) == $($names[$j])"
                     }
                 }
             }
+            $pairs | Should -Be ($names.Count * ($names.Count - 1) / 2) `
+                -Because 'every pair, which is what this test is named after, has to be compared'
             $collisions | Should -BeNullOrEmpty
         }
     }
