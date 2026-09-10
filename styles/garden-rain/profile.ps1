@@ -18,16 +18,14 @@ if (Get-Module -ListAvailable PSReadLine) {
         Set-PSReadLineOption -PredictionSource History -ErrorAction Stop
         Set-PSReadLineOption -PredictionViewStyle InlineView -ErrorAction Stop
     } catch { }
-    # Windows only. It is already the default there, and on macOS/Linux --
-    # where PSReadLine defaults to Emacs -- EditMode Windows UNBINDS Ctrl+E,
-    # Ctrl+K, Ctrl+U and Ctrl+D, and turns Ctrl+A into SelectAll. Applying a
-    # colour theme silently took away Ctrl+D (end session) and Ctrl+U (clear
-    # line); no style README mentions edit mode and nothing on screen explains
-    # it. 5.1 predates $IsWindows and is Windows by definition, hence the
-    # version test first -- the same order as Get-TStylesPlatform.
-    if (($PSVersionTable.PSVersion.Major -lt 6) -or $IsWindows) {
-        Set-PSReadLineOption -EditMode Windows
-    }
+    # No edit mode is set here, on any platform. Supplying -EditMode at all
+    # makes PSReadLine throw away its dispatch tables and rebuild them from
+    # that mode's defaults, even when the mode does not change -- so every key
+    # the user had bound in this session is deleted. On Windows, where Windows
+    # mode is already the default, that erasure was the statement's only
+    # effect. This file is dot-sourced from the END of $PROFILE, after the
+    # user's own bindings, so they always lost. A style is a colour theme; the
+    # line editor belongs to the user.
     Set-PSReadLineOption -Colors @{
         Command   = '#C8D4DC'
         Parameter = '#5EC47A'
