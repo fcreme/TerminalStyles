@@ -120,6 +120,116 @@ Describe 'Unregister-ShellLoader' {
     }
 }
 
+Describe 'the loader span never crosses a second BEGIN' {
+    # An rc file carrying a stray or duplicated BEGIN -- a hand edit, a merged
+    # dotfile, an interrupted write, the inputs Unregister-ShellLoader's own
+    # docstring names -- used to cost the user every line between that marker
+    # and the next END. `BEGIN .*? END` under Singleline is lazy in the END
+    # only: the match still starts at the FIRST BEGIN in the file. Register
+    # overwrote that whole span with its three-line block, Unregister deleted it
+    # outright, and both reported success -- with nothing to undo it, because
+    # the first-touch rule skips a file that already carries a BEGIN, so neither
+    # of those two paths takes a backup. The pattern is the only thing standing
+    # between a stray marker and the user's own lines.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            # Its own directory per test, so the backup count below can only
+            # ever see files this test made.
+            $script:rcDir = Join-Path $TestDrive ('rc-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            New-Item -ItemType Directory -Force -Path $script:rcDir | Out-Null
+            $script:rc        = Join-Path $script:rcDir '.zshrc'
+            $script:beginMark = '# ===== TerminalStyles BEGIN ====='
+            $script:endMark   = '# ===== TerminalStyles END ====='
+            $script:staleBlk  = "$script:beginMark`n. '/old/dangling/path.sh'`n$script:endMark"
+            $script:utf8      = [System.Text.UTF8Encoding]::new($false)
+        }
+
+        It 'refreshes only its own block, byte for byte, when a stray BEGIN sits above it' {
+            $before = "alias ll='ls -la'`n$script:beginMark`nexport MY_KEEP=1`n$script:staleBlk`nalias gs='git status'`n"
+            [System.IO.File]::WriteAllText($script:rc, $before, $script:utf8)
+
+            Register-ShellLoader -Path $script:rc | Should -Be 'updated'
+
+            # Everything outside the well-formed block is untouched, and the
+            # block itself really was refreshed -- so this cannot pass by the
+            # function having declined to do anything.
+            $expected = "alias ll='ls -la'`n$script:beginMark`nexport MY_KEEP=1`n" +
+                        (Get-ShellLoaderBlock).Trim() + "`nalias gs='git status'`n"
+            [System.IO.File]::ReadAllText($script:rc, $script:utf8) | Should -Be $expected
+
+            # And no copy was taken, which is the point: on the refresh path
+            # there is no backup to recover those lines from, so the pattern is
+            # the only thing protecting them. The listing needs -Force -- without
+            # it a dotfile-named backup reads as absent on Unix and the count
+            # would be comparing nothing.
+            @(Get-ChildItem -LiteralPath $script:rcDir -Filter '.zshrc.bak-*' -Force).Count |
+                Should -Be 0 -Because 'the refresh path takes no first-touch backup, by design'
+        }
+
+        It 'keeps the rc lines when several stray BEGINs stack above the block' {
+            $before = "$script:beginMark`nexport A=1`n$script:beginMark`nexport B=2`n$script:staleBlk`nexport C=3`n"
+            [System.IO.File]::WriteAllText($script:rc, $before, $script:utf8)
+
+            Register-ShellLoader -Path $script:rc | Should -Be 'updated'
+
+            $after = [System.IO.File]::ReadAllText($script:rc, $script:utf8)
+            $after | Should -Match 'export A=1'
+            $after | Should -Match 'export B=2'
+            $after | Should -Match 'export C=3'
+            $after | Should -Not -Match 'dangling'
+        }
+
+        It 'keeps the rc lines when the file uses CRLF endings' {
+            # An rc file that has been through a Windows editor -- Git Bash and
+            # WSL interop both produce them -- carries CRLF, and the span has to
+            # stop at the right marker across those endings too.
+            $crlfStale = "$script:beginMark`r`n. '/old/dangling/path.sh'`r`n$script:endMark"
+            $before = "alias ll='ls -la'`r`n$script:beginMark`r`nexport MY_KEEP=1`r`n$crlfStale`r`nalias gs='git status'`r`n"
+            [System.IO.File]::WriteAllText($script:rc, $before, $script:utf8)
+
+            Register-ShellLoader -Path $script:rc | Should -Be 'updated'
+
+            $after = [System.IO.File]::ReadAllText($script:rc, $script:utf8)
+            $after | Should -Match 'export MY_KEEP=1'
+            $after | Should -Match "alias ll='ls -la'"
+            $after | Should -Match "alias gs='git status'"
+            $after | Should -Not -Match 'dangling'
+        }
+
+        It 'leaves the file untouched when there is a BEGIN and no END anywhere' {
+            # Nothing here can be OUR block, so nothing may be rewritten. The
+            # status Register-ShellLoader returns for this input is a separate
+            # defect and is deliberately not asserted: it says 'updated' while
+            # writing nothing, which is a lie about a file it left intact, not a
+            # file it destroyed.
+            $before = "alias ll='ls -la'`n$script:beginMark`nexport MY_KEEP=1`n"
+            [System.IO.File]::WriteAllText($script:rc, $before, $script:utf8)
+
+            [void](Register-ShellLoader -Path $script:rc)
+
+            [System.IO.File]::ReadAllText($script:rc, $script:utf8) | Should -Be $before
+        }
+
+        It 'strips only its own block when a stray BEGIN sits above it' {
+            # shell-remove, and uninstall, which strips rc files and the
+            # $PROFILE through this same function. 'malformed' could not save
+            # this input: that guard fires only when there is no END ANYWHERE.
+            $before = "alias ll='ls -la'`n$script:beginMark`nexport MY_KEEP=1`n$script:staleBlk`nalias gs='git status'`n"
+            [System.IO.File]::WriteAllText($script:rc, $before, $script:utf8)
+
+            Unregister-ShellLoader -Path $script:rc | Should -Be 'removed'
+
+            $after = [System.IO.File]::ReadAllText($script:rc, $script:utf8)
+            $after | Should -Match 'export MY_KEEP=1'
+            $after | Should -Match "alias ll='ls -la'"
+            $after | Should -Match "alias gs='git status'"
+            $after | Should -Not -Match 'dangling'
+            ([regex]::Matches($after, [regex]::Escape($script:endMark))).Count | Should -Be 0
+        }
+    }
+}
+
 Describe 'Set-ShellStyleState / Clear-ShellStyleState' {
     InModuleScope TerminalStyles {
         BeforeEach {

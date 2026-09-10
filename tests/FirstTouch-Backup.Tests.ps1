@@ -72,6 +72,23 @@ Describe 'Save-FirstTouchBackup' {
 
 Describe 'shell-init keeps a copy of the rc file it edits' {
     InModuleScope TerminalStyles {
+        # -HomeDir sandboxes the rc lookup and NOTHING else. shell-init reaches
+        # Sync-ShellRuntime before it registers anything, and that stages
+        # shell/tstyles.sh and regenerates tstyles-cli.ps1 under the DATA ROOT,
+        # which -HomeDir does not touch. Unsandboxed, the four calls below
+        # rewrote the shim in the operator's OWN install, with an install kind
+        # derived from this checkout rather than from their install: on a
+        # bootstrap machine that is the by-name `Import-Module TerminalStyles`,
+        # which resolves to nothing there -- so a green run left every new zsh
+        # tab with no working `tstyles`, the 0.8.21 defect delivered by the test
+        # suite. Saved and restored rather than assigned once, because the
+        # module's $script: state outlives this Describe.
+        BeforeEach {
+            $script:savedDataRoot   = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $TestDrive
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedDataRoot }
+
         It 'backs up an existing .zshrc before adding the loader' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null

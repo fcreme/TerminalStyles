@@ -763,14 +763,26 @@ function Register-ShellLoader {
     $content = if ($exists) { [System.IO.File]::ReadAllText($Path, $enc) } else { '' }
 
     if ($content -match [regex]::Escape($begin)) {
+        # The span is TEMPERED -- it may not cross a second BEGIN -- and that is
+        # the whole of what keeps this path from eating the user's own lines.
+        # `BEGIN .*? END` under Singleline is lazy in the END, not in the BEGIN:
+        # the match still starts at the FIRST BEGIN in the file and runs to the
+        # first END anywhere after it. So an rc file carrying a stray or
+        # duplicated BEGIN -- a hand edit, a merged dotfile, an interrupted
+        # write, the inputs Unregister-ShellLoader's docstring already names --
+        # had every line between that marker and the real block's END replaced
+        # by this three-line block. With no way back: the first-touch rule below
+        # skips a file that already carries a BEGIN, so the one path that can
+        # destroy content the user wrote was the one path that never took a
+        # copy. Refusing to cross a BEGIN makes the match fail at the stray
+        # marker and start again at the real one, which is the block we own.
+        $pattern = [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end)
         if (-not $Force) {
             # Already registered. Compare the body so an upgraded data root or
             # runtime path is picked up without -Force.
-            $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
             $existing = [regex]::Match($content, $pattern, 'Singleline').Value
             if ($existing.Trim() -eq $block.Trim()) { return 'unchanged' }
         }
-        $pattern = [regex]::Escape($begin) + '.*?' + [regex]::Escape($end)
         $updated = [regex]::Replace($content, $pattern, $block.Trim(), 'Singleline')
         try { [System.IO.File]::WriteAllText($Path, $updated, $enc) } catch { return 'failed' }
         return 'updated'
@@ -877,7 +889,15 @@ function Unregister-ShellLoader {
     $content = [System.IO.File]::ReadAllText($Path, $enc)
     if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
 
-    $pattern = '\r?\n?' + [regex]::Escape($begin) + '.*?' + [regex]::Escape($end) + '\r?\n?'
+    # Tempered exactly as Register-ShellLoader's span is, and for the same
+    # reason: `.*?` anchored at the first BEGIN swallows everything up to the
+    # first END, so a stray BEGIN above a real block made shell-remove -- and
+    # uninstall, which strips through this function -- delete the user's own
+    # lines and report 'removed'. The 'malformed' guard below could not catch
+    # it: `$stripped -eq $content` only fires when there is no END ANYWHERE, and
+    # this input matched fine. Removal takes no backup either, by the same
+    # first-touch rule, so the loss was silent and total.
+    $pattern = '\r?\n?' + [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end) + '\r?\n?'
     $stripped = [regex]::Replace($content, $pattern, "`n", 'Singleline')
     if ($stripped -eq $content) { return 'malformed' }
 
