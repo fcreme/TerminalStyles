@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the guard that every theme's swatch is distinct compared zero pairs of themes, and reported green for its whole life.** `$themeNames` was built in the file-level `BeforeDiscovery`, which Pester runs in the discovery scope, so inside an `It` body it is `$null`. `@($null)` is a ONE-element array, so the outer loop ran a single iteration and the inner `for ($j = 1; $j -lt 1; ...)` never entered. `InModuleScope` was handed the same `$null`, so the signature table came back empty and no swatch was ever computed. Instrumented on the unmodified file: `themeNames is null? True`, `@(themeNames).Count = 1`, `signatures.Count = 0`, `pairs actually compared = 0`, and a green tick.
+
+  The re-enumeration is the repo's existing pattern for this, but on its own it would only have fixed half the defect: if the names were right and the `InModuleScope` handoff were broken, every lookup returns `$null`, every pair "collides", and the test fails with 120 bogus collisions rather than saying no swatch was computed. So the guard is three assertions -- that enough themes reached the run phase, that a signature exists for every one of them, and that the number of pairs compared is the number the loop bounds imply.
+
+### Changed
+
+- the header of `tests/Get-SchemeSwatch.Tests.ps1` claimed that comparison catches "all themes look like rainbows". It does not, except in the degenerate byte-identical form: restoring the historical fixed-hue candidate list in `Get-SchemeSwatch` leaves every theme rendering its OWN `brightRed`, so the bytes differ while the rows look alike, and the fixed test stays green. The property that actually protects the picker is that the first cells are the theme's own background, foreground and cursor -- the candidate ORDER -- and nothing asserts it. The claim is corrected rather than the test stretched to cover it; the production code is not defective here, and the assertion is true as named.
+
 - **`tstyles uninstall` threw before it could ask for consent, on any machine, because two lines were lost in a merge.** `$wezSplat = @{}` and the `ContainsKey('HomeDir')` line beside it were dropped resolving the merge between the WezTerm writer and the `$PROFILE`-strip change -- both touched the same few lines at the top of `Invoke-TerminalStylesUninstall` -- while both USES of `@wezSplat` survived further down. `main` went red on the merge commit.
 
   The mechanism is worth recording, because it is the opposite of what everything in this project assumes. PowerShell does not object to splatting a variable that does not exist, and it does not pass "no arguments" either:
