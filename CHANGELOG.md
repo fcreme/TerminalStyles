@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **every style deleted the user's own PSReadLine key bindings, on Windows, on every new tab.** All sixteen `styles/*/profile.ps1` called `Set-PSReadLineOption -EditMode Windows` behind a Windows-only guard. The comment above it in all sixteen files, and 0.8.21's CHANGELOG entry, both said this was costless because Windows mode is already the default there. Both were wrong. Supplying `-EditMode` at all makes PSReadLine throw away its dispatch tables and rebuild them from that mode's defaults -- the value is never compared against the current mode -- so every `Set-PSReadLineKeyHandler` the user had made in that session was deleted. Measured on PSReadLine 2.4.5 with the session already in Windows mode, so the call changed nothing:
+
+  ```
+  start                    : Alt+j=CustomAction; Ctrl+w=ForwardWord   total=65
+  after other shipped calls: Alt+j=CustomAction; Ctrl+w=ForwardWord   total=65
+  after -EditMode Windows  : Ctrl+w=BackwardKillWord                  total=63
+  ```
+
+  The module is imported from the END of `$PROFILE`, so the style always ran after the user's own bindings and the user always lost. 0.8.21 fixed the Unix half of this same statement -- where the switch additionally unbinds Ctrl+D, Ctrl+U, Ctrl+E and Ctrl+K -- and left the Windows half standing on the strength of that comment.
+
+  The statement is DELETED rather than guarded. On Windows it has exactly two reachable effects: erase the keymap and change nothing else, or erase the keymap while overriding a Vi or Emacs mode the user deliberately chose. A read-then-write guard removes only the first and leaves the second, which is the case a colour theme has least business touching. The other three `Set-PSReadLineOption` calls in those files -- `-PredictionSource`, `-PredictionViewStyle` and `-Colors` -- were measured to leave all 65 handlers intact and are unchanged.
+
+  The lint that was supposed to guard this matched the file's TEXT, and the shipped comment satisfied it; the replacement walks the AST for a `Set-PSReadLineOption` carrying an `-EditMode` parameter, and is joined by a runtime test that binds a key in a child engine, dot-sources the style, and asserts the binding survived.
+
 - **one style with a malformed `scheme.json` killed bare `tstyles` outright for every zsh and bash user, and quietly showed everyone else the PREVIOUS style's colours in its place.** The picker pre-loads every style's scheme before it draws the menu, and that read was the one parse left with nothing around it: `tstyles list` has degraded a bad folder to an `(unreadable scheme.json)` row since 0.8.10, and the `theme.json` pre-load twelve lines below this one is inside a try/catch. `Get-AvailableStyles` admits a folder on `scheme.json` EXISTING, never on it parsing, so a hand-authored style with a JSON typo -- README invites them in that directory -- or a `tstyles tune` save killed mid-write (`Save-TunedStyle` writes the file with a plain, non-atomic `WriteAllText`) arrives at that loop as an ordinary entry. What it cost then split on `$ErrorActionPreference`, and both halves are ordinary:
 
   - `Stop`, which is what the generated `tstyles-cli.ps1` sets and what `shell/tstyles.sh` runs for every `tstyles` call from zsh and bash: there `ConvertFrom-Json`'s error is fully terminating, so the flagship command -- the one the README leads with -- died with a raw `Conversion from JSON failed with error: Unterminated string`, naming a line of `tstyles.ps1` and never the style, and drew no menu at all, on every invocation until the folder was found and repaired by hand. `tstyles list` in the same state kept working and even flagged the culprit, which made the picker's death look like an unrelated bug.
