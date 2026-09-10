@@ -48,59 +48,12 @@ BeforeDiscovery {
     $repoRoot = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
 
+    # The baseline and the probe are taken in tests/Aa-RealStateBaseline.Tests.ps1,
+    # which sorts first. They are NOT retaken here: under Pester 6 this file is
+    # discovered immediately before it runs, i.e. after every other file has
+    # already executed, so a photograph taken here would contain whatever a
+    # leaking test had just done and this guard would compare it against itself.
     $global:TStylesGuardFileName = Split-Path -Leaf $PSCommandPath
-
-    # ONE implementation of "what does the operator's state look like right
-    # now", called for the baseline here and for the comparison in the test
-    # below. Two would drift, and a drift between them reads as a leak.
-    #
-    # Metadata rather than content: a warm data root holds cached GIFs, and
-    # hashing them on every run would cost more than the guard is worth. Length
-    # plus LastWriteTimeUtc catches a creation, a deletion, a truncation and a
-    # rewrite. The one write it cannot see is a Copy-Item whose source is
-    # byte-identical, because Copy-Item carries the source's timestamp across --
-    # which is also the one case where nothing was damaged.
-    #
-    # Ticks, not a formatted date: a timestamp that is compared has to be
-    # culture-proof, and under a non-Gregorian calendar a formatted one is not.
-    #
-    # -Force on the enumeration is load-bearing. Without it a dotfile
-    # (.migrated-0.2.0, .no-background) is invisible on Unix, and both sides of
-    # the comparison would agree about a file neither of them can see.
-    $global:TStylesRealStateProbe = {
-        param([string[]]$Path)
-        $state = [ordered]@{}
-        foreach ($p in $Path) {
-            if ([System.IO.Directory]::Exists($p)) {
-                $state[$p] = 'directory'
-                foreach ($e in @(Get-ChildItem -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue)) {
-                    $entry = 'directory'
-                    if (-not $e.PSIsContainer) {
-                        $entry = '{0} bytes, mtime {1}' -f $e.Length, $e.LastWriteTimeUtc.Ticks
-                    }
-                    $state[$e.FullName] = $entry
-                }
-            } elseif ([System.IO.File]::Exists($p)) {
-                $f = New-Object System.IO.FileInfo $p
-                $state[$p] = '{0} bytes, mtime {1}' -f $f.Length, $f.LastWriteTimeUtc.Ticks
-            } else {
-                $state[$p] = 'absent'
-            }
-        }
-        $state
-    }
-
-    # The files this module knows how to write, asked of the module itself
-    # rather than re-listed here: a second list of rc files is a second answer,
-    # and the two halves of that symmetry are exactly what 0.8.22 found had
-    # diverged. No -HomeDir on the call, deliberately -- the live $HOME is the
-    # whole point of this file.
-    $m = Get-Module TerminalStyles
-    $global:TStylesRealStateWatch = @(& $m { Get-TStylesDataRoot }) +
-        @(& $m { Get-ShellRcRemovalCandidate } | ForEach-Object { $_.Path }) +
-        @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
-
-    $global:TStylesRealStateBefore = & $global:TStylesRealStateProbe -Path $global:TStylesRealStateWatch
 }
 
 Describe 'the suite leaves the operator''s own state alone' {
