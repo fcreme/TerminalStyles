@@ -97,6 +97,38 @@ Describe 'Invoke-TerminalStylesRegister' {
             $after | Should -Match 'Import-Module TerminalStyles -DisableNameChecking'
             $after | Should -Not -Match 'LOCALAPPDATA\\TerminalStyles\\tstyles\.ps1'
         }
+
+        It '-Force strips only its own block when a stray BEGIN sits above it' {
+            # The same defect the rc half carries, on the other half of the same
+            # symmetry: `BEGIN .*? END` under (?s) starts at the FIRST BEGIN and
+            # runs to the first END after it. Here the strip replaces with
+            # NOTHING, so a $PROFILE with a stray or duplicated marker lost the
+            # user's own lines outright -- and the first-touch backup is skipped
+            # for any file that already carries a BEGIN.
+            $stale = "$script:loaderBegin`r`n. `"`$env:LOCALAPPDATA\TerminalStyles\tstyles.ps1`"`r`n$script:loaderEnd"
+            $existingContent = "# my existing profile`r`n$script:loaderBegin`r`nfunction prompt { 'keep-me> ' }`r`n$stale`r`nSet-Alias ll Get-ChildItem`r`n"
+            [System.IO.File]::WriteAllText($script:fakeProfile, $existingContent, [System.Text.UTF8Encoding]::new($false))
+
+            $target = [pscustomobject]@{
+                Label       = 'PowerShell 7'
+                ProfilePath = $script:fakeProfile
+                Exists      = $true
+                HasLoader   = $true
+            }
+            Invoke-TerminalStylesRegister -Force -Targets @($target) -Yes
+
+            $after = [System.IO.File]::ReadAllText($script:fakeProfile, [System.Text.UTF8Encoding]::new($false))
+            $after | Should -Match "keep-me"
+            $after | Should -Match 'Set-Alias ll Get-ChildItem'
+            $after | Should -Match '# my existing profile'
+            # It really did rewrite the block: the legacy body is gone, and one
+            # END is left for one loader. The stray BEGIN stays -- it is a line
+            # the user wrote, in a file we only ever edit between OUR markers.
+            $after | Should -Not -Match 'LOCALAPPDATA\\TerminalStyles\\tstyles\.ps1'
+            $after | Should -Match 'Import-Module TerminalStyles -DisableNameChecking'
+            ([regex]::Matches($after, [regex]::Escape($script:loaderEnd))).Count   | Should -Be 1
+            ([regex]::Matches($after, [regex]::Escape($script:loaderBegin))).Count | Should -Be 2
+        }
     }
 }
 
