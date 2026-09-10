@@ -43,6 +43,90 @@ function Get-PickerViewport {
 }
 
 
+function Get-PickerStyleSet {
+    # The picker's working set: every style whose scheme.json actually PARSES,
+    # with that parsed scheme and its swatch, read once, up front.
+    #
+    # Get-AvailableStyles admits a folder on scheme.json EXISTING, never on it
+    # parsing, so a hand-authored style with a JSON typo -- README invites them
+    # in that directory -- or a `tstyles tune` save killed mid-write (Save-
+    # TunedStyle writes the file with a plain, non-atomic WriteAllText) reaches
+    # the picker as an ordinary entry. The pre-load loop that used to sit inline
+    # in Invoke-TerminalStyle parsed it with no guard, and that cost two
+    # different failures, one per $ErrorActionPreference:
+    #
+    #   Stop     -- the generated tstyles-cli.ps1 sets it, and shell/tstyles.sh
+    #               runs that for every `tstyles` call from zsh and bash. There
+    #               ConvertFrom-Json's error is fully terminating: bare
+    #               `tstyles` printed a raw .NET parse error naming a line of
+    #               this module, never the style, and drew no menu at all.
+    #   Continue -- pwsh's default, where the same error is only statement-
+    #               terminating. The loop carried on with $scheme still holding
+    #               the PREVIOUS style's object, so the broken style took the
+    #               previous style's swatch, the previous style's live OSC
+    #               preview and, on Enter, the previous style's palette written
+    #               into current-style.osc under the broken style's name --
+    #               replayed by every new zsh/bash tab, with nothing on screen
+    #               after the first red block to say so.
+    #
+    # A style that fails the parse is therefore not in the returned set at all.
+    # $idx, $startIdx, $swatches, $schemes, $titles, $oscPackets and
+    # $mergedCache are all keyed by position, so keeping it with a $null scheme
+    # only moves the crash into the draw path. Dropping it is the picker's
+    # counterpart to the row `tstyles list` marks "(unreadable scheme.json)",
+    # not a disagreement with it -- and the caller has to SAY which folders it
+    # dropped, or the picker becomes the one command that answers "where did my
+    # style go?" with silence.
+    #
+    # Returns @{ Styles = @(...); Schemes = @{i->obj}; Swatches = @{i->string};
+    #            Unreadable = @(names) } -- the two hashtables keyed by index
+    # into Styles, which is how the picker indexes them.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Styles)
+
+    $keep       = @()
+    $schemes    = @{}
+    $swatches   = @{}
+    $unreadable = @()
+
+    foreach ($s in $Styles) {
+        # Cleared per iteration, deliberately: inheriting the previous style's
+        # scheme is precisely what a loop-carried variable does when the
+        # statement that should have replaced it did not complete.
+        $scheme = $null
+        $swatch = $null
+        try {
+            $scheme = [System.IO.File]::ReadAllText((Join-Path $s.FullName 'scheme.json'),
+                          [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            # The swatch is built inside the guard for the same reason
+            # Show-StyleList builds its own inside one: a file that parses is
+            # not necessarily a scheme, and a row the picker cannot draw is as
+            # fatal to the menu as a row it cannot parse.
+            if ($null -ne $scheme) { $swatch = Get-SchemeSwatch -Scheme $scheme }
+        } catch {
+            $scheme = $null
+        }
+        # "It did not throw" is not the test. An empty or whitespace-only file
+        # is the other half of a truncated write, and ConvertFrom-Json returns
+        # $null for it on pwsh 7 rather than raising -- and $null is unusable
+        # everywhere downstream, where -Scheme is Mandatory and refuses to bind.
+        if ($null -eq $scheme) { $unreadable += $s.Name; continue }
+
+        $i = $keep.Count
+        $keep       += $s
+        $schemes[$i]  = $scheme
+        $swatches[$i] = $swatch
+    }
+
+    return @{
+        Styles     = @($keep)
+        Schemes    = $schemes
+        Swatches   = $swatches
+        Unreadable = @($unreadable)
+    }
+}
+
+
 function Test-ShouldRestoreWindowTitle {
     # Is there a window title worth putting back?
     #
