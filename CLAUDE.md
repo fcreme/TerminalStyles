@@ -21,6 +21,15 @@ bound `-HomeDir` also suppresses the ambient `$env:ZDOTDIR`. `Invoke-TerminalSty
 takes `-Targets`. `Sync-ShellRuntime` has no seam and writes to the data root, so
 anything reaching it needs the data root sandboxed **as well as** `-HomeDir`.
 
+**Splatting an undefined variable fails UNSAFE here.** `Probe @neverDefined` does not pass
+"no arguments": it binds the FIRST POSITIONAL parameter to an empty string and makes
+`$PSBoundParameters.ContainsKey('HomeDir')` return `$true`. That is the exact guard used
+everywhere above to tell "the caller asked for a sandbox" from "use the live `$HOME`" — so
+losing a `$xSplat = @{}` line does not disable the seam, it announces a sandbox at the empty
+path. It has happened once already, to `$wezSplat`, dropped resolving a merge while both uses
+survived. `tests/Splat-Variables-Defined.Tests.ps1` walks the AST of every source file and
+fails if anything splats a variable its own scope never assigns; keep it passing.
+
 Never run `uninstall`, `delete`, `reset`, `register` or `shell-init` against the real
 environment to check something. Drive the underlying function in a sandbox instead,
 and mock `Confirm-Action` to refuse rather than relying on console detection.

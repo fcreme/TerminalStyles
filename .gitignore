@@ -30,3 +30,6 @@ Thumbs.db
 
 # Staging dir for PSGallery publish (scripts/publish.ps1)
 out/
+
+# Agent worktrees, created by tooling. Never part of the project.
+.claude/

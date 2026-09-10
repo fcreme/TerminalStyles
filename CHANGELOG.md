@@ -18,6 +18,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Esc stopped re-emitting a style the user was never in. "Did the user arrive in a style" was `[bool](Get-CurrentStyleName)`, but that name can be one the menu does not carry -- a style whose `scheme.json` just failed the parse above, or one recorded and since deleted -- and the revert then re-emitted index 0, which is some OTHER style's palette, while telling the user it was putting back what they had. It is now the index or nothing, and an unknown one falls back to handing colour control to the terminal, as it already did for a session that arrived unstyled.
 
+- **`tstyles uninstall` threw before it could ask for consent, on any machine, because two lines were lost in a merge.** `$wezSplat = @{}` and the `ContainsKey('HomeDir')` line beside it were dropped resolving the merge between the WezTerm writer and the `$PROFILE`-strip change -- both touched the same few lines at the top of `Invoke-TerminalStylesUninstall` -- while both USES of `@wezSplat` survived further down. `main` went red on the merge commit.
+
+  The mechanism is worth recording, because it is the opposite of what everything in this project assumes. PowerShell does not object to splatting a variable that does not exist, and it does not pass "no arguments" either:
+
+  ```
+  function Probe { param([string]$HomeDir) ... }
+  Probe @neverDefined   ->   bound=True   value=[]
+  ```
+
+  It binds the FIRST POSITIONAL parameter to an empty string, and `$PSBoundParameters.ContainsKey('HomeDir')` reports `$true`. That `ContainsKey` test is the guard this codebase uses everywhere to tell "the caller asked for a sandbox" from "use the live `$HOME`" -- so a lost splat definition does not turn the seam off, it announces a sandbox at the empty path. It fails unsafe. Here it happened to throw on `Join-Path`, which is why five tests went red rather than something quietly resolving against the wrong home; that was luck.
+
+  `tests/Splat-Variables-Defined.Tests.ps1` now walks the AST of every source file and fails if any scope splats a variable it never assigns. It names the offending function and variable, and it catches this exact regression when the fix is reverted.
+
 - **`tstyles uninstall` silently corrupted a `$PROFILE` that contained a byte which is not valid UTF-8, and took no backup on the way out.** Step 3 of uninstall reads the whole of the user's `$PROFILE` and writes the whole of it back, exactly as the rc half does -- and it did so through UTF-8. `Get-RcFileEncoding` exists because of what that costs, and its own docstring spells it out: a latin-1 comment or a stray byte from an old editor decodes to U+FFFD and is written back as the replacement character, so "the user's own content, silently and permanently corrupted, by a tool that was only asked to append three lines". That was fixed for `.zshrc` and `.bashrc`; the `$PROFILE` half was a second, open-coded copy of the same removal and never got it. Measured on a profile whose first line was `# café`, byte `e9`:
 
   ```
