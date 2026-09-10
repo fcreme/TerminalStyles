@@ -24,8 +24,8 @@
 $script:TStylesCapabilityNames = @(
     'OscPalette',      # OSC 4/10/11/12 dynamic colors -- live retint, no config write
     # Can THIS MODULE write a config the terminal reads on startup? True only
-    # where a writer exists: Windows Terminal's settings.json and Terminal.app's
-    # .terminal profile. Not to be confused with a style surviving a new tab,
+    # where a writer exists: Windows Terminal's settings.json, Terminal.app's
+    # .terminal profile, and WezTerm's generated Lua module. Not to be confused with a style surviving a new tab,
     # which works on every terminal and owes nothing to this flag -- that is
     # current-style.json plus the OSC re-emit in the startup block, and it
     # carries colors only. Reading Persist as "styles stick here" is what led
@@ -152,21 +152,48 @@ function Get-TerminalCapability {
             $caps.TabTitle        = $true
             $caps.BackgroundImage = $true
         }
-        # Ghostty / WezTerm / kitty / Alacritty all keep their settings in a
-        # config file this module has never learned to write -- ghostty's
-        # `config`, `wezterm.lua`, `kitty.conf`, `alacritty.toml`. Each of them
-        # can do fonts and opacity, and WezTerm does animated background
-        # images, but none of that reaches the user through TerminalStyles
-        # today. What genuinely works on all four is the OSC retint, which is
-        # the whole live-preview path, so that is what is claimed.
+        # Ghostty / kitty / Alacritty keep their settings in a config file this
+        # module has never learned to write -- ghostty's `config`, `kitty.conf`,
+        # `alacritty.toml`. Each can do fonts and opacity, but none of it reaches
+        # the user through TerminalStyles. What genuinely works on all three is
+        # the OSC retint, which is the whole live-preview path, so that is what
+        # is claimed.
         #
-        # Adding a writer for any of these is the moment to turn its flags back
-        # on -- one terminal at a time, next to the code that delivers it.
+        # Adding a writer for any of these is the moment to turn its flags on --
+        # one terminal at a time, next to the code that delivers it, which is
+        # what the WezTerm arm below now does.
         'Ghostty' {
             $caps.OscPalette = $true
         }
         'WezTerm' {
-            $caps.OscPalette = $true
+            # lib/wezterm.ps1 generates a Lua module that the user loads from
+            # their own wezterm.lua with one pcall-guarded require. Everything
+            # claimed here is written by Get-WezTermStyleLua and nothing else is.
+            #
+            # BackgroundImage is the reason this writer exists: WezTerm is the
+            # only terminal off Windows that ANIMATES a GIF, and every bundled
+            # style ships one. Terminal.app gets a still first frame at best.
+            #
+            # Font and Padding are `config.font`/`font_size` and
+            # `window_padding`. Persist is the module itself, which WezTerm reads
+            # on startup -- and, because required files are on its config reload
+            # watch list, rewriting it also restyles a RUNNING window.
+            #
+            # Opacity is deliberately NOT claimed even though WezTerm has
+            # window_background_opacity. Once a `background` layer list exists
+            # WezTerm skips the pane's solid rect, and the code paths that
+            # multiply by that setting are guarded off -- so its effect
+            # alongside the layers this writer emits is not something this
+            # project has verified. Claiming it would suppress the "can't show"
+            # notice and leave the user comparing an unchanged window against a
+            # screenshot, which is the exact failure the capability table exists
+            # to prevent. CursorShape, TabTitle and TabColor are not written at
+            # all.
+            $caps.OscPalette      = $true
+            $caps.Persist         = $true
+            $caps.Font            = $true
+            $caps.Padding         = $true
+            $caps.BackgroundImage = $true
         }
         'Kitty' {
             $caps.OscPalette = $true

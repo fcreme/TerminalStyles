@@ -98,13 +98,18 @@ Describe 'Get-TerminalCapability' {
         }
 
         It 'claims a capability only where a writer exists' {
-            # Windows Terminal has Merge-StyleIntoSettings; Terminal.app has
-            # New-AppleTerminalProfile. No other terminal has anything that
-            # writes a config, so no other terminal may claim a stored visual
-            # -- however capable the emulator itself is. iTerm2 would honour a
-            # Dynamic Profile and WezTerm animates background GIFs; neither is
-            # written today, and claiming them made styles fail silently.
-            $writers = @('WindowsTerminal', 'AppleTerminal')
+            # THREE writers now: Merge-StyleIntoSettings (Windows Terminal's
+            # settings.json), New-AppleTerminalProfile (Terminal.app's .terminal
+            # plist) and Get-WezTermStyleLua (WezTerm's generated Lua module).
+            # No other terminal has anything that writes a config, so no other
+            # terminal may claim a stored visual -- however capable the emulator
+            # itself is. iTerm2 would honour a Dynamic Profile; nothing writes
+            # one, and claiming it made styles fail silently.
+            #
+            # This list is the point of the test. Adding a terminal to it is a
+            # claim that a writer exists for it, and the assertion below this one
+            # is what holds that claim to the code.
+            $writers = @('WindowsTerminal', 'AppleTerminal', 'WezTerm')
             $stored  = @('Font', 'Opacity', 'CursorShape', 'BackgroundImage', 'TabColor')
             foreach ($k in ($script:AllKinds | Where-Object { $_ -notin $writers })) {
                 $caps = Get-TerminalCapability -Kind $k
@@ -112,6 +117,20 @@ Describe 'Get-TerminalCapability' {
                 foreach ($n in $stored) {
                     $caps[$n] | Should -BeFalse -Because "$k has no config writer, so it cannot deliver $n"
                 }
+            }
+        }
+
+        It 'every terminal on that writer list really has a writer' {
+            # Guards the list above from becoming a way to silence this file.
+            # Each name must correspond to a function that actually emits config.
+            $writerFor = @{
+                WindowsTerminal = 'Merge-StyleIntoSettings'
+                AppleTerminal   = 'New-AppleTerminalProfile'
+                WezTerm         = 'Get-WezTermStyleLua'
+            }
+            foreach ($k in $writerFor.Keys) {
+                Get-Command $writerFor[$k] -ErrorAction SilentlyContinue |
+                    Should -Not -BeNullOrEmpty -Because "$k claims stored visuals, so $($writerFor[$k]) must exist"
             }
         }
 

@@ -185,6 +185,14 @@ function Invoke-TerminalStylesRegister {
     $loaderBegin = '# ===== TerminalStyles BEGIN ====='
     $loaderEnd   = '# ===== TerminalStyles END ====='
 
+    # Get-RcFileEncoding, not UTF-8, for the reason its docstring gives: this
+    # reads the WHOLE of a file the user owns and writes the WHOLE of it back,
+    # so a byte that is not valid UTF-8 -- a latin-1 comment, a stray byte from
+    # an old editor -- decoded to U+FFFD and was written back as the
+    # replacement character. That was fixed for rc files and the $PROFILE half
+    # never got it. ISO-8859-1 round-trips every byte 0-255 unchanged, and the
+    # markers and the loader line are ASCII either way.
+
     # By NAME only when the module is somewhere PowerShell will look. A
     # bootstrap install is not on $env:PSModulePath -- which is exactly why
     # install.ps1 writes the full-path form, and why Get-ShellRcCandidate's
@@ -258,7 +266,7 @@ $loaderEnd
     $blockPattern = "(?ms)$([regex]::Escape($loaderBegin)).*?$([regex]::Escape($loaderEnd))\r?\n?"
     foreach ($t in $targets) {
         if ($t.Exists) {
-            $content = [System.IO.File]::ReadAllText($t.ProfilePath, [System.Text.UTF8Encoding]::new($false))
+            $content = [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
             $t.HasLoader = ($content -match $blockPattern)
         }
     }
@@ -306,7 +314,7 @@ $loaderEnd
         }
 
         $existing = if ($t.Exists) {
-            [System.IO.File]::ReadAllText($t.ProfilePath, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
         } else { '' }
 
         if ($existing -match $blockPattern) {
@@ -319,7 +327,7 @@ $loaderEnd
         # hand-maintained profile with no copy kept.
         $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $existing -BlockPattern ([regex]::Escape($loaderBegin))
         if ($bak) { Write-Host "  Backed up your existing $($t.Label) profile to: $bak" -ForegroundColor Gray }
-        [System.IO.File]::WriteAllText($t.ProfilePath, $final, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::WriteAllText($t.ProfilePath, $final, (Get-RcFileEncoding))
 
         Write-Host "  Registered in $($t.ProfilePath)" -ForegroundColor Green
     }
@@ -404,6 +412,111 @@ function Get-UninstallPlan {
     }
 }
 
+function Get-PowerShellProfileTarget {
+    <#
+    .SYNOPSIS
+    The $PROFILE files of the PowerShell engines present on this machine.
+
+    .DESCRIPTION
+    Pulled out of Invoke-TerminalStylesUninstall so the strip below can be run
+    against a sandbox. It could not be before: the paths come from RUNNING each
+    engine, so the only $PROFILE any test could reach was the one belonging to
+    the operator, and step 3 was therefore never exercised by anything. That is
+    the same reason the rc half's omission went four releases unnoticed, and the
+    same seam Invoke-TerminalStylesRegister already carries as -Targets.
+
+    Only files that exist: a $PROFILE that was never created has no block in it.
+
+    Distinct by path. Two engines can share one $PROFILE -- on this machine
+    `pwsh` and `pwsh-preview` both report
+    ~/.config/powershell/Microsoft.PowerShell_profile.ps1 -- and processing it
+    twice would print the malformed and unwritable warnings twice for one file.
+    Windows' two engines keep separate directories, so nothing merges there.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $seen = @{}
+    @(foreach ($e in (Get-PowerShellEngineCandidate)) {
+        $cmd = Get-Command -Name $e.Exe -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
+        if (-not $profilePath) { continue }
+        $profilePath = $profilePath.Trim()
+        if (-not (Test-Path -LiteralPath $profilePath)) { continue }
+        if ($seen.ContainsKey($profilePath)) { continue }
+        $seen[$profilePath] = $true
+        [pscustomobject]@{ ProfilePath = $profilePath; Label = $e.Label }
+    })
+}
+
+function Remove-PowerShellProfileLoader {
+    <#
+    .SYNOPSIS
+    Strip the loader block from each engine's $PROFILE. Returns how many went.
+
+    .DESCRIPTION
+    This was a second, open-coded implementation of Unregister-ShellLoader, and
+    it never received any of the three fixes that one did. A $PROFILE is a file
+    the USER owns and that predates us, exactly like an rc file, and uninstall
+    reads the whole of it and writes the whole of it back:
+
+      * It read and wrote through UTF-8. Get-RcFileEncoding is ISO-8859-1
+        precisely because that round-trips every byte 0-255 unchanged, and its
+        own docstring describes what UTF-8 does instead: a latin-1 comment or a
+        stray byte from an old editor decodes to U+FFFD and is written back as
+        the replacement character. Measured on a $PROFILE whose first line was
+        `# caf\xe9`: the byte e9 came back as ef bf bd, permanently, from a
+        command that was only asked to remove three lines -- and unlike the
+        register path, removal takes no backup, because the FIRST TOUCH rule
+        deliberately skips a file that already carries our block.
+      * A BEGIN with no matching END left the string unchanged, so nothing was
+        written AND nothing was said, while the command signed off with "Open a
+        new pwsh tab to confirm the loader is gone." Unregister-ShellLoader
+        calls that 'malformed' and the rc half prints it in red.
+      * The write was unguarded. A read-only $PROFILE -- the nix or chezmoi
+        store case Unregister-ShellLoader's own docstring names -- threw out of
+        the middle of uninstall, after the module and the rc blocks were
+        already gone and before the user-state step ran. The rc half calls that
+        'failed', says so, and carries on.
+
+    So it does not re-derive any of that: it calls Unregister-ShellLoader, and
+    reports each status the way Invoke-TerminalStylesShellInit -Remove does.
+
+    -Target is an internal/test injection of {ProfilePath, Label} objects, the
+    same shape and the same purpose as Invoke-TerminalStylesRegister -Targets.
+    Real callers omit it and get Get-PowerShellProfileTarget.
+    #>
+    [CmdletBinding()]
+    param([object[]]$Target)
+
+    if (-not $PSBoundParameters.ContainsKey('Target')) {
+        $Target = @(Get-PowerShellProfileTarget)
+    }
+
+    $removed = 0
+    foreach ($t in $Target) {
+        switch (Unregister-ShellLoader -Path $t.ProfilePath) {
+            'removed' {
+                Write-Host "  Removed loader from $($t.ProfilePath)" -ForegroundColor Green
+                $removed++
+            }
+            'malformed' {
+                Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $t.ProfilePath) -ForegroundColor Red
+                Write-Host "    Nothing was removed. Delete the block by hand -- it still loads on every tab." -ForegroundColor Red
+            }
+            'failed' {
+                Write-Host ("  ! could not write {0}" -f $t.ProfilePath) -ForegroundColor Red
+                Write-Host "    The loader is still there. Check the file's permissions (a read-only" -ForegroundColor Red
+                Write-Host "    profile, or one managed by nix or chezmoi) and remove the block by hand." -ForegroundColor Red
+            }
+            # 'none' is the ordinary case for an engine that was never
+            # registered, and says nothing on purpose.
+        }
+    }
+    return $removed
+}
+
 function Invoke-TerminalStylesUninstall {
     [CmdletBinding()]
     param(
@@ -418,12 +531,19 @@ function Invoke-TerminalStylesUninstall {
         # ~/.zshrc. Forwarded by what the caller BOUND, the rule
         # Get-ShellRcCandidate documents.
         [string]$HomeDir,
-        [string]$ZDotDir
+        [string]$ZDotDir,
+        # The same kind of seam for the $PROFILE half, which resolves its paths
+        # by RUNNING each engine and so otherwise reaches only the operator's
+        # own profile. Same shape as Invoke-TerminalStylesRegister -Targets.
+        [object[]]$ProfileTarget
     )
 
     $rcSplat = @{}
     if ($PSBoundParameters.ContainsKey('HomeDir')) { $rcSplat.HomeDir = $HomeDir }
     if ($PSBoundParameters.ContainsKey('ZDotDir')) { $rcSplat.ZDotDir = $ZDotDir }
+
+    $profileSplat = @{}
+    if ($PSBoundParameters.ContainsKey('ProfileTarget')) { $profileSplat.Target = $ProfileTarget }
 
     $dataDir = Get-TStylesDataRoot
     $kind = Get-TerminalStylesInstallKind
@@ -455,6 +575,13 @@ function Invoke-TerminalStylesUninstall {
         foreach ($t in $shellRcTargets) {
             Write-Host ("      {0}" -f $t.Path) -ForegroundColor Yellow
         }
+    }
+    $wezModule = Get-WezTermModulePath @wezSplat
+    if (Test-Path -LiteralPath $wezModule) {
+        Write-Host "  - Delete the generated WezTerm style module:" -ForegroundColor Yellow
+        Write-Host ("      {0}" -f $wezModule) -ForegroundColor Yellow
+        Write-Host "      (your wezterm.lua is NOT edited; its require line is pcall-guarded" -ForegroundColor DarkGray
+        Write-Host "       and becomes a no-op once this file is gone)" -ForegroundColor DarkGray
     }
     if ($DeleteData) {
         Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp)" -ForegroundColor Red
@@ -535,26 +662,30 @@ function Invoke-TerminalStylesUninstall {
         }
     }
     Clear-ShellStyleState
+
+    # The generated WezTerm module. Removal is a single delete because nothing
+    # of the user's was ever written into: their wezterm.lua carries only the
+    # pcall-guarded require they added by hand, which degrades to a no-op the
+    # moment this file stops existing. That is the property that made this
+    # design preferable to a marker block in a Lua program -- see the header of
+    # lib/wezterm.ps1.
+    $wezPath = Get-WezTermModulePath @wezSplat
+    if (Test-Path -LiteralPath $wezPath) {
+        try {
+            Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop
+            Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
+        } catch {
+            Write-Host "  ! could not remove $wezPath" -ForegroundColor Red
+            Write-Host "    Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Red
+        }
+    }
+
     if ($shellRemoved) {
         Write-Host "  Open a new zsh/bash tab to get your original prompt back." -ForegroundColor Gray
     }
 
     # 3. Strip the loader from both PowerShell engines' $PROFILE
-    foreach ($exe in (Get-PowerShellEngineCandidate).Exe) {
-        $cmd = Get-Command -Name $exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
-        if (-not $profilePath) { continue }
-        $profilePath = $profilePath.Trim()
-        if (-not (Test-Path -LiteralPath $profilePath)) { continue }
-
-        $content = [System.IO.File]::ReadAllText($profilePath, [System.Text.UTF8Encoding]::new($false))
-        $newContent = [regex]::Replace($content, '(?ms)# ===== TerminalStyles BEGIN =====.*?# ===== TerminalStyles END =====\r?\n?', '')
-        if ($newContent -ne $content) {
-            [System.IO.File]::WriteAllText($profilePath, $newContent, [System.Text.UTF8Encoding]::new($false))
-            Write-Host "  Removed loader from $profilePath" -ForegroundColor Green
-        }
-    }
+    Remove-PowerShellProfileLoader @profileSplat | Out-Null
 
     # 4. Optionally remove user state
     if ($DeleteData) {
