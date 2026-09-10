@@ -230,7 +230,14 @@ testing locally in `powershell.exe` saves a round trip.
   `tests/Invoke-TerminalStyle-TuneDispatch.Tests.ps1` for the
   dispatch/mock pattern.
 - Use `$TestDrive` for scratch files; never touch the real
-  `settings.json` or `%LOCALAPPDATA%` state.
+  `settings.json` or `%LOCALAPPDATA%` state. The user's own files count
+  too: bind `-HomeDir` / `-ZDotDir` / `-Targets` for anything that
+  resolves an rc file or a `$PROFILE`, and override
+  `$script:TStylesDataRoot` **as well** for anything that reaches
+  `Sync-ShellRuntime` or the style cache — the data root is derived from
+  the live `$HOME`, so `-HomeDir` alone does not contain it.
+  `tests/Zz-RealStateUntouched.Tests.ps1` fails the run if a test got
+  this wrong, and names the paths it changed.
 - Write JSON fixtures BOM-less:
   `[System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))`
   — see `tests/Find-WTSettingsPath.Tests.ps1`.
