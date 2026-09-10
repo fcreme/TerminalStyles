@@ -453,32 +453,89 @@ function Sync-InstallTree {
         [Parameter(Mandatory)][string]$InstallDir
     )
 
+    # Local to this function, and load-bearing rather than decorative: the
+    # staging below is only worth anything if a failed copy actually STOPS. The
+    # installer's main body sets 'Stop' for its own flow, but a caller that does
+    # not -- anything dot-sourcing this file, or an `iex` from a session that
+    # left the preference alone -- would get Copy-Item writing a non-terminating
+    # error, the loop carrying on, and the swap replacing a good file with a
+    # staged entry that was never written. That is the same lost install this
+    # rewrite exists to prevent, arrived at through the preference instead of
+    # through the ordering.
+    $ErrorActionPreference = 'Stop'
+
     if (-not (Test-Path -LiteralPath $InstallDir)) {
         New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
     }
 
-    foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
-        $target = Join-Path $InstallDir $entry.Name
-        if (-not (Test-Path -LiteralPath $target)) { continue }
+    # Copy EVERYTHING first, into a staging directory, and only then touch the
+    # install. The two halves used to be the other way round: one loop removed
+    # every install-owned entry, and the next copied them back. install.ps1's
+    # main body runs under $ErrorActionPreference = 'Stop' inside a try/finally
+    # with no catch, so the FIRST failing Copy-Item terminated the installer with
+    # the module already deleted -- and Assert-InstallLanded, whose entire job is
+    # to say "the module is not there", never ran, because the throw precedes it.
+    # A full disk or an antivirus holding a freshly-extracted file open was
+    # enough: the data root came out with no TerminalStyles.psd1 while the
+    # $PROFILE loader still pointed at it, so every new tab opened on a red "no
+    # valid module file was found" with no `tstyles` command -- from a session
+    # that had been working seconds earlier, and after `tstyles update` had
+    # reported "Update failed: <message>. You can retry manually", which reads as
+    # "nothing was changed".
+    #
+    # Staging is a SIBLING of $InstallDir so the swap below stays on one volume
+    # and is a rename rather than a second byte copy. The cost is that the new
+    # tree and the old one occupy that volume at the same time, so a disk too
+    # full to hold both now fails during staging -- with the working install
+    # still in place, which is the direction to fail in.
+    $staging = $InstallDir + '.staging-' + [guid]::NewGuid().Guid.Substring(0, 8)
+    $phase   = 'staging'
+    try {
+        New-Item -ItemType Directory -Path $staging -Force | Out-Null
 
-        # styles/ is the one directory the install and the user share: bundled
-        # themes sit beside the user's own, and the README documents dropping a
-        # folder named after a bundled theme to override it in place. Removing
-        # the tree would take both, so let the copy below overwrite file by file.
-        if ($entry.PSIsContainer -and $entry.Name -eq 'styles') { continue }
-
-        Remove-Item -LiteralPath $target -Recurse -Force
-        if (Test-Path -LiteralPath $target) {
-            throw ("Could not replace '$target' (a file lock may be held by another PowerShell " +
-                   "tab, OneDrive, or antivirus). Close other PowerShell windows and re-run " +
-                   "the installer.")
+        $staged = @()
+        foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
+            # styles/ is the one directory the install and the user share:
+            # bundled themes sit beside the user's own, and the README documents
+            # dropping a folder named after a bundled theme to override it in
+            # place. Replacing the tree would take both, so it is neither staged
+            # nor removed -- the merge below overwrites it file by file.
+            if ($entry.PSIsContainer -and $entry.Name -eq 'styles') { continue }
+            Copy-Item -LiteralPath $entry.FullName -Destination $staging -Recurse -Force
+            $staged += $entry.Name
         }
-    }
 
-    # Everything except styles/, which is merged one style at a time below.
-    foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
-        if ($entry.PSIsContainer -and $entry.Name -eq 'styles') { continue }
-        Copy-Item -LiteralPath $entry.FullName -Destination $InstallDir -Recurse -Force
+        # Swap. Renames only -- nothing is read from the download and no bytes
+        # are written here, so the window in which the install is neither the old
+        # one nor the new one is as narrow as this can be made without a
+        # filesystem transaction.
+        $phase = 'swap'
+        foreach ($name in $staged) {
+            $target = Join-Path $InstallDir $name
+            if (Test-Path -LiteralPath $target) {
+                Remove-Item -LiteralPath $target -Recurse -Force
+                if (Test-Path -LiteralPath $target) {
+                    throw ("Could not replace '$target' (a file lock may be held by another PowerShell " +
+                           "tab, OneDrive, or antivirus). Close other PowerShell windows and re-run " +
+                           "the installer.")
+                }
+            }
+            Move-Item -LiteralPath (Join-Path $staging $name) -Destination $target
+        }
+    } catch {
+        # Which half failed decides what the user is told, because "your install
+        # is fine, try again" and "your install is half-replaced" are opposite
+        # instructions and the caller prints the same "You can retry manually"
+        # under both.
+        if ($phase -eq 'staging') {
+            throw ("$($_.Exception.Message) Nothing in '$InstallDir' was removed or replaced.")
+        }
+        throw ("$($_.Exception.Message) The install at '$InstallDir' may now be incomplete -- " +
+               "re-run the installer to finish it.")
+    } finally {
+        # Whatever is left staged is a copy of a download that is still in temp;
+        # never let failing to clean it up mask the error that got us here.
+        Remove-Item -LiteralPath $staging -Recurse -Force -ErrorAction SilentlyContinue
     }
 
     # styles/ is shared ground, and a bulk overwrite here reverted the user's
