@@ -127,20 +127,185 @@ function Invoke-RandomStyle {
 
 
 
+function Invoke-AppleTerminalScript {
+    <#
+    .SYNOPSIS
+    Run one AppleScript against Terminal.app. The single seam for all of them.
+
+    .DESCRIPTION
+    Every osascript call in this module goes through here so a test can mock it
+    without driving the Terminal.app of whoever is running the suite -- opening
+    windows on their screen, or deleting settings sets they own.
+
+    AppleScript rather than writing ~/Library/Preferences/com.apple.Terminal.plist:
+    Terminal.app holds its preferences in memory and rewrites that file when it
+    quits, so an external write is silently reverted. Going through the app is
+    the only way to change its settings while it is running.
+
+    Returns the trimmed stdout, or $null if osascript is absent or errored.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Script)
+
+    if ((Get-TStylesPlatform) -ne 'MacOS') { return $null }
+    if (-not (Get-Command osascript -ErrorAction SilentlyContinue)) { return $null }
+    try {
+        $out = & osascript -e $Script 2>$null
+        if ($LASTEXITCODE -ne 0) { return $null }
+        return ($out -join "`n").Trim()
+    } catch { return $null }
+}
+
+function ConvertTo-AppleScriptString {
+    # A double-quoted AppleScript literal. Style names are validated upstream,
+    # but a settings-set name read back from Terminal.app is not ours to trust.
+    param([AllowEmptyString()][AllowNull()][string]$Value)
+    '"' + (($Value -replace '\\', '\\\\') -replace '"', '\"') + '"'
+}
+
+function Get-AppleTerminalSettingsSetName {
+    <#
+    .SYNOPSIS
+    The profiles Terminal.app currently has. Read-only.
+
+    .DESCRIPTION
+    Empty when Terminal.app cannot be asked, which is the safe direction: every
+    caller then falls back to `open`, the behaviour that shipped before this.
+    #>
+    [CmdletBinding()]
+    param()
+    $out = Invoke-AppleTerminalScript 'tell application "Terminal" to get name of every settings set'
+    if (-not $out) { return @() }
+    @($out -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Get-AppleTerminalImportRecordPath {
+    Join-Path $script:TStylesDataRoot '.appleterminal-imported.json'
+}
+
+function Get-AppleTerminalImportRecord {
+    <#
+    .SYNOPSIS
+    Which .terminal profiles this tool imported into Terminal.app, and as what.
+
+    .DESCRIPTION
+    An ownership record, the same idea as .installed-files: without one there is
+    no way to tell a settings set TerminalStyles created from one the user made
+    and happened to name after a style, and deleting the wrong one is not
+    recoverable. Only names appearing here are ever deleted.
+
+    Maps settings-set name -> the SHA256 of the .terminal file that produced it,
+    so a stale import is detectable.
+    #>
+    [CmdletBinding()]
+    param()
+    $p = Get-AppleTerminalImportRecordPath
+    if (-not (Test-Path -LiteralPath $p)) { return @{} }
+    try {
+        $raw = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
+        $o = $raw | ConvertFrom-Json
+        $h = @{}
+        foreach ($prop in $o.PSObject.Properties) { $h[$prop.Name] = "$($prop.Value)" }
+        return $h
+    } catch { return @{} }
+}
+
+function Set-AppleTerminalImportRecord {
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Hash)
+    $r = Get-AppleTerminalImportRecord
+    $r[$Name] = $Hash
+    try {
+        $json = ([pscustomobject]$r | ConvertTo-Json -Depth 3)
+        [System.IO.File]::WriteAllText((Get-AppleTerminalImportRecordPath), $json,
+            [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
+function Get-AppleTerminalProfileHash {
+    param([Parameter(Mandatory)][string]$Path)
+    try { (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash.ToLowerInvariant() }
+    catch { $null }
+}
+
+function Remove-AppleTerminalSettingsSet {
+    <#
+    .SYNOPSIS
+    Delete one Terminal.app profile. Returns $true when it is gone afterwards.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+    Invoke-AppleTerminalScript ("tell application `"Terminal`" to delete settings set {0}" -f
+        (ConvertTo-AppleScriptString $Name)) | Out-Null
+    return ($Name -notin (Get-AppleTerminalSettingsSetName))
+}
+
 function Open-AppleTerminalProfile {
     <#
     .SYNOPSIS
-    Hand a generated .terminal profile to macOS, which opens a new Terminal.app
-    window in it.
+    Open a new Terminal.app window carrying this style's profile.
 
     .DESCRIPTION
-    A one-line wrapper so it can be mocked. `& open` in-line meant the only test
-    that could reach the -NewWindow branch would really shell out to `open` on
-    the test runner -- launching a window, or relying on the path not existing.
+    This was `& open $Path`, and `open` on a .terminal file does not update a
+    profile of the same name -- it imports a SECOND one. Terminal.app resolves
+    the collision by appending a number, so every `tstyles <style> -NewWindow`
+    added another permanent entry to the user's profile list: eva, eva 1, eva 2,
+    eva 3. Nothing deduplicated, nothing updated in place, and `tstyles
+    uninstall` does not remove them either -- it promises not to touch
+    Terminal.app's settings at all. Found with nine of them on one machine.
+
+    So: import once, then reuse. The three cases are
+
+      * not installed          -> `open` the file, and record what we imported
+      * installed and current  -> open a window on the EXISTING settings set,
+                                  which is what stops the accumulation
+      * installed but stale    -> delete ours and re-import, so a re-tuned style
+                                  does not open a window in its old colours
+
+    The stale branch is why the import record exists. Reusing an installed
+    profile unconditionally would trade a duplicate for something worse -- a
+    window showing settings the style no longer has -- and deleting without a
+    record could take a profile the USER made and named after a style.
+
+    Falls back to `open` whenever Terminal.app cannot be asked, so nothing here
+    can make the feature worse than it was.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Path)
+    param([Parameter(Mandatory)][string]$Path, [string]$Name)
+
+    if (-not $Name) { & open $Path; return }
+
+    $installed = Get-AppleTerminalSettingsSetName
+    if ($installed.Count -eq 0) { & open $Path; return }
+
+    $hash   = Get-AppleTerminalProfileHash -Path $Path
+    $record = Get-AppleTerminalImportRecord
+
+    if ($Name -in $installed) {
+        $ours    = $record.ContainsKey($Name)
+        $current = $ours -and $hash -and $record[$Name] -eq $hash
+
+        if ($current) {
+            $script = @"
+tell application "Terminal"
+    set t to do script ""
+    set current settings of t to settings set $(ConvertTo-AppleScriptString $Name)
+end tell
+"@
+            if ($null -ne (Invoke-AppleTerminalScript $script)) { return }
+            # Terminal.app refused; fall through to the import path rather than
+            # leaving the user with no window at all.
+        } elseif ($ours) {
+            # Ours, and out of date. Replacing it keeps the name unique, so the
+            # re-import cannot produce a numbered copy.
+            Remove-AppleTerminalSettingsSet -Name $Name | Out-Null
+        }
+        # Not ours: left alone. `open` below will make a numbered copy rather
+        # than touch a profile this tool did not create.
+    }
+
     & open $Path
+    if ($hash) { Set-AppleTerminalImportRecord -Name $Name -Hash $hash }
 }
 
 function Publish-StyleBackgroundProfile {
@@ -202,7 +367,7 @@ function Publish-StyleBackgroundProfile {
         if ($isGif) {
             Write-Host "  Terminal.app cannot animate, so this is the GIF's first frame." -ForegroundColor DarkGray
         }
-        try { Open-AppleTerminalProfile -Path $profilePath } catch {
+        try { Open-AppleTerminalProfile -Path $profilePath -Name $StyleName } catch {
             Write-Host "  Could not open the profile: $_" -ForegroundColor Yellow
         }
     } else {
@@ -747,5 +912,112 @@ function Reset-StyleDirect {
         Write-Host "  '$Target' had no TerminalStyles fields -- already plain." -ForegroundColor Gray
     }
     Write-Host "  Open a new tab to restore your default prompt." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+function Get-AppleTerminalDuplicateProfile {
+    <#
+    .SYNOPSIS
+    The numbered copies Terminal.app made of a style profile: "eva 1", "eva 2".
+
+    .DESCRIPTION
+    Only ever the NUMBERED ones, and only where the unsuffixed name is a style
+    this tool knows. The base name is never reported: a user may well have their
+    own profile called `eva`, and there is no way to prove otherwise. "eva 3" has
+    no such ambiguity -- Terminal.app appends that suffix itself when an import
+    collides, so it can only have come from a repeated import.
+    #>
+    [CmdletBinding()]
+    param([string[]]$InstalledName, [string[]]$StyleName)
+
+    if (-not $PSBoundParameters.ContainsKey('InstalledName')) {
+        $InstalledName = Get-AppleTerminalSettingsSetName
+    }
+    if (-not $PSBoundParameters.ContainsKey('StyleName')) {
+        $StyleName = @((Get-AvailableStyles).Name)
+    }
+
+    @(foreach ($n in $InstalledName) {
+        $m = [regex]::Match($n, '^(?<base>.+?) (?<num>\d+)$')
+        if (-not $m.Success) { continue }
+        if ($m.Groups['base'].Value -notin $StyleName) { continue }
+        [pscustomobject]@{ Name = $n; Base = $m.Groups['base'].Value }
+    })
+}
+
+function Invoke-TerminalStyleProfiles {
+    <#
+    .SYNOPSIS
+    `tstyles profiles` -- what this tool has left in Terminal.app, and a way out.
+    #>
+    [CmdletBinding()]
+    param([switch]$Clean, [switch]$Yes)
+
+    if ((Get-TStylesPlatform) -ne 'MacOS') {
+        Write-Host ""
+        Write-Host "  Terminal.app profiles are a macOS thing; there are none to show here." -ForegroundColor Gray
+        Write-Host ""
+        return
+    }
+
+    $installed = Get-AppleTerminalSettingsSetName
+    if ($installed.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  Could not ask Terminal.app for its profiles." -ForegroundColor Yellow
+        Write-Host "  It may not be running, or osascript may be unavailable." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    $styles = @((Get-AvailableStyles).Name)
+    $mine   = @($installed | Where-Object { $_ -in $styles })
+    $dupes  = @(Get-AppleTerminalDuplicateProfile -InstalledName $installed -StyleName $styles)
+
+    Write-Host ""
+    Write-Host "Terminal.app profiles named after a style:" -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($n in ($mine | Sort-Object)) { Write-Host ("    {0}" -f $n) }
+    if ($dupes.Count -eq 0) {
+        Write-Host ""
+        Write-Host "  No duplicates." -ForegroundColor Gray
+        Write-Host ""
+        return
+    }
+
+    Write-Host ""
+    Write-Host "Duplicates, one per extra -NewWindow before this was fixed:" -ForegroundColor Yellow
+    Write-Host ""
+    foreach ($d in ($dupes | Sort-Object Name)) { Write-Host ("    {0}" -f $d.Name) -ForegroundColor Yellow }
+    Write-Host ""
+
+    if (-not $Clean) {
+        Write-Host "  Remove them with: tstyles profiles -Clean" -ForegroundColor DarkGray
+        Write-Host "  The unnumbered profiles above are left alone -- one of them may be yours." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    Write-Host ("This will DELETE {0} Terminal.app profile(s):" -f $dupes.Count) -ForegroundColor Yellow
+    foreach ($d in ($dupes | Sort-Object Name)) { Write-Host ("  - {0}" -f $d.Name) -ForegroundColor Red }
+    Write-Host "  - Nothing else in Terminal.app is touched, including the unnumbered" -ForegroundColor Gray
+    Write-Host "    profiles, your default profile, and any window already open." -ForegroundColor Gray
+    Write-Host ""
+    if (-not (Confirm-Action -Question 'Delete them? [y/N]' -Yes:$Yes `
+                -Consequence ("deletes {0} Terminal.app profile(s)" -f $dupes.Count))) {
+        Write-Host "  Cancelled." -ForegroundColor Gray
+        return
+    }
+
+    $gone = 0
+    foreach ($d in $dupes) {
+        if (Remove-AppleTerminalSettingsSet -Name $d.Name) {
+            Write-Host ("  Removed {0}" -f $d.Name) -ForegroundColor Green
+            $gone++
+        } else {
+            Write-Host ("  ! could not remove {0}" -f $d.Name) -ForegroundColor Red
+        }
+    }
+    Write-Host ""
+    Write-Host ("  {0} of {1} removed." -f $gone, $dupes.Count) -ForegroundColor Cyan
     Write-Host ""
 }
