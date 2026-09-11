@@ -292,7 +292,7 @@ Describe 'the picker puts the terminal back when you cancel' {
         # restore both live in scriptblocks, and the restore has to know whether
         # the picker put a preview on disk at all. A style with no theme.json
         # writes nothing, and restoring "the original" over a file we never
-        # touched drops its BOM and makes Windows Terminal reload for nothing.
+        # touched bumps its mtime and makes Windows Terminal reload for nothing.
         # Matched field by field rather than as one exact literal, so adding a
         # third piece of picker state does not turn this into a red test about
         # nothing.

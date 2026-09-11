@@ -382,11 +382,12 @@ function Test-StyleNameIsSingleSegment {
     Why it is not the stricter rule the tuner applies to names it CREATES: a
     hand-authored style is just a folder the user drops in, and README's
     "Adding your own style" puts no constraint on what it is called. Rejecting
-    spaces or non-ASCII here would strand every such style in a state worse
-    than not existing -- Get-AvailableStyles enumerates directories with no
-    filter, so `My Theme` would still list, still tab-complete, and then fail
-    at every use site (apply, tune, current, the shell-startup re-emit,
-    background inheritance). Reject paths, not names.
+    spaces or non-ASCII here would break every such style at once and say
+    nothing: this gate is what Get-StyleDir resolves through, and
+    Get-AvailableStyles admits exactly what Get-StyleDir resolves -- so `My
+    Theme` would stop applying, stop tuning, stop listing and stop
+    tab-completing, and the folder the user dropped in would simply cease to
+    exist as far as the tool is concerned. Reject paths, not names.
 
     Returns $true/$false; never throws.
     #>
@@ -469,24 +470,38 @@ function Get-StyleDir {
 }
 
 function Get-AvailableStyles {
-    # Returns DirectoryInfo for every styles/<name>/ that has a scheme.json,
+    # Returns DirectoryInfo for every styles/<name>/ that Get-StyleDir resolves,
     # merged from two locations:
     #   1. $DataRoot\styles\<name>\ -- user dir, persistent across updates
     #   2. $ModuleRoot\styles\<name>\ -- bundled, install-managed
     # User-wins on name collision (matches Get-StyleDir's precedence).
     # Sorted alphabetically by name.
+    #
+    # The admission test IS Get-StyleDir, not a second copy of "does this folder
+    # have a scheme.json", because the copy diverged from it in two ways at
+    # once. `Get-ChildItem -Directory` without -Force never returned a
+    # dot-prefixed directory on Unix, and `Test-Path (Join-Path ...)` without
+    # -LiteralPath read `dev[1]/scheme.json` as a wildcard PATTERN, which
+    # matches nothing. Both kinds of style resolved, applied, tuned and deleted
+    # perfectly while being absent from every enumeration: no row in `tstyles
+    # list`, no tab-completion, never picked by `random`, and `tstyles .wip`
+    # answered "Unknown command or style" for a style the tuner had just
+    # created (the dispatch matches the argument through here, not through
+    # Get-StyleDir). Worse, the delete consent screen names the tuned children
+    # that lose their brightness/saturation off this same call, so it destroyed
+    # deltas it had just told the user it would not touch.
     $userStylesDir    = Join-Path $script:TStylesDataRoot   'styles'
     $bundledStylesDir = Join-Path $script:TStylesModuleRoot 'styles'
 
     $user = if (Test-Path -LiteralPath $userStylesDir) {
-        @(Get-ChildItem -LiteralPath $userStylesDir -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName 'scheme.json')
+        @(Get-ChildItem -LiteralPath $userStylesDir -Directory -Force | Where-Object {
+            Get-StyleDir -StyleName $_.Name
         })
     } else { @() }
 
     $bundled = if (Test-Path -LiteralPath $bundledStylesDir) {
-        @(Get-ChildItem -LiteralPath $bundledStylesDir -Directory | Where-Object {
-            Test-Path (Join-Path $_.FullName 'scheme.json')
+        @(Get-ChildItem -LiteralPath $bundledStylesDir -Directory -Force | Where-Object {
+            Get-StyleDir -StyleName $_.Name
         })
     } else { @() }
 
@@ -800,11 +815,12 @@ function Invoke-TerminalStyle {
     # Guarded on having written, because a picker session can now legitimately
     # write NOTHING -- open it on a style with no theme.json and press Esc and
     # there is no preview on disk to undo. Restoring anyway would rewrite the
-    # file with the same characters, which is not free: Write-SettingsAtomic
-    # emits UTF-8 with no BOM (so a BOM the user had is gone), it bumps the
-    # mtime, and Windows Terminal watches the file and reloads on the change.
-    # "Nothing was written to settings.json" has to mean the file was not
-    # touched, or it is the same claim this whole path was fixed for.
+    # file with the same characters, which is not free: it bumps the mtime, and
+    # Windows Terminal watches the file and reloads on the change. "Nothing was
+    # written to settings.json" has to mean the file was not touched, or it is
+    # the same claim this whole path was fixed for. (The bytes themselves do
+    # survive a restore now -- Write-SettingsAtomic keeps the BOM the live file
+    # had, which it used to drop on every write.)
     $restoreOriginalSettings = {
         if ($pickerState.SettingsWritten) {
             & $writeSettings $originalJson

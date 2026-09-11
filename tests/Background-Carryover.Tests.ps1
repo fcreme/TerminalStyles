@@ -69,16 +69,31 @@ Describe 'Background carryover between styles' {
         }
 
         function script:New-Settings {
-            param([hashtable]$ProfileProps = @{})
+            # -Defaults builds the profiles.defaults block Windows Terminal
+            # inherits into every named profile. Without it the file has no
+            # defaults at all, which is the only shape the cases below this
+            # could express -- and the reason none of them could see a
+            # background carried on defaults.
+            param([hashtable]$ProfileProps = @{}, [hashtable]$Defaults)
             $p = [pscustomobject](@{ name = 'PowerShell'; guid = '{x}' } + $ProfileProps)
-            [pscustomobject]@{ profiles = [pscustomobject]@{ list = @($p) } }
+            $profiles = [pscustomobject]@{ list = @($p) }
+            if ($PSBoundParameters.ContainsKey('Defaults')) {
+                $profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]$Defaults)
+            }
+            [pscustomobject]@{ profiles = $profiles }
         }
         function script:Merge {
-            param($Settings, [string]$StyleDir)
+            param($Settings, [string]$StyleDir, [string]$TargetName = 'PowerShell')
             Merge-StyleIntoSettings -Settings $Settings -StyleDir $StyleDir `
-                -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
+                -TargetName $TargetName -BackgroundImage '' -BackgroundImageProvided $false
         }
         function script:GetProfile { param($S) $S.profiles.list | Where-Object name -eq 'PowerShell' }
+        function script:GetDefaults { param($S) $S.profiles.defaults }
+        function script:BgFieldCount {
+            param($Entry)
+            @(@('backgroundImage','backgroundImageOpacity','backgroundImageStretchMode','backgroundImageAlignment') |
+                Where-Object { $Entry.PSObject.Properties.Match($_).Count -gt 0 }).Count
+        }
 
         Context 'Test-ManagedBackgroundPath' {
             It 'is true for a bundled background under the module root' {
@@ -255,6 +270,102 @@ Describe 'Background carryover between styles' {
                 $out = Merge-StyleIntoSettings -Settings $afterWithBg -StyleDir $script:noBgDir `
                     -TargetName 'PowerShell' -BackgroundImage 'C:\pics\chosen.png' -BackgroundImageProvided $true
                 (script:GetProfile $out).backgroundImage | Should -Be 'C:\pics\chosen.png'
+            }
+        }
+
+        Context 'a background the target profile INHERITS from profiles.defaults' {
+            # Windows Terminal resolves every named profile against
+            # profiles.defaults, so an image written there is live on this
+            # profile too -- with nothing on the profile's own entry to show for
+            # it. The carry-over check read the entry alone, so
+            # `tstyles eva -Target defaults` followed by a bundle-less style on
+            # the profile the user is sitting in left eva's GIF drawn behind the
+            # new palette: verbatim the outcome the clear exists to prevent.
+            # `tstyles reset -Target defaults` is the only thing that cleared it,
+            # and that target is documented nowhere the user can read.
+            BeforeEach {
+                $script:managedBg = Join-Path $script:withBgDir 'background.gif'
+                $script:usersBg   = 'C:\Users\someone\Pictures\me.png'
+            }
+
+            It "clears the previous style's image off defaults when the new style ships none" {
+                $s = script:New-Settings -Defaults @{
+                    colorScheme            = 'withbg'
+                    backgroundImage        = $script:managedBg
+                    backgroundImageOpacity = 0.45
+                }
+                Test-ManagedBackgroundPath -Path $script:managedBg |
+                    Should -BeTrue -Because 'the fixture image must be one this tool owns, or nothing here may touch it'
+
+                $out = script:Merge -Settings $s -StyleDir $script:noBgDir
+                (script:GetProfile $out).colorScheme | Should -Be 'nobg'
+                script:BgFieldCount (script:GetDefaults $out) | Should -Be 0 `
+                    -Because 'what the profile SHOWS is what bleeds, wherever the key lives'
+                # Bounded: the background fields, and nothing else on defaults.
+                (script:GetDefaults $out).colorScheme | Should -Be 'withbg' `
+                    -Because 'this apply was not asked to restyle profiles.defaults'
+            }
+
+            It "leaves an image the USER put on defaults exactly where it is" {
+                $s = script:New-Settings -Defaults @{ backgroundImage = $script:usersBg }
+                $out = script:Merge -Settings $s -StyleDir $script:noBgDir
+                (script:GetDefaults $out).backgroundImage | Should -Be $script:usersBg
+            }
+
+            It "leaves the user's defaults image alone while clearing ours off the profile" {
+                # The guard that must not be dropped: both entries carry an
+                # image, only one of them is ours.
+                $s = script:New-Settings -ProfileProps @{ backgroundImage = $script:managedBg } `
+                                         -Defaults     @{ backgroundImage = $script:usersBg }
+                $out = script:Merge -Settings $s -StyleDir $script:noBgDir
+                script:BgFieldCount (script:GetProfile $out) | Should -Be 0
+                (script:GetDefaults $out).backgroundImage | Should -Be $script:usersBg
+            }
+
+            It 'clears both when the profile and defaults each carry one of ours' {
+                $s = script:New-Settings -ProfileProps @{ backgroundImage = $script:managedBg } `
+                                         -Defaults     @{ backgroundImage = $script:managedBg }
+                $out = script:Merge -Settings $s -StyleDir $script:noBgDir
+                script:BgFieldCount (script:GetProfile $out)  | Should -Be 0
+                script:BgFieldCount (script:GetDefaults $out) | Should -Be 0 `
+                    -Because 'stripping only the entry hands the profile straight back to the inherited copy'
+            }
+
+            It 'honours an explicit -BackgroundImage "" against the inherited image' {
+                # The plainest form of the contract: the user typed "no
+                # background" and got "Style applied" in green with the GIF
+                # still on screen.
+                $s = script:New-Settings -Defaults @{ backgroundImage = $script:managedBg }
+                $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:noBgDir `
+                    -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $true
+                script:BgFieldCount (script:GetDefaults $out) | Should -Be 0
+            }
+
+            It 'leaves defaults alone when the new style writes its own image onto the profile' {
+                # Deliberate boundary, not an oversight: a profile-level
+                # backgroundImage shadows defaults, so nothing of the old style
+                # is visible on this profile -- and clearing defaults here would
+                # silently restyle every OTHER profile the user did not name.
+                $s = script:New-Settings -Defaults @{ backgroundImage = $script:managedBg }
+                $out = script:Merge -Settings $s -StyleDir $script:withBgDir
+                (script:GetProfile $out).backgroundImage  | Should -Match 'withbg[\\/]background\.gif$'
+                (script:GetDefaults $out).backgroundImage | Should -Be $script:managedBg
+            }
+
+            It 'still styles profiles.defaults itself when defaults IS the target' {
+                # The inherited lookup must not turn the defaults target into a
+                # reader of its own entry.
+                $s = script:New-Settings -Defaults @{ backgroundImage = $script:managedBg }
+                $out = script:Merge -Settings $s -StyleDir $script:noBgDir -TargetName 'defaults'
+                (script:GetDefaults $out).colorScheme | Should -Be 'nobg'
+                script:BgFieldCount (script:GetDefaults $out) | Should -Be 0
+            }
+
+            It 'is unmoved by a settings.json with no defaults block at all' {
+                $out = script:Merge -Settings (script:New-Settings) -StyleDir $script:noBgDir
+                (script:GetProfile $out).colorScheme | Should -Be 'nobg'
+                $out.profiles.PSObject.Properties.Match('defaults').Count | Should -Be 0 `
+                    -Because 'reading defaults must not create it'
             }
         }
     }
