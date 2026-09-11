@@ -88,6 +88,48 @@ Describe 'the picker stages shell state on confirm' {
         (script:Get-CalledCommandName -FunctionAst $fn) | Should -Contain 'Set-ShellStyleState'
     }
 
+    It 'both apply doors report a staging failure, through the same notice' {
+        # Structural for the same reason the rest of this file is: the picker's
+        # confirm branch sits behind an interactive-stdin guard that Pester can
+        # never satisfy. Apply-StyleNonWT's half of this IS driven, in
+        # tests/Apply-StyleNonWT.Tests.ps1; this is what stops the picker from
+        # quietly going silent again, which is the exact way it drifted before.
+        foreach ($name in 'Invoke-TerminalStyle', 'Apply-StyleNonWT') {
+            $fn = script:Get-FunctionAst -Name $name
+            $fn | Should -Not -BeNullOrEmpty
+            (script:Get-CalledCommandName -FunctionAst $fn) | Should -Contain 'Show-ShellStagingFailure' `
+                -Because "$name stages the shell side, so it has to say when that failed"
+        }
+    }
+
+    It 'every Set-ShellStyleState call consumes the status it returns' {
+        # Staging returns 'ok' / 'failed' now, because its catch used to be
+        # `} catch { }` and a failure left every future zsh/bash tab on the
+        # PREVIOUS style while the command printed "Style applied". A call site
+        # that drops that value is back where it started -- and worse, a bare
+        # statement would emit the status straight into `tstyles`' output.
+        $calls = @(foreach ($a in $script:asts) {
+            $a.FindAll({
+                param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Set-ShellStyleState'
+            }, $true)
+        })
+
+        $calls.Count | Should -BeGreaterOrEqual 2 -Because 'both apply paths stage the shell side'
+        foreach ($c in $calls) {
+            $pipeline = $c.Parent
+            $consumed =
+                ($pipeline -is [System.Management.Automation.Language.PipelineAst] -and
+                 $pipeline.PipelineElements.Count -gt 1) -or
+                ($pipeline.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) -or
+                ($pipeline.Parent -is [System.Management.Automation.Language.ParenExpressionAst]) -or
+                ($pipeline.Parent -is [System.Management.Automation.Language.SubExpressionAst])
+            $consumed | Should -BeTrue -Because ("the call at {0}:{1} drops the staging status" -f
+                (Split-Path -Leaf $c.Extent.File), $c.Extent.StartLineNumber)
+        }
+    }
+
     It 'every Set-ShellStyleState call passes a Scheme' {
         # Set-ShellStyleState computes current-style.osc from -Scheme. Omitting
         # it is a Mandatory-parameter prompt at confirm time, on a screen the

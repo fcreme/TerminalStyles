@@ -710,7 +710,9 @@ Describe 'the shell shim does not pin a PSGallery install to one version' {
             Mock Get-TStylesDataRoot { Join-Path $TestDrive 'some-other-data-root' }
             Get-TerminalStylesInstallKind | Should -Be 'PSResourceGet' -Because 'the fixture must set the branch under test'
 
-            Sync-ShellRuntime | Should -BeTrue
+            # -Be 'ok', not -BeTrue. Every status this returns is a non-empty
+            # string, so -BeTrue is now satisfied by 'failed' as well.
+            Sync-ShellRuntime | Should -Be 'ok'
             $shim = [System.IO.File]::ReadAllText((Get-ShellCliPath))
 
             $shim | Should -Match '(?m)^Import-Module TerminalStyles -DisableNameChecking\s*$'
@@ -722,7 +724,7 @@ Describe 'the shell shim does not pin a PSGallery install to one version' {
             Mock Get-TStylesDataRoot { $script:TStylesModuleRoot }
             Get-TerminalStylesInstallKind | Should -Be 'Bootstrap'
 
-            Sync-ShellRuntime | Should -BeTrue
+            Sync-ShellRuntime | Should -Be 'ok'
             $shim = [System.IO.File]::ReadAllText((Get-ShellCliPath))
 
             $shim | Should -Match 'TerminalStyles\.psd1' `
@@ -737,6 +739,165 @@ Describe 'the shell shim does not pin a PSGallery install to one version' {
             Sync-ShellRuntime | Out-Null
             [System.IO.File]::ReadAllText((Get-ShellCliPath)) |
                 Should -Match '\$global:TStylesNoAutoLoad\s*=\s*\$true'
+        }
+    }
+}
+
+Describe 'Register-ShellLoader refuses a BEGIN with no matching END' {
+    # The registration half of the pair had no answer for a state its own
+    # sibling has a name for. Given a file whose END marker is gone --
+    # hand-edited rc, interrupted write, a half-finished manual cleanup, the
+    # inputs Unregister-ShellLoader's docstring already enumerates -- the
+    # refresh branch matched nothing, wrote the identical bytes back, and
+    # returned 'updated'. shell-init printed `updated  ~/.zshrc` in cyan and
+    # told the user to `source` it, with no loader line in the file at all, and
+    # every re-run said the same thing: an absorbing state the tool could never
+    # talk the user out of.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:rc = Join-Path $script:h '.zshrc'
+            # The state the finding was measured on, and the one a user reaches
+            # by following shell-remove's own advice ("Delete the block by
+            # hand") imprecisely: the marker left behind, the loader line gone.
+            # Nothing sources anything out of this file.
+            [System.IO.File]::WriteAllText($script:rc,
+                "alias g=git`n# ===== TerminalStyles BEGIN =====`n",
+                [System.Text.UTF8Encoding]::new($false))
+        }
+
+        It 'reports malformed rather than updated' {
+            Register-ShellLoader -Path $script:rc | Should -Be 'malformed'
+        }
+
+        It 'says the same under -Force, which used to write the file back anyway' {
+            Register-ShellLoader -Path $script:rc -Force | Should -Be 'malformed'
+        }
+
+        It 'says the same when it is the END line alone that was deleted' {
+            # The other route in, and the fixture shell-remove's own malformed
+            # test uses: a block this code wrote, with the END marker taken out.
+            # The loader line survives there, so the file still works -- but the
+            # refresh can no longer maintain it, and shell-remove will not strip
+            # it, which is exactly what the status is for.
+            $rc2 = Join-Path $script:h '.bashrc'
+            [System.IO.File]::WriteAllText($rc2, "alias g=git`n", [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $rc2 | Should -Be 'added'
+            $t = [System.IO.File]::ReadAllText($rc2, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText($rc2,
+                ($t -replace '# ===== TerminalStyles END =====\r?\n?', ''),
+                [System.Text.UTF8Encoding]::new($false))
+
+            Register-ShellLoader -Path $rc2 | Should -Be 'malformed'
+        }
+
+        It 'gives the same answer as Unregister-ShellLoader on the same bytes' {
+            # One file, one state, one name for it. The status vocabulary exists
+            # so the two halves of the pair cannot disagree about what happened.
+            $status = Register-ShellLoader -Path $script:rc
+            $status | Should -Be (Unregister-ShellLoader -Path $script:rc)
+        }
+
+        It 'leaves the file exactly as it found it' {
+            $before = [System.IO.File]::ReadAllBytes($script:rc)
+            [void](Register-ShellLoader -Path $script:rc -Force)
+            [System.IO.File]::ReadAllBytes($script:rc) | Should -Be $before
+        }
+
+        It 'shell-init says so and does not send the user to source that file' {
+            # The line the user actually acts on. It is chosen by a filter that
+            # only excluded 'failed', so a file reported as 'updated' with no
+            # loader in it was the file they were told to source.
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/zsh'
+                $out = Invoke-TerminalStylesShellInit -HomeDir $script:h 6>&1 | Out-String
+            } finally { $env:SHELL = $prev }
+
+            $out | Should -Match 'malformed'
+            $out | Should -Match 'no matching END'
+            $out | Should -Not -Match 'source ' `
+                -Because 'sourcing a file with no loader in it does nothing, twice'
+            $out | Should -Not -Match '(?m)^\s+updated\s'
+
+            [System.IO.File]::ReadAllText($script:rc, [System.Text.UTF8Encoding]::new($false)) |
+                Should -Not -Match 'tstyles\.sh' -Because 'nothing was registered, whatever it printed'
+        }
+    }
+}
+
+Describe 'Sync-ShellRuntime says WHICH staging failure happened' {
+    # One boolean for two unrelated causes: "shell/tstyles.sh is absent from the
+    # module" and "the data root would not take the copy". shell-init turned
+    # that single bit into "Could not stage the shell runtime (shell/tstyles.sh
+    # missing from the module)" -- a cause it cannot know, and one that sends a
+    # user whose data root is read-only, root-owned or full off to reinstall the
+    # module, the one action that cannot help. The path really at fault was
+    # never printed at all.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:TStylesDataRoot = $script:data
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        It 'returns ok when it staged the runtime' {
+            Sync-ShellRuntime | Should -Be 'ok'
+            Test-Path -LiteralPath (Get-ShellRuntimePath) | Should -BeTrue
+        }
+
+        It 'returns nosource when the module really is missing shell/tstyles.sh' {
+            $script:TStylesModuleRoot = Join-Path $script:h 'no-shell-dir'
+            New-Item -ItemType Directory -Path $script:TStylesModuleRoot -Force | Out-Null
+            Sync-ShellRuntime | Should -Be 'nosource'
+        }
+
+        It 'returns failed when the source is there and the write is refused' {
+            # A mock rather than chmod: the Windows legs of CI have no chmod
+            # semantics for a directory, and the cause under test is "the copy
+            # was refused", whatever refused it.
+            Test-Path -LiteralPath (Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'tstyles.sh') |
+                Should -BeTrue -Because 'the fixture must set the branch under test'
+            Mock Copy-Item { throw [System.UnauthorizedAccessException]::new('Access to the path is denied.') }
+            Sync-ShellRuntime | Should -Be 'failed'
+        }
+
+        It 'shell-init blames the module only when the module is what is missing' {
+            $script:TStylesModuleRoot = Join-Path $script:h 'no-shell-dir'
+            New-Item -ItemType Directory -Path $script:TStylesModuleRoot -Force | Out-Null
+
+            $ev = $null
+            Invoke-TerminalStylesShellInit -HomeDir $script:h -ErrorVariable ev -ErrorAction SilentlyContinue *> $null
+            # The LAST record is the command's own diagnostic -- the sentence
+            # the user is left with. Matching the whole collection would also
+            # match anything that merely leaked out of the failure underneath.
+            # @() first: -ErrorVariable hands back an ArrayList, and indexing one
+            # from the end is an array trick.
+            "$(@($ev)[-1])" | Should -Match 'missing from the module'
+        }
+
+        It 'shell-init names the data root when the data root is what refused' {
+            Mock Copy-Item { throw [System.UnauthorizedAccessException]::new('Access to the path is denied.') }
+
+            $ev = $null
+            Invoke-TerminalStylesShellInit -HomeDir $script:h -ErrorVariable ev -ErrorAction SilentlyContinue *> $null
+
+            $said = "$(@($ev)[-1])"
+            $said | Should -Not -Match 'missing from the module' `
+                -Because 'the file is there; reinstalling the module cannot help'
+            $said | Should -Match ([regex]::Escape($script:data)) `
+                -Because 'the directory that refused the write is the one the user has to fix'
+            $said | Should -Match 'denied' -Because 'the reason the write failed is the actionable half'
         }
     }
 }

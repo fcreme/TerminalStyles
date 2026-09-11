@@ -188,6 +188,106 @@ Describe 'register writes a loader the install can actually resolve' {
     }
 }
 
+Describe 'register tells the truth about a $PROFILE it could not write' {
+    # The write loop had no status at all: bare ReadAllText/WriteAllText, and
+    # "  Registered in <path>" printed unconditionally on the line after. So an
+    # unwritable $PROFILE -- read-only bit, root-owned, a OneDrive lock or a
+    # Files-On-Demand placeholder -- produced a red .NET error AND a green
+    # "Registered in" line for the same file, and the command still closed on
+    # "TerminalStyles will auto-load on every new shell tab." A user who
+    # scrolled past the red, or whose second engine failed while the first
+    # succeeded, had a real success line sitting beside a fake one.
+    #
+    # Register-ShellLoader does this same job for rc files and has returned
+    # 'failed' instead of throwing since the release its header describes. This
+    # is the other half of that symmetry.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:d -Force | Out-Null
+            $script:good = Join-Path $script:d 'good-profile.ps1'
+            $script:bad  = Join-Path $script:d 'bad-profile.ps1'
+            foreach ($p in $script:good, $script:bad) {
+                [System.IO.File]::WriteAllText($p, "# my own profile`r`n",
+                    [System.Text.UTF8Encoding]::new($false))
+            }
+            # IsReadOnly rather than chmod: one .NET attribute on every platform
+            # the suite runs on. Cleared in AfterEach so TestDrive can be removed.
+            (Get-Item -LiteralPath $script:bad -Force).IsReadOnly = $true
+
+            function script:New-Target([string]$Path, [string]$Label) {
+                [pscustomobject]@{ Label = $Label; ProfilePath = $Path; Exists = $true; HasLoader = $false }
+            }
+        }
+        AfterEach { (Get-Item -LiteralPath $script:bad -Force).IsReadOnly = $false }
+
+        It 'does not report a file it could not write as registered' {
+            $out = Invoke-TerminalStylesRegister -Yes 6>&1 -Targets @(
+                (script:New-Target $script:good 'PowerShell 7')
+                (script:New-Target $script:bad  'Windows PowerShell 5.1')
+            ) | Out-String
+
+            $out | Should -Match ("Registered in " + [regex]::Escape($script:good))
+            $out | Should -Not -Match ("Registered in " + [regex]::Escape($script:bad)) `
+                -Because 'nothing was written to it'
+            $out | Should -Match 'could not write'
+            $out | Should -Match ([regex]::Escape($script:bad))
+
+            [System.IO.File]::ReadAllText($script:good) | Should -Match 'TerminalStyles BEGIN'
+            [System.IO.File]::ReadAllText($script:bad)  | Should -Be "# my own profile`r`n"
+        }
+
+        It 'still writes every other target, and still promises auto-load for them' {
+            $out = Invoke-TerminalStylesRegister -Yes 6>&1 -Targets @(
+                (script:New-Target $script:bad  'Windows PowerShell 5.1')
+                (script:New-Target $script:good 'PowerShell 7')
+            ) | Out-String
+
+            # Order matters: the failing target is FIRST, so a loop that unwinds
+            # never reaches the one that would have worked.
+            [System.IO.File]::ReadAllText($script:good) | Should -Match 'TerminalStyles BEGIN'
+            $out | Should -Match 'auto-load on every new shell tab'
+            $out | Should -Match 'Not registered in'
+        }
+
+        It 'does not promise auto-load when every target failed' {
+            $out = Invoke-TerminalStylesRegister -Yes 6>&1 -Targets @(
+                (script:New-Target $script:bad 'Windows PowerShell 5.1')
+            ) | Out-String
+
+            $out | Should -Not -Match 'auto-load on every new shell tab' `
+                -Because 'no shell tab will load anything'
+            $out | Should -Not -Match 'To verify in this session'
+        }
+
+        It 'leaves no backup of a profile it never modified, however often it is retried' {
+            # Save-FirstTouchBackup runs BEFORE the write, so the failing target
+            # got a <profile>.bak-<timestamp> copy of a file that never changed
+            # -- and since the block never lands, the next run took another.
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:New-Target $script:bad 'x')) 6>&1 | Out-Null
+            Start-Sleep -Milliseconds 1100   # the stamp is to the second
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:New-Target $script:bad 'x')) 6>&1 | Out-Null
+
+            @(Get-ChildItem -LiteralPath $script:d -Filter 'bad-profile.ps1.bak-*' -Force).Count |
+                Should -Be 0 -Because 'a backup of an unmodified file is litter, and it compounds'
+        }
+
+        It 'does not throw out of the command under $ErrorActionPreference = Stop' {
+            # A user profile that sets Stop, or `tstyles register -ErrorAction
+            # Stop`. Under the shell default the unguarded .NET exception is
+            # non-terminating for the loop; under Stop it unwound the whole
+            # command, after printing "Registered in" for a file it had not
+            # written.
+            $ErrorActionPreference = 'Stop'
+            { Invoke-TerminalStylesRegister -Yes -Targets @(
+                (script:New-Target $script:bad  'Windows PowerShell 5.1')
+                (script:New-Target $script:good 'PowerShell 7')
+              ) 6>&1 | Out-Null } | Should -Not -Throw
+            [System.IO.File]::ReadAllText($script:good) | Should -Match 'TerminalStyles BEGIN'
+        }
+    }
+}
+
 Describe 'register and install.ps1 agree on what a loader line looks like' {
     # install.ps1 is fetched and piped to iex before the module exists, so it
     # cannot dot-source lib/ and the two loader forms are necessarily written

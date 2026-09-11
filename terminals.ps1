@@ -427,14 +427,41 @@ function Get-ShellOscPath    { Join-Path $script:TStylesDataRoot 'current-style.
 
 function Get-ShellCliPath { Join-Path $script:TStylesDataRoot 'tstyles-cli.ps1' }
 
+# WHY the last staging step failed, in the OS's own words.
+#
+# A status names the CATEGORY of failure, which is what the caller branches on,
+# and it cannot also carry the reason -- but the reason is the actionable half:
+# "access is denied" and "no space left on the device" send the user to two
+# different places. Set by the function that returns the non-'ok' status, and
+# valid only for the caller that just received one.
+$script:TStylesShellStagingError = $null
+
 function Sync-ShellRuntime {
     # Refresh the staged runtime from the module. Runs on every apply so an
     # upgraded module's runtime replaces the staged copy without the user having
     # to re-run shell-init.
+    #
+    # Returns a STATUS, not a boolean:
+    #   'ok'       -- tstyles.sh and the generated shim are staged and current
+    #   'nosource' -- shell/tstyles.sh is not in the module: a broken install
+    #   'failed'   -- the data root would not take the write; the reason is in
+    #                 $script:TStylesShellStagingError
+    #
+    # The last two are two unrelated things that used to be one $false, and the
+    # caller printed the FIRST cause for both. So a user whose data root was
+    # read-only, root-owned after a sudo install, or simply full was told
+    # "shell/tstyles.sh missing from the module" -- which sends them to reinstall
+    # the module, the one action that cannot help -- while the directory really
+    # at fault was never named. Same rule as Unregister-ShellLoader's four
+    # statuses, and the same reason.
+    $script:TStylesShellStagingError = $null
     $src = Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'tstyles.sh'
-    if (-not (Test-Path -LiteralPath $src)) { return $false }
+    if (-not (Test-Path -LiteralPath $src)) { return 'nosource' }
     try {
-        Copy-Item -LiteralPath $src -Destination (Get-ShellRuntimePath) -Force
+        # -ErrorAction Stop because Copy-Item ALSO writes the failure to the
+        # error stream: without it a red "Access to the path ... is denied"
+        # printed immediately above the message that contradicted it.
+        Copy-Item -LiteralPath $src -Destination (Get-ShellRuntimePath) -Force -ErrorAction Stop
 
         # Entry point for the `tstyles` shell function. Generated rather than
         # shipped because a BOOTSTRAP install is not on $env:PSModulePath, so
@@ -486,9 +513,10 @@ $importLine
 Invoke-TerminalStyle @args
 "@
         [System.IO.File]::WriteAllText((Get-ShellCliPath), $cli, [System.Text.UTF8Encoding]::new($false))
-        return $true
+        return 'ok'
     } catch {
-        return $false
+        $script:TStylesShellStagingError = $_.Exception.Message
+        return 'failed'
     }
 }
 
@@ -500,12 +528,26 @@ function Set-ShellStyleState {
     #
     # Best-effort throughout: a PowerShell user with no shell integration set up
     # should never see an apply fail because these could not be written.
+    #
+    # Best effort still has to REPORT, so it returns 'ok' or 'failed' (with the
+    # reason in $script:TStylesShellStagingError) rather than nothing. The catch
+    # below used to be `} catch { }`, and these two files are what every FUTURE
+    # zsh/bash tab reads: one failed write left them on the PREVIOUS style while
+    # the apply printed its ordinary green success block and told the user the
+    # style was saved for the next tab. The half that repaints THIS tab has
+    # always reported its own failure precisely; this is the half that decides
+    # every tab after it.
+    #
+    # Both call sites must CONSUME the status -- a bare statement would emit it
+    # into `tstyles`' own output. tests/Picker-ShellStateStaging.Tests.ps1 walks
+    # the AST for that.
     param(
         [Parameter(Mandatory)][string]$StyleName,
         [Parameter(Mandatory)][string]$StyleDir,
         [Parameter(Mandatory)]$Scheme,
         [switch]$KeepPrompt
     )
+    $script:TStylesShellStagingError = $null
     try {
         $enc = [System.Text.UTF8Encoding]::new($false)
         [System.IO.File]::WriteAllText((Get-ShellOscPath),
@@ -521,8 +563,34 @@ function Set-ShellStyleState {
             Remove-Item -LiteralPath $promptDst -Force -ErrorAction SilentlyContinue
         }
 
+        # Deliberately NOT folded into the status above. A stale or unwritten
+        # tstyles.sh does not change what the next tab looks like: the rc block
+        # sources whatever is there, and the palette and prompt staged above are
+        # the new style's. shell-init is the command that promises the runtime,
+        # and it reports this failure with the path and the reason.
         [void](Sync-ShellRuntime)
-    } catch { }
+        return 'ok'
+    } catch {
+        $script:TStylesShellStagingError = $_.Exception.Message
+        return 'failed'
+    }
+}
+
+function Show-ShellStagingFailure {
+    # The notice both apply doors print when Set-ShellStyleState could not
+    # stage. Written once on purpose: `tstyles <name>` and the picker stage the
+    # same two files, they have already drifted apart over exactly this -- the
+    # picker did not stage them at all for several releases -- and a notice that
+    # exists on one door and not the other is the defect this whole file is
+    # being edited for.
+    #
+    # Leading blank line, no trailing one: the callers own their own spacing.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Status)
+    if ($Status -eq 'ok') { return }
+    Write-Host ""
+    Write-Host ("  Could not stage the shell files under {0}: {1}" -f
+                $script:TStylesDataRoot, $script:TStylesShellStagingError) -ForegroundColor Yellow
+    Write-Host "  New zsh/bash tabs will keep the PREVIOUS style until that is fixed." -ForegroundColor Yellow
 }
 
 function Clear-ShellStyleState {
@@ -736,7 +804,17 @@ function Save-FirstTouchBackup {
 function Register-ShellLoader {
     # Add (or refresh) the loader block in one rc file. Returns the action taken
     # so the caller can report it: 'added', 'updated', 'unchanged', 'skipped',
-    # or 'failed' when the file could not be written.
+    # 'malformed', or 'failed' when the file could not be written.
+    #
+    # 'malformed' is the same state Unregister-ShellLoader names, on the same
+    # bytes: a BEGIN marker with no matching END. It was missing here, and the
+    # refresh branch below then matched nothing, wrote the file back
+    # byte-for-byte and returned 'updated' -- so shell-init printed the file in
+    # cyan as registered and told the user to `source` it, having written
+    # nothing, and said the same on every run afterwards. In the shape this
+    # state usually arrives in -- a block deleted by hand down to its first line
+    # -- there is no loader in that file at all. The status vocabulary exists so
+    # the two halves of the pair cannot disagree about what a file is.
     #
     # 'failed' rather than an exception: shell-init registers into several rc
     # files in a loop, and one unwritable file (read-only, owned by root, on a
@@ -777,6 +855,16 @@ function Register-ShellLoader {
         # copy. Refusing to cross a BEGIN makes the match fail at the stray
         # marker and start again at the real one, which is the block we own.
         $pattern = [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end)
+        # A BEGIN with no END to close it. Everything below assumes the span
+        # exists: the Replace would match nothing, write the identical bytes
+        # back and report 'updated'. Checked before the -Force branch, because
+        # -Force skips the comparison and went straight to that Replace.
+        #
+        # [regex]::IsMatch with the Singleline option rather than -notmatch:
+        # PowerShell's operator has no Singleline, so `.` would not cross the
+        # newlines between the markers and every ordinary multi-line block would
+        # be called malformed.
+        if (-not [regex]::IsMatch($content, $pattern, 'Singleline')) { return 'malformed' }
         if (-not $Force) {
             # Already registered. Compare the body so an upgraded data root or
             # runtime path is picked up without -Force.
@@ -886,7 +974,15 @@ function Unregister-ShellLoader {
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
     $enc   = Get-RcFileEncoding
-    $content = [System.IO.File]::ReadAllText($Path, $enc)
+    # The READ is guarded as well as the write. It was not, so an rc file this
+    # user cannot read threw a raw MethodInvocationException straight out of
+    # both callers -- past every remaining rc file, past the WezTerm cleanup and
+    # past the $PROFILE strip, in the middle of an uninstall. 'failed' is the
+    # right answer for the same reason it is when the write is refused: the
+    # block is still in a file we could not deal with.
+    try {
+        $content = [System.IO.File]::ReadAllText($Path, $enc)
+    } catch { return 'failed' }
     if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
 
     # Tempered exactly as Register-ShellLoader's span is, and for the same
@@ -905,6 +1001,61 @@ function Unregister-ShellLoader {
     # take down a shell-remove that has already stripped others.
     try { [System.IO.File]::WriteAllText($Path, $stripped, $enc) } catch { return 'failed' }
     return 'removed'
+}
+
+function Remove-ShellLoaderBlock {
+    <#
+    .SYNOPSIS
+    Strip the loader from a list of rc files and report what happened to each.
+
+    .DESCRIPTION
+    ONE implementation of the reporting rule, because there are two callers --
+    `tstyles shell-remove` and `tstyles uninstall` -- and they diverged.
+    shell-remove switched on all four of Unregister-ShellLoader's statuses;
+    uninstall kept `if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed')`,
+    which is an explicit comparison against exactly one of them and throws the
+    other three away. So an unwritable rc file (the managed-dotfile case that
+    function's docstring names) and a BEGIN with no END printed nothing at all,
+    were counted as nothing, and the command signed off on "TerminalStyles
+    uninstalled." with the block still in files its own consent screen had just
+    listed by name -- after step 1 had removed the module, so `shell-remove`
+    could no longer take them out either.
+
+    .OUTPUTS
+    [pscustomobject] Removed  = how many blocks went
+                     Problems = the paths still carrying one
+
+    The caller decides what to say about those two numbers, because the two
+    commands close on different sentences. Neither gets to decide whether a
+    failure is mentioned at all.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Path)
+
+    $removed = 0
+    $problems = @()
+    foreach ($p in $Path) {
+        switch (Unregister-ShellLoader -Path $p) {
+            'removed' {
+                Write-Host ("  removed the loader from {0}" -f $p) -ForegroundColor Green
+                $removed++
+            }
+            'malformed' {
+                Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $p) -ForegroundColor Red
+                Write-Host "    Nothing was removed. Delete the block by hand -- it still loads on every shell." -ForegroundColor Red
+                $problems += $p
+            }
+            'failed' {
+                Write-Host ("  ! could not write {0}" -f $p) -ForegroundColor Red
+                Write-Host "    The loader is still there. Check the file's permissions (a read-only" -ForegroundColor Red
+                Write-Host "    dotfile, or a symlink into a managed store) and remove the block by hand." -ForegroundColor Red
+                $problems += $p
+            }
+            # 'none' is the ordinary case for an rc file that never carried a
+            # block, and says nothing on purpose.
+        }
+    }
+    [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
 }
 
 function Invoke-TerminalStylesShellInit {
@@ -941,30 +1092,17 @@ function Invoke-TerminalStylesShellInit {
         # place while reporting the loader removed.
         $candidates = Get-ShellRcRemovalCandidate @splat
 
-        # Each status reported for what it is. A failure and a malformed block
-        # both used to read as "nothing was registered", so the user was told
-        # the loader was gone while every new shell still sourced it.
-        $removed = 0
-        $problems = @()
-        foreach ($c in $candidates) {
-            switch (Unregister-ShellLoader -Path $c.Path) {
-                'removed' {
-                    Write-Host ("  removed from {0}" -f $c.Path) -ForegroundColor Yellow
-                    $removed++
-                }
-                'malformed' {
-                    Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $c.Path) -ForegroundColor Red
-                    Write-Host "    Nothing was removed. Delete the block by hand -- it still loads on every shell." -ForegroundColor Red
-                    $problems += $c.Path
-                }
-                'failed' {
-                    Write-Host ("  ! could not write {0}" -f $c.Path) -ForegroundColor Red
-                    Write-Host "    The loader is still there. Check the file's permissions (a read-only" -ForegroundColor Red
-                    Write-Host "    dotfile, or a symlink into a managed store) and re-run." -ForegroundColor Red
-                    $problems += $c.Path
-                }
-            }
-        }
+        # Each status reported for what it is, through the helper uninstall
+        # sweeps with too. A failure and a malformed block both used to read as
+        # "nothing was registered", so the user was told the loader was gone
+        # while every new shell still sourced it.
+        #
+        # Projected with ForEach-Object rather than `$candidates.Path`: member
+        # access on an empty collection yields one $null, and a list with one
+        # empty path in it is not the same as an empty list.
+        $swept = Remove-ShellLoaderBlock -Path @($candidates | ForEach-Object { $_.Path })
+        $removed  = $swept.Removed
+        $problems = $swept.Problems
         Clear-ShellStyleState
         if ($problems.Count -gt 0) {
             Write-Host ""
@@ -978,8 +1116,16 @@ function Invoke-TerminalStylesShellInit {
         return
     }
 
-    if (-not (Sync-ShellRuntime)) {
-        Write-Error "Could not stage the shell runtime (shell/tstyles.sh missing from the module)."
+    # Two different failures, two different sentences. One boolean here named
+    # the first cause for both, so a user whose data root would not take the
+    # write was told their install was missing a file.
+    $sync = Sync-ShellRuntime
+    if ($sync -eq 'nosource') {
+        Write-Error "Could not stage the shell runtime (shell/tstyles.sh missing from the module). Reinstall TerminalStyles."
+        return
+    } elseif ($sync -ne 'ok') {
+        Write-Error ("Could not write the shell runtime into {0}: {1} Check that directory's permissions and free space." -f
+                     $script:TStylesDataRoot, $script:TStylesShellStagingError)
         return
     }
 
@@ -1146,11 +1292,16 @@ function Invoke-TerminalStylesShellInit {
             'added'     { 'Green' }
             'updated'   { 'Cyan' }
             'failed'    { 'Red' }
+            'malformed' { 'Red' }
             default     { 'Gray' }
         }
         Write-Host ("  {0,-9} {1}" -f $t.Action, $t.Path) -ForegroundColor $color
         if ($t.Action -eq 'failed') {
             Write-Host "            (could not write it -- check the file's permissions)" -ForegroundColor DarkGray
+        }
+        if ($t.Action -eq 'malformed') {
+            Write-Host "            (a TerminalStyles BEGIN marker with no matching END -- nothing" -ForegroundColor DarkGray
+            Write-Host "             was written. Delete that line by hand and run this again.)" -ForegroundColor DarkGray
         }
     }
     Write-Host ""
@@ -1164,7 +1315,11 @@ function Invoke-TerminalStylesShellInit {
     # ~/.zshrc existed was told "source ~/.bashrc" -- advice that does nothing in
     # the shell they are sitting in. Prefer a file the LOGIN shell reads; fall
     # back to the first only when none was touched.
-    $written  = @($touched | Where-Object { $_.Action -ne 'failed' })
+    #
+    # The filter is on the statuses that mean "there is no loader in this file",
+    # not on 'failed' alone: 'malformed' writes nothing either, and naming it
+    # here sent the user to `source` a file that has no loader line in it.
+    $written  = @($touched | Where-Object { $_.Action -notin @('failed', 'malformed') })
     $hintPath = (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written |
                  Select-Object -First 1).Path
     if ($hintPath) {
