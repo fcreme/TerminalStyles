@@ -15,6 +15,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - the advice printed when the policy fix fails named the wrong culprit. It blamed "LocalMachine / GPO", and LocalMachine LOSES to CurrentUser -- it is the lowest-precedence scope of the five, so it can never be what overrode the write. Only the two Group Policy scopes and a Process-scope policy outrank it. The message now names those, distinguishes "the engine answered and the answer still blocks scripts" from "the engine printed nothing at all", and asks the user to read what the manual command reports rather than promising elevation will help.
 
+- **applying a style to the `defaults` profile deleted every comment in `settings.json`, wrote nothing of the style, and printed "Style applied" in green.** `Resolve-WTProfileTarget` returned `Ok = $true` for `defaults` unconditionally, on the reasoning that the block does not have to exist yet because an apply creates it lazily. It creates it with `$Settings.profiles | Add-Member`, which has nothing to add to unless `profiles` is a JSON object -- and a hand-minimised `settings.json` may have no `profiles` key, `"profiles": null` parses to nothing, and a truncated write leaves a zero-byte file. So `Apply-StyleDirect`'s guard passed, the rolling `.bak` was spent, and the merge threw "You cannot call a method on a null-valued expression".
+
+  A method call on `$null` aborts the STATEMENT, not the script, and `$ErrorActionPreference` is `Continue` interactively -- so `$settings` kept the parsed-but-unmerged object and the very next line wrote it out. The user's comments were gone, the style was in no profile, and `tstyles current` named it anyway. This is precisely the failure the `-Target` guard was added to prevent -- "a misspelled profile name silently and irreversibly deleted their JSONC comments" -- re-entered through the one target the resolver declared always addressable. Worse on the second run: run 1 leaves the good file in the `.bak`, run 2 copies the stripped one over it. On a zero-byte `settings.json` the backup step overwrites the `.bak` with the empty file while printing "Backed up settings to: ...".
+
+  The legacy flat form `"profiles": [ ... ]` fails differently and silently: `Add-Member` UNROLLS an array, so the whole theme was grafted onto the first profile object, where Windows Terminal ignores it, and the resolver advertised "Available: defaults" while naming none of the user's real profiles. Measured against the shipped function:
+
+  ```
+  shape              main                              fixed
+  no profiles key    throws -> comments deleted        returns, writes nothing
+  legacy array       grafts defaults onto a profile    does not
+  ```
+
+  `Get-WTProfileShape` now answers "what is `profiles`, and what may a target name" once, and the four readers that had each assumed the modern shape consult it: the resolver for `Ok` and `Available`, `Merge-StyleIntoSettings` and `Set-ProfileFont` for their lazy creation, and reset's orphan-scheme sweep. The slot test is structural rather than a type name, so it answers the same on both engines. Named targets in the array form now resolve and merge correctly, which meant fixing reset's `stillUsed` computation in the same change -- reachable profiles it could not previously see would otherwise have let a reset delete a scheme still in use.
+
+  `Apply-StyleDirect` also no longer writes when the merge did not come back. That guard is what separates an ugly error from silent comment loss, and it will do the same for the next throw inside the merge.
+
+- **only `tstyles <style>` warned that a profile name was duplicated; the picker, reset, font, tune and `apply.ps1` all resolved one silently.** `Ambiguous` had two producers and exactly one consumer, across eleven call sites. The note is now written in one place that every caller reads, and the resolver records HOW it broke the tie rather than letting the note re-derive it -- so it no longer claims "the one this session is running in" when `WT_PROFILE_ID` names a third profile and file order actually decided.
+
 ## [0.8.24] - 2026-09-11
 
 ### Fixed
