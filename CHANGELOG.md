@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles shell-init` could leave a zsh user's zsh completely unstyled, print two green "added" lines, and invent a `~/.bash_profile` they never had.** Which shell the user actually logs in to was computed INSIDE the "nothing existed at all" fallback, which fires only when not one rc file was found. On every other path the three decisions that follow -- create a login file, register in `~/.profile`, name a file to source in the closing hint -- were taken with no idea which shell the user runs, and all three assumed bash.
+
+  So a zsh user with a leftover `~/.bashrc` and no `~/.zshrc` -- a pre-Catalina Mac, or any home an nvm, pyenv or conda installer has dropped a `.bashrc` into, and macOS zsh has no newuser hook so it never writes a `~/.zshrc` for you -- got the loader in bash files, a `~/.bash_profile` created for them, "source ~/.bashrc" as the closing advice, and a new zsh tab with nothing in it. Measured across rc layouts with `$env:SHELL` set to each shell:
+
+  ```
+  SHELL   home starts with   files carrying the block after shell-init
+  zsh     .bashrc only       .bash_profile, .bashrc      <- before
+  zsh     .bashrc only       .bashrc, .zshrc             <- after
+  ```
+
+  The login-shell decision is hoisted to where the three consumers can see it, and the branch that CREATES a login file is gated on it. Registering in rc files that already exist stays unconditional -- someone who uses zsh interactively and keeps a bash rc for scripts should get both, and it costs nothing. `~/.profile` is now recorded as the login shell's file rather than as sh's: it is sh's by ownership, but the only reason it is ever written is that it is what this login shell reads, and that is the question the closing hint asks of the list. `$env:SHELL` is unset on Windows and empty in some daemons, and bash was the answer in both cases before, so the default leaves them as they were.
+
 ## [0.8.24] - 2026-09-11
 
 ### Fixed
