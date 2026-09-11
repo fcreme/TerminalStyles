@@ -491,6 +491,190 @@ Describe 'shell-init finds the rc file zsh actually reads' {
     }
 }
 
+Describe 'shell-init reaches the shell the user actually logs in to' {
+    # 0.8.21 and 0.8.22 each fixed a layout where the loader landed in a file the
+    # login shell never reads. Both were bash's. The decision underneath them --
+    # which shell the user logs IN to -- was computed inside the "nothing existed
+    # at all" fallback, which fires only when not one rc file was found, so every
+    # home with a single stale ~/.bashrc in it took the bash branch by default.
+    #
+    # A zsh user with a ~/.bashrc and no ~/.zshrc therefore got two green "added"
+    # lines naming bash files, a ~/.bash_profile invented for them, "source
+    # ~/.bashrc" -- and a new zsh tab with nothing in it. Measured with a real
+    # zsh started in that home: `tstyles` ABSENT, no TSTYLES_* state, stock
+    # prompt. macOS never writes a ~/.zshrc for you (there is no newuser hook in
+    # /etc/zshrc), while a pre-Catalina ~/.bashrc survives forever, so the layout
+    # is ordinary rather than contrived.
+    #
+    # $env:SHELL is a DIMENSION in here, not a constant. Every other test that
+    # drives shell-init pins it to '/bin/bash' for determinism -- correct for
+    # what those assert, and exactly why nothing in the suite ever ran this
+    # command as a zsh user.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            # -HomeDir alone is NOT a sandbox here: shell-init reaches
+            # Sync-ShellRuntime before it registers anything, and that writes to
+            # the data root with no seam of its own.
+            $script:savedRoot = $script:TStylesDataRoot
+            $script:dataRoot  = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:dataRoot -Force | Out-Null
+            $script:TStylesDataRoot = $script:dataRoot
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedRoot }
+
+        function script:New-Home([string[]]$Files) {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            foreach ($f in $Files) {
+                [System.IO.File]::WriteAllText((Join-Path $h $f), "# original $f`n", (Get-RcFileEncoding))
+            }
+            $h
+        }
+        # [System.IO.File] rather than Get-Item: without -Force that returns
+        # nothing at all for a dotfile on Unix, and an assertion whose both sides
+        # are $null passes while comparing nothing.
+        function script:RcText([string]$Path) {
+            if (-not [System.IO.File]::Exists($Path)) { return $null }
+            [System.IO.File]::ReadAllText($Path, (Get-RcFileEncoding))
+        }
+        function script:InitAs([string]$Shell, [string]$HomeDir, [string]$ZDotDir) {
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = $Shell
+                if ($PSBoundParameters.ContainsKey('ZDotDir')) {
+                    Invoke-TerminalStylesShellInit -HomeDir $HomeDir -ZDotDir $ZDotDir -Force 6>&1 | Out-String
+                } else {
+                    Invoke-TerminalStylesShellInit -HomeDir $HomeDir -Force 6>&1 | Out-String
+                }
+            } finally { $env:SHELL = $prev }
+        }
+
+        # The literal array can never be empty at discovery. Pester 6 fails the
+        # whole FILE on an empty -ForEach rather than producing no tests, so a
+        # collection computed per-platform would take a CI leg down with it.
+        It 'a zsh login shell ends up with a loaded zsh, for the <label> layout' -ForEach @(
+            @{ label = '.bashrc only';            files = @('.bashrc') }
+            @{ label = '.bashrc + .bash_profile'; files = @('.bashrc', '.bash_profile') }
+            @{ label = '.bashrc + .profile';      files = @('.bashrc', '.profile') }
+        ) {
+            $h = script:New-Home $files
+            script:InitAs '/bin/zsh' $h | Out-Null
+
+            # NOT VACUOUS. Every layout here has a bash rc, and registering it is
+            # what emptied the -Create fallback and caused the bug. If the layout
+            # failed to land on disk this fails first, instead of the zsh
+            # assertion below passing for the wrong reason (an empty home always
+            # reached the fallback and always got a .zshrc).
+            script:RcText (Join-Path $h '.bashrc') | Should -Match 'TerminalStyles BEGIN' `
+                -Because 'the layout must be the one that disarms the fallback'
+
+            $zshrc = Join-Path $h '.zshrc'
+            [System.IO.File]::Exists($zshrc) | Should -BeTrue `
+                -Because 'zsh is the login shell, so a new zsh tab has to come up styled'
+            script:RcText $zshrc | Should -Match 'TerminalStyles BEGIN'
+        }
+
+        It 'tells a zsh user to source their zsh file, not the bash one' {
+            # Its own It because it is its own claim, and it failed separately:
+            # the hint took whichever file came first in $touched, which is
+            # candidate order, so a zsh user was told "source ~/.bashrc" -- a
+            # line that does nothing in the shell they are sitting in.
+            $h   = script:New-Home @('.bashrc')
+            $out = script:InitAs '/bin/zsh' $h
+
+            # [\\/] rather than /: the hint shortens the path by cutting $HomeDir
+            # off the front, so the separator it prints is the platform's, and
+            # this file runs on the Windows legs too.
+            $out | Should -Match 'source ~[\\/]\.zshrc'
+            $out | Should -Not -Match 'source ~[\\/]\.bashrc'
+        }
+
+        It 'does not invent a ~/.bash_profile for a zsh login shell' {
+            # The bash rescue had no login-shell guard, so it fired here too and
+            # created a file the user never had. shell-remove strips the block
+            # and leaves the file (plus a .bak of a file TerminalStyles itself
+            # wrote seconds earlier) in their home for good.
+            $h = script:New-Home @('.bashrc')
+            script:InitAs '/bin/zsh' $h | Out-Null
+
+            [System.IO.File]::Exists((Join-Path $h '.bash_profile')) | Should -BeFalse `
+                -Because 'nothing asked for a bash login file on a machine that logs into zsh'
+        }
+
+        It 'leaves ~/.profile alone for a zsh login shell' {
+            # The stock Debian/Ubuntu skel. `tstyles help shell-init` bounds this
+            # write -- "your ~/.profile, WHEN THAT IS THE ONLY FILE your login
+            # shell reads" -- and for a zsh login shell it is not; the branch
+            # checked which files exist and never which shell was running.
+            $h = script:New-Home @('.bashrc', '.profile')
+            script:InitAs '/bin/zsh' $h | Out-Null
+
+            script:RcText (Join-Path $h '.profile') | Should -Not -Match 'TerminalStyles BEGIN' `
+                -Because 'login zsh never reads ~/.profile, and the help text says so'
+        }
+
+        It 'creates the zsh rc inside $ZDOTDIR, which is the file zsh opens' {
+            # ~/.zshrc EXISTS here, so "a .zshrc was written" is true and still
+            # useless: with ZDOTDIR set, zsh reads $ZDOTDIR/.zshrc and never
+            # ~/.zshrc. Get-ShellRcCandidate already orders the two that way;
+            # the rescue has to take the first rather than any of them.
+            $h = script:New-Home @('.zshrc')
+            $z = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $z -Force | Out-Null
+
+            script:InitAs '/bin/zsh' $h $z | Out-Null
+
+            $zdotRc = Join-Path $z '.zshrc'
+            [System.IO.File]::Exists($zdotRc) | Should -BeTrue `
+                -Because 'ZDOTDIR is set, so this is the only zsh rc a new tab reads'
+            script:RcText $zdotRc | Should -Match 'TerminalStyles BEGIN'
+        }
+
+        # The mirror. A rule that only ever runs for one shell is half-tested,
+        # and creating files is the half that surprises people.
+        It 'a bash login shell still gets its login file, for the <label> layout' -ForEach @(
+            @{ label = '.bashrc only';       files = @('.bashrc');              login = '.bash_profile' }
+            @{ label = '.bashrc + .profile'; files = @('.bashrc', '.profile');  login = '.profile' }
+        ) {
+            $h = script:New-Home $files
+            script:InitAs '/bin/bash' $h | Out-Null
+
+            script:RcText (Join-Path $h $login) | Should -Match 'TerminalStyles BEGIN' `
+                -Because 'login bash reads this file and never ~/.bashrc'
+        }
+
+        It 'shell-remove still takes back the zsh rc shell-init created' {
+            # A new WRITE path is a new way to break the round-trip the suite
+            # measures in tests/Uninstall-ReversesShellInit.Tests.ps1, whose six
+            # layouts all pin a bash login shell. The zsh candidates are on the
+            # removal list, so this should hold -- assert it rather than assume.
+            $h = script:New-Home @('.bashrc')
+            script:InitAs '/bin/zsh' $h | Out-Null
+            script:RcText (Join-Path $h '.zshrc') | Should -Match 'TerminalStyles BEGIN' `
+                -Because 'there has to be something to remove'
+
+            Invoke-TerminalStylesShellInit -HomeDir $h -Remove *> $null
+
+            $left = @(Get-ChildItem -LiteralPath $h -File -Force |
+                Where-Object { (script:RcText $_.FullName) -match 'TerminalStyles BEGIN' } |
+                ForEach-Object { $_.Name })
+            $left -join ', ' | Should -BeNullOrEmpty `
+                -Because "shell-remove reports success, so nothing may still source the runtime (left in: $($left -join ', '))"
+        }
+
+        It 'does not invent a ~/.zshrc for a bash login shell' {
+            # The other direction of the same rule: "silently creating ~/.bashrc
+            # on a machine that only uses zsh would be a surprise" is
+            # Register-ShellLoader's own reason for -Create, and it is symmetric.
+            $h = script:New-Home @('.bashrc')
+            script:InitAs '/bin/bash' $h | Out-Null
+
+            [System.IO.File]::Exists((Join-Path $h '.zshrc')) | Should -BeFalse `
+                -Because 'they log into bash; a zsh rc file is not ours to create'
+        }
+    }
+}
+
 Describe 'the shell shim does not pin a PSGallery install to one version' {
     # The shim bakes an absolute Import-Module into $DataRoot/tstyles-cli.ps1.
     # That is REQUIRED for a bootstrap install, which is not on
