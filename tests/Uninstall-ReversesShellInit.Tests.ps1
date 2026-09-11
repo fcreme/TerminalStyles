@@ -428,7 +428,17 @@ Describe 'bash login shells get the style' {
             [System.IO.File]::WriteAllText((Join-Path $h '.bashrc'), "export FOO=1`n",
                 [System.Text.UTF8Encoding]::new($false))
 
-            Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            # Pin $env:SHELL, like the round-trip above and for the same reason.
+            # Creating a bash LOGIN file is now gated on the login shell being
+            # bash -- unguarded, it also fired for a zsh user with a stale
+            # ~/.bashrc and invented a ~/.bash_profile they never had. So this It
+            # measured the zsh arm on a zsh machine and the bash arm on a bash
+            # one, which is not what its name says it tests.
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            } finally { $env:SHELL = $prev }
 
             $bp = Join-Path $h '.bash_profile'
             Test-Path -LiteralPath $bp | Should -BeTrue -Because 'login bash reads this file, not .bashrc'
@@ -447,7 +457,16 @@ Describe 'bash login shells get the style' {
                 [System.IO.File]::WriteAllText((Join-Path $h $f), "# $f`n", [System.Text.UTF8Encoding]::new($false))
             }
 
-            Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            # Pinned for the same reason as the It above: ~/.profile is written
+            # only when it is the file the LOGIN shell reads, which a zsh login
+            # shell's never is (tests/Shell-Integration.Tests.ps1 asserts that
+            # side), so leaving the ambient value in made the outcome depend on
+            # whoever ran the suite.
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
+            } finally { $env:SHELL = $prev }
 
             Test-Path -LiteralPath (Join-Path $h '.bash_profile') | Should -BeFalse `
                 -Because 'it would shadow the ~/.profile bash reads today'
