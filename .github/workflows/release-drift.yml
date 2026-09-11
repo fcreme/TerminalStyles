@@ -40,8 +40,15 @@ jobs:
       - name: Compare the newest tag with what PSGallery serves
         shell: pwsh
         run: |
-          $tag = (git tag -l --sort=-v:refname | Select-Object -First 1)
-          if (-not $tag) { Write-Host "No tags yet; nothing to compare."; exit 0 }
+          # Only tags shaped vN.N[.N[.N]] are candidates, and the newest is
+          # taken from THAT list. `--sort=-v:refname` alone sorts whatever is
+          # there, so one tag that is not a version -- a marker on the gifs
+          # branch, a `latest`, anything a human adds -- could come out on top
+          # and be compared as if it were a release.
+          $tag = @(git tag -l 'v*' --sort=-v:refname |
+                     Where-Object { $_ -match '^v\d+(\.\d+){1,3}$' }) |
+                   Select-Object -First 1
+          if (-not $tag) { Write-Host "No version tags yet; nothing to compare."; exit 0 }
           $tagVersion = $tag -replace '^v', ''
 
           # Read-only, unauthenticated, and allowed to fail: PSGallery being
@@ -57,7 +64,21 @@ jobs:
           Write-Host "newest tag : $tagVersion"
           Write-Host "PSGallery  : $published"
 
-          if ([version]$published -ge [version]$tagVersion) {
+          # TryParse, not a [version] cast. A cast THROWS on anything it cannot
+          # read -- a prerelease suffix like 0.9.0-beta1, or a version string
+          # PSGallery formats unexpectedly -- and these two lines sit outside
+          # the try/catch above, so the throw would fail this job with
+          # "Cannot convert value ..." every Monday. That reads like drift and
+          # is not: it is this check being unable to answer, which is a warning.
+          $pv = $null; $tv = $null
+          if (-not [version]::TryParse($published, [ref]$pv) -or
+              -not [version]::TryParse($tagVersion, [ref]$tv)) {
+              Write-Host "::warning::Could not compare '$published' with '$tagVersion' as versions."
+              Write-Host "Not treating this as drift."
+              exit 0
+          }
+
+          if ($pv -ge $tv) {
               Write-Host "PSGallery is up to date."
               exit 0
           }
