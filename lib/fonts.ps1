@@ -492,6 +492,12 @@ function Set-ProfileFont {
 
     $entry = $null
     if ($TargetName -eq 'defaults') {
+        # Same guard, same reason, as the merge's lazy creation: Add-Member has
+        # nothing to add `defaults` to unless `profiles` is an object, and on
+        # the legacy flat-array form it silently grafts the block onto every
+        # profile instead. $false is the answer this function already has for "a
+        # target that is not there", and it leaves settings.json untouched.
+        if (-not (Get-WTProfileShape -Settings $settings).HasDefaultsSlot) { return $false }
         if (-not $settings.profiles.PSObject.Properties.Match('defaults').Count) {
             $settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
         }
@@ -609,9 +615,16 @@ function Invoke-TerminalStyleFont {
     # user's undo of their last real apply on a command that changed nothing.
     $resolvedTarget = Resolve-WTProfileTarget -Settings $settingsObj -TargetName $Target
     if (-not $resolvedTarget.Ok) {
-        Write-Host "Profile '$Target' not found in settings.json. Available: $($resolvedTarget.Available -join ', ')" -ForegroundColor Yellow
+        Write-Host (Get-WTTargetNotFoundMessage -ResolvedTarget $resolvedTarget -TargetName $Target) -ForegroundColor Yellow
         return
     }
+
+    # The same tie, the same note as apply and reset. Set-ProfileFont resolves
+    # again internally and gets the same answer; this is the one place that can
+    # say so, and it said nothing -- so the font landed on whichever of two
+    # same-named profiles came first and "Applied '<font>' to '<name>'" printed
+    # in green either way.
+    Write-AmbiguousTargetNote -ResolvedTarget $resolvedTarget -TargetName $Target -Verb 'Applied to'
 
     try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget -Quiet } catch { }
     if (Set-ProfileFont -SettingsPath $settingsPath -TargetName $Target -Family $font.family) {
