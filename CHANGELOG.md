@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **a `tstyles delete` that failed still erased the trash, and the error said nothing else had happened.** The sweep of expired trash ran BEFORE the move, so every way the delete can fail -- the folder open in an editor, a permissions refusal, a name collision at the destination -- left the collateral erasure already done while the only thing printed was that the style could not be deleted. The sweep now runs after the move has landed: the delete and the sweep are one transaction in the order the prompt describes them, and a delete that did not happen erases nothing.
+
+  Narrower than first reported, and worth recording accurately: the folders it erases ARE named in red on the same screen the user confirms, and they are past the documented seven days. What was false is the other half -- that a failed command had changed nothing.
+
+- **`tstyles delete` itemised a reset it then refused to perform, and called its own style one this tool never wrote.** Deleting the ACTIVE style on Windows Terminal prints that the profile will be reset, and the reset then runs after the style directory has already moved to the trash -- so the guard added in 0.8.22, which refuses to strip a profile whose `colorScheme` does not name a style this tool knows, could no longer see the style and refused. The user got "Deleted mine." followed by "'PowerShell' carries no TerminalStyles style -- nothing was changed. Its colorScheme is 'mine', which is not a style this tool wrote." about the style they had just deleted, with the profile left styled.
+
+  The reconciliation stays LAST, deliberately -- resetting before the move would leave the terminal unstyled if the move then threw, which is what that ordering guards. Instead the caller passes the ownership answer it already had one statement earlier, so the 0.8.22 guard is not weakened: a `colorScheme` naming something else is still refused, and a test pins that. Also fixed by the same change: `current-style.ps1` and `current-style.json` survived, so the deleted style's prompt kept loading while `tstyles current` reported nothing active.
+
+- **the delete confirmation described the opposite of what happens to a tuned child.** It said a child keeps its brightness and saturation and only loses the parent's colours; since 0.8.18 a child records a fingerprint of the base it was tuned from, and when the base goes the deltas are dropped and the child keeps the colours. Both clauses of that sentence were wrong, not one. The prompt now asks the question the tuner itself answers rather than re-deriving it from a proxy -- the plan computes what will really happen and the printer prints it, the same division the ERASE lines already use.
+
 ## [0.8.25] - 2026-09-12
 
 ### Fixed
