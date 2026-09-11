@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **opening the picker on a style that ships no `theme.json` stripped every comment out of `settings.json`, wrote none of the style, and reported success.** `Get-StyleSettingsPayload` decides what a style actually contributes to `settings.json`, and it had exactly three references repo-wide -- none of them in the picker, and none in `tests/`. So `tstyles aaa-schemeonly` correctly printed "ships no theme.json, so nothing was written to settings.json" and left the file byte-identical, while `tstyles` and Enter on the SAME style rewrote it: re-serialising the parsed object drops every JSONC comment the user had, nothing of the style was written, "Style applied" printed in green, and `tstyles current` then named a style Windows Terminal was never told about.
+
+  The load-bearing site is the FIRST PREVIEW, which fires the instant the picker opens, before a key is pressed. Measured end to end through the real picker on a real pty, with one Enter: `sha 978aca48 -> c1b9877e`, comment lines `4 -> 1`, `"schemes": []` still empty. With the fix the file comes back byte-identical at `978aca48`, all four comments intact, and the picker prints the direct path's own sentence.
+
+  The three merge sites are now one helper. Pasting the guard at each was the obvious fix and is how the rule came to be missing from all three; it would also have left the decision inside a function no test can drive, so the only possible regression test would have been a source-text assertion -- the shape this project has been bitten by twice.
+
+  Two things fell out of gating it that a naive guard would have broken. The picker relies on `settings.json` mirroring the highlighted row, so arrowing from a themed style onto a payload-less one now restores the user's original bytes rather than leaving the previous style's preview on disk under the new name. And Esc no longer writes at all when the picker never wrote: restoring over an untouched file is not free -- it drops a BOM the user had, bumps the mtime, and Windows Terminal watches the file and reloads.
+
 ## [0.8.24] - 2026-09-11
 
 ### Fixed
