@@ -632,20 +632,15 @@ function Apply-StyleDirect {
     # irreversibly deleted their JSONC comments.
     $resolvedTarget = Resolve-WTProfileTarget -Settings $settings -TargetName $Target
     if (-not $resolvedTarget.Ok) {
-        Write-Error ("Windows Terminal profile '$Target' not found. Available: " +
-                     ($resolvedTarget.Available -join ', '))
+        Write-Error (Get-WTTargetNotFoundMessage -ResolvedTarget $resolvedTarget -TargetName $Target)
         return
     }
 
-    # Say so when the name was not unique. The resolver breaks the tie with the
-    # session's own GUID, which is almost always what the user wants -- but
-    # "almost always" is worth one line, because the alternative is a silent
-    # choice between two profiles the user cannot tell apart from the outside.
-    # Without this, Ambiguous would be a field nothing reads.
-    if ($resolvedTarget.Ambiguous) {
-        Write-Host "  Note: more than one profile is named '$Target'." -ForegroundColor DarkGray
-        Write-Host "  Applied to the one this session is running in." -ForegroundColor DarkGray
-    }
+    # Say so when the name was not unique -- through the shared note, which is
+    # the same sentence reset, font, the picker and apply.ps1 now print. This
+    # was the only caller that said anything, and it was the inline version that
+    # claimed the session's profile even when the tie could not be broken.
+    Write-AmbiguousTargetNote -ResolvedTarget $resolvedTarget -TargetName $Target -Verb 'Applied to'
 
     # The style half of the same rule. Merge-StyleIntoSettings returns the
     # settings UNTOUCHED for a style with no theme.json -- deliberately, since a
@@ -676,9 +671,31 @@ function Apply-StyleDirect {
             Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
         }
 
-        $settings = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
-            -TargetName $Target -BackgroundImage $BackgroundImage `
-            -BackgroundImageProvided $BackgroundImageProvided
+        # Into a SEPARATE variable, and checked before the write. This was
+        # `$settings = Merge-...` followed by the write, and PowerShell does not
+        # abandon the command when the merge fails: a method call on a
+        # null-valued expression aborts only that STATEMENT, and
+        # $ErrorActionPreference is 'Continue' in an interactive shell. So the
+        # assignment never happened, $settings still held the parsed-but-
+        # unmerged object, and Write-SettingsFile re-serialized THAT -- which
+        # deleted every JSONC comment in the user's settings.json, printed
+        # "Style applied" in green, and recorded a style no profile had
+        # received. That is the exact failure the -Target guard above exists to
+        # prevent; it came back through the merge. The resolver no longer hands
+        # this path a target the merge cannot write, and this makes sure the
+        # next throw inside the merge costs an error message instead of the
+        # user's comments.
+        $merged = $null
+        try {
+            $merged = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
+                -TargetName $Target -BackgroundImage $BackgroundImage `
+                -BackgroundImageProvided $BackgroundImageProvided
+        } catch {
+            $merged = $null
+            Write-Error "Could not apply '$StyleName' to '$Target': $_"
+        }
+        if ($null -eq $merged) { return }
+        $settings = $merged
         Write-SettingsFile -Path $settingsPath -Settings $settings
     }
 
@@ -816,6 +833,14 @@ function Reset-StyleDirect {
         return
     }
 
+    # Reset needs this note more than apply does, and never had it. The strip
+    # below removes every field an apply may write -- padding, opacity,
+    # useAcrylic, cursorShape, font.face and the rest -- off whichever of two
+    # same-named profiles the resolver picked, and then reports "Reset '<name>'
+    # to its unstyled default." in green. Which one it picked is not something
+    # the user can see from the outside.
+    Write-AmbiguousTargetNote -ResolvedTarget $resolvedTarget -TargetName $Target -Verb 'Reset'
+
     # Capture the scheme name before stripping (for orphan cleanup).
     $schemeName = if ($entry.PSObject.Properties.Match('colorScheme').Count) { $entry.colorScheme } else { $null }
 
@@ -874,9 +899,18 @@ function Reset-StyleDirect {
 
     # Remove the orphan scheme unless another profile still references it.
     if ($schemeName -and $settings.PSObject.Properties.Match('schemes').Count) {
+        # "Every profile that could still reference this scheme" has to mean the
+        # same set the resolver targets, or the sweep deletes a scheme something
+        # still uses. Through the shared shape for that reason: a direct read of
+        # .list finds nothing on the legacy flat-array form, where the profiles
+        # are the array itself -- and those profiles are now resolvable, so
+        # reset can reach them.
+        $shape = Get-WTProfileShape -Settings $settings
         $allProfiles = @()
-        if ($settings.profiles.PSObject.Properties.Match('defaults').Count) { $allProfiles += $settings.profiles.defaults }
-        $allProfiles += @($settings.profiles.list)
+        if ($shape.HasDefaultsSlot -and $settings.profiles.PSObject.Properties.Match('defaults').Count) {
+            $allProfiles += $settings.profiles.defaults
+        }
+        $allProfiles += @($shape.List)
         $stillUsed = @($allProfiles | Where-Object {
             $_.PSObject.Properties.Match('colorScheme').Count -and $_.colorScheme -eq $schemeName
         }).Count -gt 0

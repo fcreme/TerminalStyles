@@ -28,7 +28,7 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Pester 5 (PSResourceGet)
+      - name: Install Pester (PSResourceGet)
         if: matrix.shell == 'pwsh'
         shell: pwsh
         run: |
@@ -37,11 +37,23 @@ jobs:
           # repos and dependency resolution more reliably than the legacy
           # PowerShellGet v2 Install-Module, which has been flaky for
           # 'No match was found' errors against PSGallery on CI runners.
-          Install-PSResource -Name Pester -Version '[5.0.0,)' -TrustRepository -Reinstall
+          # BOUNDED ABOVE on purpose. This was '[5.0.0,)', which is "newest", so
+          # the major version of the test framework arrived from whatever
+          # PSGallery happened to be serving that day -- and it moved: the step
+          # was still called "Install Pester 5" while these legs ran Pester 6.
+          # That is not cosmetic. Pester 6 discovers and executes each file in
+          # turn rather than discovering all of them first, which silently made
+          # a guard that watches for tests writing to the operator's own files
+          # compare the damage against itself; and it FAILS DISCOVERY on an
+          # empty -ForEach rather than producing no tests, which took both
+          # Windows legs down for a file about POSIX shells. Both were found by
+          # hand, not by this workflow. A new major is now a decision someone
+          # makes here, not something that happens to a Tuesday.
+          Install-PSResource -Name Pester -Version '[5.0.0,7.0.0)' -TrustRepository -Reinstall
           Import-Module Pester
           (Get-Module Pester).Version
 
-      - name: Install Pester 5 (Windows PowerShell)
+      - name: Install Pester (Windows PowerShell)
         if: matrix.shell == 'powershell'
         shell: powershell
         run: |
@@ -53,7 +65,12 @@ jobs:
             [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
           Install-PackageProvider -Name NuGet -MinimumVersion 2.8.5.201 -Force | Out-Null
           Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
-          Install-Module -Name Pester -MinimumVersion 5.0.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          # Same upper bound as the PSResourceGet leg above; -MinimumVersion
+          # alone is "newest" and would let the two engines drift onto
+          # different majors, which is the one thing a two-engine matrix must
+          # not do quietly.
+          Install-Module -Name Pester -MinimumVersion 5.0.0 -MaximumVersion 6.99.99 `
+            -Force -SkipPublisherCheck -Scope CurrentUser
           Import-Module Pester -MinimumVersion 5.0.0
           (Get-Module Pester).Version
 
@@ -112,13 +129,13 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y zsh
 
-      - name: Install Pester 5
+      - name: Install Pester
         shell: pwsh
         run: |
           # -Repository PSGallery explicitly: the runner images register
           # additional repositories, and resolution against the wrong one fails
           # with a bare "package: Not Found".
-          Install-PSResource -Name Pester -Version '[5.0.0,)' -Repository PSGallery -TrustRepository -Reinstall
+          Install-PSResource -Name Pester -Version '[5.0.0,7.0.0)' -Repository PSGallery -TrustRepository -Reinstall
           Import-Module Pester
           (Get-Module Pester).Version
 

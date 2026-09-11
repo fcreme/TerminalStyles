@@ -1,0 +1,88 @@
+# Publish to PSGallery, by hand, from here.
+#
+# NOT THE PRIMARY PATH, and deliberately not automatic. The PSGallery API key
+# for this project rotates, so a stored PSGALLERY_API_KEY secret goes stale
+# between releases and a tag-triggered publish would fail more often than it
+# worked. The local `pwsh ./scripts/publish.ps1` -- which prompts for the key
+# with hidden input and writes it to neither history nor env -- stays the way
+# releases ship.
+#
+# What catches a forgotten release is release-drift.yml, which compares the
+# newest tag against PSGallery's PUBLIC version and needs no key at all. That
+# is the workflow that matters; this one is here for the case where a key IS
+# current, and it is dispatch-only so it never fires on a tag with a stale one.
+#
+# To use it: add a PSGALLERY_API_KEY secret (Settings -> Secrets and variables
+# -> Actions), then run this workflow against the tag. Without the secret it
+# stops at the first guard and says so.
+
+name: Publish
+
+# Dispatch only. A tag push must not attempt a publish with a key that has
+# very likely rotated since it was stored -- a red X on every release would
+# train everyone to ignore it, and release-drift.yml is what should speak up
+# on a tag instead.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Tag to publish (e.g. v0.8.24)'
+        required: true
+
+jobs:
+  publish:
+    name: Publish to PSGallery
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.inputs.ref }}
+          # publish.ps1 resolves every allowlist entry through `git ls-files`,
+          # so it needs real history, not a blobless checkout.
+          fetch-depth: 0
+
+      - name: Refuse early if the key is not configured
+        shell: pwsh
+        env:
+          KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          if (-not $env:KEY) {
+            Write-Host "::error::PSGALLERY_API_KEY is not set on this repository."
+            Write-Host "Add it under Settings -> Secrets and variables -> Actions."
+            Write-Host "Nothing was published and nothing was staged."
+            exit 1
+          }
+          Write-Host "API key is present."
+
+      - name: The tag must match the manifest version
+        shell: pwsh
+        run: |
+          # A tag and a ModuleVersion that disagree is the one mistake this
+          # workflow can make that a human cannot undo: PSGallery does not
+          # allow republishing a version. Better to fail here than to ship
+          # 0.8.23's code as 0.8.24.
+          $tag = "${{ github.event.inputs.ref }}" -replace '^v', ''
+          $manifest = (Test-ModuleManifest ./TerminalStyles.psd1).Version.ToString()
+          Write-Host "tag: $tag   manifest: $manifest"
+          if ($tag -ne $manifest) {
+            Write-Host "::error::Tag $tag does not match ModuleVersion $manifest."
+            exit 1
+          }
+
+      - name: Stage and verify without publishing
+        shell: pwsh
+        run: |
+          # publish.ps1 -WhatIf stages the allowlist, validates the manifest and
+          # smoke-tests that the staged module imports and every shipped
+          # function resolves -- all before the key is used for anything.
+          ./scripts/publish.ps1 -WhatIf
+
+      - name: Publish
+        shell: pwsh
+        env:
+          PSGALLERY_API_KEY: ${{ secrets.PSGALLERY_API_KEY }}
+        run: |
+          # Passed as a parameter rather than left in the environment for the
+          # publish step to find: publish.ps1 prompts when it is not given one,
+          # and a prompt on a runner is a hang, not a failure.
+          ./scripts/publish.ps1 -ApiKey $env:PSGALLERY_API_KEY

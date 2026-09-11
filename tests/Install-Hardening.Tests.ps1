@@ -207,6 +207,17 @@ Describe 'Test-PolicyResolved' {
         Test-PolicyResolved -Policy $null | Should -BeFalse
     }
 
+    It "rejects 'Undefined' -- it is the absence of an answer, not permission" {
+        # An EFFECTIVE Get-ExecutionPolicy never returns it (an all-Undefined
+        # machine resolves to the platform default), so this is the value of a
+        # single SCOPE that was never written. It used to return $true, and the
+        # post-check in Resolve-ExecutionPolicy was handing it the CurrentUser
+        # scope: a write that did not land was announced as
+        # "Done. CurrentUser policy is now Undefined" in green.
+        Test-PolicyResolved -Policy 'Undefined'    | Should -BeFalse
+        Test-PolicyResolved -Policy '  undefined ' | Should -BeFalse
+    }
+
     It 'tolerates surrounding whitespace' {
         Test-PolicyResolved -Policy "  RemoteSigned `r`n" | Should -BeTrue
         Test-PolicyResolved -Policy "  Restricted  "       | Should -BeFalse
@@ -393,5 +404,132 @@ Describe 'the install panel names the engines it actually registered' {
             "$($n.Member.Extent.Text)" -eq 'PSEdition' }, $true))
         @($editionReads).Count | Should -Be 0 `
             -Because 'inverting the edition is what named Windows PowerShell 5.1 on a Mac'
+    }
+}
+
+Describe 'Resolve-ExecutionPolicy verifies the effective policy, not the scope it wrote' {
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+
+        # A stand-in engine, never a real one. The only thing
+        # Resolve-ExecutionPolicy asks of an engine is
+        #   & $cmd.Source -NoProfile -NonInteractive -Command '<one string>'
+        # plus the last non-empty line of its stdout -- and a .ps1 path answers
+        # that exactly as powershell.exe does: Get-Command hands back an
+        # ExternalScriptInfo whose .Source is the path, and the three arguments
+        # bind to a param block. Nothing in this suite may launch the real
+        # thing: `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force`
+        # would rewrite the execution policy of the machine running the tests.
+        #
+        # The stub answers the two questions DIFFERENTLY, which is the whole
+        # point of the fix. On a GPO-locked machine the CurrentUser scope reads
+        # back the value just written to it while the EFFECTIVE policy -- the
+        # one that decides whether the loader runs -- is unchanged.
+        function script:New-StubEngine {
+            param(
+                [Parameter(Mandatory)][string]$Name,
+                [Parameter(Mandatory)][string]$Effective,   # answer to `Get-ExecutionPolicy`
+                [Parameter(Mandatory)][string]$CurrentUser  # answer to `... -Scope CurrentUser`
+            )
+            $dir = Join-Path $TestDrive ('engine-' + $Name)
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $log  = Join-Path $dir 'asked.log'
+            $path = Join-Path $dir 'engine.ps1'
+            # An unrecognised question is answered with a value no branch treats
+            # as success, so changing the shape of the command string without
+            # updating this stub fails the tests instead of quietly passing them.
+            $src = @'
+param([switch]$NoProfile, [switch]$NonInteractive, [string]$Command)
+Add-Content -LiteralPath '{LOG}' -Value "$Command"
+$asked = @("$Command" -split ';')[-1].Trim()
+if     ($asked -match '^Get-ExecutionPolicy$')                       { '{EFFECTIVE}' }
+elseif ($asked -match '^Get-ExecutionPolicy\s+-Scope\s+CurrentUser$') { '{CURRENTUSER}' }
+else                                                                  { 'Restricted' }
+'@
+            $src = $src.Replace('{LOG}', $log).Replace('{EFFECTIVE}', $Effective).Replace('{CURRENTUSER}', $CurrentUser)
+            [System.IO.File]::WriteAllText($path, $src, [System.Text.UTF8Encoding]::new($false))
+            # Resolve-ExecutionPolicy returns at its first line if Get-Command
+            # cannot resolve -Exe, and every assertion below would then be
+            # reading an empty string. Fail here, where the reason is legible.
+            if (-not (Get-Command -Name $path -ErrorAction SilentlyContinue)) {
+                throw "Stub engine '$path' is not resolvable by Get-Command on this platform."
+            }
+            [pscustomobject]@{ Path = $path; Log = $log }
+        }
+
+        # Read with [System.IO.File] and project with @(): an empty log must
+        # count 0, and a missing one must not throw before the assertion runs.
+        function script:Get-EngineCall {
+            param([Parameter(Mandatory)]$Stub)
+            if (-not [System.IO.File]::Exists($Stub.Log)) { return @() }
+            @([System.IO.File]::ReadAllLines($Stub.Log) | Where-Object { "$_".Trim() })
+        }
+    }
+
+    BeforeEach {
+        # There is a human at the console and they answered yes. Without both,
+        # Resolve-ExecutionPolicy returns before it launches anything -- which is
+        # why every case below also counts the calls the stub actually received.
+        Mock Test-InteractiveConsole { $true }
+        Mock Read-Host { 'y' }
+    }
+
+    It 'does not claim success when a Group Policy overrides the CurrentUser write' {
+        # `Set-ExecutionPolicy -Scope CurrentUser` SUCCEEDS under a
+        # MachinePolicy/UserPolicy GPO -- it writes HKCU and only warns -- so the
+        # scope reads back RemoteSigned while the effective policy stays
+        # Restricted and the loader still cannot run. Asking the scope it just
+        # wrote is structurally incapable of detecting that, and the installer
+        # printed "Done. CurrentUser policy is now RemoteSigned" in green on
+        # exactly the machines the prompt exists for.
+        $stub = script:New-StubEngine -Name 'gpo' -Effective 'Restricted' -CurrentUser 'RemoteSigned'
+
+        $out = (Resolve-ExecutionPolicy -Exe $stub.Path -Label 'Windows PowerShell 5.1' `
+                    -EffectivePolicy 'Restricted' 6>&1 | Out-String)
+
+        @(script:Get-EngineCall $stub).Count | Should -Be 1 `
+            -Because 'the engine must actually have been launched, or this test measures nothing'
+        $out | Should -Match 'Script execution is disabled' `
+            -Because 'the prompt path must have been reached'
+        $out | Should -Not -Match 'Done' `
+            -Because 'the loader still cannot run on this machine'
+        # Only the scope-free question can produce this value, whatever the
+        # wording around it.
+        $out | Should -Match "still 'Restricted'"
+        $out | Should -Match 'overriding CurrentUser'
+    }
+
+    It 'does not claim success when the CurrentUser write never lands' {
+        # The other half: when the HKCU write does not stick, the scoped
+        # read-back is the string 'Undefined' -- and the success line then read
+        # "Done. CurrentUser policy is now Undefined", a success claim naming the
+        # word for "nothing is set here", with no error output anywhere.
+        $stub = script:New-StubEngine -Name 'nowrite' -Effective 'Restricted' -CurrentUser 'Undefined'
+
+        $out = (Resolve-ExecutionPolicy -Exe $stub.Path -Label 'Windows PowerShell 5.1' `
+                    -EffectivePolicy 'Restricted' 6>&1 | Out-String)
+
+        @(script:Get-EngineCall $stub).Count | Should -Be 1 `
+            -Because 'the engine must actually have been launched, or this test measures nothing'
+        $out | Should -Not -Match 'Done'
+        $out | Should -Not -Match 'Undefined' `
+            -Because 'Undefined is never an answer worth printing as a result'
+        $out | Should -Match "still 'Restricted'"
+    }
+
+    It 'does claim success when the effective policy really changed' {
+        # The complement, so a fix that simply always reports failure fails here.
+        $stub = script:New-StubEngine -Name 'ok' -Effective 'RemoteSigned' -CurrentUser 'RemoteSigned'
+
+        $out = (Resolve-ExecutionPolicy -Exe $stub.Path -Label 'PowerShell 7' `
+                    -EffectivePolicy 'Restricted' 6>&1 | Out-String)
+
+        @(script:Get-EngineCall $stub).Count | Should -Be 1
+        $out | Should -Match 'Done'
+        $out | Should -Match 'RemoteSigned' `
+            -Because 'the value printed is the one the engine reported'
+        $out | Should -Not -Match 'still'
     }
 }

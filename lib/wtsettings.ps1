@@ -249,6 +249,78 @@ function Get-StyleSettingsPayload {
     return [pscustomobject]@{ Ok = $true; Missing = $null }
 }
 
+function Get-WTProfileShape {
+    <#
+    .SYNOPSIS
+    What `profiles` actually is in this settings.json, and what a -Target may name.
+
+    .DESCRIPTION
+    Windows Terminal writes `"profiles": { "defaults": {...}, "list": [...] }`
+    and every read here assumed it. Files in the wild are not always that shape:
+    a hand-minimised settings.json can have no `profiles` key at all,
+    `"profiles": null` parses to nothing, an interrupted or truncated write
+    leaves a zero-byte file (so $Settings ITSELF is $null), and the legacy flat
+    form `"profiles": [ ... ]` is an array.
+
+    HasDefaultsSlot is the load-bearing one, because 'defaults' is the single
+    target that does not have to exist yet: an apply creates the block lazily
+    with `$Settings.profiles | Add-Member`. That has nothing to add to unless
+    `profiles` is a JSON object. Against a missing key or a null it throws "You
+    cannot call a method on a null-valued expression"; against the array form it
+    is worse and does not throw at all, because Add-Member UNROLLS an array and
+    grafts a `defaults` NoteProperty onto every profile IN it -- so the whole
+    theme is written inside the first profile, where Windows Terminal ignores it.
+
+    One question, four readers -- Resolve-WTProfileTarget decides Ok and
+    Available from it, Merge-StyleIntoSettings and Set-ProfileFont guard their
+    lazy creation with it, Reset-StyleDirect enumerates profiles with it.
+    Sharing it is the point: the resolver answering "yes, addressable" while the
+    merge assumed a shape the file did not have is what spent the user's rolling
+    backup and then wrote a comment-stripped settings.json back over their own
+    file, under "Style applied" in green.
+
+    ConvertFrom-Json gives a PSCustomObject for `{...}` and an Object[] for
+    `[...]`, on pwsh 7 and Windows PowerShell 5.1 alike. The test below asks the
+    question structurally rather than by type name -- "is this something a
+    member can be hung on", i.e. not null, not a collection, not a scalar --
+    because that is the property the lazy creation actually depends on. (Testing
+    `-is [pscustomobject]` would be wrong anyway: that accelerator is
+    System.Management.Automation.PSObject, which the parsed object is not.)
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()]$Settings)
+
+    $profiles = $null
+    try { $profiles = $Settings.profiles } catch { $profiles = $null }
+
+    $hasSlot = ($null -ne $profiles -and
+                $profiles -isnot [System.Collections.IEnumerable] -and
+                $profiles -isnot [System.ValueType])
+
+    $list = @()
+    if ($hasSlot) {
+        # @($null) is a one-element array holding $null, not an empty one, so a
+        # profiles object with no `list` key would otherwise report one profile.
+        $list = @($profiles.list | Where-Object { $null -ne $_ })
+    } elseif ($profiles -is [array]) {
+        $list = @($profiles | Where-Object { $null -ne $_ })
+    }
+
+    # What the user may pass to -Target, in the order they should see it.
+    # 'defaults' is listed only where it can actually be written: offering it
+    # for a file that cannot carry it is the error message promising the one
+    # answer that is guaranteed to fail.
+    $available = @()
+    if ($hasSlot) { $available += 'defaults' }
+    $available += @($list | ForEach-Object { $_.name } | Where-Object { $_ })
+
+    return [pscustomobject]@{
+        HasDefaultsSlot = $hasSlot
+        List            = $list
+        Available       = $available
+    }
+}
+
 function Resolve-WTProfileTarget {
     <#
     .SYNOPSIS
@@ -260,14 +332,20 @@ function Resolve-WTProfileTarget {
     damage -- which is how a mistyped -Target came to destroy the rolling
     backup on two of them while erroring cleanly on a third.
 
-    Ok vs Entry is a real distinction, not a convenience. 'defaults' is always
-    ADDRESSABLE (an apply creates the block lazily) so Ok is $true, but it has
-    no Entry until the block exists -- and reset has nothing to strip from a
-    profile that is not there. Callers that write want Ok; callers that modify
-    an existing entry want Entry.
+    Ok vs Entry is a real distinction, not a convenience. 'defaults' is
+    ADDRESSABLE without existing (an apply creates the block lazily) so Ok can be
+    $true with no Entry -- and reset has nothing to strip from a profile that is
+    not there. Callers that write want Ok; callers that modify an existing entry
+    want Entry. Addressable is not unconditional, though: it needs a `profiles`
+    object to create the block on, which is Get-WTProfileShape's question.
 
     Available is for the caller's error message, so every one of them can name
     the same set of real profiles.
+
+    TieBreak says HOW a duplicated name was resolved, because the caller has to
+    tell the user: 'Session' when $PreferGuid picked one of the namesakes,
+    'First' when it could not and the file order decided. It is $null exactly
+    when Ambiguous is $false.
     #>
     [CmdletBinding()]
     param(
@@ -281,18 +359,35 @@ function Resolve-WTProfileTarget {
         [AllowEmptyString()][string]$PreferGuid = $env:WT_PROFILE_ID
     )
 
-    $list = @()
-    try { $list = @($Settings.profiles.list) } catch { $list = @() }
-    $available = @('defaults') + @($list | ForEach-Object { $_.name } | Where-Object { $_ })
+    $shape     = Get-WTProfileShape -Settings $Settings
+    $list      = $shape.List
+    $available = $shape.Available
 
     if ($TargetName -eq 'defaults') {
+        # Ok was $true here UNCONDITIONALLY, and that is the whole of the defect
+        # this guard closes. Apply-StyleDirect's -Target guard asks this
+        # question, so it passed for a settings.json with no `profiles` object;
+        # the rolling backup was spent; Merge-StyleIntoSettings then threw "You
+        # cannot call a method on a null-valued expression" on the lazy
+        # creation. A method call on null aborts the STATEMENT, not the command,
+        # so the assignment never happened, $settings still held the
+        # parsed-but-unmerged object, and the write on the next line re-
+        # serialized it: every JSONC comment in the user's file deleted, "Style
+        # applied" in green, and no profile touched. Run it twice and the .bak
+        # -- the one copy that still had the comments -- was overwritten with
+        # the stripped file. See Get-WTProfileShape for the four shapes.
         $entry = $null
-        try {
-            if ($Settings.profiles.PSObject.Properties.Match('defaults').Count) {
-                $entry = $Settings.profiles.defaults
-            }
-        } catch { }
-        return [pscustomobject]@{ Ok = $true; Entry = $entry; IsDefaults = $true; Available = $available; Ambiguous = $false }
+        if ($shape.HasDefaultsSlot -and $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
+            $entry = $Settings.profiles.defaults
+        }
+        return [pscustomobject]@{
+            Ok         = $shape.HasDefaultsSlot
+            Entry      = $entry
+            IsDefaults = $true
+            Available  = $available
+            Ambiguous  = $false
+            TieBreak   = $null
+        }
     }
 
     # NOT $matches: that is an AUTOMATIC variable, rewritten by every -match
@@ -316,9 +411,19 @@ function Resolve-WTProfileTarget {
     # The GUID only breaks a tie. If it names a profile whose name is NOT
     # $TargetName, the user asked for a different profile than the one they are
     # sitting in, and that request wins.
-    $entry = $null
-    if ($PreferGuid -and $named.Count -gt 1) {
-        $entry = $named | Where-Object { $_.guid -eq $PreferGuid } | Select-Object -First 1
+    $entry    = $null
+    $tieBreak = $null
+    if ($named.Count -gt 1) {
+        if ($PreferGuid) {
+            $entry = $named | Where-Object { $_.guid -eq $PreferGuid } | Select-Object -First 1
+        }
+        # Recorded HERE, where the choice is actually made. The note the callers
+        # print used to assert "Applied to the one this session is running in"
+        # on every ambiguous resolution -- false whenever $PreferGuid names a
+        # THIRD profile (reset run from an Ubuntu tab, say), which is the
+        # ordinary modern-WT shape. Re-deriving it at the call site would be a
+        # second copy of this decision, so the decision reports itself.
+        $tieBreak = if ($entry) { 'Session' } else { 'First' }
     }
     if (-not $entry) { $entry = $named | Select-Object -First 1 }
 
@@ -326,6 +431,88 @@ function Resolve-WTProfileTarget {
         Ok = [bool]$entry; Entry = $entry; IsDefaults = $false; Available = $available
         # True when the name alone was not enough to identify a profile.
         Ambiguous = ($named.Count -gt 1)
+        # 'Session', 'First', or $null when there was no tie to break.
+        TieBreak  = $tieBreak
+    }
+}
+
+function Get-WTTargetNotFoundMessage {
+    <#
+    .SYNOPSIS
+    The one sentence every caller says when Resolve-WTProfileTarget says no.
+
+    .DESCRIPTION
+    Three callers wrote this message, two of them identically, and all three
+    ended in "Available: " + the list -- which is a dead end when the list is
+    EMPTY. That is not a hypothetical shape: it is exactly the settings.json
+    that used to be accepted for -Target defaults and then cost the user their
+    JSONC comments (no `profiles` key, a null one, a zero-byte file). Refusing
+    it is the fix; refusing it with a sentence that stops mid-air would only
+    move the confusion.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()]$ResolvedTarget,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$TargetName
+    )
+
+    $available = @()
+    if ($ResolvedTarget) { $available = @($ResolvedTarget.Available) }
+    if (-not $available.Count) {
+        # "not an object" rather than "empty": `"profiles": {}` IS usable -- the
+        # defaults block can be created in it -- so this list names only the
+        # shapes that are not.
+        return ("Windows Terminal's settings.json has no profile to apply to: its 'profiles' key is " +
+                "missing, null, or not an object. Check the file, or let Windows Terminal rewrite it.")
+    }
+    return "Windows Terminal profile '$TargetName' not found. Available: $($available -join ', ')"
+}
+
+function Write-AmbiguousTargetNote {
+    <#
+    .SYNOPSIS
+    Say that a -Target name matched more than one profile, and which one won.
+
+    .DESCRIPTION
+    Two Windows Terminal profiles may carry the same `name`, and from outside
+    they are indistinguishable: -Target cannot separate them, so a user cannot
+    check which one a command chose. Resolve-WTProfileTarget breaks the tie with
+    the session's own GUID, which is almost always what was wanted -- and
+    "almost always" is worth one line wherever it is acted on.
+
+    It was acted on in five places and said in one. `tstyles <style>` printed
+    the note; the picker, `tstyles reset`, `tstyles font` and the standalone
+    apply.ps1 resolved the same tie in silence -- and reset is the one that
+    matters most, because it strips every field an apply may write (padding,
+    opacity, useAcrylic, font.face among them) off whichever namesake it picked
+    and then reports "Reset '<name>' to its unstyled default." in green.
+
+    So the note lives here, next to the resolver, and every caller that acts on
+    a resolution reads it. $Verb is the caller's own word for what it did, so
+    the sentence stays true for a reset as well as an apply.
+
+    The second line is NOT unconditional. It claimed the session's profile every
+    time, which is false when the tie could not be broken -- the session is in a
+    third profile, or there is no WT_PROFILE_ID at all -- and that is precisely
+    the sentence a user reads to decide whether the right profile was hit. The
+    resolver records which branch it took; this only reports it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()]$ResolvedTarget,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$TargetName,
+        # The caller's verb: 'Applied to', 'Reset', 'Applying to'.
+        [string]$Verb = 'Used'
+    )
+
+    if (-not $ResolvedTarget -or -not $ResolvedTarget.Ambiguous) { return }
+
+    Write-Host "  Note: more than one profile is named '$TargetName'." -ForegroundColor DarkGray
+    if ($ResolvedTarget.TieBreak -eq 'Session') {
+        Write-Host ("  {0} the one this session is running in." -f $Verb) -ForegroundColor DarkGray
+    } else {
+        Write-Host ("  {0} the first one in settings.json, guid {1}." -f
+                    $Verb, $ResolvedTarget.Entry.guid) -ForegroundColor DarkGray
     }
 }
 
@@ -410,11 +597,23 @@ function Merge-StyleIntoSettings {
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
     $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
+    # The lazy creation, guarded rather than assumed. Add-Member needs a
+    # `profiles` OBJECT to add the block to: on a missing key or a null this
+    # line threw, and on the legacy flat-array form it unrolled the array and
+    # grafted `defaults` onto every profile in it without a word. The resolver
+    # now refuses 'defaults' for both shapes, so a caller that went through it
+    # never arrives here -- this is the same rule stated where the write
+    # happens, for the two callers that merge without resolving first (the
+    # picker's preview and the tuner). Falling through to the existing
+    # `if (-not $entry)` keeps the no-target contract: settings returned
+    # untouched, and no orphan scheme, since the scheme is upserted below.
     $entry = if ($TargetName -eq 'defaults') {
-        if (-not $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
-            $Settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
+        if ((Get-WTProfileShape -Settings $Settings).HasDefaultsSlot) {
+            if (-not $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
+                $Settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
+            }
+            $Settings.profiles.defaults
         }
-        $Settings.profiles.defaults
     } else {
         $namedEntry
     }

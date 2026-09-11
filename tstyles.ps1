@@ -745,9 +745,16 @@ function Invoke-TerminalStyle {
     $validateTarget = {
         param([string]$Name)
         $resolved = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $Name
-        if ($resolved.Ok) { return $true }
-        Write-Error ("Windows Terminal profile '$Name' not found. Available: " +
-                     ($resolved.Available -join ', '))
+        if ($resolved.Ok) {
+            # Said here, at validation, because it is the last moment the user
+            # can read anything: the picker takes the screen on the next frame
+            # and clears it again on confirm. The picker writes the style to the
+            # resolved profile exactly as `tstyles <style>` does, and was the
+            # only one of the pair that never mentioned the tie.
+            Write-AmbiguousTargetNote -ResolvedTarget $resolved -TargetName $Name -Verb 'Applying to'
+            return $true
+        }
+        Write-Error (Get-WTTargetNotFoundMessage -ResolvedTarget $resolved -TargetName $Name)
         return $false
     }
 
@@ -859,7 +866,11 @@ function Invoke-TerminalStyle {
     # replace with an explanation.
     if ($useSettingsFile -and -not $Target) {
         Write-Host "Could not auto-detect the current Windows Terminal profile."
-        Write-Host "Available: $((@('defaults') + @($originalSettings.profiles.list.name)) -join ', ')"
+        # The same list the validator below will accept, from the same place.
+        # Built here by hand, it offered 'defaults' for a settings.json that
+        # cannot carry one -- a prompt naming the single answer guaranteed to be
+        # refused.
+        Write-Host "Available: $((Get-WTProfileShape -Settings $originalSettings).Available -join ', ')"
         $Target = (Read-Host "Target profile").Trim()
         if (-not $Target) { return }
         # The answer is a name the user typed, so it gets the same check.
