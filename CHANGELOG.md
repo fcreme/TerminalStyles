@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.25] - 2026-09-12
+
 ### Fixed
 
 - **opening the picker on a style that ships no `theme.json` stripped every comment out of `settings.json`, wrote none of the style, and reported success.** `Get-StyleSettingsPayload` decides what a style actually contributes to `settings.json`, and it had exactly three references repo-wide -- none of them in the picker, and none in `tests/`. So `tstyles aaa-schemeonly` correctly printed "ships no theme.json, so nothing was written to settings.json" and left the file byte-identical, while `tstyles` and Enter on the SAME style rewrote it: re-serialising the parsed object drops every JSONC comment the user had, nothing of the style was written, "Style applied" printed in green, and `tstyles current` then named a style Windows Terminal was never told about.
@@ -52,6 +54,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `Apply-StyleDirect` also no longer writes when the merge did not come back. That guard is what separates an ugly error from silent comment loss, and it will do the same for the next throw inside the merge.
 
 - **only `tstyles <style>` warned that a profile name was duplicated; the picker, reset, font, tune and `apply.ps1` all resolved one silently.** `Ambiguous` had two producers and exactly one consumer, across eleven call sites. The note is now written in one place that every caller reads, and the resolver records HOW it broke the tie rather than letting the note re-derive it -- so it no longer claims "the one this session is running in" when `WT_PROFILE_ID` names a third profile and file order actually decided.
+
+### Changed
+
+- CI installed whatever major version of Pester PSGallery was serving. Every install line was unbounded above -- `-Version '[5.0.0,)'` and `-MinimumVersion 5.0.0` both mean "newest" -- so steps named "Install Pester 5" have been running Pester 6. That is not cosmetic: Pester 6 discovers and executes each file in turn rather than discovering all of them first, which silently made the guard that watches for tests writing to the operator's own files photograph the state AFTER the damage and compare it against itself; and it fails DISCOVERY on an empty `-ForEach` rather than producing no tests, which took both Windows legs down for a file about POSIX shells. Both were found by hand. The range is bounded at `7.0.0` on all three install sites, the Windows PowerShell leg gains the matching `-MaximumVersion` so the two engines cannot drift onto different majors, and the steps are named for what they do.
+
+- a release that is tagged but never published now says so. `v0.8.22` and `v0.8.23` were both committed, tagged and released on GitHub and neither ever reached PSGallery, so every installed copy stayed on 0.8.21 for weeks while a `tstyles reset` that deleted hand-made profile settings and a trash sweep that erased styles seconds after promising seven days sat fixed in git and shipped to nobody. Nothing anywhere said so. `release-drift.yml` asks PSGallery for its published version -- which is public, so this needs no API key and nothing that rotates -- compares it with the newest tag, and fails on the tag push and again every Monday for as long as they differ. An unreachable PSGallery warns and exits 0: a network failure is not a release problem and must not read as one. `publish.yml` is there for the case where a key is current, and is dispatch-only so a rotated one cannot redden every release.
 
 ## [0.8.24] - 2026-09-11
 
@@ -709,7 +717,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.24...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.25...HEAD
+[0.8.25]: https://github.com/fcreme/TerminalStyles/compare/v0.8.24...v0.8.25
 [0.8.24]: https://github.com/fcreme/TerminalStyles/compare/v0.8.23...v0.8.24
 [0.8.23]: https://github.com/fcreme/TerminalStyles/compare/v0.8.22...v0.8.23
 [0.8.22]: https://github.com/fcreme/TerminalStyles/compare/v0.8.21...v0.8.22
