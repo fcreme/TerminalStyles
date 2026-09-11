@@ -58,7 +58,7 @@ jobs:
         shell: powershell
         run: |
           # Windows PowerShell 5.1 ships Pester 3 in-box and lacks PSResourceGet,
-          # so bootstrap Pester 5 via PowerShellGet v2. Force TLS 1.2 first: on
+          # so bootstrap Pester via PowerShellGet v2. Force TLS 1.2 first: on
           # .NET Framework the default SecurityProtocol can omit it, and PSGallery
           # hard-refuses TLS < 1.2.
           [Net.ServicePointManager]::SecurityProtocol = `
@@ -83,8 +83,10 @@ jobs:
         if: matrix.shell == 'pwsh'
         shell: pwsh
         run: |
-          # Pin to Pester 5 explicitly so WinPS 5.1 doesn't auto-load its in-box
-          # Pester 3 (which lacks New-PesterConfiguration).
+          # A FLOOR, not a pin: it stops Windows PowerShell 5.1 auto-loading its
+          # in-box Pester 3 (which has no New-PesterConfiguration), and takes
+          # the newest installed above that -- which the install step has now
+          # bounded below 7.0.0, so this cannot reach a major nobody chose.
           Import-Module Pester -MinimumVersion 5.0.0
           $config = New-PesterConfiguration
           $config.Run.Path = 'tests'
