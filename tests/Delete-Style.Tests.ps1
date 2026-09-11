@@ -527,6 +527,46 @@ Describe 'the delete prompt discloses what confirming it will erase' {
             }
         }
 
+        Context 'a delete that did not happen erases nothing' {
+            # The sweep is the one irreversible thing `tstyles delete` does, and
+            # it ran FIRST -- before the containment re-proof and before the
+            # move. So every ordinary way the move can fail (the folder open in
+            # an editor on Windows, a permissions failure, the style removed by
+            # hand or by a second terminal between the plan and the keystroke)
+            # destroyed the expired trash anyway, printed one red line about the
+            # style that was NOT deleted, and said nothing about what it had
+            # erased. A failed command reads as a command that did nothing.
+            It 'keeps the trash the prompt named when the move fails' {
+                $doomed = script:New-Trash 'precious-20200101-000000'
+                $plan   = Get-StyleDeletePlan -Name 'mine'
+                @($plan.SweepTargets.Name) | Should -Be @('precious-20200101-000000') `
+                    -Because 'otherwise the sweep has nothing to erase and this measures nothing'
+
+                # The style removed between the plan and the 'y' -- a second
+                # terminal, or a hand `rm`. Move-Item -ErrorAction Stop throws.
+                Remove-Item -LiteralPath $plan.Dir -Recurse -Force
+
+                { Move-StyleDirectoryToTrash -Plan $plan } | Should -Throw
+
+                [System.IO.Directory]::Exists($doomed) | Should -BeTrue `
+                    -Because 'the delete did not happen, so nothing it was bundled with may happen either'
+            }
+
+            It 'tells the user the trash is intact when the delete fails' {
+                # The other half: the ERASE lines were on the consent screen, so
+                # after a failure the user is entitled to know they did not run.
+                $doomed = script:New-Trash 'precious-20200101-000000'
+                Mock Move-Item { throw 'Access to the path is denied.' }
+
+                $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String
+
+                $out | Should -Match "Could not delete 'mine'"
+                $out | Should -Match 'Nothing was erased'
+                [System.IO.Directory]::Exists($doomed) | Should -BeTrue
+                Get-StyleDir -StyleName 'mine' | Should -Not -BeNullOrEmpty
+            }
+        }
+
         Context 'the listing and the sweep cannot drift apart' {
             It 'erases exactly what the prompt named, and nothing else' {
                 $doomed  = script:New-Trash 'precious-20200101-000000'
@@ -633,6 +673,185 @@ Describe 'the trash stamp is written in the calendar the sweep reads' {
 
             @(Get-StyleTrashSweepTarget).Name | Should -Not -Contain (Split-Path $plan.TrashPath -Leaf) `
                 -Because '"Kept for 7 days" was printed about it one statement ago'
+        }
+    }
+}
+
+# The consent screen itemises "RESET the terminal to its unstyled default,
+# because '<name>' is active", and then did not reset.
+#
+# Invoke-TerminalStyleDelete moves the style into .deleted/ and only afterwards
+# calls Reset-StyleDirect, whose ownership marker is "does Get-AvailableStyles
+# know the profile's colorScheme". .deleted is a SIBLING of styles/, so the one
+# style that marker is guaranteed to be true of is the one the move just hid:
+# the reset refused, the profile kept colorScheme, opacity, useAcrylic, font and
+# any background, and the output contradicted itself four lines apart --
+# "Deleted mine." in green, then "Its colorScheme is 'mine', which is not a
+# style this tool wrote."
+#
+# Windows Terminal only: every other terminal returns into Reset-StyleNonWT
+# before the marker is consulted, so the OSC reset always fired there.
+Describe 'deleting the active style performs the reset the prompt itemised' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedModule  = $script:TStylesModuleRoot
+            $script:savedCurrent = $script:TStylesCurrent
+
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            $script:TStylesCurrent    = Join-Path $script:root 'current-style.ps1'
+
+            script:New-Style $script:root 'eva' | Out-Null
+            $script:mineDir = script:New-Style $script:root 'mine' -Tuned
+            # WasActive is a byte-compare of current-style.ps1 against each
+            # style's profile.ps1, so the style needs one and it has to match.
+            [System.IO.File]::WriteAllText((Join-Path $script:mineDir 'profile.ps1'), '# mine prompt')
+            [System.IO.File]::WriteAllText($script:TStylesCurrent, '# mine prompt')
+            [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n")
+
+            $script:fakeSettings = Join-Path $script:root 'settings.json'
+            $obj = [pscustomobject]@{
+                schemes  = @([pscustomobject]@{ name = 'mine' })
+                profiles = [pscustomobject]@{
+                    list = @([pscustomobject]@{
+                        name = 'PS'; guid = '{x}'; colorScheme = 'mine'; opacity = 80; useAcrylic = $true
+                    })
+                }
+            }
+            [System.IO.File]::WriteAllText($script:fakeSettings,
+                ($obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+
+            Mock Get-TerminalKind             { 'WindowsTerminal' }
+            Mock Find-WTSettingsPath          { $script:fakeSettings }
+            Mock Get-CurrentWTProfileName     { 'PS' }
+            Mock Show-UpdateNoticeIfAvailable {}
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesCurrent    = $script:savedCurrent
+        }
+
+        It 'strips the profile the style it just deleted was applied to' {
+            $plan = Get-StyleDeletePlan -Name 'mine'
+            $plan.WasActive | Should -BeTrue -Because 'otherwise the RESET bullet is never printed and this measures nothing'
+            $plan.RevealDir | Should -BeNullOrEmpty -Because 'the name GOES; the shadow branch re-applies instead'
+
+            Invoke-TerminalStyleDelete -Name 'mine' -Target 'PS' -Yes 6>&1 | Out-Null
+
+            $after = [System.IO.File]::ReadAllText($script:fakeSettings, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            $p = $after.profiles.list | Where-Object name -eq 'PS'
+            $p.PSObject.Properties.Match('colorScheme').Count | Should -Be 0
+            $p.PSObject.Properties.Match('opacity').Count     | Should -Be 0
+            $p.PSObject.Properties.Match('useAcrylic').Count  | Should -Be 0
+            @($after.schemes | Where-Object name -eq 'mine').Count | Should -Be 0 `
+                -Because 'the scheme is an orphan once the style is gone'
+            Test-Path -LiteralPath $script:TStylesCurrent | Should -BeFalse `
+                -Because 'the deleted style would otherwise keep loading its prompt in every new shell'
+        }
+
+        It 'does not call the style it just deleted one this tool never wrote' {
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Target 'PS' -Yes 6>&1 | Out-String
+
+            $out | Should -Match 'Deleted mine\.'
+            $out | Should -Not -Match 'not a style this tool wrote'
+            $out | Should -Not -Match 'nothing was changed'
+        }
+    }
+}
+
+# What the consent screen promises a TUNED CHILD of the style being deleted.
+#
+# The shadow branch printed, in Gray -- the colour this file reserves for what
+# is KEPT -- "'<child>' was tuned from this style and re-seeds from the bundled
+# one: same brightness/saturation, different colours". That is true only for a
+# tune.json with no baseFingerprint, which is the legacy shape: Save-TunedStyle
+# has written one into every tune.json since 0.8.18. With a fingerprint the
+# revealed bundled style hashes differently, Resolve-TuneSeed takes its
+# base-moved branch, and the knobs come back 0/0 -- while the DarkGray footnote
+# that exists "for the wording" fires only in the case where the sentence above
+# it is already true.
+Describe 'the prompt describes what will actually happen to a tuned child' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedModule  = $script:TStylesModuleRoot
+            $script:savedCurrent = $script:TStylesCurrent
+
+            $script:caseRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:dataRoot = Join-Path $script:caseRoot 'data'
+            $script:modRoot  = Join-Path $script:caseRoot 'mod'
+            $script:TStylesDataRoot   = $script:dataRoot
+            $script:TStylesModuleRoot = $script:modRoot
+            $script:TStylesCurrent    = Join-Path $script:caseRoot 'current-style.ps1'
+
+            # The bundled style and the user's shadow of it must hash
+            # differently, or the fingerprint compare has nothing to notice.
+            $script:bundledEva = script:New-Style $script:modRoot  'eva'
+            $script:shadowEva  = script:New-Style $script:dataRoot 'eva' -Tuned
+            [System.IO.File]::WriteAllText((Join-Path $script:bundledEva 'scheme.json'), '{"name":"eva","background":"#111111"}')
+            [System.IO.File]::WriteAllText((Join-Path $script:shadowEva  'scheme.json'), '{"name":"eva","background":"#222222"}')
+            $script:childDir = script:New-Style $script:dataRoot 'eva-night'
+            [System.IO.File]::WriteAllText((Join-Path $script:childDir 'scheme.json'), '{"name":"eva-night","background":"#333333"}')
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesCurrent    = $script:savedCurrent
+        }
+
+        function script:New-ChildTune([bool]$Fingerprinted) {
+            $fields = @('"base":"eva"', '"brightness":-35', '"saturation":10')
+            if ($Fingerprinted) {
+                $fp = Get-StyleSchemeFingerprint -StyleDir $script:shadowEva
+                $fp | Should -Not -BeNullOrEmpty
+                $fields += ('"baseFingerprint":"' + $fp + '"')
+            }
+            [System.IO.File]::WriteAllText((Join-Path $script:childDir 'tune.json'),
+                ('{' + ($fields -join ',') + '}'))
+        }
+
+        It 'the promise matches what the next tune really does -- <Shape>' -ForEach @(
+            @{ Shape = 'a tune.json carrying a base fingerprint'; Fingerprinted = $true;  Keeps = $false }
+            @{ Shape = 'a legacy tune.json with no fingerprint';  Fingerprinted = $false; Keeps = $true  }
+        ) {
+            script:New-ChildTune $Fingerprinted
+
+            $plan = Get-StyleDeletePlan -Name 'eva'
+            $plan.Origin            | Should -Be 'shadow'
+            $plan.RevealDir         | Should -Not -BeNullOrEmpty
+            @($plan.Children).Count | Should -Be 1
+            $plan.Children[0].Name  | Should -Be 'eva-night'
+
+            $out = Show-StyleDeletePlan -Plan $plan 6>&1 | Out-String
+
+            # The delete itself, then the question the prompt was answering.
+            Move-StyleDirectoryToTrash -Plan $plan
+            $seed = Resolve-TuneSeed -StyleName 'eva-night' -StyleDir (Get-StyleDir -StyleName 'eva-night')
+
+            if ($Keeps) {
+                $seed.Brightness | Should -Be -35
+                $seed.Saturation | Should -Be 10
+                $out | Should -Match 'same brightness/saturation'
+                $out | Should -Match 'records no base fingerprint'
+            } else {
+                $seed.Brightness | Should -Be 0 -Because 'the base it was measured against is not the one the name now resolves to'
+                $seed.Saturation | Should -Be 0
+                $out | Should -Match "'eva-night' loses the brightness -35 and saturation \+10"
+                $out | Should -Not -Match 'records no base fingerprint'
+            }
+
+            # Stated once, so a rewording cannot quietly break the pairing: the
+            # screen may only promise the adjustments survive when they do.
+            if ($out -match 'same brightness/saturation') {
+                $seed.Brightness | Should -Be -35
+                $seed.Saturation | Should -Be 10
+            }
+
+            # And the plan, not the printer, is where that was decided.
+            $plan.Children[0].KeepsAdjustments | Should -Be $Keeps
         }
     }
 }

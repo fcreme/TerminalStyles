@@ -163,6 +163,56 @@ Describe 'Reset-StyleDirect' {
             $w.PSObject.Properties.Match('colorScheme').Count | Should -Be 0
             $w.PSObject.Properties.Match('opacity').Count     | Should -Be 0
         }
+        It 'strips a style the caller has already proved is ours but the disk no longer has' {
+            # The ownership marker asks Get-AvailableStyles whether the
+            # profile's colorScheme names a style. `tstyles delete` calls this
+            # AFTER moving that style into .deleted/, which is a sibling of
+            # styles/ -- so the marker failed for the one profile it is
+            # guaranteed to be true of, and the reset the delete prompt had just
+            # itemised refused. -KnownStyleName is how the caller carries the
+            # proof it already had across the move.
+            $obj = [pscustomobject]@{
+                schemes  = @([pscustomobject]@{ name = 'trashed-style' })
+                profiles = [pscustomobject]@{
+                    list = @([pscustomobject]@{
+                        name = 'PowerShell'; guid = '{x}'; colorScheme = 'trashed-style'; opacity = 80
+                    })
+                }
+            }
+            [System.IO.File]::WriteAllText($script:fakeSettings, ($obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+
+            @(Get-AvailableStyles | Where-Object Name -eq 'trashed-style').Count | Should -Be 0 `
+                -Because 'the marker must have no other way to find it, or this measures nothing'
+
+            $script:written = $null
+            Reset-StyleDirect -Target 'PowerShell' -KnownStyleName 'trashed-style'
+
+            $script:written | Should -Not -BeNullOrEmpty
+            $w = $script:written.profiles.list | Where-Object name -eq 'PowerShell'
+            $w.PSObject.Properties.Match('colorScheme').Count | Should -Be 0
+            $w.PSObject.Properties.Match('opacity').Count     | Should -Be 0
+            @($script:written.schemes | Where-Object name -eq 'trashed-style').Count | Should -Be 0
+        }
+
+        It 'still refuses a profile carrying some other tool''s scheme name' {
+            # The seam is one name, not a bypass: -KnownStyleName must not turn
+            # the marker off for a profile this tool never styled.
+            $obj = [pscustomobject]@{
+                schemes  = @([pscustomobject]@{ name = 'someone-elses' })
+                profiles = [pscustomobject]@{
+                    list = @([pscustomobject]@{
+                        name = 'PowerShell'; guid = '{x}'; colorScheme = 'someone-elses'; opacity = 60
+                    })
+                }
+            }
+            [System.IO.File]::WriteAllText($script:fakeSettings, ($obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+
+            $script:written = $null
+            Reset-StyleDirect -Target 'PowerShell' -KnownStyleName 'trashed-style'
+
+            $script:written | Should -BeNullOrEmpty -Because 'the caller proved ownership of a different name'
+        }
+
         It 'resets the defaults profile when -Target defaults' {
             $obj = [pscustomobject]@{
                 schemes  = @([pscustomobject]@{ name = 'eva' })
