@@ -986,13 +986,33 @@ function Invoke-TerminalStylesShellInit {
     # Register in every rc file the user actually has. Registering only the
     # login shell's would miss the common case of someone who uses zsh
     # interactively but keeps a bash rc for scripts -- and costs nothing.
+    # Shell is carried alongside Path because everything below has to know
+    # which shell a touched file belongs to, and asking the path ('*zshrc')
+    # would be a second implementation of what Get-ShellRcCandidate already
+    # decided -- one that also has no answer for ~/.profile.
     $touched = @()
     foreach ($c in $candidates) {
         $action = Register-ShellLoader -Path $c.Path -Force:$Force
         if ($action -ne 'skipped') {
-            $touched += [pscustomobject]@{ Path = $c.Path; Action = $action }
+            $touched += [pscustomobject]@{ Path = $c.Path; Shell = $c.Shell; Action = $action }
         }
     }
+
+    # WHICH SHELL THE USER ACTUALLY LOGS IN TO. This lived inside the "nothing
+    # existed" fallback below, which fires only when not one rc file was found
+    # -- so on every other path the three decisions that follow (create a login
+    # file, register in ~/.profile, name a file to source) were taken with no
+    # idea which shell the user runs, and all three assumed bash.
+    #
+    # A zsh user with a leftover ~/.bashrc and no ~/.zshrc -- a pre-Catalina Mac,
+    # or any home an nvm/pyenv/conda installer has dropped a .bashrc into; macOS
+    # zsh has no newuser hook, so it never writes a ~/.zshrc for you -- therefore
+    # got two green "added" lines naming bash files, a ~/.bash_profile invented
+    # for them, "source ~/.bashrc", and a new zsh tab with nothing in it at all.
+    #
+    # $env:SHELL is unset on Windows and empty in some daemons, and 'bash' is the
+    # answer both cases had before, so the default keeps them as they were.
+    $loginShell = if ($env:SHELL -and $env:SHELL -match 'zsh') { 'zsh' } else { 'bash' }
 
     # A bash user needs the LOGIN file, and it is the one most likely absent.
     # macOS Terminal.app starts bash as a login shell, which reads
@@ -1007,10 +1027,19 @@ function Invoke-TerminalStylesShellInit {
     # Created as a source of .bashrc plus the block, which is the conventional
     # shape -- a bare .bash_profile would stop bash reading ~/.profile, and
     # would leave their own .bashrc unloaded in login shells exactly as before.
+    #
+    # Gated on the login shell, which it was not: it fired for a zsh user with a
+    # .bashrc too, inventing a ~/.bash_profile they never had (shell-remove
+    # strips the block but leaves the file), or writing into their ~/.profile --
+    # which `tstyles help shell-init` says is touched only "when that is the
+    # only file your login shell reads", and for a zsh login shell it is not.
+    # Registering in rc files that already EXIST stays unconditional; this
+    # branch is the one that creates and reaches past them.
     $bashrc       = $candidates | Where-Object { $_.Path -like '*.bashrc' }       | Select-Object -First 1
     $bashProfile  = $candidates | Where-Object { $_.Path -like '*.bash_profile' } | Select-Object -First 1
     $dotProfile   = Join-Path $HomeDir '.profile'
-    if ($bashrc -and $bashProfile -and
+    if ($loginShell -eq 'bash' -and
+        $bashrc -and $bashProfile -and
         (Test-Path -LiteralPath $bashrc.Path) -and
         -not (Test-Path -LiteralPath $bashProfile.Path)) {
 
@@ -1019,7 +1048,11 @@ function Invoke-TerminalStylesShellInit {
             # rather than creating a .bash_profile that would shadow it.
             $action = Register-ShellLoader -Path $dotProfile -Force:$Force
             if ($action -ne 'skipped') {
-                $touched += [pscustomobject]@{ Path = $dotProfile; Action = $action }
+                # Recorded as the LOGIN shell's file, not as sh's. ~/.profile is
+                # sh's by ownership, but the only reason it was written is that
+                # it is what this login shell reads, and that is the question
+                # the closing hint asks of this list.
+                $touched += [pscustomobject]@{ Path = $dotProfile; Shell = $loginShell; Action = $action }
             }
         } else {
             $seed = "# Created by TerminalStyles: bash login shells read this file, never" + [Environment]::NewLine +
@@ -1028,7 +1061,7 @@ function Invoke-TerminalStylesShellInit {
             try {
                 [System.IO.File]::WriteAllText($bashProfile.Path, $seed, [System.Text.UTF8Encoding]::new($false))
                 $action = Register-ShellLoader -Path $bashProfile.Path -Force:$Force
-                $touched += [pscustomobject]@{ Path = $bashProfile.Path; Action = $action }
+                $touched += [pscustomobject]@{ Path = $bashProfile.Path; Shell = 'bash'; Action = $action }
                 Write-Host ""
                 Write-Host ("  Created {0}, which is what bash reads for a login shell" -f $bashProfile.Path) -ForegroundColor DarkGray
                 Write-Host "  (Terminal.app opens one). It sources your ~/.bashrc." -ForegroundColor DarkGray
@@ -1038,13 +1071,41 @@ function Invoke-TerminalStylesShellInit {
         }
     }
 
+    # The same rescue for zsh, which never got one. Bash's exists because its
+    # login file is the one most likely to be absent; for zsh the ONLY file is
+    # likely to be absent, and then not a single line of the loop above reached
+    # the shell the user opens tabs in. It still printed a green "added" for
+    # whatever bash rc happened to be lying around.
+    #
+    # The FIRST zsh candidate is the file zsh will actually read:
+    # Get-ShellRcCandidate puts $ZDOTDIR/.zshrc ahead of ~/.zshrc, and zsh reads
+    # ~/.zshrc only when ZDOTDIR is unset -- so "some .zshrc was written" is not
+    # the test; "the one zsh opens was written" is.
+    if ($loginShell -eq 'zsh') {
+        $zshrc = $candidates | Where-Object { $_.Shell -eq 'zsh' } | Select-Object -First 1
+        if ($zshrc -and -not (Test-Path -LiteralPath $zshrc.Path)) {
+            $action = Register-ShellLoader -Path $zshrc.Path -Create -Force:$Force
+            $touched += [pscustomobject]@{ Path = $zshrc.Path; Shell = 'zsh'; Action = $action }
+            if ($action -ne 'failed') {
+                Write-Host ""
+                Write-Host ("  Created {0}, the file zsh reads on every new tab --" -f $zshrc.Path) -ForegroundColor DarkGray
+                Write-Host "  you had no zsh rc file, and zsh is your login shell." -ForegroundColor DarkGray
+            }
+        }
+    }
+
     # Nothing existed to register in. Create the rc file for the login shell
     # rather than doing nothing and leaving the user to guess.
+    #
+    # The zsh rescue above now always leaves an entry in $touched for a zsh
+    # login shell (it registers the file or reports the failure), so in practice
+    # this is the bash arm. It is left general rather than rewritten as a bash
+    # branch: $loginShell still chooses the target, so if the rescue's condition
+    # ever narrows, this keeps covering what it stops covering.
     if (-not $touched) {
-        $loginShell = if ($env:SHELL -and $env:SHELL -match 'zsh') { 'zsh' } else { 'bash' }
         $target = $candidates | Where-Object Shell -eq $loginShell | Select-Object -First 1
         $action = Register-ShellLoader -Path $target.Path -Create
-        $touched += [pscustomobject]@{ Path = $target.Path; Action = $action }
+        $touched += [pscustomobject]@{ Path = $target.Path; Shell = $target.Shell; Action = $action }
         # A bash login shell reads .bash_profile, so creating only .bashrc would
         # have produced the same silent nothing as above.
         if ($loginShell -eq 'bash' -and $target.Path -like '*.bashrc') {
@@ -1054,6 +1115,7 @@ function Invoke-TerminalStylesShellInit {
                 try {
                     [System.IO.File]::WriteAllText($bp.Path, $seed, [System.Text.UTF8Encoding]::new($false))
                     $touched += [pscustomobject]@{ Path = $bp.Path
+                                                   Shell = 'bash'
                                                    Action = (Register-ShellLoader -Path $bp.Path -Force:$Force) }
                 } catch { }
             } elseif (Test-Path -LiteralPath $dotProfile) {
@@ -1072,7 +1134,7 @@ function Invoke-TerminalStylesShellInit {
                 # Here it is the only file the login shell will read.
                 $action = Register-ShellLoader -Path $dotProfile -Force:$Force
                 if ($action -ne 'skipped') {
-                    $touched += [pscustomobject]@{ Path = $dotProfile; Action = $action }
+                    $touched += [pscustomobject]@{ Path = $dotProfile; Shell = $loginShell; Action = $action }
                 }
             }
         }
@@ -1096,7 +1158,15 @@ function Invoke-TerminalStylesShellInit {
     # ~/.zshrc and printed unconditionally, so a bash user who had just had
     # .bashrc and .bash_profile written was told to source a zsh file they may
     # not even have.
-    $hintPath = ($touched | Where-Object { $_.Action -ne 'failed' } | Select-Object -First 1).Path
+    #
+    # Then it named whichever file came first, which is candidate order, not the
+    # user's order: a zsh user whose ~/.bashrc was registered before their
+    # ~/.zshrc existed was told "source ~/.bashrc" -- advice that does nothing in
+    # the shell they are sitting in. Prefer a file the LOGIN shell reads; fall
+    # back to the first only when none was touched.
+    $written  = @($touched | Where-Object { $_.Action -ne 'failed' })
+    $hintPath = (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written |
+                 Select-Object -First 1).Path
     if ($hintPath) {
         $shown = if ($hintPath.StartsWith($HomeDir)) { '~' + $hintPath.Substring($HomeDir.Length) } else { $hintPath }
         Write-Host ("  Open a new tab, or run:  source {0}" -f $shown) -ForegroundColor DarkGray
