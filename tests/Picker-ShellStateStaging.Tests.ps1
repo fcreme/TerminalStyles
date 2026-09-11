@@ -286,8 +286,21 @@ Describe 'the picker puts the terminal back when you cancel' {
     It 'tracks the revert in a reference type, not a plain bool' {
         # A scriptblock assigning to a [bool] would land in its own child scope
         # and the finally would never see it, so the revert would run twice.
+        #
+        # The bag now carries SettingsWritten as well, for the same reason and
+        # with the same consequence if it were a plain [bool]: the write and the
+        # restore both live in scriptblocks, and the restore has to know whether
+        # the picker put a preview on disk at all. A style with no theme.json
+        # writes nothing, and restoring "the original" over a file we never
+        # touched drops its BOM and makes Windows Terminal reload for nothing.
+        # Matched field by field rather than as one exact literal, so adding a
+        # third piece of picker state does not turn this into a red test about
+        # nothing.
         $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
-        $fn.Extent.Text | Should -Match '\$pickerState\s*=\s*@\{\s*Reverted\s*=\s*\$false\s*\}'
+        $src = $fn.Extent.Text
+        $src | Should -Match '\$pickerState\s*=\s*@\{[^}]*\bReverted\s*=\s*\$false'
+        $src | Should -Match '\$pickerState\s*=\s*@\{[^}]*\bSettingsWritten\s*=\s*\$false'
+        $src | Should -Match '\$pickerState\.SettingsWritten\s*=\s*\$true'
     }
 }
 
@@ -316,9 +329,14 @@ Describe 'the picker does not burn work it throws away' {
     It 'still prebuilds on Windows Terminal, where the scan is used' {
         # The fix must not have cost WT its prebuild -- that cache is what makes
         # arrow-keying back to a visited style instant.
+        #
+        # Get-StylePreviewJson, not Merge-StyleIntoSettings: the picker's three
+        # open-coded merges are now one helper, which is what made it possible
+        # to ask Get-StyleSettingsPayload in one place instead of forgetting it
+        # in three.
         $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
         $idle = [regex]::Match($fn.Extent.Text, '(?s)\$onIdle = \{.*?\n        \}').Value
-        $idle | Should -Match 'Merge-StyleIntoSettings'
+        $idle | Should -Match 'Get-StylePreviewJson'
         $idle | Should -Match 'mergedCache\['
     }
 }

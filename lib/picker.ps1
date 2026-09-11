@@ -127,6 +127,60 @@ function Get-PickerStyleSet {
 }
 
 
+function Get-StylePreviewJson {
+    # The settings.json the picker would write for one style -- or $null when
+    # that style has nothing to put there.
+    #
+    # Get-StyleSettingsPayload is the function that decides whether a style
+    # contributes anything to settings.json at all. Apply-StyleDirect asks it,
+    # apply.ps1 asks it, and 0.8.18's CHANGELOG says "all four write paths ...
+    # now check first" -- but the picker never did, because it held THREE
+    # open-coded copies of ConvertFrom-WTJson -> Merge-StyleIntoSettings ->
+    # ConvertTo-Json (the first preview, the per-keystroke apply, the idle
+    # prebuild) and none of them asked. A style with a scheme.json and no
+    # theme.json is legal -- README documents theme.json as optional and
+    # Get-AvailableStyles admits the folder, so it is listed and selectable --
+    # and Merge-StyleIntoSettings returns the settings object UNTOUCHED for it.
+    # The picker wrote that object anyway, which re-serializes what
+    # ConvertFrom-WTJson parsed and drops every // and /* */ comment the user
+    # wrote, then printed "Style applied: <name>" in green and recorded the
+    # style. So `tstyles current` and the `*` in `tstyles list` both named a
+    # style Windows Terminal had never been told about, while `tstyles <name>`
+    # on the very same style refused in as many words. The load-bearing copy was
+    # the FIRST preview, which fires as the picker opens -- before the user
+    # touches a key.
+    #
+    # One function, so there is one place that asks, and so a fourth copy cannot
+    # be added without it. $null means "nothing to write", which the picker's
+    # $writeSettings choke point already treats as a no-op -- the gate is the
+    # return value rather than a fourth guard beside a fourth merge.
+    #
+    # Carved out here for the same reason Invoke-StylePickerLoop and
+    # Get-PickerViewport are: the picker body cannot be driven by a test, and a
+    # decision that only exists inside it can only ever be asserted on its
+    # source text.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OriginalJson,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [string]$TargetName,
+        [string]$BackgroundImage,
+        [bool]$BackgroundImageProvided
+    )
+
+    if (-not (Get-StyleSettingsPayload -StyleDir $StyleDir).Ok) { return $null }
+
+    $preview = ConvertFrom-WTJson $OriginalJson
+    $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $StyleDir `
+                   -TargetName $TargetName -BackgroundImage $BackgroundImage `
+                   -BackgroundImageProvided $BackgroundImageProvided
+    # Depth 100 (the JSON max), matching Write-SettingsFile: a user
+    # settings.json nested deeper than 32 is silently stringified by
+    # ConvertTo-Json, without warning on Windows PowerShell 5.1.
+    return $preview | ConvertTo-Json -Depth 100
+}
+
+
 function Test-ShouldRestoreWindowTitle {
     # Is there a window title worth putting back?
     #

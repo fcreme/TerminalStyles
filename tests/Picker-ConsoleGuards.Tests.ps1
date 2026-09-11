@@ -68,15 +68,20 @@ Describe 'the picker refuses a session with no real console' {
             # An ordering test that omits the call it should be ordering is
             # worth nothing.
             #
-            # Clear-Host is the scrollback wipe and Merge-StyleIntoSettings is
-            # the first thing that builds a settings.json to write.
+            # Clear-Host is the scrollback wipe and Get-StylePreviewJson is the
+            # first thing that builds a settings.json to write. It used to be
+            # Merge-StyleIntoSettings, named directly at three sites inside the
+            # picker; those three copies are now one call to the helper that
+            # asks Get-StyleSettingsPayload before it merges, so the merge
+            # itself no longer appears in this function at all and naming it
+            # here would assert over zero call sites.
             #
             # NOT Write-SettingsAtomic, though it is the actual write: its one
             # call site lives inside the $writeSettings scriptblock, which is
             # DEFINED above the guard and invoked below it. Comparing source
             # offsets would flag that as a violation and be wrong -- the check
             # measures where code is written, not when it runs.
-            foreach ($name in 'Read-Host', 'Clear-Host', 'Merge-StyleIntoSettings') {
+            foreach ($name in 'Read-Host', 'Clear-Host', 'Get-StylePreviewJson') {
                 $calls = @($ast.FindAll({ param($n)
                     $n -is [System.Management.Automation.Language.CommandAst] -and
                     $n.GetCommandName() -eq $name }, $true))
