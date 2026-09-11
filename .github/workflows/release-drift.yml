@@ -1,0 +1,72 @@
+# Is the newest tag actually on PSGallery?
+#
+# WHY THIS EXISTS, AND WHY IT NEEDS NO SECRET. Publishing is a local
+# `scripts/publish.ps1` run, and the API key rotates, so it cannot be stored
+# here and the publish cannot be automated. That is fine -- automating the
+# publish was never the real fix. The real failure was not knowing: v0.8.22 and
+# v0.8.23 were both committed, tagged and released on GitHub, and neither ever
+# reached PSGallery. Every installed copy stayed on 0.8.21 for weeks while a
+# `tstyles reset` that deleted hand-made profile settings, and a trash sweep
+# that erased styles seconds after promising seven days, sat fixed in git and
+# shipped to nobody. Nothing anywhere said so.
+#
+# PSGallery's published version is PUBLIC. This asks for it, compares it to the
+# newest tag, and fails when they differ -- on the tag push itself, and again
+# every Monday for as long as it stays true. No key, no secret, nothing to
+# rotate.
+
+name: Release drift
+
+on:
+  push:
+    tags:
+      - 'v*'
+  schedule:
+    # Monday 09:00 UTC. A weekly nag is the right frequency for something whose
+    # fix is one command: often enough that a forgotten release is caught in
+    # days, rare enough that the mail still gets read.
+    - cron: '0 9 * * 1'
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: Tag vs PSGallery
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0   # tags
+
+      - name: Compare the newest tag with what PSGallery serves
+        shell: pwsh
+        run: |
+          $tag = (git tag -l --sort=-v:refname | Select-Object -First 1)
+          if (-not $tag) { Write-Host "No tags yet; nothing to compare."; exit 0 }
+          $tagVersion = $tag -replace '^v', ''
+
+          # Read-only, unauthenticated, and allowed to fail: PSGallery being
+          # unreachable is not a release problem and must not read as one.
+          try {
+              $published = (Find-PSResource -Name TerminalStyles -Repository PSGallery -ErrorAction Stop).Version.ToString()
+          } catch {
+              Write-Host "::warning::Could not reach PSGallery: $($_.Exception.Message)"
+              Write-Host "Not treating this as drift."
+              exit 0
+          }
+
+          Write-Host "newest tag : $tagVersion"
+          Write-Host "PSGallery  : $published"
+
+          if ([version]$published -ge [version]$tagVersion) {
+              Write-Host "PSGallery is up to date."
+              exit 0
+          }
+
+          Write-Host "::error::PSGallery is on $published but the newest tag is $tagVersion -- the release has not shipped."
+          Write-Host ""
+          Write-Host "Nobody is running the fixes in $tagVersion. To publish, from a checkout of the tag:"
+          Write-Host "    pwsh ./scripts/publish.ps1"
+          Write-Host "It prompts for the API key with hidden input and writes it to neither history nor env."
+          Write-Host ""
+          Write-Host "This check runs again every Monday until the two agree."
+          exit 1
