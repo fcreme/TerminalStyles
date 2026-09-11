@@ -773,13 +773,42 @@ function Invoke-TerminalStyle {
         if ($Target -and -not (& $validateTarget $Target)) { return }
     }
 
+    # A hashtable, not plain variables: the revert and the writes below run
+    # inside scriptblocks, and a plain assignment there would land in the
+    # scriptblock's own child scope and never be seen out here. The finally
+    # block needs to know whether the revert already happened, and the revert
+    # needs to know whether there is anything to revert.
+    $pickerState = @{ Reverted = $false; SettingsWritten = $false }
+
     # Single choke point for every settings.json write in the picker. Off
     # Windows Terminal this is a no-op, so the loop below reads the same in
-    # both worlds instead of repeating the guard at each call site.
+    # both worlds instead of repeating the guard at each call site. An empty or
+    # $null $Json is a no-op too -- that is how Get-StylePreviewJson says "this
+    # style has nothing for settings.json" without every caller re-testing it.
     $writeSettings = {
         param([string]$Json)
         if ($useSettingsFile -and $Json) {
             Write-SettingsAtomic -Path $settingsPath -Json $Json
+            $pickerState.SettingsWritten = $true
+        }
+    }
+
+    # The other half of that choke point: put the user's own settings.json back.
+    # $originalJson is the byte-exact source text, so this restores the // and
+    # /* */ comments ConvertFrom-WTJson dropped on the way into a preview.
+    #
+    # Guarded on having written, because a picker session can now legitimately
+    # write NOTHING -- open it on a style with no theme.json and press Esc and
+    # there is no preview on disk to undo. Restoring anyway would rewrite the
+    # file with the same characters, which is not free: Write-SettingsAtomic
+    # emits UTF-8 with no BOM (so a BOM the user had is gone), it bumps the
+    # mtime, and Windows Terminal watches the file and reloads on the change.
+    # "Nothing was written to settings.json" has to mean the file was not
+    # touched, or it is the same claim this whole path was fixed for.
+    $restoreOriginalSettings = {
+        if ($pickerState.SettingsWritten) {
+            & $writeSettings $originalJson
+            $pickerState.SettingsWritten = $false
         }
     }
 
@@ -889,11 +918,6 @@ function Invoke-TerminalStyle {
     # because $idx is the live cursor and has moved by the time Esc arrives.
     $startIdx        = $idx
     $hadCurrentStyle = ($currentIdx -ge 0)
-    # A hashtable, not a [bool]: the revert runs inside a scriptblock, and a
-    # plain assignment there would land in the scriptblock's own child scope and
-    # never be seen out here. The finally block needs to know whether the revert
-    # already happened.
-    $pickerState     = @{ Reverted = $false }
 
     # Each style's color swatch AND its parsed scheme object, both from the
     # single guarded read above -- keyed by index into the filtered $styles, so
@@ -1100,11 +1124,21 @@ function Invoke-TerminalStyle {
         # entirely off Windows Terminal: there is no $originalJson to merge into,
         # and the OSC packet emitted by the render loop is the whole preview.
         if ($useSettingsFile) {
-            $preview = ConvertFrom-WTJson $originalJson
-            $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$idx].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-            $initialJson = $preview | ConvertTo-Json -Depth 100
+            # Through Get-StylePreviewJson, which asks Get-StyleSettingsPayload
+            # first and answers $null for a style that has nothing to write --
+            # a $null the $writeSettings choke point above already no-ops on.
+            # This is the site that cost the comments: it fires as the picker
+            # opens, before a key is pressed, so bare `tstyles` on a style with
+            # no theme.json rewrote settings.json from the parsed object (every
+            # // and /* */ comment gone), wrote nothing of the style, and then
+            # reported success.
+            $initialJson = Get-StylePreviewJson -OriginalJson $originalJson -StyleDir $styles[$idx].FullName `
+                               -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
             & $writeSettings $initialJson
-            if (Test-StyleResolved -StyleDir $styles[$idx].FullName) {
+            # Never cache a $null: $mergedCache is consulted with ContainsKey,
+            # so an entry for a style with no payload would read as "already
+            # built" and skip the restore below for the rest of the session.
+            if ($initialJson -and (Test-StyleResolved -StyleDir $styles[$idx].FullName)) {
                 $mergedCache[$idx] = $initialJson
             }
         } else {
@@ -1259,11 +1293,20 @@ function Invoke-TerminalStyle {
             if ($resolved -and $mergedCache.ContainsKey($i)) {
                 & $writeSettings $mergedCache[$i]
             } else {
-                $preview = ConvertFrom-WTJson $originalJson
-                $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $styles[$i].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                $json = $preview | ConvertTo-Json -Depth 100
-                & $writeSettings $json
-                if ($resolved) { $mergedCache[$i] = $json }
+                $json = Get-StylePreviewJson -OriginalJson $originalJson -StyleDir $styles[$i].FullName `
+                            -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+                if ($json) {
+                    & $writeSettings $json
+                    if ($resolved) { $mergedCache[$i] = $json }
+                } else {
+                    # Nothing to preview -- but an EARLIER style's preview may
+                    # still be on disk, and leaving it there would show, and
+                    # then on Enter confirm, another style's colours under this
+                    # one's name. The style's contribution to settings.json is
+                    # the user's own file, so put that back. (A no-op when the
+                    # picker has not written; see $restoreOriginalSettings.)
+                    & $restoreOriginalSettings
+                }
             }
             if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
         }
@@ -1282,7 +1325,7 @@ function Invoke-TerminalStyle {
         # sequences, so resetting drops them to the terminal's stock palette
         # rather than back to their style. Re-emit it instead.
         $restoreOriginalLook = {
-            & $writeSettings $originalJson
+            & $restoreOriginalSettings
             if (-not $useSettingsFile -and $hadCurrentStyle -and $schemes.ContainsKey($startIdx)) {
                 Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$startIdx]) | Out-Null
             } else {
@@ -1307,14 +1350,21 @@ function Invoke-TerminalStyle {
             $nextPrebuild = -1
             for ($j = 0; $j -lt $styles.Count; $j++) {
                 if ($mergedCache.ContainsKey($j)) { continue }
+                # Skipped BEFORE the Test-StyleResolved probe, and on the same
+                # question Get-StylePreviewJson answers below: a style with
+                # nothing for settings.json has no JSON to prebuild, and the
+                # scan restarts from 0 every tick -- so without this it would
+                # be chosen as $nextPrebuild ~20 times a second for the life of
+                # the picker and no style after it would ever be cached.
+                if (-not (Get-StyleSettingsPayload -StyleDir $styles[$j].FullName).Ok) { continue }
                 if (-not (Test-StyleResolved -StyleDir $styles[$j].FullName)) { continue }
                 $nextPrebuild = $j
                 break
             }
             if ($nextPrebuild -ge 0) {
-                $pp = ConvertFrom-WTJson $originalJson
-                $pp = Merge-StyleIntoSettings -Settings $pp -StyleDir $styles[$nextPrebuild].FullName -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
-                $mergedCache[$nextPrebuild] = $pp | ConvertTo-Json -Depth 100
+                $ppJson = Get-StylePreviewJson -OriginalJson $originalJson -StyleDir $styles[$nextPrebuild].FullName `
+                              -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+                if ($ppJson) { $mergedCache[$nextPrebuild] = $ppJson }
             } else {
                 Start-Sleep -Milliseconds 50
             }
@@ -1453,6 +1503,26 @@ function Invoke-TerminalStyle {
         Write-Host "  Style applied: " -NoNewline
         Write-Host $selectedStyle.Name -ForegroundColor Green
         Write-Host ""
+
+        # The same qualifier `tstyles <name>` prints, from the same function, so
+        # the two doors give the same answer. Without it the picker claimed a
+        # bare success for a style Windows Terminal was never told about. The
+        # Set-CurrentStyleRecord above is still right -- off settings.json the
+        # style really is applied, as the prompt and the palette, and the record
+        # is what makes `tstyles current` work at all -- but "Style applied" on
+        # its own reads as "settings.json now has it", and it does not.
+        #
+        # Re-asked here rather than remembered from the preview: the answer is
+        # about the style the user actually confirmed, and it names the file
+        # that is missing rather than assuming which one it was.
+        if ($useSettingsFile) {
+            $confirmPayload = Get-StyleSettingsPayload -StyleDir $selectedStyle.FullName
+            if (-not $confirmPayload.Ok) {
+                Write-Host ("  '{0}' ships no {1}, so nothing was written to settings.json." -f
+                            $selectedStyle.Name, $confirmPayload.Missing) -ForegroundColor DarkGray
+                Write-Host ""
+            }
+        }
         if ($pendingUpdate) {
             Write-Host ("  Update available ({0} -> {1}). Run: tstyles update" -f
                         $pendingUpdate.Installed, $pendingUpdate.Remote) -ForegroundColor Yellow
