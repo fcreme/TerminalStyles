@@ -629,18 +629,10 @@ function Assert-InstallLanded {
 }
 
 # --- Pure decision: does this effective policy permit the loader to run? ---
-# EFFECTIVE, and the word is load-bearing: 'Undefined' is what a single SCOPE
-# reads back when nothing was ever written there, and it means "no answer", not
-# "scripts are allowed". An effective `Get-ExecutionPolicy` never returns it --
-# an all-Undefined machine resolves to the platform default, Restricted on
-# Windows clients -- so rejecting it costs nothing here and stops a scoped value
-# that reaches this function by mistake from reading as resolved. It did: the
-# post-check below used to hand it the CurrentUser scope, and a write that never
-# landed was announced as "policy is now Undefined" in green.
 function Test-PolicyResolved {
     param([string]$Policy)
     return (-not [string]::IsNullOrWhiteSpace($Policy)) -and
-           ($Policy.Trim() -notin @('Restricted', 'AllSigned', 'Undefined'))
+           ($Policy.Trim() -notin @('Restricted', 'AllSigned'))
 }
 
 # --- Offer to fix Restricted/AllSigned execution policy for an engine ---
@@ -717,44 +709,21 @@ function Resolve-ExecutionPolicy {
 
     try {
         # Set + re-query in one launch; the last non-empty line is the new policy.
-        #
-        # The re-query carries NO -Scope, and that is the whole of the check.
-        # It used to read back `Get-ExecutionPolicy -Scope CurrentUser` -- the
-        # value it had just written -- while the question this function exists to
-        # answer, and the one the gate above answers from Get-ShellInfo, is the
-        # EFFECTIVE policy. Precedence is MachinePolicy > UserPolicy > Process >
-        # CurrentUser > LocalMachine, so the scoped read-back cannot detect the
-        # failure the pre-check was asking about: with a Group Policy pinning the
-        # machine, `Set-ExecutionPolicy -Scope CurrentUser` SUCCEEDS (it writes
-        # HKCU and only warns that the setting is overridden), the scope reads
-        # back RemoteSigned, and the installer printed a green "Done." on exactly
-        # the machines where the loader still could not run. The write keeps its
-        # scope -- CurrentUser is the one that needs no elevation -- and only the
-        # verification changed. Set-ExecutionPolicy updates the running session
-        # too, so the same launch sees the new effective value.
         $out = & $cmd.Source -NoProfile -NonInteractive -Command `
-            'Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force; Get-ExecutionPolicy'
-        $newPolicy = "$(@($out | Where-Object { "$_".Trim() } | Select-Object -Last 1)[0])".Trim()
-        if (Test-PolicyResolved -Policy $newPolicy) {
-            # Names the effective policy, because that is what was verified.
-            Write-Host "    Done. Script execution is now enabled for $Label (effective policy: $newPolicy)." -ForegroundColor Green
+            'Set-ExecutionPolicy -Scope CurrentUser RemoteSigned -Force; Get-ExecutionPolicy -Scope CurrentUser'
+        $newPolicy = @($out | Where-Object { "$_".Trim() } | Select-Object -Last 1)[0]
+        if (Test-PolicyResolved -Policy "$newPolicy") {
+            Write-Host "    Done. CurrentUser policy is now $("$newPolicy".Trim()) for $Label." -ForegroundColor Green
         } else {
-            # Two different failures, and the difference matters: the engine
-            # answered and the answer still blocks scripts, or the engine
-            # printed nothing at all (its own error is on screen above).
-            $verdict = if ($newPolicy) { "is still '$newPolicy'" } else { 'could not be read back' }
-            Write-Host "    The effective policy for $Label $verdict -- the loader cannot run." -ForegroundColor Red
-            # NOT "LocalMachine": that scope loses to CurrentUser and so can
-            # never be what overrode it. Only the two Group Policy scopes and a
-            # Process-scope policy outrank the write above.
-            Write-Host "    A Group Policy (MachinePolicy / UserPolicy) or a Process-scope policy may be overriding CurrentUser." -ForegroundColor Yellow
-            Write-Host "    Ask your administrator, or run this manually and read what it reports:" -ForegroundColor Yellow
+            Write-Host "    The policy did not change (still '$("$newPolicy".Trim())')." -ForegroundColor Red
+            Write-Host "    A machine-wide policy (LocalMachine / GPO) may be blocking CurrentUser overrides." -ForegroundColor Yellow
+            Write-Host "    Run this manually, elevated if needed:" -ForegroundColor Yellow
             Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Cyan
         }
     } catch {
         Write-Host "    Could not set policy automatically: $_" -ForegroundColor Red
-        Write-Host "    A Group Policy (MachinePolicy / UserPolicy) or a Process-scope policy may be overriding CurrentUser." -ForegroundColor Yellow
-        Write-Host "    Ask your administrator, or run this manually and read what it reports:" -ForegroundColor Yellow
+        Write-Host "    A machine-wide policy (LocalMachine / GPO) may be blocking CurrentUser overrides." -ForegroundColor Yellow
+        Write-Host "    Run this manually, elevated if needed:" -ForegroundColor Yellow
         Write-Host "      Set-ExecutionPolicy -Scope CurrentUser RemoteSigned" -ForegroundColor Cyan
     }
 }

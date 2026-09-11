@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the installer's execution-policy fix verified the wrong scope, so it reported success on exactly the machines where it had failed.** `install.ps1` asks "can the loader run?" twice and asked two different questions. The PRE-check reads `Get-ExecutionPolicy` with no scope -- the EFFECTIVE policy, which is what actually decides whether a script runs. The POST-check read `Get-ExecutionPolicy -Scope CurrentUser`: the value it had just written. Precedence is MachinePolicy > UserPolicy > Process > CurrentUser > LocalMachine, so the scoped read-back cannot detect the failure the pre-check was asking about. On a machine with a Group Policy pinning the policy, `Set-ExecutionPolicy -Scope CurrentUser` SUCCEEDS -- it writes HKCU and only warns that the setting is overridden -- the scope reads back `RemoteSigned`, and the installer printed a green "Done." while the loader still could not run. The write keeps its scope, because CurrentUser is the one that needs no elevation; only the verification changed.
+
+- `Test-PolicyResolved` accepted `Undefined` as "scripts are allowed". `Undefined` is what a single SCOPE reads back when nothing was ever written there -- it means "no answer", not "allowed" -- and an effective `Get-ExecutionPolicy` never returns it, since an all-Undefined machine resolves to the platform default, `Restricted` on Windows clients. So rejecting it costs nothing and stops a scoped value that reaches the function by mistake from reading as resolved, which is precisely what the post-check above was doing: a write that never landed announced in green as "policy is now Undefined".
+
+- the advice printed when the policy fix fails named the wrong culprit. It blamed "LocalMachine / GPO", and LocalMachine LOSES to CurrentUser -- it is the lowest-precedence scope of the five, so it can never be what overrode the write. Only the two Group Policy scopes and a Process-scope policy outrank it. The message now names those, distinguishes "the engine answered and the answer still blocks scripts" from "the engine printed nothing at all", and asks the user to read what the manual command reports rather than promising elevation will help.
+
 ## [0.8.24] - 2026-09-11
 
 ### Fixed
