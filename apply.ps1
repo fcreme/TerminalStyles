@@ -126,13 +126,25 @@ Write-Host "Settings file: $SettingsPath"
 $settings = ConvertFrom-WTJson ([System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)))
 
 # --- Target profile selection ---
-$profileNames = @('defaults') + @($settings.profiles.list | ForEach-Object { $_.name })
+# The module's own list, not a fork of it. Built here by hand it always offered
+# 'defaults' -- including for a settings.json with no `profiles` object to
+# create one on, which is the answer the check below is now guaranteed to
+# refuse.
+$profileNames = @((Get-WTProfileShape -Settings $settings).Available)
+if (-not $profileNames.Count) {
+    # Asked before the prompt, because a menu of nothing is not a question.
+    throw (Get-WTTargetNotFoundMessage -ResolvedTarget $null -TargetName $Target)
+}
 if (-not $Target) {
     $Target = Read-Choice 'Which Windows Terminal profile to apply this style to?' $profileNames -Flag '-Target'
 }
-if (-not (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Ok) {
-    throw "Profile '$Target' not found. Available: $($profileNames -join ', ')"
+$resolvedTarget = Resolve-WTProfileTarget -Settings $settings -TargetName $Target
+if (-not $resolvedTarget.Ok) {
+    throw (Get-WTTargetNotFoundMessage -ResolvedTarget $resolvedTarget -TargetName $Target)
 }
+# Two profiles can share a name, and this script picked one of them in silence.
+# Same note the module's apply path prints.
+Write-AmbiguousTargetNote -ResolvedTarget $resolvedTarget -TargetName $Target -Verb 'Applied to'
 Write-Host "Target: $Target" -ForegroundColor Green
 
 # --- Background image ---
