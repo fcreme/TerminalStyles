@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.26] - 2026-09-12
+
 ### Fixed
 
 - **the leak check whitelisted the leak, so one style went on overwriting the user's own shell variables.** 0.8.22 renamed the runtime's `TS_LOADED` and `TS_SHELL` because bare names in the user's shell are the thing this project forbids -- and both style leak checks excused `^(TS_|_ts_)`, the very prefix that release had just declared a leak. `gitbash/prompt.sh` accordingly kept defining `TS_GIT_OPEN` and `TS_GIT_CLOSE` at top level, replacing anything the user had under those names on every new shell, while the check reported green.
@@ -14,8 +16,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The names are now `_ts_git_open` and `_ts_git_close` like everything else, and the whitelist is `_ts_` only. Measured with the old style restored: the tightened check fails twice, naming `TS_GIT_CLOSE, TS_GIT_OPEN` from both the static lint and the real-zsh measurement, where the old whitelist passed 150 of 150 with the same leak present.
 
   That is the last of the twenty-six defects the audit reproduced against the real code.
-
-### Fixed
 
 - **every write to `settings.json` dropped a byte-order mark the file already had.** The picker documents its Esc revert as putting the file back byte-exactly, and it did not: `Write-SettingsAtomic` emits UTF-8 with no BOM unconditionally. The BOM is already gone by the picker's FIRST preview write, so repairing only the revert would have left it lost after a crash mid-preview and after Enter. Fixed in the single writer instead, which also covers apply, reset, the tuner and the font writer -- the encoding is a property of the user's file, not of the command that happened to touch it. Measured: a `settings.json` opening `EF BB BF` came back without it on every path, and now comes back with it.
 
@@ -759,7 +759,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.25...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.26...HEAD
+[0.8.26]: https://github.com/fcreme/TerminalStyles/compare/v0.8.25...v0.8.26
 [0.8.25]: https://github.com/fcreme/TerminalStyles/compare/v0.8.24...v0.8.25
 [0.8.24]: https://github.com/fcreme/TerminalStyles/compare/v0.8.23...v0.8.24
 [0.8.23]: https://github.com/fcreme/TerminalStyles/compare/v0.8.22...v0.8.23
