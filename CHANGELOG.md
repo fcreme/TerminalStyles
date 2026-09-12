@@ -17,6 +17,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   One consequence is deliberate and worth stating: when the incoming style ships no background and `profiles.defaults` carries one of ours, those fields are removed from `defaults`, so every other profile inheriting it loses that image too. That is what "one we wrote for the previously applied style gets cleared" means when the image is on `defaults`; the alternative would need a per-profile override this project cannot verify from macOS.
 
+- **a `tstyles delete` that failed still erased the trash, and the error said nothing else had happened.** The sweep of expired trash ran BEFORE the move, so every way the delete can fail -- the folder open in an editor, a permissions refusal, a name collision at the destination -- left the collateral erasure already done while the only thing printed was that the style could not be deleted. The sweep now runs after the move has landed: the delete and the sweep are one transaction in the order the prompt describes them, and a delete that did not happen erases nothing.
+
+  Narrower than first reported, and worth recording accurately: the folders it erases ARE named in red on the same screen the user confirms, and they are past the documented seven days. What was false is the other half -- that a failed command had changed nothing.
+
+- **`tstyles delete` itemised a reset it then refused to perform, and called its own style one this tool never wrote.** Deleting the ACTIVE style on Windows Terminal prints that the profile will be reset, and the reset then runs after the style directory has already moved to the trash -- so the guard added in 0.8.22, which refuses to strip a profile whose `colorScheme` does not name a style this tool knows, could no longer see the style and refused. The user got "Deleted mine." followed by "'PowerShell' carries no TerminalStyles style -- nothing was changed. Its colorScheme is 'mine', which is not a style this tool wrote." about the style they had just deleted, with the profile left styled.
+
+  The reconciliation stays LAST, deliberately -- resetting before the move would leave the terminal unstyled if the move then threw, which is what that ordering guards. Instead the caller passes the ownership answer it already had one statement earlier, so the 0.8.22 guard is not weakened: a `colorScheme` naming something else is still refused, and a test pins that. Also fixed by the same change: `current-style.ps1` and `current-style.json` survived, so the deleted style's prompt kept loading while `tstyles current` reported nothing active.
+
+- **the delete confirmation described the opposite of what happens to a tuned child.** It said a child keeps its brightness and saturation and only loses the parent's colours; since 0.8.18 a child records a fingerprint of the base it was tuned from, and when the base goes the deltas are dropped and the child keeps the colours. Both clauses of that sentence were wrong, not one. The prompt now asks the question the tuner itself answers rather than re-deriving it from a proxy -- the plan computes what will really happen and the printer prints it, the same division the ERASE lines already use.
+
+- **five places on the shell and loader paths reported success for something that had not happened.** They are one defect wearing five hats: a function that knows why it failed hands its caller a value that cannot carry the reason. This file already had the answer -- `Unregister-ShellLoader` returns `removed` / `none` / `malformed` / `failed` and its callers compare explicitly -- and the other four places on the same paths had each collapsed a status to a boolean or to nothing.
+
+  `Register-ShellLoader` reported `updated` for an rc file carrying a BEGIN with no matching END: it wrote the file back byte-for-byte and told the user it had installed the loader. Its sibling has returned `malformed` for exactly that input since 0.8.22, so the two halves of the same marker rule disagreed. Measured on the same file: `Register` said `updated` where `Unregister` said `malformed`.
+
+  `tstyles uninstall` swept the rc files with `if ((Unregister-ShellLoader ...) -eq 'removed')`, discarding the other three answers, so a file it had just promised to strip could be left carrying the block with nothing said and "TerminalStyles uninstalled." printed underneath. `shell-remove` reported all four. The sweep-and-report rule is now one function both call, since that duplication is what let the two drift.
+
+  `tstyles register` wrote both `$PROFILE` files in an unguarded loop, so the second one failing left the command half-applied under a promise that every new tab would auto-load. Each target is now guarded: on failure it removes the first-touch backup it took of a file it never modified, names the path and the reason, and the auto-load line prints only if at least one target really got the block.
+
+  `Set-ShellStyleState` swallowed every failure in the zsh/bash half of an apply in one `catch { }`, so `tstyles <style>` reported success while new tabs kept the previous prompt. `Sync-ShellRuntime` returned one boolean for two unrelated causes, so `shell-init` blamed a missing module file whatever had actually gone wrong -- including a data root that refused the write.
+
+  A status names the category, which is what a caller branches on, and cannot also carry "access is denied" versus "no space left on the device", which is the half the user acts on. Both staging functions now set one documented module-scoped variable on the way out, read only alongside a non-`ok` status.
+
+  Found while reproducing the above: `Unregister-ShellLoader`'s READ was outside its try, so an unreadable rc file threw a raw `MethodInvocationException` out of the middle of both callers rather than returning `failed`.
+
 ## [0.8.25] - 2026-09-12
 
 ### Fixed

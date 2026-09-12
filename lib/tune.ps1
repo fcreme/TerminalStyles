@@ -257,6 +257,45 @@ function Get-StyleSchemeFingerprint {
     } catch { return $null }
 }
 
+function Test-TuneBaseMoved {
+    <#
+    .SYNOPSIS
+    Has the base a tuned style recorded been re-baked since that save?
+
+    .DESCRIPTION
+    One place answers it, because two places already disagreed. Resolve-TuneSeed
+    asks before deciding whether the recorded deltas still mean anything, and
+    the delete prompt asks before telling the user what will happen to a tuned
+    child when the style it was tuned from is moved aside. The prompt's own
+    answer was "a child with no fingerprint is the one that loses its
+    adjustments", which is the case that keeps them, so it promised in Gray --
+    the colour reserved for what is KEPT -- that the knobs survived, on every
+    child saved since the fingerprint was introduced.
+
+    "Unknown" is NOT "changed", in both of its shapes, because reading it as
+    changed discards the user's deltas and the next save then records the style
+    as its own base, severing the lineage for good:
+      * a tune.json written before the fingerprint existed records none;
+      * a base whose scheme.json cannot be READ -- a lock, a permission denial,
+        an antivirus hold -- fingerprints as $null.
+    Both answer $false.
+
+    Only meaningful when the base is a DIFFERENT directory; a self-referential
+    or missing base is the CALLER's question and is decided before this is
+    asked.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowEmptyString()][AllowNull()][string]$RecordedFingerprint,
+        [Parameter(Mandatory)][string]$BaseDir
+    )
+
+    if (-not $RecordedFingerprint) { return $false }
+    $currentFp = Get-StyleSchemeFingerprint -StyleDir $BaseDir
+    if (-not $currentFp) { return $false }
+    return ($RecordedFingerprint -ne $currentFp)
+}
+
 function Save-TunedStyle {
     # Materializes a tuned style into $DataRoot\styles\$SaveName\:
     #   scheme.json (adjusted colors, name = $SaveName)
@@ -503,9 +542,9 @@ function Resolve-TuneSeed {
                 # that in. Fall through to own-theme seeding instead, the same
                 # way the self-reference guard above does.
                 #
-                # A tune.json written before the fingerprint existed has none;
-                # that is "unknown", not "changed", so those keep seeding as
-                # they always did rather than silently losing their knobs.
+                # Test-TuneBaseMoved is where that comparison lives, because the
+                # delete prompt has to answer the same question about a tuned
+                # child before the style it descends from is moved aside.
                 $recordedFp = [string]$tune.baseFingerprint
                 $baseMoved  = $false
                 # Only meaningful when the base is a DIFFERENT directory. An
@@ -548,15 +587,8 @@ function Resolve-TuneSeed {
                     $seed.ChangedBaseName = [string]$tune.base
                     $seed.LineageBase     = [string]$tune.base
                 }
-                if (-not $baseIsSelf -and $recordedFp) {
-                    $currentFp = Get-StyleSchemeFingerprint -StyleDir $resolvedBaseDir
-                    # $null means the base could not be READ -- a lock, a
-                    # permission denial, an antivirus hold. That is "unknown",
-                    # exactly as a missing recorded fingerprint is, and must not
-                    # be read as "changed": doing so discarded the user's
-                    # deltas and, on save, rewrote tune.json with the style as
-                    # its own base, severing the lineage for good.
-                    if ($currentFp) { $baseMoved = ($recordedFp -ne $currentFp) }
+                if (-not $baseIsSelf) {
+                    $baseMoved = Test-TuneBaseMoved -RecordedFingerprint $recordedFp -BaseDir $resolvedBaseDir
                 }
                 if ($baseMoved) {
                     $seed.BaseChanged = $true

@@ -184,12 +184,25 @@ function Get-StyleTuneChild {
     anywhere else -- so the user has to be told before confirming, by name and
     by value.
 
+    KeepsAdjustments is what the delete actually does to this child, decided
+    here rather than guessed by the printer. It is false whenever the name goes
+    -- the base stops resolving, so the deltas are dropped -- and when the name
+    REVERTS to a bundled style it is the fingerprint question:
+    Test-TuneBaseMoved against -RevealDir, the same comparison Resolve-TuneSeed
+    will make the next time the child is tuned.
+
     HasFingerprint matters for the wording: a child with no baseFingerprint
     gets no "the base changed" notice on its next tune, so its adjustments
     change meaning with nothing on screen to explain it.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$StyleDir)
+    param(
+        [Parameter(Mandatory)][string]$StyleDir,
+        # Where the name will resolve after the delete, when it survives at all
+        # (a shadow reverting to its bundled original). Empty means the name
+        # goes with the style.
+        [AllowEmptyString()][AllowNull()][string]$RevealDir
+    )
 
     $out = @()
     foreach ($s in (Get-AvailableStyles)) {
@@ -203,11 +216,15 @@ function Get-StyleTuneChild {
         $baseDir = Get-StyleDir -StyleName ([string]$t.base)
         if (-not $baseDir) { continue }
         if (-not (Test-SameStyleDirectory -A $baseDir -B $StyleDir)) { continue }
+        $recordedFp = $(if ($t.PSObject.Properties.Match('baseFingerprint').Count) { [string]$t.baseFingerprint } else { '' })
         $out += [pscustomobject]@{
-            Name           = $s.Name
-            Brightness     = $(if ($t.PSObject.Properties.Match('brightness').Count) { [int]$t.brightness } else { 0 })
-            Saturation     = $(if ($t.PSObject.Properties.Match('saturation').Count) { [int]$t.saturation } else { 0 })
-            HasFingerprint = [bool]($t.PSObject.Properties.Match('baseFingerprint').Count -and $t.baseFingerprint)
+            Name             = $s.Name
+            Brightness       = $(if ($t.PSObject.Properties.Match('brightness').Count) { [int]$t.brightness } else { 0 })
+            Saturation       = $(if ($t.PSObject.Properties.Match('saturation').Count) { [int]$t.saturation } else { 0 })
+            HasFingerprint   = [bool]$recordedFp
+            KeepsAdjustments = $(if ($RevealDir) {
+                                     -not (Test-TuneBaseMoved -RecordedFingerprint $recordedFp -BaseDir $RevealDir)
+                                 } else { $false })
         }
     }
     return @($out)
@@ -296,7 +313,9 @@ function Get-StyleDeletePlan {
     # survives.
     try { $plan.WasActive = ((Get-CurrentStyleName) -eq $Name) } catch { }
 
-    $plan.Children = @(Get-StyleTuneChild -StyleDir $dir)
+    # After RevealDir on purpose: what a tuned child keeps depends on whether
+    # the name survives the delete, and on what it resolves to if it does.
+    $plan.Children = @(Get-StyleTuneChild -StyleDir $dir -RevealDir $plan.RevealDir)
 
     $cache = Get-StyleCacheDir -StyleName $Name
     if (Test-Path -LiteralPath $cache) { $plan.KeptCache = $cache }
@@ -391,15 +410,24 @@ function Show-StyleDeletePlan {
         }
     }
 
+    # On KeepsAdjustments, not on which branch of the delete this is. A child
+    # keeps its deltas only where the base its fingerprint was taken from is
+    # still what the name resolves to, so the reveal branch said "same
+    # brightness/saturation" in Gray while the tuner dropped them to 0, for
+    # every child saved since the fingerprint was introduced.
     foreach ($c in $Plan.Children) {
-        if ($Plan.RevealDir) {
+        if ($c.KeepsAdjustments) {
             Write-Host ("  - '{0}' was tuned from this style and re-seeds from the bundled one: same brightness/saturation, different colours" -f $c.Name) -ForegroundColor Gray
             if (-not $c.HasFingerprint) {
                 Write-Host ("      it records no base fingerprint, so its next tune will not mention the change") -ForegroundColor DarkGray
             }
         } else {
             Write-Host ("  - '{0}' loses the brightness {1:+#;-#;0} and saturation {2:+#;-#;0} it was tuned by" -f $c.Name, $c.Brightness, $c.Saturation) -ForegroundColor Red
-            Write-Host ("      nothing else records those values") -ForegroundColor DarkGray
+            if ($Plan.RevealDir) {
+                Write-Host ("      they were measured against your '{0}', not the bundled one; nothing else records them, and its own colours do not change" -f $Plan.Name) -ForegroundColor DarkGray
+            } else {
+                Write-Host ("      nothing else records those values") -ForegroundColor DarkGray
+            }
         }
     }
 
@@ -487,34 +515,18 @@ function Move-StyleDirectoryToTrash {
 
     Old trash is swept here rather than by a separate command, so the store
     cannot grow without bound -- the very complaint this feature exists to fix.
+
+    The reversible step runs FIRST and the irreversible one LAST. It was the
+    other way round, so every ordinary way the move can fail -- the folder open
+    in an editor on Windows, a permissions failure, the style removed by hand or
+    by a second terminal between the plan and the keystroke -- still erased the
+    expired trash for good, while the only thing printed was that the style
+    could NOT be deleted.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)]$Plan)
 
     $trashRoot = Get-StyleTrashRoot
-
-    # Sweep the list the user was SHOWN, off the plan -- not a fresh one.
-    # Calling Get-StyleTrashSweepTarget again here would re-read the clock AFTER
-    # the prompt, and Confirm-Action blocks for as long as the user takes to
-    # read it: a folder sitting at six days and twenty-three hours when the
-    # listing was drawn crosses the window while they decide, and confirming
-    # erases it having never named it. That is this same defect one step later,
-    # and it is why the window is not a parameter here -- a second place to set
-    # it is a second answer to disagree with the first.
-    #
-    # A plan carrying no SweepTargets sweeps nothing, which is the safe
-    # direction to fail: the trash grows rather than losing something unnamed.
-    if (Test-Path -LiteralPath $trashRoot) {
-        foreach ($old in @($Plan.SweepTargets)) {
-            try {
-                if ($old.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
-                    [System.IO.Directory]::Delete($old.FullName, $false)
-                } else {
-                    Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction Stop
-                }
-            } catch { }
-        }
-    }
 
     # Re-prove containment at the moment of the move, not just when the plan
     # was built.
@@ -528,7 +540,31 @@ function Move-StyleDirectoryToTrash {
     Move-Item -LiteralPath $Plan.Dir -Destination $Plan.TrashPath -ErrorAction Stop
 
     if ((Test-Path -LiteralPath $Plan.Dir) -or -not (Test-Path -LiteralPath $Plan.TrashPath)) {
-        throw "Move did not complete: '$($Plan.Dir)' -> '$($Plan.TrashPath)'. Nothing else was changed."
+        throw "Move did not complete: '$($Plan.Dir)' -> '$($Plan.TrashPath)'."
+    }
+
+    # Only now, with the move verified: a delete that did not happen erases
+    # nothing.
+    #
+    # Sweep the list the user was SHOWN, off the plan -- not a fresh one.
+    # Calling Get-StyleTrashSweepTarget again here would re-read the clock AFTER
+    # the prompt, and Confirm-Action blocks for as long as the user takes to
+    # read it: a folder sitting at six days and twenty-three hours when the
+    # listing was drawn crosses the window while they decide, and confirming
+    # erases it having never named it. That is this same defect one step later,
+    # and it is why the window is not a parameter here -- a second place to set
+    # it is a second answer to disagree with the first.
+    #
+    # A plan carrying no SweepTargets sweeps nothing, which is the safe
+    # direction to fail: the trash grows rather than losing something unnamed.
+    foreach ($old in @($Plan.SweepTargets)) {
+        try {
+            if ($old.Attributes -band [System.IO.FileAttributes]::ReparsePoint) {
+                [System.IO.Directory]::Delete($old.FullName, $false)
+            } else {
+                Remove-Item -LiteralPath $old.FullName -Recurse -Force -ErrorAction Stop
+            }
+        } catch { }
     }
 }
 
@@ -616,6 +652,13 @@ function Invoke-TerminalStyleDelete {
         Move-StyleDirectoryToTrash -Plan $plan
     } catch {
         Write-Host "Could not delete '$($plan.Name)': $_" -ForegroundColor Red
+        # The listing above named trash this delete would erase, in red, and the
+        # user consented to it as part of one act. Saying the delete failed does
+        # not say that half did not happen, and the failure paths through
+        # Move-Item throw before the sweep can be reported any other way.
+        if (@($plan.SweepTargets).Count -gt 0) {
+            Write-Host "  Nothing was erased: the trash is swept only after the move lands." -ForegroundColor DarkGray
+        }
         return
     }
 
@@ -626,12 +669,15 @@ function Invoke-TerminalStyleDelete {
     if ($plan.KeptProfile) { Write-Host "  Kept $($plan.KeptProfile)" -ForegroundColor DarkGray }
 
     # Reconciliation LAST, and only once the move is verified, so a failed move
-    # never repaints the terminal.
+    # never repaints the terminal. The cost of that order is that the style is
+    # no longer where the reset looks for it: -KnownStyleName carries the
+    # ownership the plan proved while it was still there, or the reset refuses
+    # the one profile it is certain about and the RESET line above is a lie.
     if ($plan.WasActive) {
         if ($plan.RevealDir) {
             Apply-StyleDirect -StyleName $plan.Name -Target $Target
         } else {
-            Reset-StyleDirect -Target $Target
+            Reset-StyleDirect -Target $Target -KnownStyleName $plan.Name
         }
     }
 }

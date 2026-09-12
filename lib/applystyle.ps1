@@ -487,7 +487,12 @@ function Apply-StyleNonWT {
     # Stage the zsh/bash side too. The user's login shell is probably not
     # PowerShell, and the colors belong to the terminal rather than to any one
     # shell -- so a zsh tab opened after this should come up styled as well.
-    Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
+    #
+    # The status is captured because it is reported below. Staging is
+    # best-effort by design, but it decides what every FUTURE tab looks like,
+    # and a silent failure left them all on the previous style while this
+    # function printed "Style applied".
+    $staged = Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
 
     # Prompt/banner: same contract as the Windows Terminal path.
     $styleProfile = Join-Path $StyleDir 'profile.ps1'
@@ -503,17 +508,27 @@ function Apply-StyleNonWT {
     Write-Host "  Terminal:      " -NoNewline
     Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan
 
+    # The same treatment the OSC half below has always had, for the half that
+    # decides every tab AFTER this one. Through the shared notice, so the picker
+    # cannot end up saying something different about the same failure.
+    Show-ShellStagingFailure -Status $staged
+
     if (-not $applied) {
         Write-Host ""
         if ([Console]::IsOutputRedirected) {
-            # The style IS recorded and staged -- a new tab will come up in it.
-            # What could not happen is repainting THIS session, because its
-            # output does not go to a terminal. Say that precisely: the
-            # alternative is a user watching an unchanged window after being
-            # told the style was applied.
+            # The style IS recorded, and staged when the staging worked -- a new
+            # tab will come up in it. What could not happen is repainting THIS
+            # session, because its output does not go to a terminal. Say that
+            # precisely: the alternative is a user watching an unchanged window
+            # after being told the style was applied.
             Write-Host "  Colors were not applied to this session: its output is redirected," -ForegroundColor Yellow
-            Write-Host "  so there is no terminal to repaint. The style is saved -- open a new" -ForegroundColor Yellow
-            Write-Host "  tab, or run tstyles directly in your terminal, to see it." -ForegroundColor Yellow
+            Write-Host "  so there is no terminal to repaint." -ForegroundColor Yellow
+            if ($staged -eq 'ok') {
+                # Conditional, because this is the sentence a staging failure
+                # falsifies word for word.
+                Write-Host "  The style is saved -- open a new tab, or run tstyles directly in your" -ForegroundColor Yellow
+                Write-Host "  terminal, to see it." -ForegroundColor Yellow
+            }
         } else {
             Write-Host "  Note: this terminal did not accept live color changes, so only the prompt was applied." -ForegroundColor Yellow
         }
@@ -796,7 +811,12 @@ function Reset-StyleDirect {
     # Off Windows Terminal there is no settings.json to strip: the reset is an
     # OSC 104/110-117 packet that hands color control back to the terminal's own
     # profile, plus dropping the style record and current-style.ps1.
-    param([string]$Target)
+    #
+    # -KnownStyleName is one name the CALLER has already proved is ours, for the
+    # ownership marker below. `tstyles delete` is the only user: it proves
+    # ownership while the style is still on disk, and the reset it promised runs
+    # after the move.
+    param([string]$Target, [string]$KnownStyleName)
 
     Show-UpdateNoticeIfAvailable
 
@@ -869,9 +889,20 @@ function Reset-StyleDirect {
     # answer is to change nothing rather than guess. This runs BEFORE the backup
     # on purpose -- see Save-SettingsBackup below, whose rolling .bak is the
     # user's only undo and must not be spent on a call that writes nothing.
+    #
+    # Get-AvailableStyles enumerates styles/ under the two roots, and that is
+    # the whole of what it can see -- so the marker is false for a style that
+    # has just been moved OUT of it. `tstyles delete` does exactly that: it
+    # moves the style into .deleted/ (a sibling of styles/) and only then runs
+    # the reset it itemised on the consent screen, which refused, leaving the
+    # profile fully styled and printing "Its colorScheme is '<name>', which is
+    # not a style this tool wrote" four lines under "Deleted <name>." Resetting
+    # BEFORE the move would leave the terminal unstyled if the move then
+    # throws, so the caller carries its proof across instead.
     $styledByUs = $false
     if ($schemeName) {
-        $styledByUs = @(Get-AvailableStyles | Where-Object { $_.Name -eq $schemeName }).Count -gt 0
+        $styledByUs = ($KnownStyleName -and $schemeName -eq $KnownStyleName) -or
+                      @(Get-AvailableStyles | Where-Object { $_.Name -eq $schemeName }).Count -gt 0
     }
     if (-not $styledByUs) {
         Write-Host ("  '{0}' carries no TerminalStyles style -- nothing was changed." -f $Target) -ForegroundColor Yellow
