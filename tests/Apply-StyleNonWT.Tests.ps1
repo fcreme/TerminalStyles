@@ -173,6 +173,107 @@ Describe 'Apply-StyleNonWT' {
     }
 }
 
+Describe 'the zsh/bash half of an apply says when it could not stage' {
+    # Set-ShellStyleState stages current-style.osc and current-prompt.sh -- the
+    # two files that decide what every FUTURE zsh/bash tab looks like -- inside
+    # one try whose catch was literally `} catch { }`, and it returned nothing.
+    # Both call sites invoked it as a bare statement, because there was nothing
+    # to check. So a write failure on the first of those files skipped the rest,
+    # left the PREVIOUS style staged, and `tstyles <style>` printed its ordinary
+    # green success block over the top of it.
+    #
+    # Best-effort is the right policy here and is documented as deliberate: a
+    # PowerShell user with no shell integration must not see an apply fail over
+    # these. Best effort still has to REPORT, and the asymmetry made that
+    # obvious -- the half that repaints THIS tab reports its failure in three
+    # careful yellow lines, and the half that decides every future tab said
+    # nothing at all.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+
+            $script:styleDir = Join-Path $script:TStylesDataRoot 'styles/fake'
+            New-Item -ItemType Directory -Force -Path $script:styleDir | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'scheme.json'),
+                '{"name":"fake","background":"#101010","foreground":"#f0f0f0"}',
+                [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'prompt.sh'),
+                "# fake shell prompt`n", [System.Text.UTF8Encoding]::new($false))
+            $script:scheme = [pscustomobject]@{
+                name = 'fake'; background = '#101010'; foreground = '#f0f0f0'
+            }
+
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Mock Write-HostOscPacket { $false }
+            Mock Get-StyleBundledBackground { $null }
+
+            # A directory that does not exist, so [System.IO.File]::WriteAllText
+            # throws a DirectoryNotFoundException on the FIRST statement in the
+            # try -- the same shape as an unwritable data root, with no chmod,
+            # which keeps this portable to the Windows legs of CI.
+            function script:Break-Staging {
+                Mock Get-ShellOscPath { Join-Path $script:TStylesDataRoot 'no-such-dir/current-style.osc' }
+            }
+        }
+
+        It 'returns ok when it staged everything' {
+            Set-ShellStyleState -StyleName 'fake' -StyleDir $script:styleDir -Scheme $script:scheme |
+                Should -Be 'ok'
+        }
+
+        It 'returns failed rather than swallowing the write error' {
+            script:Break-Staging
+            Set-ShellStyleState -StyleName 'fake' -StyleDir $script:styleDir -Scheme $script:scheme |
+                Should -Be 'failed'
+        }
+
+        It 'the apply names the directory it could not write into' {
+            script:Break-Staging
+            $out = Apply-StyleNonWT -StyleName 'fake' -StyleDir $script:styleDir 6>&1 | Out-String
+
+            $out | Should -Match 'Could not stage'
+            $out | Should -Match ([regex]::Escape($script:TStylesDataRoot)) `
+                -Because 'the user cannot fix a directory the message never names'
+            $out | Should -Match 'PREVIOUS style' `
+                -Because 'that is what every new zsh/bash tab will come up in'
+        }
+
+        It 'stops claiming the style is saved for the next tab' {
+            # The sentence the staging failure falsifies, word for word. It is
+            # printed only when stdout is redirected, which is the case a
+            # machine might act on -- and the case every CI leg runs under.
+            if (-not [Console]::IsOutputRedirected) {
+                Set-ItResult -Skipped -Because 'that sentence is only printed to a redirected host'
+                return
+            }
+            script:Break-Staging
+            $out = Apply-StyleNonWT -StyleName 'fake' -StyleDir $script:styleDir 6>&1 | Out-String
+            $out | Should -Not -Match 'The style is saved'
+        }
+
+        It 'says none of that on an ordinary apply' {
+            # A warning printed when nothing is wrong is the same defect wearing
+            # the other hat.
+            $out = Apply-StyleNonWT -StyleName 'fake' -StyleDir $script:styleDir 6>&1 | Out-String
+            $out | Should -Not -Match 'Could not stage'
+            [System.IO.File]::ReadAllText((Get-ShellOscPath), [System.Text.UTF8Encoding]::new($false)) |
+                Should -Be (Get-SchemeOscPacket -Scheme $script:scheme) -Because 'the fixture must really stage'
+        }
+
+        It 'does not leak its status into the command output' {
+            # The call sites have to CONSUME the new return value. A bare
+            # `Set-ShellStyleState ...` statement would now emit 'ok' straight
+            # into `tstyles`' own output.
+            $out = Apply-StyleNonWT -StyleName 'fake' -StyleDir $script:styleDir 6>&1 |
+                   Where-Object { $_ -isnot [System.Management.Automation.InformationRecord] } |
+                   Out-String
+            $out.Trim() | Should -BeNullOrEmpty
+        }
+    }
+}
+
 Describe 'Reset-StyleNonWT' {
     InModuleScope TerminalStyles {
         BeforeEach {

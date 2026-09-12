@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **five places on the shell and loader paths reported success for something that had not happened.** They are one defect wearing five hats: a function that knows why it failed hands its caller a value that cannot carry the reason. This file already had the answer -- `Unregister-ShellLoader` returns `removed` / `none` / `malformed` / `failed` and its callers compare explicitly -- and the other four places on the same paths had each collapsed a status to a boolean or to nothing.
+
+  `Register-ShellLoader` reported `updated` for an rc file carrying a BEGIN with no matching END: it wrote the file back byte-for-byte and told the user it had installed the loader. Its sibling has returned `malformed` for exactly that input since 0.8.22, so the two halves of the same marker rule disagreed. Measured on the same file: `Register` said `updated` where `Unregister` said `malformed`.
+
+  `tstyles uninstall` swept the rc files with `if ((Unregister-ShellLoader ...) -eq 'removed')`, discarding the other three answers, so a file it had just promised to strip could be left carrying the block with nothing said and "TerminalStyles uninstalled." printed underneath. `shell-remove` reported all four. The sweep-and-report rule is now one function both call, since that duplication is what let the two drift.
+
+  `tstyles register` wrote both `$PROFILE` files in an unguarded loop, so the second one failing left the command half-applied under a promise that every new tab would auto-load. Each target is now guarded: on failure it removes the first-touch backup it took of a file it never modified, names the path and the reason, and the auto-load line prints only if at least one target really got the block.
+
+  `Set-ShellStyleState` swallowed every failure in the zsh/bash half of an apply in one `catch { }`, so `tstyles <style>` reported success while new tabs kept the previous prompt. `Sync-ShellRuntime` returned one boolean for two unrelated causes, so `shell-init` blamed a missing module file whatever had actually gone wrong -- including a data root that refused the write.
+
+  A status names the category, which is what a caller branches on, and cannot also carry "access is denied" versus "no space left on the device", which is the half the user acts on. Both staging functions now set one documented module-scoped variable on the way out, read only alongside a non-`ok` status.
+
+  Found while reproducing the above: `Unregister-ShellLoader`'s READ was outside its try, so an unreadable rc file threw a raw `MethodInvocationException` out of the middle of both callers rather than returning `failed`.
+
 ## [0.8.25] - 2026-09-12
 
 ### Fixed

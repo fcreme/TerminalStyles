@@ -1399,6 +1399,10 @@ function Invoke-TerminalStyle {
         # makes sense. Off WT there are no profiles to disambiguate -- this shell
         # IS PowerShell, so the prompt always applies.
         $isPwshTarget = $true
+        # 'ok' up front because only the non-settings-file branch stages the
+        # shell side at all: left unset, the Windows Terminal path would compare
+        # $null against 'ok' and warn about a staging step it never ran.
+        $stagedShell = 'ok'
         if ($useSettingsFile) {
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
@@ -1432,7 +1436,10 @@ function Invoke-TerminalStyle {
             # current-style.osc and current-prompt.sh on the PREVIOUS style, so
             # every new zsh/bash tab comes up in the old palette and banner --
             # while `tstyles <name>` on the same terminal gets it right.
-            Set-ShellStyleState -StyleName $selectedStyle.Name `
+            # Captured, and reported below with the confirm block: the status
+            # exists because that staging used to fail in silence, and a bare
+            # statement here would also emit 'ok' into the picker's own output.
+            $stagedShell = Set-ShellStyleState -StyleName $selectedStyle.Name `
                                 -StyleDir $selectedStyle.FullName `
                                 -Scheme $schemes[$idx] -KeepPrompt:$KeepPrompt
 
@@ -1503,6 +1510,14 @@ function Invoke-TerminalStyle {
         Write-Host "  Style applied: " -NoNewline
         Write-Host $selectedStyle.Name -ForegroundColor Green
         Write-Host ""
+
+        # The same notice `tstyles <name>` prints, from the same function, so the
+        # two doors say the same thing about the same failure. This is the door
+        # that forgot to stage those files at all for several releases.
+        if ($stagedShell -ne 'ok') {
+            Show-ShellStagingFailure -Status $stagedShell
+            Write-Host ""
+        }
 
         # The same qualifier `tstyles <name>` prints, from the same function, so
         # the two doors give the same answer. Without it the picker claimed a
