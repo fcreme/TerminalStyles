@@ -97,9 +97,16 @@ Describe 'uninstall reverses shell-init' {
             # written to is a SUBSET of the file set that must be swept, because
             # shell-init also registers into ~/.profile. Asserting the narrow name
             # here is what let that block become unremovable.
+            #
+            # The strip itself goes through Remove-ShellLoaderBlock, which is the
+            # one implementation of "unregister each file and report every
+            # status" -- uninstall's own copy of that loop kept one of the four
+            # statuses and dropped the rest. Either name satisfies the second
+            # assertion, so moving the call back inline does not fail it; the
+            # behavioural cases further down are what hold that shape.
             $src = (Get-Command Invoke-TerminalStylesUninstall).ScriptBlock.ToString()
             $src | Should -Match 'Get-ShellRcRemovalCandidate'
-            $src | Should -Match 'Unregister-ShellLoader'
+            $src | Should -Match '(Unregister-ShellLoader|Remove-ShellLoaderBlock)'
         }
 
         It 'clears the staged shell state the loader reads' {
@@ -389,12 +396,25 @@ Describe 'shell-remove tells the truth about what it did' {
             # Every status is a truthy STRING, so `if (Unregister-ShellLoader ...)`
             # is now true even for 'none' -- it would strip nothing and report
             # success for every rc file the user has.
-            foreach ($fn in 'Invoke-TerminalStylesShellInit', 'Invoke-TerminalStylesUninstall') {
+            #
+            # This lint passed for the whole life of the uninstall bug above:
+            # `if ((Unregister-ShellLoader ...) -eq 'removed')` is not a bare
+            # boolean, and it still threw 'failed' and 'malformed' away. So the
+            # behavioural cases are the ones that matter, and the counter here
+            # is the other half of the lesson -- the loop stopped covering
+            # Invoke-TerminalStylesUninstall the moment it began routing through
+            # the shared helper, and a `continue` with nothing behind it reports
+            # green.
+            $checked = 0
+            foreach ($fn in 'Invoke-TerminalStylesShellInit', 'Invoke-TerminalStylesUninstall',
+                            'Remove-ShellLoaderBlock', 'Remove-PowerShellProfileLoader') {
                 $src = (Get-Command $fn).ScriptBlock.ToString()
                 if ($src -notmatch 'Unregister-ShellLoader') { continue }
+                $checked++
                 $src | Should -Not -Match 'if \(Unregister-ShellLoader[^)]*\)\s*\{' `
                     -Because "$fn must not use the status as a bare boolean"
             }
+            $checked | Should -BeGreaterThan 0 -Because 'a loop that never iterates reports green'
         }
     }
 }
@@ -514,6 +534,170 @@ Describe 'bash login shells get the style' {
             Invoke-TerminalStylesShellInit -HomeDir $h -Force *> $null
             [System.IO.File]::ReadAllText((Join-Path $h '.bash_profile'), [System.Text.UTF8Encoding]::new($false)) |
                 Should -Match 'original \.bash_profile'
+        }
+    }
+}
+
+Describe 'both rc-removal callers report every file they could not strip' {
+    # The consent screen NAMES the rc files uninstall is about to change, one
+    # per line, and then step 2 compared Unregister-ShellLoader's four-state
+    # status against exactly one of its values. 'failed' (an unwritable rc file
+    # -- the managed-dotfile case that function's own docstring names) and
+    # 'malformed' (a BEGIN with no END) printed nothing, were counted as
+    # nothing, and the command signed off on "TerminalStyles uninstalled." with
+    # the block still in two of the files it had just listed. Step 1 has removed
+    # the module by then, so `tstyles shell-remove` -- the documented way out --
+    # is gone too, and the user was never told there was anything to remove.
+    #
+    # Run over BOTH callers of the same rule, because that is the shape of the
+    # defect: shell-remove switched on all four statuses and uninstall kept its
+    # own single-arm copy. Whichever way a future edit breaks them apart, one of
+    # these two cases goes red.
+    #
+    # Driven through the real commands, past consent, with every path they can
+    # reach inside TestDrive: -HomeDir for the rc half, a mocked data root for
+    # the staged files, the Bootstrap branch so Uninstall-PSResource is never
+    # reached, and both seams of the $PROFILE half pinned to an empty list.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $script:data
+            Mock Get-TStylesDataRoot { $script:data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            # -ProfileTarget @() already pins this; the mock is the second lock
+            # on the one seam whose failure would reach the operator's own
+            # $PROFILE, because that list is discovered by RUNNING each engine.
+            Mock Get-PowerShellProfileTarget { @() }
+            Mock Confirm-Action { $true }
+
+            # Three rc files, each carrying a block this code wrote itself, in
+            # the three states Unregister-ShellLoader distinguishes.
+            $script:clean = Join-Path $script:h '.zshrc'
+            $script:stuck = Join-Path $script:h '.bashrc'
+            $script:broke = Join-Path $script:h '.profile'
+            foreach ($p in $script:clean, $script:stuck, $script:broke) {
+                [System.IO.File]::WriteAllText($p, "# original`nexport MINE=1`n",
+                    [System.Text.UTF8Encoding]::new($false))
+                Register-ShellLoader -Path $p | Should -Be 'added' -Because 'the fixture must plant a real block'
+            }
+            $t = [System.IO.File]::ReadAllText($script:broke, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText($script:broke,
+                ($t -replace '# ===== TerminalStyles END =====\r?\n?', ''),
+                [System.Text.UTF8Encoding]::new($false))
+            # IsReadOnly rather than chmod: one .NET attribute on every platform
+            # the suite runs on, where chmod is an external binary that only
+            # happens to exist on the Windows runners.
+            (Get-Item -LiteralPath $script:stuck -Force).IsReadOnly = $true
+        }
+        AfterEach {
+            (Get-Item -LiteralPath $script:stuck -Force).IsReadOnly = $false
+            $script:TStylesDataRoot = $script:savedData
+        }
+
+        It '<caller> names both files it could not strip, and does not claim it finished' -ForEach @(
+            @{ caller = 'shell-remove'; falseClaim = 'original prompt back'
+               qualifier = 'NOT fully removed' }
+            @{ caller = 'uninstall';    falseClaim = '(?m)^TerminalStyles uninstalled\.\s*$'
+               qualifier = 'EXCEPT' }
+        ) {
+            $out = if ($caller -eq 'uninstall') {
+                Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String
+            } else {
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove 6>&1 | Out-String
+            }
+
+            $out | Should -Match ([regex]::Escape($script:stuck))
+            $out | Should -Match 'could not write'
+            $out | Should -Match ([regex]::Escape($script:broke))
+            $out | Should -Match 'no matching END'
+            $out | Should -Match 'by hand'
+
+            # The last line the user reads. uninstall printed its unconditionally.
+            $out | Should -Not -Match $falseClaim
+            $out | Should -Match $qualifier
+
+            # The half that makes the silence a lie rather than a cosmetic slip.
+            foreach ($p in $script:stuck, $script:broke) {
+                [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false)) |
+                    Should -Match 'TerminalStyles BEGIN' -Because "$p would otherwise have been reported gone"
+            }
+
+            # ...and the ordinary file still comes out clean, with the user's
+            # own line still in it.
+            $after = [System.IO.File]::ReadAllText($script:clean, [System.Text.UTF8Encoding]::new($false))
+            $after | Should -Not -Match 'TerminalStyles BEGIN'
+            $after | Should -Match 'export MINE=1'
+        }
+    }
+}
+
+Describe 'uninstall says nothing extra when every rc file came out clean' {
+    # The other direction: a command that now qualifies its sign-off must not
+    # qualify it on the ordinary path, or the qualifier stops meaning anything.
+    InModuleScope TerminalStyles {
+        It 'closes on the plain line when there was nothing to report' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $data = Join-Path $h 'data'
+            New-Item -ItemType Directory -Path $data -Force | Out-Null
+            $saved = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $data
+            Mock Get-TStylesDataRoot { $data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            Mock Get-PowerShellProfileTarget { @() }
+            Mock Confirm-Action { $true }
+
+            $rc = Join-Path $h '.zshrc'
+            [System.IO.File]::WriteAllText($rc, "# original`n", [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $rc | Should -Be 'added'
+
+            try {
+                $out = Invoke-TerminalStylesUninstall -HomeDir $h -Yes -ProfileTarget @() 6>&1 | Out-String
+            } finally { $script:TStylesDataRoot = $saved }
+
+            $out | Should -Match '(?m)^TerminalStyles uninstalled\.\s*$'
+            $out | Should -Not -Match 'EXCEPT'
+            [System.IO.File]::ReadAllText($rc, [System.Text.UTF8Encoding]::new($false)) |
+                Should -Not -Match 'TerminalStyles BEGIN'
+        }
+    }
+}
+
+Describe 'an rc file that cannot even be READ is a status, not a stack trace' {
+    # Found while reproducing the one above. Unregister-ShellLoader guards its
+    # WRITE and not its READ, so a file the tool has no read permission on threw
+    # a raw MethodInvocationException out of the middle of both callers -- past
+    # every remaining rc file, past the WezTerm cleanup and past the $PROFILE
+    # strip. The whole point of the status vocabulary is that one bad rc file
+    # cannot take the command down.
+    InModuleScope TerminalStyles {
+        It 'reports failed rather than throwing' {
+            if ((Get-TStylesPlatform) -eq 'Windows') {
+                Set-ItResult -Skipped -Because 'chmod is the POSIX way to make a file unreadable'; return
+            }
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $script:TStylesDataRoot = $TestDrive
+            $rc = Join-Path $h '.zshrc'
+            [System.IO.File]::WriteAllText($rc, "# mine`n", [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $rc | Should -Be 'added'
+            & chmod 000 $rc
+            $readable = $true
+            try { [System.IO.File]::ReadAllText($rc) | Out-Null } catch { $readable = $false }
+            try {
+                if ($readable) {
+                    # root reads anything. Saying so beats asserting on a
+                    # fixture that never took.
+                    Set-ItResult -Skipped -Because 'this user can read a mode-000 file, so the fixture did not take'
+                    return
+                }
+                { Unregister-ShellLoader -Path $rc } | Should -Not -Throw
+                Unregister-ShellLoader -Path $rc | Should -Be 'failed'
+            } finally { & chmod 644 $rc }
         }
     }
 }

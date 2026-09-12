@@ -487,7 +487,12 @@ function Apply-StyleNonWT {
     # Stage the zsh/bash side too. The user's login shell is probably not
     # PowerShell, and the colors belong to the terminal rather than to any one
     # shell -- so a zsh tab opened after this should come up styled as well.
-    Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
+    #
+    # The status is captured because it is reported below. Staging is
+    # best-effort by design, but it decides what every FUTURE tab looks like,
+    # and a silent failure left them all on the previous style while this
+    # function printed "Style applied".
+    $staged = Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
 
     # Prompt/banner: same contract as the Windows Terminal path.
     $styleProfile = Join-Path $StyleDir 'profile.ps1'
@@ -503,17 +508,27 @@ function Apply-StyleNonWT {
     Write-Host "  Terminal:      " -NoNewline
     Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan
 
+    # The same treatment the OSC half below has always had, for the half that
+    # decides every tab AFTER this one. Through the shared notice, so the picker
+    # cannot end up saying something different about the same failure.
+    Show-ShellStagingFailure -Status $staged
+
     if (-not $applied) {
         Write-Host ""
         if ([Console]::IsOutputRedirected) {
-            # The style IS recorded and staged -- a new tab will come up in it.
-            # What could not happen is repainting THIS session, because its
-            # output does not go to a terminal. Say that precisely: the
-            # alternative is a user watching an unchanged window after being
-            # told the style was applied.
+            # The style IS recorded, and staged when the staging worked -- a new
+            # tab will come up in it. What could not happen is repainting THIS
+            # session, because its output does not go to a terminal. Say that
+            # precisely: the alternative is a user watching an unchanged window
+            # after being told the style was applied.
             Write-Host "  Colors were not applied to this session: its output is redirected," -ForegroundColor Yellow
-            Write-Host "  so there is no terminal to repaint. The style is saved -- open a new" -ForegroundColor Yellow
-            Write-Host "  tab, or run tstyles directly in your terminal, to see it." -ForegroundColor Yellow
+            Write-Host "  so there is no terminal to repaint." -ForegroundColor Yellow
+            if ($staged -eq 'ok') {
+                # Conditional, because this is the sentence a staging failure
+                # falsifies word for word.
+                Write-Host "  The style is saved -- open a new tab, or run tstyles directly in your" -ForegroundColor Yellow
+                Write-Host "  terminal, to see it." -ForegroundColor Yellow
+            }
         } else {
             Write-Host "  Note: this terminal did not accept live color changes, so only the prompt was applied." -ForegroundColor Yellow
         }

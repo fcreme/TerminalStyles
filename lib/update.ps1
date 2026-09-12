@@ -315,36 +315,70 @@ $loaderEnd
         return
     }
 
-    # Write the block per target (strip first for -Force path)
+    # Write the block per target (strip first for -Force path).
+    #
+    # Guarded, with a per-target status, which is the contract Register-ShellLoader
+    # documents for the rc half of the same job -- "'failed' rather than an
+    # exception ... so the user saw a stack trace and had no idea which of their
+    # rc files had been touched". This half had none of it: the read and the
+    # write were bare, and "Registered in <path>" printed unconditionally on the
+    # line after. An unwritable $PROFILE (read-only bit, root-owned, a OneDrive
+    # lock or a Files-On-Demand placeholder) therefore produced a red .NET error
+    # AND a green success line for the same file, and the command still closed
+    # on "TerminalStyles will auto-load on every new shell tab."
+    $failed = @()
     foreach ($t in $toWrite) {
-        $profileDir = Split-Path -Parent $t.ProfilePath
-        if ($profileDir -and -not (Test-Path -LiteralPath $profileDir)) {
-            New-Item -ItemType Directory -Path $profileDir -Force | Out-Null
+        $bak = $null
+        try {
+            $profileDir = Split-Path -Parent $t.ProfilePath
+            if ($profileDir -and -not (Test-Path -LiteralPath $profileDir)) {
+                New-Item -ItemType Directory -Path $profileDir -Force -ErrorAction Stop | Out-Null
+            }
+
+            $existing = if ($t.Exists) {
+                [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
+            } else { '' }
+
+            if ($existing -match $blockPattern) {
+                $existing = [regex]::Replace($existing, $blockPattern, '')
+            }
+
+            $final = ($existing.TrimEnd() + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart()
+            # Same first-touch rule the bootstrap installer has always applied to
+            # $PROFILE. The module half never did, so `tstyles register` rewrote a
+            # hand-maintained profile with no copy kept.
+            $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $existing -BlockPattern ([regex]::Escape($loaderBegin))
+            [System.IO.File]::WriteAllText($t.ProfilePath, $final, (Get-RcFileEncoding))
+        } catch {
+            # The backup was taken of a file we then never modified, and the
+            # block never landed -- so the next run took another one, and the
+            # one after that. Announced only after the write, for the same
+            # reason: a backup line for an unchanged file reads as success.
+            if ($bak) { Remove-Item -LiteralPath $bak -Force -ErrorAction SilentlyContinue }
+            $failed += $t
+            Write-Host "  ! could not write $($t.ProfilePath)" -ForegroundColor Red
+            Write-Host "    $($_.Exception.Message)" -ForegroundColor Red
+            Write-Host "    Check the file's permissions (a read-only profile, one managed by nix" -ForegroundColor Red
+            Write-Host "    or chezmoi, or a cloud-synced placeholder) and run this again." -ForegroundColor Red
+            continue
         }
 
-        $existing = if ($t.Exists) {
-            [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
-        } else { '' }
-
-        if ($existing -match $blockPattern) {
-            $existing = [regex]::Replace($existing, $blockPattern, '')
-        }
-
-        $final = ($existing.TrimEnd() + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart()
-        # Same first-touch rule the bootstrap installer has always applied to
-        # $PROFILE. The module half never did, so `tstyles register` rewrote a
-        # hand-maintained profile with no copy kept.
-        $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $existing -BlockPattern ([regex]::Escape($loaderBegin))
         if ($bak) { Write-Host "  Backed up your existing $($t.Label) profile to: $bak" -ForegroundColor Gray }
-        [System.IO.File]::WriteAllText($t.ProfilePath, $final, (Get-RcFileEncoding))
-
         Write-Host "  Registered in $($t.ProfilePath)" -ForegroundColor Green
     }
 
     Write-Host ""
-    Write-Host "TerminalStyles will auto-load on every new shell tab." -ForegroundColor Cyan
-    Write-Host "To verify in this session: Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Gray
-    Write-Host ""
+    if ($failed.Count -gt 0) {
+        Write-Host ("Not registered in: {0}" -f (($failed | ForEach-Object { $_.Label }) -join ', ')) -ForegroundColor Red
+        Write-Host ""
+    }
+    # Only when something really was written. The promise is about what a new
+    # tab will load, and nothing loads out of a file the block never reached.
+    if ($failed.Count -lt @($toWrite).Count) {
+        Write-Host "TerminalStyles will auto-load on every new shell tab." -ForegroundColor Cyan
+        Write-Host "To verify in this session: Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Gray
+        Write-Host ""
+    }
 }
 
 
@@ -667,17 +701,19 @@ function Invoke-TerminalStylesUninstall {
     # exact path baked into the generated tstyles-cli.ps1, so the shell's own
     # `tstyles` command could no longer load the module. That left hand-editing
     # ~/.zshrc as the only recovery.
-    $shellRemoved = 0
     # The removal superset, not the registration list: shell-init can register
     # into ~/.profile, and sweeping the narrow list orphaned that block forever.
-    foreach ($c in (Get-ShellRcRemovalCandidate @rcSplat)) {
-        # Explicit comparison: Unregister-ShellLoader returns a STATUS now, and
-        # every status -- including 'none' -- is a truthy string.
-        if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed') {
-            Write-Host "  Removed shell loader from $($c.Path)" -ForegroundColor Green
-            $shellRemoved++
-        }
-    }
+    #
+    # Through the same helper `tstyles shell-remove` uses. This loop used to be
+    # its own copy of the rule, comparing the four-state status against exactly
+    # one value -- an explicit comparison, so the lint for "don't use the status
+    # as a boolean" passed, while 'failed' and 'malformed' were thrown away in
+    # silence. The consent screen above NAMES these files one per line, and two
+    # of them could be left carrying the block with nothing said about it.
+    $sweep = Remove-ShellLoaderBlock -Path @(Get-ShellRcRemovalCandidate @rcSplat |
+                                             ForEach-Object { $_.Path })
+    $shellRemoved  = $sweep.Removed
+    $shellProblems = $sweep.Problems
     Clear-ShellStyleState
 
     # The generated WezTerm module. Removal is a single delete because nothing
@@ -717,7 +753,28 @@ function Invoke-TerminalStylesUninstall {
     }
 
     Write-Host ""
-    Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
+    # The last line the user reads, and it was printed unconditionally. An rc
+    # file this command could not strip is one the user now has to find and edit
+    # by hand: step 1 has removed the module, so `tstyles shell-remove` -- the
+    # documented way out -- cannot run any more.
+    if ($shellProblems.Count -gt 0) {
+        Write-Host "TerminalStyles uninstalled, EXCEPT the loader block in:" -ForegroundColor Yellow
+        foreach ($p in $shellProblems) {
+            Write-Host ("  {0}" -f $p) -ForegroundColor Yellow
+        }
+        # Single-quoted: a backtick opens an escape in a double-quoted string,
+        # and `t is a tab.
+        Write-Host 'Delete those blocks by hand -- the module is gone, so `tstyles shell-remove`' -ForegroundColor Yellow
+        # What is safe to promise about the leftovers, and no more: the staged
+        # style state has just been cleared, so whatever the block still finds
+        # to source has nothing left to paint. Whether the runtime file itself
+        # survives depends on the install kind, and this is not the line to
+        # explain that in.
+        Write-Host "cannot do it for you now. Until you do, they paint nothing: the staged style" -ForegroundColor Gray
+        Write-Host "state is gone, so there is nothing left for them to apply." -ForegroundColor Gray
+    } else {
+        Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
+    }
     Write-Host "Open a new pwsh tab to confirm the loader is gone." -ForegroundColor Gray
     Write-Host "Your settings.json was NOT modified. If you want a default look back," -ForegroundColor Gray
     Write-Host "restore a settings.json.bak-* backup or edit it via WT Settings -> Open JSON file." -ForegroundColor Gray
