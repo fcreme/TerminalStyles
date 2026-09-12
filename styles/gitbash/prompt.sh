@@ -22,7 +22,11 @@ _ts_pYellow=$(ts_c '155;150;29')
 ts_title 'GITBASH // MINGW64'
 
 # Colors for the " (branch)" segment ts_git_branch appends.
-TS_GIT_OPEN=$(ts_cs '187;0;187')   # same magenta as pMagenta, but substitution-safe
-TS_GIT_CLOSE=$(ts_xs)
+# _ts_-prefixed like everything else this file defines. These were the last two
+# bare names any style put in the user's shell -- 0.8.22 renamed the runtime's
+# own TS_LOADED and TS_SHELL for exactly this reason and these were missed,
+# because both leak checks whitelist the TS_ prefix that release declared a leak.
+_ts_git_open=$(ts_cs '187;0;187')   # same magenta as pMagenta, but substitution-safe
+_ts_git_close=$(ts_xs)
 
 ts_prompt_apply "$(ts_prompt_expand "${_ts_pGreen}{USER}@{HOST}${_ts_pX} ${_ts_pYellow}MINGW64${_ts_pX} ${_ts_pCyan}{CWD}${_ts_pX}{GITBRANCH}{NL}${_ts_pGray}\$${_ts_pX} ")"

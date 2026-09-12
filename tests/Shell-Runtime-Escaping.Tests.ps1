@@ -85,7 +85,7 @@ Describe 'ts_git_branch survives a hostile branch name' {
         $out = script:Invoke-Shell -Shell 'zsh' -Script @"
 cd '$repo'
 . '$($script:runtime)' 2>/dev/null
-TS_GIT_OPEN=''; TS_GIT_CLOSE=''
+_ts_git_open=''; _ts_git_close=''
 setopt PROMPT_SUBST
 PROMPT="`$(ts_git_branch)"
 print -rP "[`$PROMPT]"
@@ -100,7 +100,7 @@ print -rP "[`$PROMPT]"
         $out = script:Invoke-Shell -Shell 'zsh' -Script @"
 cd '$repo'
 . '$($script:runtime)' 2>/dev/null
-TS_GIT_OPEN=''; TS_GIT_CLOSE=''
+_ts_git_open=''; _ts_git_close=''
 setopt PROMPT_SUBST
 PROMPT="`$(ts_git_branch) END"
 print -rP "[`$PROMPT]"
@@ -115,7 +115,7 @@ print -rP "[`$PROMPT]"
         $out = script:Invoke-Shell -Shell 'bash' -Script @"
 cd '$repo'
 . '$($script:runtime)' 2>/dev/null
-TS_GIT_OPEN=''; TS_GIT_CLOSE=''
+_ts_git_open=''; _ts_git_close=''
 ts_git_branch
 "@
         $out | Should -Match '\(100%done\)'
@@ -151,8 +151,8 @@ ts_cs '187;0;187'
     It 'gitbash uses the substitution-safe helper for its branch colours' {
         $p = Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'styles/gitbash') 'prompt.sh'
         $src = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
-        $src | Should -Match 'TS_GIT_OPEN=\$\(ts_cs'
-        $src | Should -Match 'TS_GIT_CLOSE=\$\(ts_xs\)'
+        $src | Should -Match '_ts_git_open=\$\(ts_cs'
+        $src | Should -Match '_ts_git_close=\$\(ts_xs\)'
     }
 }
 

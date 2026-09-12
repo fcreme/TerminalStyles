@@ -182,6 +182,11 @@ Describe 'a style prompt does not clobber the user''s shell variables' {
     # user had by those names. $X and $D are not exotic choices for a person's
     # own scratch variables.
     #
+    # _ts_ ONLY. The whitelist used to read ^(TS_|_ts_), which excused the very
+    # prefix 0.8.22 declared a leak when it renamed the runtime's TS_LOADED and
+    # TS_SHELL -- so gitbash went on defining TS_GIT_OPEN and TS_GIT_CLOSE in
+    # the user's shell and this check reported green. A leak check that
+    # whitelists the leak is the shape CLAUDE.md warns about.
     # Everything is prefixed _ts_ now. Verified in a real interactive zsh: a
     # .zshrc setting X and D keeps both after the style loads.
     BeforeDiscovery {
@@ -204,7 +209,7 @@ Describe 'a style prompt does not clobber the user''s shell variables' {
         # CHANGELOG said the defect was closed.
         $bare = @([regex]::Matches($text, '(?m)(?:^|[\s;&|(])([A-Za-z_][A-Za-z0-9_]*)=') |
             ForEach-Object { $_.Groups[1].Value } |
-            Where-Object { $_ -notmatch '^(TS_|_ts_)' } |
+            Where-Object { $_ -notmatch '^_ts_' } |
             Sort-Object -Unique)
 
         $bare | Should -BeNullOrEmpty `
@@ -256,7 +261,7 @@ Describe 'a style leaks nothing into the user shell -- measured, not linted' {
         [System.IO.File]::WriteAllText($sf, $script, [System.Text.UTF8Encoding]::new($false))
 
         $out = & zsh -f $sf 2>$null
-        $leaked = @($out | Where-Object { $_ -and $_ -notmatch '^(TS_|_ts_|ts_before$|ts_after$)' } |
+        $leaked = @($out | Where-Object { $_ -and $_ -notmatch '^(_ts_|ts_before$|ts_after$)' } |
                    Sort-Object -Unique)
 
         $leaked -join ', ' | Should -BeNullOrEmpty `
