@@ -182,6 +182,27 @@ Describe 'Get-StyleDeletePlan decides before anything is touched' {
             $plan.Children[0].Brightness | Should -Be -20
             $plan.Children[0].Saturation | Should -Be 5
         }
+
+        It 'names a dot-prefixed child too -- the tuner will create one' {
+            # The children come off Get-AvailableStyles, which hid a
+            # dot-prefixed directory on Unix (Get-ChildItem without -Force).
+            # Test-StyleNameValid accepts a leading dot, so `tstyles tune mine`
+            # -> "save as" -> `.wip` makes exactly this style -- and the RED
+            # disclosure line, "'<name>' loses the brightness X and saturation Y
+            # it was tuned by / nothing else records those values", then left it
+            # out of a list the user is entitled to read as complete.
+            foreach ($n in 'keeper', '.wip') {
+                $c = script:New-Style $script:root $n -Tuned
+                [System.IO.File]::WriteAllText((Join-Path $c 'tune.json'),
+                    '{"base":"mine","brightness":30,"saturation":25}')
+            }
+
+            $plan = Get-StyleDeletePlan -Name 'mine'
+            $names = @($plan.Children | ForEach-Object { $_.Name })
+            $names | Should -Contain 'keeper'
+            $names | Should -Contain '.wip' `
+                -Because 'confirming the delete destroys the only record of its deltas'
+        }
     }
 }
 

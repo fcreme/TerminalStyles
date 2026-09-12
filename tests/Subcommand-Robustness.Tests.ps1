@@ -311,3 +311,49 @@ Describe 'the font download is bounded' {
         }
     }
 }
+
+Describe 'applying by name reaches the styles the tool itself creates' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            # Save and restore: this Describe points both roots at a TestDrive,
+            # and the assignment would otherwise persist into the Describes
+            # above and below it.
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:TStylesDataRoot   = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesModuleRoot = $script:TStylesDataRoot
+            foreach ($n in 'eva', '.wip') {
+                $d = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $n
+                New-Item -ItemType Directory -Path $d -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'),
+                    "{`"name`":`"$n`"}", [System.Text.UTF8Encoding]::new($false))
+            }
+            Mock Apply-StyleDirect {}
+            Mock Show-TerminalStyleHelp {}
+            Mock Write-Host {}
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        It "applies '.wip' rather than answering 'Unknown command or style'" {
+            # The dispatch matches its argument through Get-AvailableStyles, not
+            # through Get-StyleDir -- so a style the enumeration could not see
+            # was one `tstyles` refused to apply by name, printing the unknown-
+            # command line and the whole help screen for a style its own tuner
+            # had just written (Test-StyleNameValid accepts a leading dot).
+            Invoke-TerminalStyle -Arg '.wip'
+            Should -Invoke Apply-StyleDirect -ParameterFilter { $StyleName -eq '.wip' } -Times 1 -Exactly
+            Should -Not -Invoke Show-TerminalStyleHelp
+        }
+
+        It 'still refuses a name that is no style at all' {
+            # The control: the branch above must not have become "apply
+            # anything", which would take the unknown-command message with it.
+            Invoke-TerminalStyle -Arg 'definitely-not-a-style'
+            Should -Not -Invoke Apply-StyleDirect
+            Should -Invoke Show-TerminalStyleHelp -Times 1
+        }
+    }
+}

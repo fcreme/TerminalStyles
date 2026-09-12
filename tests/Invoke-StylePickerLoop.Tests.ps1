@@ -168,6 +168,35 @@ Describe 'Invoke-StylePickerLoop' {
                 (@(Compare-Object $originalBytes $afterBytes -SyncWindow 0).Count) | Should -Be 0
             }
 
+            It 'restores the byte-exact original settings.json on Esc when the file carries a UTF-8 BOM' {
+                # Same gesture as above against the other encoding a real
+                # settings.json comes in. Windows Terminal writes no BOM, but
+                # Windows PowerShell 5.1's `Out-File -Encoding utf8`, Notepad's
+                # "UTF-8 with BOM" and several editors do, so a hand-edited file
+                # often has one -- and a cancelled pick silently rewrote its
+                # header. The BOM-less fixture above cannot see that: the byte
+                # that goes missing is one it never had.
+                $enc = [System.Text.UTF8Encoding]::new($false)
+                $original = '{"profiles":{"list":[{"name":"Símbolo del sistema","guid":"{abc}"}]}}'
+                [System.IO.File]::WriteAllText($script:settingsPath, $original,
+                    [System.Text.UTF8Encoding]::new($true))
+                # Snapshot exactly as the picker does -- which is where the BOM
+                # is lost, before any key is pressed.
+                $script:originalJson = [System.IO.File]::ReadAllText(
+                    $script:settingsPath, $enc)
+
+                $originalBytes = [System.IO.File]::ReadAllBytes($script:settingsPath)
+                ($originalBytes[0] -eq 0xEF -and $originalBytes[1] -eq 0xBB -and $originalBytes[2] -eq 0xBF) |
+                    Should -BeTrue -Because 'the fixture must really carry a BOM or this case measures nothing'
+
+                $keys = New-KeyStub @([ConsoleKey]::DownArrow, $null, [ConsoleKey]::Escape)
+                $r = Invoke-StylePickerLoop -StyleCount 2 -StartIndex 0 `
+                    -ReadKey $keys -OnPreview $script:onPreview -OnRevert $script:onRevert
+                $r.Outcome | Should -Be 'cancelled'
+                $afterBytes = [System.IO.File]::ReadAllBytes($script:settingsPath)
+                (@(Compare-Object $originalBytes $afterBytes -SyncWindow 0).Count) | Should -Be 0
+            }
+
             It 'persists the chosen style on Enter' {
                 # Down -> Enter (Enter drains the pending preview for index 1 = beta).
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, [ConsoleKey]::Enter)

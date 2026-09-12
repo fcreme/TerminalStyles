@@ -215,7 +215,7 @@ if ($payload.Ok) {
         -TargetName $Target -BackgroundImage $BackgroundImage `
         -BackgroundImageProvided $bgProvided
 
-    # --- Save settings.json (UTF-8 no BOM, atomic, full depth) ---
+    # --- Save settings.json (UTF-8, atomic, full depth; keeps any BOM) ---
     Write-SettingsFile -Path $SettingsPath -Settings $settings
     Write-Host "settings.json updated." -ForegroundColor Green
 } else {

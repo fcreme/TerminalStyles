@@ -649,9 +649,34 @@ function Merge-StyleIntoSettings {
     # applied style gets cleared -- otherwise it bleeds through and the new
     # style is shown behind the old style's GIF. A background the user set
     # themselves is left alone, which is what the skip is for.
+    #
+    # "On the profile" has to mean what the profile SHOWS, not what its own
+    # entry happens to spell out: Windows Terminal resolves every named profile
+    # against profiles.defaults, so an image written there by
+    # `tstyles <style> -Target defaults` is live on this profile with nothing on
+    # its entry to show for it. Read only the entry -- as this did -- and
+    # $existingBg is $null, the ownership test is asked about nothing, the
+    # action falls to 'skip', and the next bundle-less style applied to the
+    # profile the user is sitting in is drawn behind the previous style's GIF.
+    # Asked through the shared resolver rather than reached for directly,
+    # because `profiles` is not always an object: against the legacy flat-array
+    # form or a missing key, `$Settings.profiles.defaults` is a method call on
+    # null. The resolver already answers "what entry does this target name
+    # resolve to", for all four shapes, and hands back $null when there is none.
+    $inheritedEntry = $null
+    if ($TargetName -ne 'defaults') {
+        $inheritedEntry = (Resolve-WTProfileTarget -Settings $Settings -TargetName 'defaults').Entry
+    }
+    $inheritedBg = if ($inheritedEntry -and
+                       $inheritedEntry.PSObject.Properties.Match('backgroundImage').Count -gt 0) {
+        [string]$inheritedEntry.backgroundImage
+    } else { $null }
+
+    # The profile's own key shadows the inherited one, so it is the one that
+    # answers "whose background is on screen".
     $existingBg = if ($entry.PSObject.Properties.Match('backgroundImage').Count -gt 0) {
         [string]$entry.backgroundImage
-    } else { $null }
+    } else { $inheritedBg }
 
     $bgAction = if ($applyBg) {
                     if ([string]::IsNullOrEmpty($effectiveBg)) { 'remove' } else { 'apply' }
@@ -671,6 +696,23 @@ function Merge-StyleIntoSettings {
         foreach ($bgField in $bgFields) {
             if ($entry.PSObject.Properties.Match($bgField).Count -gt 0) {
                 $entry.PSObject.Properties.Remove($bgField)
+            }
+        }
+        # And from profiles.defaults when that is where the image the profile
+        # shows actually lives: stripping the entry alone hands the profile
+        # straight back to the inherited copy, which is the same bleed one
+        # level up. Guarded on the INHERITED value being ours, separately from
+        # the decision above -- the entry can carry one of ours over a
+        # background the user chose for every profile, and that one is theirs
+        # to keep. Only 'remove' reaches here: an 'apply' writes the new
+        # style's image onto the entry, where it shadows defaults, so nothing
+        # of the old style is visible on this profile and clearing defaults
+        # would silently restyle every other profile too.
+        if ($inheritedEntry -and (Test-ManagedBackgroundPath -Path $inheritedBg)) {
+            foreach ($bgField in $bgFields) {
+                if ($inheritedEntry.PSObject.Properties.Match($bgField).Count -gt 0) {
+                    $inheritedEntry.PSObject.Properties.Remove($bgField)
+                }
             }
         }
     }
@@ -705,9 +747,45 @@ function Write-SettingsAtomic {
     # and reloads on change) can observe a half-written/empty file. A same-volume
     # rename is atomic on NTFS, so the live file is only ever the old bytes or the
     # complete new bytes -- never a truncated middle. Falls back to a direct copy
-    # if Replace/Move is unsupported (e.g. an odd filesystem). UTF-8 no BOM.
+    # if Replace/Move is unsupported (e.g. an odd filesystem). UTF-8, keeping the
+    # byte-order mark the live file already had and adding none to a new file.
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyString()][string]$Json)
-    $enc = [System.Text.UTF8Encoding]::new($false)
+
+    # Whether settings.json starts with a BOM is the FILE's property, not this
+    # caller's, and the single writer is the only place that can keep it. Every
+    # snapshot in the module is taken with [File]::ReadAllText, whose overload
+    # builds its StreamReader with detectEncodingFromByteOrderMarks:true no
+    # matter which encoding it is handed -- so a leading EF BB BF is consumed as
+    # an encoding marker and is simply not in the string. Writing
+    # UTF8Encoding($false) unconditionally then dropped it, three bytes at a
+    # time, from a file the user owns: the picker's Esc and the tuner's Esc are
+    # both documented as restoring the ORIGINAL BYTES (tstyles.ps1 header,
+    # README "reverts in-memory to the exact prior bytes"), and both came back
+    # shorter than they went in. The rolling .bak is taken with Copy-Item
+    # precisely so it keeps every byte, a BOM included -- which left the backup
+    # and the live file disagreeing about the header. Sniffing here fixes the
+    # preview write, the revert, apply, reset and the font writer in one place;
+    # asking at the revert alone would still have lost it on the first preview.
+    #
+    # A missing, locked or unreadable file falls through to no BOM, which is
+    # today's behaviour and the right default for a file we are creating.
+    $hadBom = $false
+    try {
+        if (Test-Path -LiteralPath $Path) {
+            $head = [byte[]]::new(3)
+            # FileShare::ReadWrite, not OpenRead's FileShare::Read: Windows
+            # Terminal watches settings.json and may hold it open, and an
+            # exception here would silently cost the BOM on exactly the
+            # machines this runs on.
+            $fs = [System.IO.File]::Open($Path, [System.IO.FileMode]::Open,
+                                                [System.IO.FileAccess]::Read,
+                                                [System.IO.FileShare]::ReadWrite)
+            try { $read = $fs.Read($head, 0, 3) } finally { $fs.Dispose() }
+            $hadBom = ($read -eq 3 -and $head[0] -eq 0xEF -and $head[1] -eq 0xBB -and $head[2] -eq 0xBF)
+        }
+    } catch { $hadBom = $false }
+
+    $enc = [System.Text.UTF8Encoding]::new($hadBom)
     $tmp = "$Path.tstmp"
     [System.IO.File]::WriteAllText($tmp, $Json, $enc)
     try {
