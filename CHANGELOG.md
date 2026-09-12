@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the leak check whitelisted the leak, so one style went on overwriting the user's own shell variables.** 0.8.22 renamed the runtime's `TS_LOADED` and `TS_SHELL` because bare names in the user's shell are the thing this project forbids -- and both style leak checks excused `^(TS_|_ts_)`, the very prefix that release had just declared a leak. `gitbash/prompt.sh` accordingly kept defining `TS_GIT_OPEN` and `TS_GIT_CLOSE` at top level, replacing anything the user had under those names on every new shell, while the check reported green.
+
+  The names are now `_ts_git_open` and `_ts_git_close` like everything else, and the whitelist is `_ts_` only. Measured with the old style restored: the tightened check fails twice, naming `TS_GIT_CLOSE, TS_GIT_OPEN` from both the static lint and the real-zsh measurement, where the old whitelist passed 150 of 150 with the same leak present.
+
+  That is the last of the twenty-six defects the audit reproduced against the real code.
+
+### Fixed
+
 - **every write to `settings.json` dropped a byte-order mark the file already had.** The picker documents its Esc revert as putting the file back byte-exactly, and it did not: `Write-SettingsAtomic` emits UTF-8 with no BOM unconditionally. The BOM is already gone by the picker's FIRST preview write, so repairing only the revert would have left it lost after a crash mid-preview and after Enter. Fixed in the single writer instead, which also covers apply, reset, the tuner and the font writer -- the encoding is a property of the user's file, not of the command that happened to touch it. Measured: a `settings.json` opening `EF BB BF` came back without it on every path, and now comes back with it.
 
 - **styles the tuner itself creates were invisible to every listing, including the delete consent listing that is supposed to name what goes.** `Get-AvailableStyles` enumerated with a pattern that skips a dot-prefixed directory and treats `[` and `]` as wildcards, while `Get-StyleDir` resolves both -- so a style named `.wip` or `dev[1]` could be applied by name and tuned, but never appeared in `tstyles list`, never in the picker, and never in the "these go with it" list the delete prompt prints before erasing it. The enumeration now admits exactly what `Get-StyleDir` resolves, rather than carrying a second, narrower answer to the same question. That also closes a third divergence: a directory name the resolver refuses can no longer be listed either, which is the "worse than not existing" state the resolver's own docstring exists to prevent.

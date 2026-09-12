@@ -210,7 +210,7 @@ printf 'REACHED-END\n'
 Describe 'a style prompt loads under set -u too' {
     # styles/<name>/prompt.sh is sourced by the same runtime, in the same shell,
     # with the same options in force. None of the sixteen reads an ambient
-    # variable today -- gitbash assigns TS_GIT_OPEN/TS_GIT_CLOSE itself before
+    # variable today -- gitbash assigns _ts_git_open/_ts_git_close itself before
     # ts_git_branch can run -- and this is what keeps the next one from
     # introducing one.
     It '<_> sources cleanly in bash' -ForEach $script:StyleNames -Skip:$script:NoBash {
@@ -237,7 +237,7 @@ printf 'STYLE-OK\n'
         $r.StdOut | Should -Match 'STYLE-OK'
     }
 
-    It 'ts_git_branch renders with TS_GIT_OPEN and TS_GIT_CLOSE never assigned' -Skip:$script:NoBash {
+    It 'ts_git_branch renders with _ts_git_open and _ts_git_close never assigned' -Skip:$script:NoBash {
         # Only gitbash's prompt.sh sets those two, so any other style whose
         # template ever carries {GITBRANCH} reaches the printf with both unset.
         # Under nounset that is an error inside the prompt of every command.

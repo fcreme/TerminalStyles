@@ -154,7 +154,7 @@ ts_git_branch() {
     # Defaulted anyway: a template carrying {GITBRANCH} reaches this function
     # from whatever style is staged, and an uncolored branch is a better answer
     # than an error inside the prompt of every command.
-    printf ' %s(%s)%s' "${TS_GIT_OPEN-}" "$_ts_b" "${TS_GIT_CLOSE-}"
+    printf ' %s(%s)%s' "${_ts_git_open-}" "$_ts_b" "${_ts_git_close-}"
 }
 
 ts_prompt_apply() {
