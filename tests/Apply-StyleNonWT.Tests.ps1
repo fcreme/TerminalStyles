@@ -87,7 +87,7 @@ Describe 'Invoke-TerminalStyleOscApply / Reset' {
 
         It 'emits a packet on a terminal that supports OSC' {
             $scheme = [pscustomobject]@{ name = 't'; background = '#000000'; foreground = '#ffffff' }
-            Invoke-TerminalStyleOscApply -Scheme $scheme -Kind 'AppleTerminal' | Should -BeTrue
+            Invoke-TerminalStyleOscApply -Scheme $scheme -Kind 'AppleTerminal' | Should -BeExactly 'painted'
             Should -Invoke Write-HostOscPacket -Times 1
         }
 
@@ -96,8 +96,27 @@ Describe 'Invoke-TerminalStyleOscApply / Reset' {
             # cannot take one. Capability is what gates it, not the kind name.
             Mock Get-TerminalCapability { @{ OscPalette = $false } }
             $scheme = [pscustomobject]@{ name = 't'; background = '#000000' }
-            Invoke-TerminalStyleOscApply -Scheme $scheme -Kind 'AppleTerminal' | Should -BeFalse
+            Invoke-TerminalStyleOscApply -Scheme $scheme -Kind 'AppleTerminal' | Should -BeExactly 'unsupported'
             Should -Invoke Write-HostOscPacket -Times 0
+        }
+
+        It 'says nocolors, not noterminal, for a scheme it cannot read' {
+            # The collapse this status exists to undo. Both answers used to be
+            # $false, and the caller's one branch on that value blamed the
+            # terminal -- which had painted the previous style perfectly and was
+            # never sent anything this time. The writer is mocked to SUCCEED, so
+            # a $false here can only have come from the empty packet.
+            $scheme = [pscustomobject]@{ name = 't'; background = 'black'; foreground = 'white' }
+            Invoke-TerminalStyleOscApply -Scheme $scheme -Kind 'AppleTerminal' | Should -BeExactly 'nocolors'
+            Should -Invoke Write-HostOscPacket -Times 0 `
+                -Because 'there was nothing to write, so the writer is not what failed'
+        }
+
+        It 'says noterminal when there was a packet and nothing took it' {
+            Mock Write-HostOscPacket { $false }
+            $scheme = [pscustomobject]@{ name = 't'; background = '#0a0006' }
+            Invoke-TerminalStyleOscApply -Scheme $scheme -Kind 'AppleTerminal' | Should -BeExactly 'noterminal'
+            Should -Invoke Write-HostOscPacket -Times 1
         }
 
         It 'emits the reset packet' {
@@ -319,7 +338,7 @@ Describe 'Write-HostOscPacket reports whether it painted' {
             if ([Console]::IsOutputRedirected) {
                 Write-HostOscPacket -Packet "test" | Should -BeFalse
                 Invoke-TerminalStyleOscApply -Scheme ([pscustomobject]@{ background = '#000000' }) `
-                    -Kind 'AppleTerminal' | Should -BeFalse
+                    -Kind 'AppleTerminal' | Should -BeExactly 'noterminal'
             } else {
                 Set-ItResult -Skipped -Because 'this run has a real console attached'
             }
@@ -331,6 +350,129 @@ Describe 'Write-HostOscPacket reports whether it painted' {
 
         It 'returns a real boolean' {
             Write-HostOscPacket -Packet '' | Should -BeOfType [bool]
+        }
+    }
+}
+
+Describe 'Apply-StyleNonWT names the right culprit for colors that did not land' {
+    # The half of the tri-state nobody pinned: what the apply SAYS. The packet
+    # length was the only signal that a scheme had rendered to nothing, and it
+    # was thrown away, so "there was no terminal" and "the style carried no
+    # colour this tool can read" arrived as the same $false and the one branch
+    # on it blamed the terminal. Measured on a real pty: `tstyles namedcolors`
+    # printed "Style applied" and then "this terminal did not accept live color
+    # changes" on a terminal that repainted perfectly for `tstyles sober` in the
+    # same session seconds later.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:enc = [System.Text.UTF8Encoding]::new($false)
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+
+            $script:sDir = Join-Path $script:TStylesDataRoot 'styles/claim'
+            New-Item -ItemType Directory -Force -Path $script:sDir | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:sDir 'prompt.sh'),
+                "# claim shell prompt`n", $script:enc)
+
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Mock Get-StyleBundledBackground { $null }
+            # A terminal that takes everything it is handed, so nothing below
+            # can be explained by the writer. Whatever the apply then says about
+            # colours has to come from the STYLE.
+            Mock Write-HostOscPacket { $true }
+
+            function script:Set-Scheme([string]$Json) {
+                [System.IO.File]::WriteAllText((Join-Path $script:sDir 'scheme.json'), $Json, $script:enc)
+            }
+            # -OutputRedirected is bound explicitly, and defaults to $false --
+            # the REAL-CONSOLE arm, which is the one that carried the wrong
+            # sentence and the one no CI leg can otherwise reach, since every
+            # leg runs with stdout redirected.
+            function script:Get-ApplyOutput {
+                param([bool]$Redirected = $false)
+                Apply-StyleNonWT -StyleName 'claim' -StyleDir $script:sDir `
+                    -OutputRedirected $Redirected 6>&1 | Out-String
+            }
+        }
+
+        It 'blames the style, not the terminal, when nothing was readable' {
+            # X11 colour words -- which the terminal itself would have honoured,
+            # and which ConvertTo-NormalHex refuses. The packet is empty, so
+            # nothing was ever sent and the terminal cannot have refused it.
+            script:Set-Scheme '{"name":"claim","background":"black","foreground":"white"}'
+            $out = script:Get-ApplyOutput
+
+            $out | Should -Not -Match 'did not accept' `
+                -Because 'the terminal was never sent anything to refuse'
+            $out | Should -Match 'no colors this tool can read'
+            $out | Should -Match '#rrggbb' -Because 'the user has to be told what a readable value looks like'
+        }
+
+        It 'still reports the real no-terminal case' {
+            # The other side of the same fork: a packet that existed and did not
+            # land. Revert the status and case one starts printing this too,
+            # which is the collapse.
+            Mock Write-HostOscPacket { $false }
+            script:Set-Scheme '{"name":"claim","background":"#0a0006"}'
+            $out = script:Get-ApplyOutput
+
+            $out | Should -Match 'did not accept live color changes'
+            $out | Should -Not -Match 'no colors this tool can read'
+        }
+
+        It 'names the slots it skipped when only some of the scheme was readable' {
+            # Quieter and worse: the packet is non-empty, so it paints, reports
+            # unqualified success, and the slots it left out keep the PREVIOUS
+            # style's colours -- OSC only sets what it emits.
+            script:Set-Scheme '{"name":"claim","background":"#0a0006","foreground":"white","red":"#c41e3a"}'
+            $out = script:Get-ApplyOutput
+
+            $out | Should -Match 'skipped'
+            $out | Should -Match '1 color value in this style is not readable'
+            $out | Should -Match 'foreground' -Because 'a slot that kept the old colour must be named'
+            $out | Should -Not -Match 'background' -Because 'that one was applied'
+        }
+
+        It 'counts the skipped slots rather than saying value(s)' {
+            script:Set-Scheme '{"name":"claim","background":"#0a0006","foreground":"white","red":"crimson"}'
+            $out = script:Get-ApplyOutput
+
+            $out | Should -Match '2 color values in this style are not readable'
+            $out | Should -Match 'foreground, red'
+        }
+
+        It 'says none of that for a style it could read in full' {
+            script:Set-Scheme '{"name":"claim","background":"#0a0006","foreground":"#ffe8e8"}'
+            $out = script:Get-ApplyOutput
+
+            $out | Should -Not -Match 'skipped'
+            $out | Should -Not -Match 'no colors this tool can read'
+            $out | Should -Not -Match 'did not accept'
+        }
+
+        It 'does not claim a prompt was applied when the style ships none' {
+            # The second false clause in the same sentence. current-style.ps1 is
+            # written only for a style carrying profile.ps1; this one does not,
+            # so "only the prompt was applied" named the one thing that had also
+            # not happened.
+            Mock Write-HostOscPacket { $false }
+            script:Set-Scheme '{"name":"claim","background":"#0a0006"}'
+            $out = script:Get-ApplyOutput
+
+            Test-Path -LiteralPath $script:TStylesCurrent | Should -BeFalse -Because 'the fixture must really ship no prompt'
+            $out | Should -Match 'did not accept live color changes' -Because 'the arm under test must be the one that ran'
+            $out | Should -Not -Match 'only the prompt was applied'
+            $out | Should -Match 'nothing from this style reached this session'
+        }
+
+        It 'still says the prompt was applied when it really was' {
+            Mock Write-HostOscPacket { $false }
+            script:Set-Scheme '{"name":"claim","background":"#0a0006"}'
+            [System.IO.File]::WriteAllText((Join-Path $script:sDir 'profile.ps1'), "# claim prompt`n", $script:enc)
+            $out = script:Get-ApplyOutput
+
+            $out | Should -Match 'only the prompt was applied'
         }
     }
 }
