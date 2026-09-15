@@ -161,6 +161,21 @@ Describe 'install.ps1 keeps its own copy in step' {
         # line that fixes it.
         $src = [System.IO.File]::ReadAllText($script:installPath, [System.Text.UTF8Encoding]::new($false))
         $src | Should -Not -Match 'throw "Neither pwsh\.exe nor powershell\.exe'
-        $src | Should -Match 'Import-Module TerminalStyles -DisableNameChecking'
+    }
+
+    It 'advises the loader line THIS install needs, not a second literal of it' {
+        # That advice is the only thing a user in this state has -- nothing
+        # registered a loader for them, so they paste it into their own $PROFILE
+        # by hand. It was a literal `Import-Module TerminalStyles
+        # -DisableNameChecking` while the installer three lines up had written
+        # the full-path form, and this branch only fires on a bootstrap install,
+        # which is precisely where the bare name resolves to nothing.
+        $loader = 'Import-Module "/somewhere/TerminalStyles/TerminalStyles.psd1" -DisableNameChecking'
+        $out = Write-NoEngineNotice -InstallDir '/somewhere/TerminalStyles' -LoaderImport $loader 6>&1 | Out-String
+
+        $out | Should -Match ([regex]::Escape($loader))
+        $out | Should -Not -Match '(?m)^\s*Import-Module TerminalStyles -DisableNameChecking\s*$' `
+            -Because 'the by-name form is not what this install got'
+        $out | Should -Match ([regex]::Escape('/somewhere/TerminalStyles'))
     }
 }
