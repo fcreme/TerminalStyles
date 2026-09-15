@@ -626,7 +626,15 @@ function Invoke-TerminalStyleFont {
     # in green either way.
     Write-AmbiguousTargetNote -ResolvedTarget $resolvedTarget -TargetName $Target -Verb 'Applied to'
 
-    try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget -Quiet } catch { }
+    # Announced, like the apply and reset paths. -Quiet is for the picker and the
+    # tuner, whose own docstring scopes it to "a menu that redraws every frame";
+    # this is a linear one-shot command that inherited the silence without the
+    # reason for it. There is ONE rolling .bak, so this write spends the copy the
+    # last real apply left -- the only surviving record of the user's own
+    # colorScheme, font and JSONC comments, since a successful apply re-serializes
+    # settings.json and drops them. README teaches that file as the undo; a
+    # command that consumes it has to say so on the same screen.
+    try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget } catch { }
     if (Set-ProfileFont -SettingsPath $settingsPath -TargetName $Target -Family $font.family) {
         Write-Host "  Applied '$($font.family)' to '$Target'. Open a new tab to see it." -ForegroundColor Green
     } else {

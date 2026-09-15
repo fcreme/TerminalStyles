@@ -110,6 +110,54 @@ Describe 'README claims that the code can settle' {
         }
     }
 
+    It 'names every command that spends the rolling backup' {
+        # The recovery recipe is a claim the user acts on with Copy-Item, and it
+        # listed two of the five writers. `tstyles font` and `tstyles tune` roll
+        # the same single .bak, so after either one "restore the last-known-good
+        # state" restores the file from after the apply, not before it -- and
+        # `tstyles reset` is no way back, since it removes what a style ADDED and
+        # cannot return what the style overwrote.
+        #
+        # Derived from the AST rather than from a list, so a sixth writer fails
+        # here until the section admits it.
+        $commandFor = @{
+            'Invoke-TerminalStyle'     = 'picker'          # tstyles with no arg
+            'Invoke-TerminalStyleTune' = 'tstyles tune'
+            'Invoke-TerminalStyleFont' = 'tstyles font'
+            'Apply-StyleDirect'        = 'tstyles <name>'
+            'Reset-StyleDirect'        = 'tstyles reset'
+        }
+
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $files = Get-ChildItem -LiteralPath $repoRoot -Recurse -Filter '*.ps1' -File |
+            Where-Object { $_.FullName -notmatch '[\\/](tests|out)[\\/]' }
+
+        $writers = @()
+        foreach ($f in $files) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null)
+            $calls = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Save-SettingsBackup' }, $true))
+            foreach ($c in $calls) {
+                $fn = $c.Parent
+                while ($fn -and $fn -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $fn = $fn.Parent }
+                if ($fn -and $fn.Name -ne 'Save-SettingsBackup') { $writers += $fn.Name }
+            }
+        }
+        $writers = @($writers | Sort-Object -Unique)
+        $writers.Count | Should -BeGreaterThan 2 -Because 'the scan must actually be finding the writers'
+
+        @($writers | Where-Object { -not $commandFor.ContainsKey($_) }) -join ', ' |
+            Should -BeNullOrEmpty -Because 'a new writer of the single rolling .bak needs a name in the README recipe'
+
+        $section = ([regex]::Match($script:readme, '(?ms)^### Recovering.*?(?=^#{2,3} )')).Value
+        $section | Should -Not -BeNullOrEmpty -Because 'the recovery recipe is what this test is about'
+        foreach ($w in $writers) {
+            $section | Should -BeLike "*$($commandFor[$w])*" `
+                -Because "$w rolls the one .bak the recipe tells the user to restore"
+        }
+    }
+
     It 'points at the cache directory the code actually uses' {
         # Get-StyleCacheDir puts fetched backgrounds under <DataRoot>/cache/<name>.
         # The README pointed at the pre-0.2.0 styles/<name> location, so anyone
