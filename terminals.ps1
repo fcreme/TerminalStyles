@@ -380,22 +380,50 @@ function Write-HostOscPacket {
 }
 
 function Invoke-TerminalStyleOscApply {
-    # Retint the live terminal to $Scheme via OSC. Returns $true when the packet
-    # was emitted, $false when the terminal cannot take one.
+    <#
+    .SYNOPSIS
+    Retint the live terminal to $Scheme via OSC. Returns a STATUS, not a bool.
+
+    .DESCRIPTION
+    `painted`     the packet reached the terminal.
+    `nocolors`    the scheme carried nothing this tool can read, so nothing was
+                  sent. The terminal was never asked and is not at fault.
+    `noterminal`  there was a packet, and no terminal to take it -- redirected
+                  stdout, a runspace, a hosted app.
+    `unsupported` this terminal kind cannot take an OSC palette at all.
+
+    A status names the category, which is what a caller branches on. This
+    returned $true/$false, and `nocolors` and `noterminal` arrived as the same
+    $false -- so a hand-authored style whose values are X11 colour words
+    ("black") or `rgb()` made `tstyles <name>` print "Style applied" and then
+    "this terminal did not accept live color changes" at a terminal that had
+    repainted perfectly for the style before it. Callers MUST NOT assume
+    success: an apply that silently painted nothing and still reported "Style
+    applied" is what this return value exists to prevent.
+
+    The packet is built here and tested BEFORE the write, so Write-HostOscPacket
+    keeps its bool and its empty-packet guard: an empty string really did paint
+    nothing, which is all that function is asked.
+    #>
     param(
         [Parameter(Mandatory)]$Scheme,
         [string]$Kind = (Get-TerminalKind)
     )
-    if (-not (Get-TerminalCapability -Kind $Kind).OscPalette) { return $false }
-    # Return what actually happened, not what the terminal is capable of. The
+    if (-not (Get-TerminalCapability -Kind $Kind).OscPalette) { return 'unsupported' }
+    $packet = Get-SchemeOscPacket -Scheme $Scheme
+    if (-not $packet) { return 'nocolors' }
+    # Report what actually happened, not what the terminal is capable of. The
     # two differ whenever stdout is redirected -- a pipe, a file, an agent shell
     # -- and reporting capability there made `tstyles <name>` claim success
     # while changing nothing on screen.
-    return (Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $Scheme))
+    if (Write-HostOscPacket -Packet $packet) { return 'painted' }
+    return 'noterminal'
 }
 
 function Invoke-TerminalStyleOscReset {
     # Hand color control back to the terminal's own configured scheme.
+    # Still a bool, deliberately: Get-OscResetPacket is a constant and is never
+    # empty, so the `nocolors` answer its apply sibling has cannot arise here.
     param([string]$Kind = (Get-TerminalKind))
     if (-not (Get-TerminalCapability -Kind $Kind).OscPalette) { return $false }
     return (Write-HostOscPacket -Packet (Get-OscResetPacket))

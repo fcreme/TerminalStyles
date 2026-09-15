@@ -468,7 +468,13 @@ function Apply-StyleNonWT {
         # Needed because an image can only reach Terminal.app through a profile,
         # and a profile only takes effect on a new window -- unlike colors,
         # which the OSC packet applies to the window you are already in.
-        [switch]$NewWindow
+        [switch]$NewWindow,
+        # A parameter for the reason Test-InteractiveConsole gives for its three:
+        # the .NET statics cannot be mocked, and the arm below that only prints
+        # at a REAL console could otherwise be pinned by nothing but an AST
+        # assertion -- every CI leg runs redirected, so that arm's wording was
+        # never measured anywhere.
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
     )
 
     $kind = Get-TerminalKind
@@ -496,8 +502,15 @@ function Apply-StyleNonWT {
 
     # Prompt/banner: same contract as the Windows Terminal path.
     $styleProfile = Join-Path $StyleDir 'profile.ps1'
+    # Recorded, not assumed: the colour notice below used to end "so only the
+    # prompt was applied" unconditionally, and a style that ships no profile.ps1
+    # -- or an apply run with -KeepPrompt -- had no prompt applied either. On
+    # that path nothing at all reached the session while the note named the one
+    # thing that had supposedly worked.
+    $promptApplied = $false
     if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
         Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
+        $promptApplied = $true
     } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
         Remove-Item -LiteralPath $script:TStylesCurrent -Force
     }
@@ -513,9 +526,19 @@ function Apply-StyleNonWT {
     # cannot end up saying something different about the same failure.
     Show-ShellStagingFailure -Status $staged
 
-    if (-not $applied) {
+    if ($applied -eq 'nocolors') {
+        # Not the terminal's doing, and saying it was sent users to check a
+        # terminal that was working. Get-SchemeOscPacket reads hex and nothing
+        # else, so a scheme whose values are X11 colour words ("black"), an
+        # `rgb()` call, or a typo renders to an empty string and no packet is
+        # ever sent. Nothing painted, so nothing on screen changed -- including
+        # the colours of the style that was there before.
         Write-Host ""
-        if ([Console]::IsOutputRedirected) {
+        Write-Host "  Note: this style defines no colors this tool can read, so the terminal" -ForegroundColor Yellow
+        Write-Host "  was not asked to change any. Values must be #rgb, #rrggbb or #rrggbbaa." -ForegroundColor Yellow
+    } elseif ($applied -ne 'painted') {
+        Write-Host ""
+        if ($OutputRedirected) {
             # The style IS recorded, and staged when the staging worked -- a new
             # tab will come up in it. What could not happen is repainting THIS
             # session, because its output does not go to a terminal. Say that
@@ -529,8 +552,29 @@ function Apply-StyleNonWT {
                 Write-Host "  The style is saved -- open a new tab, or run tstyles directly in your" -ForegroundColor Yellow
                 Write-Host "  terminal, to see it." -ForegroundColor Yellow
             }
-        } else {
+        } elseif ($promptApplied) {
             Write-Host "  Note: this terminal did not accept live color changes, so only the prompt was applied." -ForegroundColor Yellow
+        } else {
+            Write-Host "  Note: this terminal did not accept live color changes, and no prompt was" -ForegroundColor Yellow
+            Write-Host "  applied, so nothing from this style reached this session." -ForegroundColor Yellow
+        }
+    }
+
+    # The quieter half of the same collapse: a packet that carried SOME of the
+    # scheme is non-empty, so it paints and reports plain success -- while the
+    # slots it could not read were simply left out, and OSC only sets what it
+    # emits, so those keep the PREVIOUS style's colours. The window is then a
+    # blend of two styles with nothing on screen saying so.
+    if ($applied -eq 'painted') {
+        $dropped = @(Get-SchemeUnreadableSlots -Scheme $scheme)
+        if ($dropped.Count -gt 0) {
+            $head = if ($dropped.Count -eq 1) { "1 color value in this style is not readable hex and was" }
+                    else { "$($dropped.Count) color values in this style are not readable hex and were" }
+            $tail = if ($dropped.Count -eq 1) { "That slot keeps the color it already had." }
+                    else { "Those slots keep the colors they already had." }
+            Write-Host ""
+            Write-Host "  Note: $head skipped:" -ForegroundColor Yellow
+            Write-Host "  $($dropped -join ', '). $tail" -ForegroundColor Yellow
         }
     }
 

@@ -706,6 +706,40 @@ function Resolve-TuneSeed {
     return $seed
 }
 
+function Resolve-TuneOpenedScheme {
+    <#
+    .SYNOPSIS
+    The scheme Esc has to put back: the style the tuner was OPENED on.
+
+    .DESCRIPTION
+    Carved out for the same reason Test-SameStyleDirectory was -- the decision
+    is one line of subtlety that cannot be reached through Invoke-TerminalStyleTune,
+    which needs a console and a pty. Its whole content is "are these two paths
+    the same directory, as the HOST FILESYSTEM sees it", and the answer differs
+    from PowerShell's `-eq` only on a volume the test suite mostly does not run
+    on. Mock Test-SameStyleDirectory and ask this instead.
+
+    $BaseDir is the style the deltas are measured from, which for a tuned style
+    is a DIFFERENT style: tuning `eva-night` makes eva the working base. Esc
+    restoring the base repainted the terminal as eva and said "Reverted.",
+    leaving the user on a style they had never chosen. Where the two really are
+    one directory the already-read $BaseScheme is returned unchanged, so a plain
+    style costs no second read.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$StyleDir,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$BaseDir,
+        [Parameter(Mandatory)]$BaseScheme
+    )
+
+    if (Test-SameStyleDirectory -A $StyleDir -B $BaseDir) { return $BaseScheme }
+    try {
+        return ([System.IO.File]::ReadAllText((Join-Path $StyleDir 'scheme.json'),
+            [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json)
+    } catch { return $BaseScheme }
+}
+
 function Invoke-TerminalStyleTune {
     # `tstyles tune [name]` -- interactive live tuning of a style's brightness,
     # saturation, opacity, font face, and font size. Colors retint instantly
@@ -844,12 +878,12 @@ function Invoke-TerminalStyleTune {
     # the terminal as EVA and said "Reverted.", leaving the user on a style they
     # had not chosen and did not have before. For a plain style the two files
     # are the same and this is the same object.
-    $openedScheme = if ($styleDir -eq $baseDir) { $baseScheme } else {
-        try {
-            [System.IO.File]::ReadAllText((Join-Path $styleDir 'scheme.json'),
-                [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-        } catch { $baseScheme }
-    }
+    #
+    # Test-SameStyleDirectory, not -eq: PowerShell's operators are
+    # case-insensitive everywhere, so on a case-sensitive volume styles/eva and
+    # styles/Eva are two directories that -eq collapses into one -- and this was
+    # the one same-directory test in the file still asking with the operator.
+    $openedScheme = Resolve-TuneOpenedScheme -StyleDir $styleDir -BaseDir $baseDir -BaseScheme $baseScheme
 
     # NOT wrapped in @(). Get-MonospaceFontList ends with `return ,@(...)`, which
     # emits the list as ONE object so a single-font machine cannot unroll to a

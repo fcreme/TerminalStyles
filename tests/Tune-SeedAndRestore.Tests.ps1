@@ -145,14 +145,62 @@ Describe 'Resolve-TuneSeed commits all-or-nothing' {
 
 Describe 'Esc restores the style the tuner was opened on' {
     InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:enc = [System.Text.UTF8Encoding]::new($false)
+            $script:oBase  = Join-Path $TestDrive ('ob-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            $script:oStyle = Join-Path $TestDrive ('os-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            New-Item -ItemType Directory -Path $script:oBase  -Force | Out-Null
+            New-Item -ItemType Directory -Path $script:oStyle -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:oBase 'scheme.json'),
+                '{"name":"eva","background":"#0a0006","foreground":"#ffe8e8"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:oStyle 'scheme.json'),
+                '{"name":"Eva","background":"#050003","foreground":"#807474"}', $script:enc)
+            $script:oBaseScheme = [pscustomobject]@{
+                name = 'eva'; background = '#0a0006'; foreground = '#ffe8e8'
+            }
+        }
+
         It 'reads the opened style, not the working base' {
             # For a tuned style these are different files: tuning 'eva-night'
             # resolves base 'eva' as the working base because that is what the
             # deltas are measured from. Restoring the base repainted the
             # terminal as eva and reported "Reverted.", leaving the user on a
             # style they had never chosen and did not have when they started.
+            $s = Resolve-TuneOpenedScheme -StyleDir $script:oStyle -BaseDir $script:oBase `
+                -BaseScheme $script:oBaseScheme
+            $s.name       | Should -BeExactly 'Eva'
+            $s.background | Should -Be '#050003'
+        }
+
+        It 'reads the opened style when it differs from its base only in case' {
+            # What a case-sensitive volume answers for styles/Eva against
+            # styles/eva -- two real directories that -eq collapses into one, on
+            # the filesystems CI mostly does not run on. The mock stands in for
+            # the volume, exactly as Test-SameStyleDirectory's own docstring
+            # prescribes; asking with the operator instead returns the BASE here.
+            Mock Test-SameStyleDirectory { $false }
+            $s = Resolve-TuneOpenedScheme -StyleDir $script:oStyle -BaseDir $script:oStyle.ToUpperInvariant() `
+                -BaseScheme $script:oBaseScheme
+            $s.name       | Should -BeExactly 'Eva' -Because 'Esc must put back the style the tuner was opened on'
+            $s.background | Should -Be '#050003'
+        }
+
+        It 'reuses the base object it was already handed when they are one directory' {
+            $s = Resolve-TuneOpenedScheme -StyleDir $script:oBase -BaseDir $script:oBase `
+                -BaseScheme $script:oBaseScheme
+            [object]::ReferenceEquals($s, $script:oBaseScheme) | Should -BeTrue `
+                -Because 'a plain style must not pay for a second read'
+        }
+
+        It 'falls back to the base when the opened style has no readable scheme.json' {
+            Remove-Item -LiteralPath (Join-Path $script:oStyle 'scheme.json') -Force
+            $s = Resolve-TuneOpenedScheme -StyleDir $script:oStyle -BaseDir $script:oBase `
+                -BaseScheme $script:oBaseScheme
+            $s.name | Should -BeExactly 'eva'
+        }
+
+        It 'restores through the opened scheme, not the working base' {
             $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match '\$openedScheme\s*=\s*if \(\$styleDir -eq \$baseDir\)'
             $block = [regex]::Match($src, '(?s)\$restoreBaseLook = \{.*?\n    \}').Value
             $block | Should -Match '\$openedScheme'
             $block | Should -Not -Match 'Scheme \$baseScheme'
@@ -372,6 +420,15 @@ Describe 'the one-hop guards compare paths the way the filesystem does' {
             $resSrc = (Get-Command Test-StyleResolved).ScriptBlock.ToString()
             $resSrc | Should -Match 'Test-SameStyleDirectory'
             $resSrc | Should -Not -Match '\$baseDir -ne \$StyleDir'
+
+            $openedSrc = (Get-Command Resolve-TuneOpenedScheme).ScriptBlock.ToString()
+            $openedSrc | Should -Match 'Test-SameStyleDirectory'
+            $openedSrc | Should -Not -Match '\$StyleDir -(eq|ne) \$BaseDir'
+
+            # The call site too: the decision moved out of Invoke-TerminalStyleTune
+            # and must not grow a second spelling back inside it.
+            $tuneSrc = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+            $tuneSrc | Should -Not -Match '\$styleDir -(eq|ne) \$baseDir'
         }
     }
 }

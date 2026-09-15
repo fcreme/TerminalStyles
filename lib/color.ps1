@@ -225,6 +225,49 @@ function Get-SchemeOscPacket {
     return $sb.ToString()
 }
 
+function Get-SchemeUnreadableSlots {
+    <#
+    .SYNOPSIS
+    Which colour slots did this scheme carry that Get-SchemeOscPacket could not read?
+
+    .DESCRIPTION
+    The packet builder appends a sequence only `if ($color)`, so a slot written
+    as an X11 colour word ("black" -- which a terminal would honour), as
+    `rgb(196,30,58)`, or with a typo is dropped with no record. The length of
+    the resulting string was the only signal that anything went missing, and it
+    was thrown away: a style with SOME unreadable values painted the rest, the
+    apply reported plain success, and the dropped slots kept the PREVIOUS
+    style's colours on screen.
+
+    Deliberately carries no list of its own. It asks the builder twice per slot
+    the scheme actually has -- once with a known-good hex to learn whether this
+    is a slot the builder renders at all, once with the real value to see
+    whether it rendered -- so the two can never disagree about what a colour
+    slot is. A second copy of the twenty names here would go quiet about
+    precisely the slot that had just been added to the builder.
+
+    Returns the names in the scheme's own order. Empty for a fully readable
+    scheme, and empty for a scheme with no colour slots at all -- "no colours to
+    drop" and "every colour dropped" are different questions, and the packet
+    being empty answers the second.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Scheme)
+
+    $names = if ($Scheme -is [System.Collections.IDictionary]) { @($Scheme.Keys) }
+             else { @($Scheme.PSObject.Properties | ForEach-Object { $_.Name }) }
+
+    return @($names | Where-Object {
+        $known = [pscustomobject]@{}
+        $known | Add-Member -NotePropertyName $_ -NotePropertyValue '#000000'
+        if (-not (Get-SchemeOscPacket -Scheme $known)) { return $false }
+
+        $actual = [pscustomobject]@{}
+        $actual | Add-Member -NotePropertyName $_ -NotePropertyValue $Scheme.$_
+        -not (Get-SchemeOscPacket -Scheme $actual)
+    })
+}
+
 function Get-OscResetPacket {
     # Returns OSC sequences that RESET the terminal's dynamic colors back to the
     # profile defaults: the full palette (OSC 104, no params) plus foreground

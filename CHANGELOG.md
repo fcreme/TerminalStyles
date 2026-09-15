@@ -9,6 +9,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **a style whose colours the terminal could not read was indistinguishable from a terminal that could not show colours.** `Write-HostOscPacket` returned the same `$false` for "there is nothing to paint" and "there is nowhere to paint it", so the apply path told a user with a perfectly good terminal that their terminal could not show the style. It is the collapse-a-status-into-a-boolean shape v0.8.26 fixed five instances of on the loader paths, and it now follows the same contract those do: `ok`, `nocolors`, `unsupported`, `noterminal`.
+
+  A detail worth recording, found while running the binding proofs rather than by reading: `$false -eq 'nocolors'` is False but **`$true -eq 'nocolors'` is True** -- PowerShell coerces the right operand to bool when the left is one, and any non-empty string is truthy. A function returning a mix of booleans and status strings therefore gives its callers silently wrong comparisons, which is why the capability arm returns a status too rather than keeping its `$false`.
+
+- **the tuner compared two style directories with `-eq` at the one call site its own case-sensitivity helper was written for.** `Test-SameStyleDirectory` exists because a path comparison on a case-insensitive filesystem is not a string comparison; the Esc-restore path did not use it.
+
+### Changed
+
+- the help drift guard walked a hand-typed list of subcommands that was three behind the module's own, so it checked ten of the thirteen commands it claimed to cover. `tstyles.ps1` already owns `$script:TStylesSubcommands`; the guard now reads it, and a command added without a help topic fails the suite by name. Demonstrated by adding one: `Expected 'sekrit' to be found in collection ... but it was not found.`
 - **`{LEAF}` meant two different things in the two halves of a style, and the parity harness only ever rendered one of them.** bash's `\W` and zsh's `%1~` are not the same escape: at a single-component absolute path `%1~` keeps the leading slash (`/tmp`) and `\W` drops it (`tmp`). `{LEAF}` is this project's own placeholder and has to mean one thing, so bash is the leg that moves -- a `ts_leaf` helper reproduces `%1~`, evaluated fresh on every prompt like `{GITBRANCH}` rather than captured at load. Verified against a real zsh across `$HOME`, `/tmp`, `/` and a subdirectory: all four now agree.
 
   The reason nothing caught it is the more important half. Every `prompt.sh` header promises its PowerShell and shell halves render BYTE-IDENTICALLY, and the parity harness rendered only the zsh one -- so half of the promise has never been checked. The harness now renders the bash half too.
