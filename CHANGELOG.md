@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.27] - 2026-09-15
+
 ### Fixed
 
 - **a style whose colours the terminal could not read was indistinguishable from a terminal that could not show colours.** `Write-HostOscPacket` returned the same `$false` for "there is nothing to paint" and "there is nowhere to paint it", so the apply path told a user with a perfectly good terminal that their terminal could not show the style. It is the collapse-a-status-into-a-boolean shape v0.8.26 fixed five instances of on the loader paths, and it now follows the same contract those do: `ok`, `nocolors`, `unsupported`, `noterminal`.
@@ -15,9 +17,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **the tuner compared two style directories with `-eq` at the one call site its own case-sensitivity helper was written for.** `Test-SameStyleDirectory` exists because a path comparison on a case-insensitive filesystem is not a string comparison; the Esc-restore path did not use it.
 
-### Changed
-
 - the help drift guard walked a hand-typed list of subcommands that was three behind the module's own, so it checked ten of the thirteen commands it claimed to cover. `tstyles.ps1` already owns `$script:TStylesSubcommands`; the guard now reads it, and a command added without a help topic fails the suite by name. Demonstrated by adding one: `Expected 'sekrit' to be found in collection ... but it was not found.`
+
 - **`{LEAF}` meant two different things in the two halves of a style, and the parity harness only ever rendered one of them.** bash's `\W` and zsh's `%1~` are not the same escape: at a single-component absolute path `%1~` keeps the leading slash (`/tmp`) and `\W` drops it (`tmp`). `{LEAF}` is this project's own placeholder and has to mean one thing, so bash is the leg that moves -- a `ts_leaf` helper reproduces `%1~`, evaluated fresh on every prompt like `{GITBRANCH}` rather than captured at load. Verified against a real zsh across `$HOME`, `/tmp`, `/` and a subdirectory: all four now agree.
 
   The reason nothing caught it is the more important half. Every `prompt.sh` header promises its PowerShell and shell halves render BYTE-IDENTICALLY, and the parity harness rendered only the zsh one -- so half of the promise has never been checked. The harness now renders the bash half too.
@@ -27,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **the `tstyles` shell wrapper re-sourced the style prompt with no tty guard, so the banner landed in redirected output.** The rule was already present in two of the three writers and absent from the one between them. It is now one guarded seam all three call.
 
 - **gitbash's `~` abbreviation had no path boundary, so a sibling of `$HOME` rendered as `~Xtra`** -- and diverged from both shells, which abbreviate only at a component boundary.
+
 - **`tstyles register` showed the user one loader line and wrote a different one, and then told them to run a command that errors.** On a bootstrap install the block written into `$PROFILE` carries the absolute path -- which is the whole reason 0.8.21 fixed the WRITE -- while the consent screen printed the by-name form and the closing "to verify in this session" hint printed a command that resolves to nothing on a machine with no PSGallery copy. Both messages had their own literal beside a `$loaderImport` already computed from the install kind, so fixing the write in 0.8.21 left two copies behind to drift. They now print that variable. Measured on a real bootstrap install: the consent screen said `Import-Module TerminalStyles -DisableNameChecking` and the file received `Import-Module "<root>/TerminalStyles.psd1" -DisableNameChecking`.
 
   A third copy of the same literal, which the report did not mention, is `install.ps1`'s "no PowerShell engine found" advice -- the only instruction a user in that state has, to paste into their `$PROFILE` by hand, and it named the form that cannot work on the one install kind that can reach the branch.
@@ -787,7 +789,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.26...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.27...HEAD
+[0.8.27]: https://github.com/fcreme/TerminalStyles/compare/v0.8.26...v0.8.27
 [0.8.26]: https://github.com/fcreme/TerminalStyles/compare/v0.8.25...v0.8.26
 [0.8.25]: https://github.com/fcreme/TerminalStyles/compare/v0.8.24...v0.8.25
 [0.8.24]: https://github.com/fcreme/TerminalStyles/compare/v0.8.23...v0.8.24
