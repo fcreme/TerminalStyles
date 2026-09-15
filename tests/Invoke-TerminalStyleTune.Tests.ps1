@@ -249,7 +249,12 @@ Describe 'the tuner warns about the collision that actually loses work' {
             # the destructive one.
             $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
             $src | Should -Match "userDir = Join-Path \(Join-Path \`$script:TStylesDataRoot 'styles'\)"
-            $src | Should -Match 'will be REPLACED'
+            # The sentence itself is Get-TuneReplaceWarning's, so ask it rather
+            # than the source text -- it also has to name the background image
+            # it now takes with it, which a literal at the Read-Host could not.
+            $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            Get-TuneReplaceWarning -Name 'mytheme' -DestDir $d | Should -Match 'will be REPLACED'
         }
 
         It 'still mentions shadowing for a bundled name' {

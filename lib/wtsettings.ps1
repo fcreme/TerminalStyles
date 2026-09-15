@@ -557,6 +557,42 @@ function Save-SettingsBackup {
     }
 }
 
+function Get-BackupFailureNote {
+    <#
+    .SYNOPSIS
+    What a caller says when the rolling settings.json.bak could NOT be taken.
+
+    .DESCRIPTION
+    One sentence, in one place, for the five commands that roll the one .bak.
+    Three of them said nothing at all: the call sat in `try { ... } catch { }`,
+    so a Copy-Item that really failed -- measured with the .bak alone unwritable
+    while its directory stayed writable, which is what a sync client, an editor
+    or an AV scanner holding the file open looks like -- rewrote settings.json
+    and left the .bak holding the state from the user's LAST REAL APPLY, with
+    not one word on screen. On the success path the same site prints "Backed up
+    settings to: <path>", so failure and success differed only by an absence;
+    with -Quiet they were byte-identical.
+
+    README teaches that file as the only route back to a colorScheme, a
+    font.face or the JSONC comments an apply drops, so "the backup could not be
+    taken" and "the backup was taken" must not be the same outcome.
+
+    -InFrame is for the picker and the tuner, whose menus Clear-Host on every
+    redraw: a line printed where the failure happened is wiped unread, so theirs
+    is phrased as a standing state and painted inside the frame.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Reason,
+        [switch]$InFrame
+    )
+
+    if ($InFrame) {
+        return "  ! settings.json.bak could not be written ($Reason) -- your undo is still the copy the last apply left"
+    }
+    return "Warning: could not write backup ($Reason); proceeding anyway."
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,

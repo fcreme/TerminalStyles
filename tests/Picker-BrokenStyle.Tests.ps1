@@ -308,7 +308,17 @@ Describe 'the picker itself' {
                 -Because 'the frame is the only place a picker message survives to be read'
             # The frame is overwritten in place, so a row that appears without
             # being counted strands the previous frame's last line on screen.
-            $draw[0].Right.Extent.Text | Should -Match '\$chrome\s*=\s*if \(\$unreadableNote\)'
+            # Every conditional row is therefore tested TWICE -- once to print
+            # it, once in the height budget -- and the rule is asserted over all
+            # of them rather than over the one that existed when this was
+            # written. The backup-failure row joined it in 0.8.28.
+            $body = $draw[0].Right.Extent.Text
+            $body | Should -Match '\$chrome'
+            foreach ($note in '$unreadableNote', '$backupNote') {
+                ([regex]::Matches($body, [regex]::Escape("if ($note)"))).Count |
+                    Should -BeGreaterOrEqual 2 `
+                    -Because "$note is a conditional row, so the height budget has to count it too"
+            }
         }
     }
 }

@@ -523,6 +523,31 @@ function Set-ProfileFont {
     return $true
 }
 
+function Test-FontCommandCanApply {
+    <#
+    .SYNOPSIS
+    Can `tstyles font <name>` write a font for this terminal?
+
+    .DESCRIPTION
+    NOT (Get-TerminalCapability).Font, which answers a different question and
+    has answered it for two terminals since 0.8.24. That flag means "a STYLE
+    APPLY writes this terminal's font": WezTerm's arm turns it on because
+    Get-WezTermStyleLua emits `config.font` from the style's theme.json. This
+    command has no such route -- the only font writer it can reach is
+    Set-ProfileFont, which knows Windows Terminal's settings.json and nothing
+    else -- so reading the capability here made the gate below fall through on
+    WezTerm and print "Could not locate Windows Terminal settings.json" in red,
+    on a Mac, after an install that had just succeeded. That red line is the
+    exact outcome the gate exists to prevent.
+
+    So: one predicate, named for the question the command asks, next to the
+    writer that answers it. Add an arm here when a second terminal gains one.
+    #>
+    [CmdletBinding()]
+    param([string]$Kind = (Get-TerminalKind))
+    return ($Kind -eq 'WindowsTerminal')
+}
+
 function Show-FontList {
     # List the font catalog with an installed/installable marker. -Catalog and
     # -Installed are test seams; real callers omit them.
@@ -555,7 +580,18 @@ function Show-FontList {
         Write-Host ("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license)
     }
     Write-Host ""
-    Write-Host "  Install + apply one with: tstyles font <name>" -ForegroundColor DarkGray
+    # "Install + apply" is a promise only Windows Terminal keeps. Everywhere
+    # else `tstyles font <name>` installs and then says, correctly, that the
+    # terminal takes its font from its own settings -- so the shortest
+    # description of the command contradicted the command itself.
+    $listKind = Get-TerminalKind
+    if (Test-FontCommandCanApply -Kind $listKind) {
+        Write-Host "  Install + apply one with: tstyles font <name>" -ForegroundColor DarkGray
+    } else {
+        Write-Host "  Install one with: tstyles font <name>" -ForegroundColor DarkGray
+        Write-Host ("  {0} takes its font from its own settings, so choose it there once installed." -f
+                    (Get-TerminalDisplayName -Kind $listKind)) -ForegroundColor DarkGray
+    }
 }
 
 function Invoke-TerminalStyleFont {
@@ -594,10 +630,23 @@ function Invoke-TerminalStyleFont {
     # the install above IS the whole job: say so, rather than chasing a
     # settings.json that cannot exist and reporting "Could not locate Windows
     # Terminal settings.json" in red after an install that actually succeeded.
+    #
+    # Test-FontCommandCanApply, NOT (Get-TerminalCapability).Font: that flag is
+    # a promise about the STYLE APPLY path and has been $true for WezTerm since
+    # 0.8.24, where this gate then fell through and printed exactly the red line
+    # the comment above says it exists to prevent.
     $fontKind = Get-TerminalKind
-    if (-not (Get-TerminalCapability -Kind $fontKind).Font) {
-        Write-Host ("  {0} takes its font from its own preferences, so TerminalStyles cannot apply it for you." -f (Get-TerminalDisplayName -Kind $fontKind)) -ForegroundColor DarkGray
-        Write-Host ("  '{0}' is installed and will be listed there." -f $font.family) -ForegroundColor DarkGray
+    if (-not (Test-FontCommandCanApply -Kind $fontKind)) {
+        Write-Host ("  {0} takes its font from its own settings, so tstyles font cannot apply it for you." -f (Get-TerminalDisplayName -Kind $fontKind)) -ForegroundColor DarkGray
+        if ((Get-TerminalCapability -Kind $fontKind).Font) {
+            # A terminal whose font a style apply DOES write (WezTerm, through
+            # the generated Lua module). "will be listed there" would be wrong:
+            # there is no font picker to list it in, it is named in a config
+            # file -- or in the theme.json of a style.
+            Write-Host ("  '{0}' is installed; name it in that config, or in the theme.json of a style." -f $font.family) -ForegroundColor DarkGray
+        } else {
+            Write-Host ("  '{0}' is installed and will be listed there." -f $font.family) -ForegroundColor DarkGray
+        }
         return
     }
 
@@ -634,7 +683,13 @@ function Invoke-TerminalStyleFont {
     # colorScheme, font and JSONC comments, since a successful apply re-serializes
     # settings.json and drops them. README teaches that file as the undo; a
     # command that consumes it has to say so on the same screen.
-    try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget } catch { }
+    # The catch here was empty, so a Copy-Item that really failed left the .bak
+    # holding the state from the user's LAST REAL APPLY while settings.json was
+    # rewritten underneath it, and the whole of what the user saw was "Applied
+    # '<family>' to '<target>'". This is a linear one-shot command, so it says it
+    # the way the apply and reset paths do.
+    try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget }
+    catch { Write-Host (Get-BackupFailureNote -Reason "$_") -ForegroundColor Yellow }
     if (Set-ProfileFont -SettingsPath $settingsPath -TargetName $Target -Family $font.family) {
         Write-Host "  Applied '$($font.family)' to '$Target'. Open a new tab to see it." -ForegroundColor Green
     } else {

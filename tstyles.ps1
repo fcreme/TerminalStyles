@@ -1128,9 +1128,16 @@ function Invoke-TerminalStyle {
     # may only be taken once the operation is possible -- and so a BOM survives,
     # which the WriteAllText round-trip this replaced would have dropped. The
     # target was validated well above; $resolvedForBackup carries that proof.
+    # A failure here was swallowed by `catch { }`, so the picker previewed and
+    # applied over a .bak still holding the state from the user's last real
+    # apply -- and with -Quiet the failed and successful backups produce
+    # byte-identical output. Captured into a note the frame paints, because
+    # everything printed above the menu is wiped by its Clear-Host.
+    $backupNote = $null
     if ($useSettingsFile) {
         $resolvedForBackup = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $Target
-        try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedForBackup -Quiet } catch { }
+        try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedForBackup -Quiet }
+        catch { $backupNote = Get-BackupFailureNote -Reason "$_" -InFrame }
     }
 
     [Console]::CursorVisible = $false
@@ -1241,13 +1248,21 @@ function Invoke-TerminalStyle {
             # same height on every REDRAW, which it is -- $unreadableNote cannot
             # change while the picker is up.
             if ($unreadableNote) { Write-Host "$hintColor$unreadableNote$resetColor" }
+            # Same reasoning, same place: the rolling backup this picker takes
+            # before its first preview can fail, and saying so where it happened
+            # means saying it above the frame, where the Clear-Host wipes it.
+            # Like $unreadableNote it is decided once, before the loop, so the
+            # frame's height is still identical on every redraw.
+            if ($backupNote) { Write-Host "$hintColor$backupNote$resetColor" }
             Write-Host ""
             # Rows the frame spends on anything that is not a style: the leading
             # blank, the header line, the two hint lines, the two always-present
             # scroll indicators, the trailing blank, and one spare so the shell's
             # own prompt has somewhere to land -- plus the unreadable-styles
-            # line, when there is one.
-            $chrome = if ($unreadableNote) { 9 } else { 8 }
+            # line and the backup-failure line, when there are any.
+            $chrome = 8
+            if ($unreadableNote) { $chrome++ }
+            if ($backupNote)     { $chrome++ }
             # A non-positive WindowHeight means "I don't know", not "no room".
             # It reads as 0 under a pty whose size was never set -- some CI
             # runners, some SSH sessions before the first SIGWINCH -- and

@@ -77,6 +77,90 @@ Describe 'a Save-As over an existing style really replaces it' {
             (Get-Content (Join-Path $script:dest 'profile.ps1') -Raw)      | Should -Match 'eva profile'
         }
 
+        It 'does not leave the replaced style''s wallpaper painting the new one' {
+            # The same promise as the two tests above -- "'<name>' already exists
+            # and will be REPLACED" -- and the one artefact it did not cover.
+            # background.* is tier 1 of Get-StyleBundledBackground: checked
+            # before the cache and before the image inherited from the new base,
+            # so a leftover outranks the new base's permanently. The tuner's own
+            # preview, whose scratch dir carries no image, had been showing the
+            # BASE's all along.
+            #
+            # Asserted on the RESOLVER, not on Test-Path: what matters is what
+            # the terminal will actually paint.
+            $base = Join-Path $script:TStylesDataRoot 'styles/plainbase'
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $base 'scheme.json'), '{"name":"plainbase"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $base 'theme.json'),  '{"opacity":100}',       $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $base 'background.gif'), 'PLAIN-BASE-WALLPAPER', $script:enc)
+
+            # A hand-authored style, exactly the shape README documents, with an
+            # image of its own.
+            New-Item -ItemType Directory -Path $script:dest -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'scheme.json'), '{"name":"mytheme"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'theme.json'),  '{"opacity":100}',    $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'background.png'), 'MYTHEME-WALLPAPER', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'README.md'), 'my own notes', $script:enc)
+
+            # Save As 'mytheme' while tuning plainbase: the collision the prompt
+            # describes as REPLACED.
+            Save-TunedStyle -AdjustedScheme $script:scheme -SaveName 'mytheme' `
+                -BaseStyleDir $base -BaseName 'plainbase' -OpenedStyleDir $base `
+                -Brightness 0 -Saturation 0 -Opacity 100 -FontFace 'Menlo' -FontSize 12 | Out-Null
+
+            $resolved = Get-StyleBundledBackground -StyleDir $script:dest
+            $resolved | Should -Not -BeNullOrEmpty -Because 'the new base does ship one, by inheritance'
+            [System.IO.File]::ReadAllText($resolved) | Should -Be 'PLAIN-BASE-WALLPAPER' `
+                -Because 'the replaced style''s wallpaper must not outrank the base the user tuned'
+        }
+
+        It 'keeps a hand-placed background on an ordinary Overwrite re-tune' {
+            # The other half, and the reason the removal above is gated on "the
+            # destination is a DIFFERENT style" rather than on "the destination
+            # is not the base". A tuned style's base IS another directory, so the
+            # simpler test is true on every Enter-save of a brightness tweak:
+            # measured against that form, this file disappeared on a routine
+            # adjustment, with no backup and no trash.
+            $base = Join-Path $script:TStylesDataRoot 'styles/plainbase'
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $base 'scheme.json'), '{"name":"plainbase"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $base 'theme.json'),  '{"opacity":100}',       $script:enc)
+
+            New-Item -ItemType Directory -Path $script:dest -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'background.png'), 'MYTHEME-WALLPAPER', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'tune.json'),
+                '{"schemaVersion":1,"base":"plainbase","brightness":-20}', $script:enc)
+
+            # Re-tuning 'mytheme': the tuner is open on mytheme, the colours come
+            # from its base, and the save goes back to mytheme.
+            Save-TunedStyle -AdjustedScheme $script:scheme -SaveName 'mytheme' `
+                -BaseStyleDir $base -BaseName 'plainbase' -OpenedStyleDir $script:dest `
+                -Brightness -25 -Saturation 0 -Opacity 100 -FontFace 'Menlo' -FontSize 12 | Out-Null
+
+            $own = Join-Path $script:dest 'background.png'
+            Test-Path -LiteralPath $own | Should -BeTrue `
+                -Because 'the user placed this file; a brightness tweak must not delete it'
+            [System.IO.File]::ReadAllText($own) | Should -Be 'MYTHEME-WALLPAPER'
+        }
+
+        It 'says so before it takes the image, and only when it is taking one' {
+            # The prompt is the consent, so it has to name what goes. A Save-As
+            # over a style with an image now removes it; an Overwrite re-tune
+            # keeps it and must not claim otherwise.
+            New-Item -ItemType Directory -Path $script:dest -Force | Out-Null
+            Get-TuneReplaceWarning -Name 'mytheme' -DestDir $script:dest |
+                Should -Not -Match '(?i)background' -Because 'there is no image here to take'
+
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'background.png'), 'x', $script:enc)
+            $saveAs = Get-TuneReplaceWarning -Name 'mytheme' -DestDir $script:dest
+            $saveAs | Should -Match 'will be REPLACED'
+            $saveAs | Should -Match '(?i)background image'
+
+            Get-TuneReplaceWarning -Name 'mytheme' -DestDir $script:dest -SameStyle |
+                Should -Not -Match '(?i)background' `
+                -Because 'an Overwrite re-tune keeps it, and a prompt may not claim a loss that will not happen'
+        }
+
         It 'leaves an Overwrite re-tune alone, where base and destination are one directory' {
             # $sameDir: the file being "removed" would be the source itself.
             $selfDir = Join-Path $script:TStylesDataRoot 'styles/self'

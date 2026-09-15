@@ -175,9 +175,16 @@ function Get-TerminalCapability {
             # style ships one. Terminal.app gets a still first frame at best.
             #
             # Font and Padding are `config.font`/`font_size` and
-            # `window_padding`. Persist is the module itself, which WezTerm reads
-            # on startup -- and, because required files are on its config reload
-            # watch list, rewriting it also restyles a RUNNING window.
+            # `window_padding`. Font here is a promise about the STYLE APPLY --
+            # the face a style declares in its theme.json. `tstyles font <name>`
+            # asks a different question and must not read this flag; it asks
+            # Test-FontCommandCanApply (lib/fonts.ps1), because the only font
+            # writer that command reaches is Set-ProfileFont, which knows
+            # Windows Terminal's settings.json alone.
+            #
+            # Persist is the module itself, which WezTerm reads on startup --
+            # and, because required files are on its config reload watch list,
+            # rewriting it also restyles a RUNNING window.
             #
             # Opacity is deliberately NOT claimed even though WezTerm has
             # window_background_opacity. Once a `background` layer list exists

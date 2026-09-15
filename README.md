@@ -121,6 +121,8 @@ tstyles tune [name]               # Live-tune brightness/saturation/opacity/font
 tstyles delete [name]             # Delete a style you made (bundled styles are refused)
 tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
+tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zshrc, ~/.bashrc, ~/.bash_profile
+tstyles shell-remove              # Remove that zsh/bash loader again
 tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
@@ -173,7 +175,7 @@ colors rather than stacking one set of adjustments on another.
 
 ```powershell
 tstyles font                      # list the catalog, with installed/installable markers
-tstyles font 'JetBrains Mono'     # install it (if needed) and apply it to the active profile
+tstyles font 'JetBrains Mono'     # install it (if needed); on Windows Terminal, apply it too
 ```
 
 Six curated fonts are available — **JetBrains Mono**, **Fira Code**,
@@ -187,6 +189,11 @@ Already-installed fonts are detected and skipped, so re-running the
 command is cheap. Once a font is installed it also shows up in the
 `tstyles tune` font-face knob and in the picker, alongside the monospace
 fonts you already had.
+
+Applying the font to a profile is a **Windows Terminal** thing —
+`settings.json` is the only config file `tstyles font` writes. On every
+other terminal the install is the whole job: the command says so and
+leaves you to select the font in your terminal's own settings.
 
 The first time you run `tstyles`, a one-time prompt offers to install the
 whole set. Decline it and you're never asked again — `tstyles font` is
@@ -204,9 +211,10 @@ tstyles eva -KeepPrompt        # eva's look; your prompt stays
 ```
 
 The scriptable `apply.ps1` accepts the same flag (`apply.ps1 -KeepPrompt`,
-with `-NoProfile` kept as an alias). Note: a `-KeepPrompt` apply isn't reported
-by `tstyles current` / the `*` in `tstyles list`, because active-style detection
-is prompt-based.
+with `-NoProfile` kept as an alias). A `-KeepPrompt` apply is still reported by
+`tstyles current` and the `*` in `tstyles list`: detection normally byte-compares
+the installed prompt, which this flag deliberately leaves alone, so it falls back
+to the style record that every apply writes.
 
 ### Resetting a profile
 
@@ -220,7 +228,11 @@ tstyles reset -Target 'Ubuntu' # a specific profile
 This strips the colors, cursor, font, opacity, and background a style added,
 removes the now-unused color scheme, and restores your own prompt (open a new
 tab to see it). It's the inverse of applying a style, and writes a
-`settings.json.bak` first. Fields you set on the profile by hand are left alone.
+`settings.json.bak` first — that last part is Windows Terminal only. Elsewhere
+there is no `settings.json` to strip: the reset is an escape sequence handing
+color control back to the terminal's own profile, so there is nothing to back
+up and no `.bak` is written. Fields you set on the profile by hand are left
+alone.
 
 ## Styles
 

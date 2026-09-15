@@ -69,6 +69,25 @@ function Test-BackgroundProbeSuppressed {
     return (($Now.ToUniversalTime() - $at) -lt $ttl)
 }
 
+function Get-BackgroundFileIn {
+    # The background image sitting DIRECTLY in one directory, or $null.
+    #
+    # One place knows the extensions and their priority (.gif > .png > .jpg >
+    # .jpeg, the order README documents for the gifs branch), because two
+    # places answering the same question is how the tuner came to remove the
+    # artefacts it owns while leaving behind the one file that outranks them
+    # all: Save-TunedStyle replaced a style's profile.ps1 and prompt.sh and
+    # kept its background.png, so a style the user had just been told was
+    # REPLACED went on painting the replaced style's wallpaper. The removal
+    # list and the resolution list are now the same list.
+    param([Parameter(Mandatory)][string]$Directory)
+    foreach ($ext in 'gif','png','jpg','jpeg') {
+        $candidate = Join-Path $Directory "background.$ext"
+        if (Test-Path -LiteralPath $candidate) { return $candidate }
+    }
+    return $null
+}
+
 function Get-StyleBundledBackground {
     # Three-tier resolution:
     #   1. Bundled file under $StyleDir (module root, read-only-ish on PSGallery)
@@ -80,19 +99,15 @@ function Get-StyleBundledBackground {
     param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
 
     # 1. Bundled (under module root)
-    foreach ($ext in 'gif','png','jpg','jpeg') {
-        $bundled = Join-Path $StyleDir "background.$ext"
-        if (Test-Path -LiteralPath $bundled) { return $bundled }
-    }
+    $bundled = Get-BackgroundFileIn -Directory $StyleDir
+    if ($bundled) { return $bundled }
 
     $styleName = Split-Path -Leaf $StyleDir
     $cacheDir  = Get-StyleCacheDir -StyleName $styleName
 
     # 2. Cached (under data root)
-    foreach ($ext in 'gif','png','jpg','jpeg') {
-        $cached = Join-Path $cacheDir "background.$ext"
-        if (Test-Path -LiteralPath $cached) { return $cached }
-    }
+    $cached = Get-BackgroundFileIn -Directory $cacheDir
+    if ($cached) { return $cached }
     # 2b. Inheritance: a tuned style inherits its base's background. For a
     # non-tuned style this returns $null instantly (no tune.json), so the
     # normal path is unaffected. -NoInherit suppresses this (used when
