@@ -16,6 +16,11 @@
 #
 # Portability: POSIX-ish shell, with the two shells' differences isolated in
 # ts_c / ts_prompt_apply below. Sourced by both, so no bashisms outside those.
+# A third shell can still reach this file -- `tstyles shell-init` registers the
+# loader in ~/.profile, which a dash or ksh login shell reads -- and there job 2
+# is not portable at all: ts_prompt_expand is bash/zsh syntax and the templates
+# are bash's PS1 escapes. So a POSIX sh gets job 1 and stops: colours, and its
+# own prompt. ts_prompt_load is where that is decided.
 #
 # EVERY ambient read below uses ${VAR-}, never a bare $VAR. This file is sourced
 # from the user's rc file, so it inherits whatever shell options that rc has
@@ -101,6 +106,11 @@ ts_rawx() { printf '\033[0m'; }
 # characters a path happens to contain. A path holding a '%' would otherwise be
 # reinterpreted by zsh as a prompt escape, and a '\' by bash.
 #
+# The one exception is {LEAF} in bash, where the two shells' escapes do not
+# agree and the placeholder becomes a command substitution instead -- see
+# ts_leaf. It is still evaluated per prompt rather than captured, and bash does
+# not re-scan what a substitution returns, so neither property above is lost.
+#
 # Substitution uses ${var//from/to} rather than sed: it needs no subprocess (this
 # runs on every shell start), and it cannot be confused by the template's own
 # punctuation -- several banners and prompts contain '|', which would collide
@@ -114,7 +124,14 @@ ts_prompt_expand() {
         _ts_host='%m'
     else
         _ts_cwd='\w'
-        _ts_leaf='\W'
+        # NOT '\W'. bash's \W and zsh's %1~ are not the same escape: at a
+        # single-component absolute path %1~ keeps the leading slash ('/tmp')
+        # and \W drops it ('tmp'). {LEAF} is this project's own placeholder and
+        # has to mean one thing, so bash is the leg that moves -- the
+        # PowerShell half and the parity harness are both fitted to %1~. Same
+        # mechanism as {GITBRANCH} below: a command substitution bash re-runs
+        # on every prompt.
+        _ts_leaf='$(ts_leaf)'
         _ts_user='\u'
         _ts_host='\h'
     fi
@@ -129,6 +146,27 @@ ts_prompt_expand() {
     _ts_tpl="${_ts_tpl//\{NL\}/$_ts_nl}"
     _ts_tpl="${_ts_tpl//\{GITBRANCH\}/\$(ts_git_branch)}"
     printf '%s' "$_ts_tpl"
+}
+
+ts_leaf() {
+    # zsh's %1~ for bash: the ~-abbreviated path's last component, except where
+    # abbreviating leaves only one, which zsh prints whole ('~', '/tmp', '/').
+    # Evaluated fresh on every prompt, like ts_git_branch, so the directory
+    # still reaches the prompt as a value bash produces rather than as text
+    # captured at load time. bash decodes PS1's backslash escapes BEFORE
+    # command substitution, so a path containing '\W' or '\[' arrives too late
+    # to be decoded and prints literally -- the same property ts_cs relies on.
+    _ts_lp="${PWD-}"
+    if [ -n "${HOME-}" ]; then
+        case "$_ts_lp" in
+            "$HOME")   printf '~'; return 0 ;;
+            "$HOME"/*) _ts_lp="~${_ts_lp#"$HOME"}" ;;
+        esac
+    fi
+    case "${_ts_lp#/}" in
+        */*) printf '%s' "${_ts_lp##*/}" ;;
+        *)   printf '%s' "$_ts_lp" ;;
+    esac
 }
 
 ts_git_branch() {
@@ -182,6 +220,39 @@ ts_title() {
     return 0
 }
 
+ts_prompt_load() {
+    # The ONE place the staged prompt is sourced. Both callers -- ts_load at
+    # shell startup and the `tstyles` wrapper's live reload -- go through here,
+    # because each of the two rules below was missing from one of them.
+    #
+    # 1. zsh and bash only. `_ts_shell` has three values and everything else in
+    #    this file distinguishes two, so a POSIX sh took the arm written for
+    #    bash: ts_prompt_expand's ${var//from/to} is not POSIX and is a hard
+    #    error in dash, and the placeholders expand to bash's PS1 backslash
+    #    escapes, which no POSIX sh decodes. A dash login shell reading the
+    #    loader from ~/.profile printed the palette, the title and the style's
+    #    whole banner, then "Bad substitution", and was left with an EMPTY PS1
+    #    -- no prompt at all, where dash's own is "$ ". ksh93 printed the raw
+    #    escapes as visible text. The palette is the terminal's rather than the
+    #    shell's, so it still applies; the prompt is the half that cannot.
+    [ "${_ts_shell-}" != 'sh' ] || return 0
+    [ -r "$TSTYLES_DATA/current-prompt.sh" ] || return 0
+
+    # 2. Banner bytes follow fd 1. Nine of the sixteen styles printf an ASCII
+    #    banner at the top of prompt.sh, and `tstyles eva > log` redirects only
+    #    the wrapper's stdout -- so 515 bytes of ANSI box landed in the
+    #    capture, directly under the PowerShell half's own sentence about there
+    #    being no terminal to repaint. The source itself must still happen:
+    #    the shell around that redirect is still interactive and still painting
+    #    PS1/PROMPT on the tty, and swapping it live is the only reason the
+    #    wrapper exists. So redirect the banner, not the reload.
+    if [ -t 1 ]; then
+        . "$TSTYLES_DATA/current-prompt.sh"
+    else
+        . "$TSTYLES_DATA/current-prompt.sh" >/dev/null
+    fi
+}
+
 # --- Startup ---------------------------------------------------------------
 ts_load() {
     # Non-interactive shells get nothing: no colors, no prompt, no output. This
@@ -227,9 +298,7 @@ ts_load() {
     fi
 
     # 2. Prompt + banner.
-    if [ -r "$TSTYLES_DATA/current-prompt.sh" ]; then
-        . "$TSTYLES_DATA/current-prompt.sh"
-    fi
+    ts_prompt_load
 }
 
 # --- The `tstyles` command for non-PowerShell shells ------------------------
@@ -286,7 +355,7 @@ tstyles() {
         # No hashing tool: fall back to the old behaviour rather than never
         # re-sourcing, since a missed prompt swap is worse than a stray banner.
         if [ -z "$_ts_before" ] || [ -z "$_ts_after" ] || [ "$_ts_before" != "$_ts_after" ]; then
-            . "$TSTYLES_DATA/current-prompt.sh"
+            ts_prompt_load
         fi
         unset _ts_before _ts_after
     fi

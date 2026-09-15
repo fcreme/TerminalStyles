@@ -251,6 +251,32 @@ printf 'BRANCH-OK\n'
         $r.StdErr.Trim() | Should -BeNullOrEmpty -Because "bash said: $($r.StdErr)"
         $r.StdOut | Should -Match 'BRANCH-OK'
     }
+
+    It 'ts_leaf renders under nounset, including with HOME unset' -Skip:$script:NoBash {
+        # {LEAF} in bash is $(ts_leaf), which runs inside the prompt of EVERY
+        # command -- so an ambient read there is an "unbound variable" per
+        # prompt rather than once at load. $HOME unset is the case it has to
+        # answer for: there is nothing to abbreviate and the path still has to
+        # render. The three answers below are zsh's %1~ at the same three
+        # directories, which is what {LEAF} means.
+        $r = script:Invoke-Sandboxed -Shell 'bash' -Body @"
+set -u
+. '$($script:runtime)'
+cd /
+printf 'ROOT<%s>\n' "`$(ts_leaf)"
+cd "`$HOME"
+printf 'HOME<%s>\n' "`$(ts_leaf)"
+unset HOME
+cd /usr
+printf 'NOHOME<%s>\n' "`$(ts_leaf)"
+printf 'LEAF-OK\n'
+"@
+        $r.StdErr.Trim() | Should -BeNullOrEmpty -Because "bash said: $($r.StdErr)"
+        $r.StdOut | Should -Match 'ROOT</>'
+        $r.StdOut | Should -Match 'HOME<~>'
+        $r.StdOut | Should -Match 'NOHOME</usr>'
+        $r.StdOut | Should -Match 'LEAF-OK'
+    }
 }
 
 Describe 'an interactive shell under set -u still gets its style' {

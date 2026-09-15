@@ -28,11 +28,14 @@ function global:prompt {
 
     # Path: substitute $HOME prefix with '~', then convert backslashes to
     # forward slashes for the authentic Git-Bash look.
-    $path = $PWD.Path
-    if ($path.StartsWith($HOME, [StringComparison]::OrdinalIgnoreCase)) {
-        $path = '~' + $path.Substring($HOME.Length)
-    }
-    $path = $path -replace '\\', '/'
+    #
+    # The abbreviation must stop at a path boundary, which is why this is the
+    # same lookahead-guarded expression the other fifteen styles use rather
+    # than a bare StartsWith: a plain prefix test also matches a SIBLING of
+    # $HOME, so with a home of ~/user the directory ~/userXtra rendered as
+    # "~Xtra" and ~/user-old as "~-old" -- while {CWD} in the zsh/bash half
+    # maps to %~ / \w, which abbreviate on components and print both in full.
+    $path = ($PWD.Path -replace ('^' + [regex]::Escape($HOME) + '(?=$|[\\/])'), '~') -replace '\\', '/'
 
     # Branch detection. Save/restore $LASTEXITCODE so calling git here
     # doesn't pollute the user's subsequent error checks.

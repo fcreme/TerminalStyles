@@ -17,6 +17,11 @@
 #   - that same shim interpolated the module path into a single-quoted string
 #     with no escaping, so an apostrophe in the path produced a shim that could
 #     not parse while Sync-ShellRuntime reported success.
+#   - the `tstyles` wrapper re-sourced the staged prompt with no tty guard, so a
+#     redirected apply glued the style's ANSI banner into the capture.
+#   - `_ts_shell` has three values and everything downstream distinguished two,
+#     so a POSIX sh took the arm written for bash and got "Bad substitution"
+#     and an empty PS1 on every prompt.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -27,6 +32,11 @@ BeforeDiscovery {
     $script:HasZsh  = [bool](Get-Command zsh  -ErrorAction SilentlyContinue)
     $script:HasBash = [bool](Get-Command bash -ErrorAction SilentlyContinue)
     $script:HasGit  = [bool](Get-Command git  -ErrorAction SilentlyContinue)
+    # A real POSIX sh that is NOT bash. macOS's /bin/sh IS bash and sets
+    # BASH_VERSION, which is why the 'sh' arm survived this long on the
+    # maintainer's platform; /bin/dash ships on macOS and on every Debian
+    # derivative, so name it explicitly rather than trusting `sh`.
+    $script:HasDash = [bool](Get-Command dash -ErrorAction SilentlyContinue)
     # `script` is the only portable way to hand a shell a real pty, and ts_load
     # returns early without one. Two incompatible flavours exist:
     #   BSD (macOS)       script -q <file> <cmd...>
@@ -37,6 +47,7 @@ BeforeDiscovery {
 BeforeAll {
     $repoRoot = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+    $script:repoRoot = $repoRoot
     $script:runtime = Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh'
 
     # A throwaway repo whose branch name we can make hostile.
@@ -74,6 +85,53 @@ BeforeAll {
             return [System.IO.File]::ReadAllText($LogPath)
         }
         return ''
+    }
+
+    # A sandbox the real module never enters: a data root under $TestDrive, an
+    # empty tstyles-cli.ps1 so the wrapper's own guard passes, and a stub `pwsh`
+    # FIRST on PATH whose only action is to restage current-prompt.sh. No real
+    # data root, no real $HOME, no pwsh subprocess, no apply.
+    function script:New-ApplySandbox {
+        param([string]$Name)
+        $root = Join-Path $TestDrive $Name
+        $data = Join-Path $root 'data'
+        $bin  = Join-Path $root 'bin'
+        $hm   = Join-Path $root 'home'
+        foreach ($d in @($data, $bin, $hm)) {
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+        }
+        Copy-Item -LiteralPath (Join-Path $script:repoRoot 'styles/sober/prompt.sh') `
+                  -Destination (Join-Path $data 'current-prompt.sh') -Force
+        [System.IO.File]::WriteAllText((Join-Path $data 'tstyles-cli.ps1'), '')
+        [System.IO.File]::WriteAllText((Join-Path $data 'current-style.osc'),
+                                       "$([char]27)]4;0;#000000$([char]7)")
+
+        $stub = @'
+#!/bin/sh
+# Stand-in for tstyles-cli.ps1. The last argument is the subcommand, exactly as
+# the wrapper passes it. Restages the prompt and prints one line; that is all.
+for _a in "$@"; do _sub="$_a"; done
+case "$_sub" in
+  eva) cp '__EVA__' "$TSTYLES_DATA/current-prompt.sh"; echo 'Style applied: eva' ;;
+  *)   echo "stub ran: $_sub" ;;
+esac
+exit 0
+'@
+        $stub = $stub.Replace('__EVA__', (Join-Path $script:repoRoot 'styles/eva/prompt.sh'))
+        $stubPath = Join-Path $bin 'pwsh'
+        [System.IO.File]::WriteAllText($stubPath, ($stub -replace "`r`n", "`n"))
+        & chmod +x $stubPath
+        return [pscustomobject]@{ Root = $root; Data = $data; Bin = $bin; Home = $hm }
+    }
+
+    # `script` wants a single executable to hand the pty, so wrap the shell and
+    # whatever environment it needs in a /bin/sh one-liner.
+    function script:New-PtyWrapper {
+        param([string]$Dir, [string]$Name, [string]$Exec)
+        $w = Join-Path $Dir "$Name.sh"
+        [System.IO.File]::WriteAllText($w, "#!/bin/sh`n$Exec`n")
+        & chmod +x $w
+        return $w
     }
 }
 
@@ -363,5 +421,220 @@ Describe 'an apply prints its banner once, not twice' {
             [System.Text.UTF8Encoding]::new($false))
         $terminals | Should -Match 'TStylesNoAutoLoad' `
             -Because 'the gate above is inert if the generated shim stops setting it'
+    }
+}
+
+Describe 'the `tstyles` wrapper re-sources the prompt without writing to a capture' {
+    # ts_load has gated on `[ -t 1 ]` since 0.8.21 and ts_title carries the same
+    # test; the third writer of the same bytes -- the wrapper's live reload --
+    # did not. Nine of the sixteen styles printf an ASCII banner at prompt.sh
+    # top level, so `tstyles eva > log` put 515 bytes of ANSI box in the log,
+    # directly under the PowerShell half's own line about there being no
+    # terminal to repaint.
+    #
+    # TWO assertions per shell, and both are load-bearing. The obvious repair --
+    # wrap the source in `if [ -t 1 ]; then ... fi` -- passes the first and
+    # breaks the feature: only the wrapper's fd 1 is redirected, the shell
+    # around it is still interactive and still painting PS1 on the tty, and
+    # swapping that live is the only reason this wrapper exists. Measured in
+    # real bash and real zsh: that variant loses the swap in both.
+
+    It 'bash: a redirected apply writes no escape bytes and still swaps the prompt' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        $sb  = script:New-ApplySandbox -Name 'apply-bash'
+        $cap = Join-Path $sb.Root 'captured.txt'
+        $rc  = Join-Path $sb.Root 'rc.sh'
+        # The rc exits at the end for the reason the idempotency test above
+        # gives: util-linux's `script -c` hands the shell the pty as stdin, so
+        # an interactive shell left at a prompt would hang CI.
+        [System.IO.File]::WriteAllText($rc, @"
+export TSTYLES_DATA='$($sb.Data)'
+PATH='$($sb.Bin)':"`$PATH"
+. '$($script:repoRoot)/shell/tstyles.sh'
+tstyles eva > '$cap'
+case "`${PS1-}" in *PILOT*) echo 'TSPROBE-SWAPPED' ;; *) echo 'TSPROBE-NOT-SWAPPED' ;; esac
+exit
+"@)
+        # macOS ships bash 3.2, where long options must precede short ones.
+        $w    = script:New-PtyWrapper -Dir $sb.Root -Name 'w' -Exec "exec bash --init-file '$rc' -i"
+        $log  = Join-Path $sb.Root 'log'
+        $text = script:Invoke-UnderPty -Command $w -LogPath $log
+
+        [System.IO.File]::Exists($cap) | Should -BeTrue -Because 'the apply must have run at all'
+        $captured = [System.IO.File]::ReadAllText($cap)
+
+        # The stub CLI, not a real pwsh: without this a capture that is empty
+        # because the wrapper never ran would satisfy every assertion below.
+        $captured | Should -Match 'Style applied: eva' -Because 'the stub CLI must be the one that ran'
+
+        $captured | Should -Not -Match ([char]27) `
+            -Because 'a redirected apply must put no escape bytes in the capture'
+        $captured | Should -Not -Match 'ANTA BAKA' `
+            -Because "the style's banner belongs on the terminal, not in the user's file"
+        $text | Should -Match 'TSPROBE-SWAPPED' `
+            -Because 'the live prompt swap is the only reason this wrapper exists'
+    }
+
+    It 'zsh: the same, in the other shell the wrapper serves' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        $sb   = script:New-ApplySandbox -Name 'apply-zsh'
+        $cap  = Join-Path $sb.Root 'captured.txt'
+        $zdot = $sb.Root
+        [System.IO.File]::WriteAllText((Join-Path $zdot '.zshrc'), @"
+export TSTYLES_DATA='$($sb.Data)'
+PATH='$($sb.Bin)':"`$PATH"
+. '$($script:repoRoot)/shell/tstyles.sh'
+tstyles eva > '$cap'
+case "`${PS1-}" in *PILOT*) echo 'TSPROBE-SWAPPED' ;; *) echo 'TSPROBE-NOT-SWAPPED' ;; esac
+exit
+"@)
+        # -d suppresses the global rc files, so only the .zshrc above runs.
+        $w    = script:New-PtyWrapper -Dir $sb.Root -Name 'wz' `
+                    -Exec "ZDOTDIR='$zdot'; export ZDOTDIR`nexec zsh -d -i"
+        $log  = Join-Path $sb.Root 'log'
+        $text = script:Invoke-UnderPty -Command $w -LogPath $log
+
+        [System.IO.File]::Exists($cap) | Should -BeTrue -Because 'the apply must have run at all'
+        $captured = [System.IO.File]::ReadAllText($cap)
+
+        # The stub CLI, not a real pwsh: without this a capture that is empty
+        # because the wrapper never ran would satisfy every assertion below.
+        $captured | Should -Match 'Style applied: eva' -Because 'the stub CLI must be the one that ran'
+
+        $captured | Should -Not -Match ([char]27) `
+            -Because 'a redirected apply must put no escape bytes in the capture'
+        $captured | Should -Not -Match 'ANTA BAKA'
+        $text | Should -Match 'TSPROBE-SWAPPED' `
+            -Because 'the live prompt swap is the only reason this wrapper exists'
+    }
+
+    It 'an UNredirected apply still prints the banner on the terminal' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        # The control. A guard written so it also mutes the tty would satisfy
+        # both assertions above and take the feature with it.
+        $sb = script:New-ApplySandbox -Name 'apply-tty'
+        $rc = Join-Path $sb.Root 'rc.sh'
+        [System.IO.File]::WriteAllText($rc, @"
+export TSTYLES_DATA='$($sb.Data)'
+PATH='$($sb.Bin)':"`$PATH"
+. '$($script:repoRoot)/shell/tstyles.sh'
+tstyles eva
+exit
+"@)
+        $w    = script:New-PtyWrapper -Dir $sb.Root -Name 'w' -Exec "exec bash --init-file '$rc' -i"
+        $log  = Join-Path $sb.Root 'log'
+        $text = script:Invoke-UnderPty -Command $w -LogPath $log
+        $text | Should -Match 'Style applied: eva' -Because 'the stub CLI must be the one that ran'
+        $text | Should -Match 'ANTA BAKA' `
+            -Because 'on a real terminal the apply still shows the style it applied'
+    }
+}
+
+Describe 'a POSIX sh gets the palette and keeps its own prompt' {
+    # `_ts_shell` is computed as zsh | bash | sh and every consumer asked only
+    # "is it zsh", so 'sh' took the arm written for bash. That arm is
+    # bash-specific twice over: ts_prompt_expand's ${var//from/to} is not POSIX
+    # and is a hard error in dash, and the placeholders expand to bash's PS1
+    # backslash escapes, which no POSIX sh decodes.
+    #
+    # `tstyles shell-init` routes exactly these shells into ~/.profile:
+    # $loginShell is `if ($env:SHELL -match 'zsh') {'zsh'} else {'bash'}`, so
+    # SHELL=/bin/dash resolves to 'bash' and takes that branch. A dash login
+    # shell then printed the palette, the title and the style's whole banner,
+    # then "Bad substitution", and was left with an EMPTY PS1 -- no prompt at
+    # all, where dash's own is "$ ". ksh93 has ${//} and so printed no error,
+    # just the raw bash escapes as visible text.
+    #
+    # Both call sites are covered in one session: shell startup (ts_load) and
+    # the `tstyles` wrapper's live reload, which fires again per apply.
+
+    It 'dash reports itself as sh rather than pretending to be bash' -Skip:(-not $script:HasDash) {
+        # Pins that the branch exists and is taken; everything below is about
+        # what the runtime then does with that answer.
+        $out = script:Invoke-Shell -Shell 'dash' -Script @"
+. '$($script:repoRoot)/shell/tstyles.sh' 2>/dev/null
+echo "SHELLIS=[`$_ts_shell]"
+"@
+        $out | Should -Match 'SHELLIS=\[sh\]'
+    }
+
+    It 'a real login dash gets no error and keeps its own prompt, at startup and on apply' -Skip:(-not ($script:HasDash -and $script:HasScript)) {
+        # The sandbox stages sober and the stub swaps it for eva, so the hash
+        # gate opens and the wrapper really does re-source -- otherwise this
+        # would measure the startup path twice and call it two call sites.
+        $sb = script:New-ApplySandbox -Name 'posix-dash'
+
+        # The real registration shape: the loader block in ~/.profile, which is
+        # the file shell-init writes for this layout and the file a login dash
+        # reads. The probes and the exit live in that same file because BSD and
+        # util-linux `script` disagree about what the shell's stdin is.
+        [System.IO.File]::WriteAllText((Join-Path $sb.Home '.profile'), @"
+# ===== TerminalStyles BEGIN =====
+if [ -r '$($script:repoRoot)/shell/tstyles.sh' ]; then . '$($script:repoRoot)/shell/tstyles.sh'; fi
+# ===== TerminalStyles END =====
+# The stub goes on PATH HERE, not in the wrapper: a login shell reads
+# /etc/profile first, and macOS's runs path_helper, which rebuilds PATH
+# and moves any prepended directory behind /usr/local/bin. Set it after
+# that and the wrapper cannot reach a real pwsh.
+PATH='$($sb.Bin)':"`$PATH"; export PATH
+echo "TSPROBE-A PS1=[`$PS1]"
+tstyles eva
+echo "TSPROBE-B PS1=[`$PS1]"
+exit
+"@)
+        $w = script:New-PtyWrapper -Dir $sb.Root -Name 'wd' -Exec (@(
+                "HOME='$($sb.Home)'; export HOME"
+                "TSTYLES_DATA='$($sb.Data)'; export TSTYLES_DATA"
+                'exec dash -l -i'
+             ) -join "`n")
+        $log  = Join-Path $sb.Root 'log'
+        $text = script:Invoke-UnderPty -Command $w -LogPath $log
+
+        # The palette is the terminal's, not the shell's, so it must still be
+        # applied -- otherwise this would pass by having disabled the runtime.
+        $text | Should -Match '\]4;0;#000000' `
+            -Because 'a POSIX sh still gets the colours; only the prompt cannot carry over'
+
+        # And the apply must really have gone through the stub, or the wrapper
+        # half below is measured against a command that never ran.
+        $text | Should -Match 'Style applied: eva' `
+            -Because 'the stub CLI must be the one that ran'
+
+        ([regex]::Matches($text, 'Bad substitution')).Count | Should -Be 0 `
+            -Because 'ts_prompt_expand is zsh/bash syntax and must not be run by a POSIX sh'
+
+        $probes = @([regex]::Matches($text, 'TSPROBE-(?:A|B) PS1=\[(?<p>[^\]\r\n]*)\]') |
+                    ForEach-Object { $_.Groups['p'].Value })
+        $probes.Count | Should -Be 2 -Because "both probes must report; the log was: $text"
+        foreach ($p in $probes) {
+            # Empty is the defect: ts_prompt_apply installed the dead
+            # substitution's output, so dash had no prompt at all.
+            $p | Should -Not -BeNullOrEmpty `
+                -Because 'the runtime must not leave a POSIX sh with no prompt at all'
+            # And a backslash is the OTHER half of it: every ts_c colour in a
+            # bash template starts `\[`, which is what ksh93 painted as text.
+            $p | Should -Not -Match '\\' `
+                -Because 'and must not hand it a bash prompt template it cannot decode'
+        }
+    }
+
+    It 'bash reading the same block still gets the full styled prompt' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        # The control for the guard above. Written as a test of the shell that
+        # is running rather than of _ts_shell, it would mute bash too.
+        $sb = script:New-ApplySandbox -Name 'posix-bash-control'
+        Copy-Item -LiteralPath (Join-Path $script:repoRoot 'styles/eva/prompt.sh') `
+                  -Destination (Join-Path $sb.Data 'current-prompt.sh') -Force
+        $rc = Join-Path $sb.Root 'rc.sh'
+        [System.IO.File]::WriteAllText($rc, @"
+export TSTYLES_DATA='$($sb.Data)'
+. '$($script:repoRoot)/shell/tstyles.sh'
+echo "TSPROBE-A PS1=[`$PS1]"
+exit
+"@)
+        $w    = script:New-PtyWrapper -Dir $sb.Root -Name 'wb' -Exec "exec bash --init-file '$rc' -i"
+        $log  = Join-Path $sb.Root 'log'
+        $text = script:Invoke-UnderPty -Command $w -LogPath $log
+
+        $text | Should -Match 'ANTA BAKA' -Because 'bash still gets the banner'
+        # Lazy across everything, because the template itself is full of `\]`.
+        $text | Should -Match 'TSPROBE-A PS1=\[[\s\S]*?PILOT' `
+            -Because "bash still gets the style's prompt template"
     }
 }
