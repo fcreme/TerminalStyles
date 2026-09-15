@@ -9,7 +9,9 @@ function global:prompt {
     $Esc  = [char]27
     $Teal = "$Esc[38;2;122;153;153m"
     $X    = "$Esc[0m"
-    # The zsh/bash half is {LEAF}, which ts_prompt_expand maps to %1~ / \W.
+    # The zsh/bash half is {LEAF}, which ts_prompt_expand maps to zsh's %1~ and,
+    # in bash, to ts_leaf -- a helper that reproduces %1~, because bash's own \W
+    # is not the same escape and drops the leading slash at '/tmp'.
     # Matching %1~ takes two steps, and this had neither: abbreviate $HOME to
     # ~ FIRST, then keep the last component -- except where that leaves only
     # one, which zsh prints whole ('~', '/tmp', '/'). Before: sitting in $HOME

@@ -20,10 +20,28 @@
 # A static lint cannot see any of this: each half is valid on its own and the
 # drift only exists between them. So render both and compare.
 #
+# WHAT THIS FILE USED TO MISS, and why it now renders three halves at four
+# directories instead of two at one. It rendered zsh only, and only at $HOME.
+# That is a single point in a two-dimensional space, and both of the defects
+# fixed in the release below sat outside it:
+#
+#   * "the shell half" is two shells. {LEAF} mapped to zsh's %1~ and bash's \W,
+#     which are NOT the same escape -- at a single-component absolute path %1~
+#     keeps the leading slash and \W drops it -- so sober showed "/usr" in zsh
+#     and pwsh and "usr" in bash, and nothing here ever rendered bash.
+#   * $HOME is the one directory where a prefix test and a path-boundary test
+#     agree. gitbash abbreviated $HOME with StartsWith and no boundary, so a
+#     SIBLING of $HOME rendered as "~Xtra" -- invisible from $HOME.
+#
+# Measured over the full matrix, 16 styles x 4 directories x 3 halves: 62 of
+# the 64 combinations agreed before the fix and all 64 after it, and the two
+# that disagreed were exactly those two defects. One row of this grid catches
+# either of them; the old single point caught neither.
+#
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
-Describe 'a style renders the same prompt in PowerShell and in zsh' {
+Describe 'a style renders the same prompt in PowerShell, zsh and bash' {
     BeforeDiscovery {
         $repoRoot = Split-Path $PSScriptRoot -Parent
         $script:ParityStyles = @(
@@ -37,54 +55,200 @@ Describe 'a style renders the same prompt in PowerShell and in zsh' {
         # gets $null -- falsy -- so the test neither runs nor reports skipped:
         # it silently passes. Windows CI has no zsh and must skip honestly.
         $script:NoParityShell = -not (Get-Command zsh -ErrorAction SilentlyContinue)
+        $script:NoParityBash  = $script:NoParityShell -or
+                                -not (Get-Command bash -ErrorAction SilentlyContinue)
     }
 
-    It '<_> renders identically in both halves' -ForEach $script:ParityStyles -Skip:$script:NoParityShell {
-        $repoRoot = Split-Path $PSScriptRoot -Parent
-        $styleDir = Join-Path (Join-Path $repoRoot 'styles') $_
-        $runtime  = Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh'
+    BeforeAll {
+        $script:repoRoot = Split-Path $PSScriptRoot -Parent
+        $script:runtime  = Join-Path (Join-Path $script:repoRoot 'shell') 'tstyles.sh'
+        $script:work     = Join-Path $TestDrive 'parity'
+        New-Item -ItemType Directory -Path $script:work -Force | Out-Null
 
-        # $HOME is the cwd on purpose: it is the case the drift actually showed
-        # up in (~ vs the absolute path, ~ vs the folder's own name) and both
-        # shells agree on what it is. A temp directory would not do -- macOS
-        # puts those behind a symlink, and pwsh reports the resolved path while
-        # zsh keeps the logical one, which is a shell difference rather than
-        # anything a style controls.
-        $strip = { param($s) ($s -replace "`e\[[0-9;]*m", '') }
+        # A synthetic $HOME, so the cwds below can include one that is a
+        # character-prefix SIBLING of it. The path is put through `pwd -P` once
+        # and that one resolved string is what both $HOME and every cd target
+        # are built from -- which is what keeps macOS's symlinked temp
+        # directories out of the comparison. zsh keeps the logical path and
+        # pwsh reports what it was handed, so as long as both are handed the
+        # physical one they are comparing the same thing.
+        $seed = Join-Path $script:work 'sand'
+        New-Item -ItemType Directory -Path $seed -Force | Out-Null
+        # Asked again here rather than read from the discovery flag: this block
+        # runs in the run phase and must not depend on which variables survive
+        # discovery.
+        $real = $seed
+        if (Get-Command zsh -ErrorAction SilentlyContinue) {
+            $real = (& zsh -f -c "cd '$seed' && pwd -P" 2>$null | Select-Object -First 1)
+            if (-not $real) { $real = $seed }
+        }
+        $script:ParityHome = Join-Path $real 'tsparity'
+        $sibling           = Join-Path $real 'tsparityXtra'
+        $child             = Join-Path $script:ParityHome 'proj'
+        foreach ($d in @($script:ParityHome, $sibling, $child)) {
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+        }
+
+        # Four directories, each of which some half of some style got wrong:
+        #   $HOME          the ~ case the original drift showed up in
+        #   <$HOME>Xtra    a SIBLING whose name extends $HOME's -- gitbash's
+        #                  StartsWith abbreviated it to "~Xtra"
+        #   /usr           a single-component absolute path, where bash's \W
+        #                  drops the leading slash that zsh's %1~ keeps
+        #   $HOME/proj     an ordinary child, the control
+        # /usr rather than /tmp on purpose: it is present and un-symlinked on
+        # both Unix runners, and it is never a git worktree, so {GITBRANCH}
+        # cannot make two halves disagree for a reason no style controls.
+        $script:ParityCwds = @($script:ParityHome, $sibling, '/usr', $child)
+
+        # The engine running the suite, so the 5.1 leg would measure 5.1 rather
+        # than whatever pwsh happens to be on PATH.
+        $script:Engine = (Get-Process -Id $PID).Path
+
+        $script:StripSgr = {
+            param($s)
+            ($s -replace "`e\[[0-9;]*m", '' -replace "`e\][0-9]*;[^`a]*`a", '')
+        }
+
+        # Each half renders EVERY cwd in one process, writing <TSPn> before each
+        # prompt, so the whole sweep costs three children per style.
+        function script:Split-Prompts {
+            param([string]$Blob, [int]$Count)
+            $out = @()
+            for ($i = 0; $i -lt $Count; $i++) {
+                $a = $Blob.IndexOf("<TSP$i>")
+                if ($a -lt 0) { $out += $null; continue }
+                $a += "<TSP$i>".Length
+                $b = $Blob.IndexOf("<TSP$($i + 1)>")
+                if ($b -lt $a) { $b = $Blob.Length }
+                $out += $Blob.Substring($a, $b - $a)
+            }
+            return $out
+        }
+    }
+
+    It '<_> renders identically in PowerShell and zsh' -ForEach $script:ParityStyles -Skip:$script:NoParityShell {
+        $styleDir = Join-Path (Join-Path $script:repoRoot 'styles') $_
+        $cwds     = $script:ParityCwds
 
         # The PowerShell half in a CHILD process: profile.ps1 defines
         # global:prompt and sets PSReadLine options, neither of which belongs in
-        # the test host.
-        $psOut = & pwsh -NoProfile -Command @"
-`$ErrorActionPreference = 'SilentlyContinue'
-Set-Location -LiteralPath '$HOME'
-. '$(Join-Path $styleDir 'profile.ps1')' *> `$null
-[Console]::Out.Write((prompt))
-"@ 2>$null
-        if (-not $psOut) {
-            $psOut = & pwsh-preview -NoProfile -Command @"
-`$ErrorActionPreference = 'SilentlyContinue'
-Set-Location -LiteralPath '$HOME'
-. '$(Join-Path $styleDir 'profile.ps1')' *> `$null
-[Console]::Out.Write((prompt))
-"@ 2>$null
+        # the test host. $HOME reaches it through the environment, which is why
+        # it is set and restored around both children rather than passed in.
+        $lines = @(
+            "`$ErrorActionPreference = 'SilentlyContinue'"
+            ". '$(Join-Path $styleDir 'profile.ps1')' *> `$null")
+        for ($i = 0; $i -lt $cwds.Count; $i++) {
+            $lines += "Set-Location -LiteralPath '$($cwds[$i])'"
+            $lines += "[Console]::Out.Write('<TSP$i>' + (prompt))"
+        }
+        $psFile = Join-Path $script:work "ps-$_.ps1"
+        [System.IO.File]::WriteAllText($psFile, ($lines -join "`n"), [System.Text.UTF8Encoding]::new($false))
+
+        $zLines = @(
+            "source '$($script:runtime)' >/dev/null 2>&1"
+            "source '$(Join-Path $styleDir 'prompt.sh')' >/dev/null 2>&1")
+        for ($i = 0; $i -lt $cwds.Count; $i++) {
+            $zLines += "cd '$($cwds[$i])'"
+            $zLines += "printf '%s' '<TSP$i>'"
+            $zLines += 'print -Pn -- "$PROMPT"'
+        }
+        $zFile = Join-Path $script:work "z-$_.zsh"
+        [System.IO.File]::WriteAllText($zFile, ($zLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
+
+        $oldHome = $env:HOME
+        try {
+            $env:HOME = $script:ParityHome
+            $psBlob  = ((& $script:Engine -NoProfile -File $psFile 2>$null) -join "`n")
+            $zshBlob = ((& zsh -f $zFile 2>$null) -join "`n")
+        } finally { $env:HOME = $oldHome }
+
+        $psParts  = script:Split-Prompts -Blob $psBlob  -Count $cwds.Count
+        $zshParts = script:Split-Prompts -Blob $zshBlob -Count $cwds.Count
+
+        for ($i = 0; $i -lt $cwds.Count; $i++) {
+            $psText  = & $script:StripSgr ([string]$psParts[$i]).TrimEnd()
+            $zshText = & $script:StripSgr ([string]$zshParts[$i]).TrimEnd()
+            $psText | Should -Not -BeNullOrEmpty `
+                -Because "the PowerShell half must render something at $($cwds[$i])"
+            $psText | Should -Be $zshText `
+                -Because "$_'s two halves must show the same prompt at $($cwds[$i])"
+        }
+    }
+
+    It '<_> renders the same in bash as in zsh' -ForEach $script:ParityStyles -Skip:$script:NoParityBash {
+        # THE HALF THAT WAS NEVER RENDERED. Every prompt.sh header promises its
+        # two halves look the same, and this file only ever ran zsh -- so a
+        # placeholder mapped onto two bash/zsh escapes that disagree with each
+        # other passed for four releases. {LEAF} was: zsh's %1~ keeps the
+        # leading slash at a single-component absolute path ('/usr'), bash's \W
+        # drops it ('usr'), and sober is the one style that uses {LEAF}.
+        #
+        # bash only expands PS1 when it prints a prompt, and bash 3.2 (macOS
+        # stock) has no ${PS1@P}. But an INTERACTIVE bash whose stdin is a pipe
+        # still prints its prompt -- to stderr -- so `exec 2>&1` in the rc file
+        # puts the expanded prompt on stdout with no pty needed. A marker
+        # printed by the rc, and one per cd sent on stdin, bracket each prompt,
+        # so multi-line prompts survive intact.
+        $styleDir = Join-Path (Join-Path $script:repoRoot 'styles') $_
+        $cwds     = $script:ParityCwds
+
+        $rc = @(
+            # A scratch data root, so nothing here reads the operator's own.
+            "export TSTYLES_DATA='$($script:work)'"
+            'exec 2>&1'
+            "source '$($script:runtime)' >/dev/null 2>&1"
+            "source '$(Join-Path $styleDir 'prompt.sh')' >/dev/null 2>&1"
+            "cd '$($cwds[0])'"
+            "printf '%s' '<TSP0>'"
+        ) -join "`n"
+        $rcFile = Join-Path $script:work "b-$_.rc"
+        [System.IO.File]::WriteAllText($rcFile, $rc, [System.Text.UTF8Encoding]::new($false))
+
+        $stdin = @()
+        for ($i = 1; $i -lt $cwds.Count; $i++) {
+            $stdin += "cd '$($cwds[$i])'; printf '%s' '<TSP$i>'"
+        }
+        $stdin += "printf '%s' '<TSP$($cwds.Count)>'"
+        $stdin += 'exit'
+
+        $zLines = @(
+            "source '$($script:runtime)' >/dev/null 2>&1"
+            "source '$(Join-Path $styleDir 'prompt.sh')' >/dev/null 2>&1")
+        for ($i = 0; $i -lt $cwds.Count; $i++) {
+            $zLines += "cd '$($cwds[$i])'"
+            $zLines += "printf '%s' '<TSP$i>'"
+            $zLines += 'print -Pn -- "$PROMPT"'
+        }
+        $zFile = Join-Path $script:work "zb-$_.zsh"
+        [System.IO.File]::WriteAllText($zFile, ($zLines -join "`n"), [System.Text.UTF8Encoding]::new($false))
+
+        $oldHome = $env:HOME
+        $oldDep  = $env:BASH_SILENCE_DEPRECATION_WARNING
+        try {
+            $env:HOME = $script:ParityHome
+            # macOS's bash 3.2 otherwise prints its "use zsh" notice at the
+            # first prompt, i.e. in the middle of the capture.
+            $env:BASH_SILENCE_DEPRECATION_WARNING = '1'
+            $bashBlob = ((($stdin -join "`n") |
+                          & bash --noprofile --noediting --rcfile $rcFile -i 2>$null) -join "`n")
+            $zshBlob  = ((& zsh -f $zFile 2>$null) -join "`n")
+        } finally {
+            $env:HOME = $oldHome
+            $env:BASH_SILENCE_DEPRECATION_WARNING = $oldDep
         }
 
-        $zshScript = @(
-            "cd '$HOME'"
-            "source '$runtime' >/dev/null 2>&1"
-            "source '$(Join-Path $styleDir 'prompt.sh')' >/dev/null 2>&1"
-            'print -Pn -- "$PROMPT"'
-        ) -join "`n"
-        $sf = Join-Path $TestDrive "parity-$_.zsh"
-        [System.IO.File]::WriteAllText($sf, $zshScript, [System.Text.UTF8Encoding]::new($false))
-        $zshOut = & zsh -f $sf 2>$null
+        $bashParts = script:Split-Prompts -Blob $bashBlob -Count $cwds.Count
+        $zshParts  = script:Split-Prompts -Blob $zshBlob  -Count $cwds.Count
 
-        $psText  = & $strip (($psOut  -join "`n").TrimEnd())
-        $zshText = & $strip (($zshOut -join "`n").TrimEnd())
-
-        $psText | Should -Not -BeNullOrEmpty -Because 'the PowerShell half must render something'
-        $psText | Should -Be $zshText -Because "$_'s two halves must show the same prompt"
+        for ($i = 0; $i -lt $cwds.Count; $i++) {
+            $bashText = & $script:StripSgr ([string]$bashParts[$i]).TrimEnd()
+            $zshText  = & $script:StripSgr ([string]$zshParts[$i]).TrimEnd()
+            $bashText | Should -Not -BeNullOrEmpty `
+                -Because "the bash half must render something at $($cwds[$i])"
+            $bashText | Should -Be $zshText `
+                -Because "$_'s bash and zsh halves must show the same prompt at $($cwds[$i])"
+        }
     }
 }
 
