@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`{LEAF}` meant two different things in the two halves of a style, and the parity harness only ever rendered one of them.** bash's `\W` and zsh's `%1~` are not the same escape: at a single-component absolute path `%1~` keeps the leading slash (`/tmp`) and `\W` drops it (`tmp`). `{LEAF}` is this project's own placeholder and has to mean one thing, so bash is the leg that moves -- a `ts_leaf` helper reproduces `%1~`, evaluated fresh on every prompt like `{GITBRANCH}` rather than captured at load. Verified against a real zsh across `$HOME`, `/tmp`, `/` and a subdirectory: all four now agree.
+
+  The reason nothing caught it is the more important half. Every `prompt.sh` header promises its PowerShell and shell halves render BYTE-IDENTICALLY, and the parity harness rendered only the zsh one -- so half of the promise has never been checked. The harness now renders the bash half too.
+
+- **a POSIX `sh` sourcing the loader from `~/.profile` errored on every prompt.** `tstyles shell-init` registers there in the layout where it is the only file a login shell reads, and dash or ksh will read it -- but the second half of what the runtime does is bash/zsh syntax, and the `sh` branch was computed and then treated as bash. There is no portable way to mark non-printing bytes in a POSIX sh prompt and no `\w` equivalent, so a real third branch would be a second prompt implementation; instead an `sh` gets the palette -- which belongs to the terminal, not the shell -- and keeps its own prompt. The guard sits at both call sites, because fixing only the loader leaves the per-apply path.
+
+- **the `tstyles` shell wrapper re-sourced the style prompt with no tty guard, so the banner landed in redirected output.** The rule was already present in two of the three writers and absent from the one between them. It is now one guarded seam all three call.
+
+- **gitbash's `~` abbreviation had no path boundary, so a sibling of `$HOME` rendered as `~Xtra`** -- and diverged from both shells, which abbreviate only at a component boundary.
+
 ## [0.8.26] - 2026-09-12
 
 ### Fixed
