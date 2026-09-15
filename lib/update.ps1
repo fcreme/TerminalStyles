@@ -645,7 +645,13 @@ function Invoke-TerminalStylesUninstall {
         Write-Host "       and becomes a no-op once this file is gone)" -ForegroundColor DarkGray
     }
     if ($DeleteData) {
-        Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp)" -ForegroundColor Red
+        # The parenthetical is a bounded listing, so it has to be complete: the
+        # styles the user made and the ones waiting in .deleted are the two
+        # things in there that nothing else can give back. `tstyles restore`
+        # makes the trash look like a safety net, and this is the one command
+        # that empties it without naming it.
+        Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp," -ForegroundColor Red
+        Write-Host "      the styles you made, and every style in the trash awaiting tstyles restore)" -ForegroundColor Red
     } else {
         Write-Host "  - PRESERVE user state ($dataDir contents -- pass -DeleteData to wipe)" -ForegroundColor Gray
     }
