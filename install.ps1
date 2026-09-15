@@ -284,6 +284,28 @@ function Write-InstallPanel {
     }
 }
 
+# --- The "no engine on PATH" advice ---
+# A function so a test can read what it prints. The line below is the only thing
+# a user in this state has: nothing registered a loader for them, so they paste
+# it into their own $PROFILE by hand. It was a literal of the BY-NAME form while
+# the installer had just written the full-path one three lines up -- and this
+# branch only fires on a bootstrap install, which is exactly where the by-name
+# form resolves to nothing. Print $loaderImport, the value this script already
+# wrote into every profile it could find, so the advice cannot drift from it.
+function Write-NoEngineNotice {
+    param(
+        [Parameter(Mandatory)][string]$InstallDir,
+        [Parameter(Mandatory)][string]$LoaderImport
+    )
+    Write-Host ""
+    Write-Host ("No PowerShell engine found on PATH (looked for: {0})." -f
+                ((Get-PowerShellEngineCandidate).Exe -join ', ')) -ForegroundColor Yellow
+    Write-Host "TerminalStyles is installed at $InstallDir, but no `$PROFILE loader was registered." -ForegroundColor Yellow
+    Write-Host "Add this line to your PowerShell profile to load it:" -ForegroundColor Yellow
+    Write-Host "    $LoaderImport" -ForegroundColor Cyan
+    Write-Host ""
+}
+
 # --- Helper: get a shell's $PROFILE + execution policy in ONE launch ---
 # Each shell launch (pwsh.exe / powershell.exe) costs ~500ms on cold start.
 # We previously launched each shell twice (once for $PROFILE, once for
@@ -618,6 +640,48 @@ function Write-InstallManifest {
         [System.Text.UTF8Encoding]::new($false))
 }
 
+# --- Record the commit this install landed, for the update checker ---
+# A function so a test can drive both halves; the whole point is what it leaves
+# on DISK when the record fails.
+#
+# It used to leave a PRE-EXISTING .installed-sha untouched and print "update
+# checker will be disabled". That sentence is true only of a FIRST install,
+# where there is no file and Test-UpdateAvailable's missing-file branch really
+# does disable the check. The common way here is a RE-install -- `tstyles
+# update` on a bootstrap install re-runs this script, and Sync-InstallTree
+# preserves the file because the download does not ship it -- so the tree was
+# the new code while the record still named the previous commit. The checker was
+# not disabled at all: it read that stale commit, reported an update the user
+# had already applied once every 24 hours, and the `tstyles update` they were
+# told to run compared the same stale value, missed its "Already up to date"
+# short-circuit and re-downloaded the ~10 MB ZIP.
+#
+# So the file goes. "We do not know what is installed" is exactly the state the
+# checker's missing-file branch is for, and a record known to be wrong can only
+# produce a wrong answer. The no-`sha` 200 -- a proxy's HTML error page, a
+# rate-limit body -- throws into the same handler rather than falling through in
+# silence, which was the same broken state with nothing printed at all.
+function Write-InstallSha {
+    param(
+        [Parameter(Mandatory)][string]$InstallDir,
+        [Parameter(Mandatory)][string]$Repo,
+        [Parameter(Mandatory)][string]$Branch
+    )
+    $shaPath = Join-Path $InstallDir '.installed-sha'
+    try {
+        # GitHub's API documents User-Agent as required for unauthenticated requests.
+        $commitInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$Repo/commits/$Branch" `
+                                        -Headers @{ 'User-Agent' = 'TerminalStyles-Installer' } `
+                                        -TimeoutSec 5 -ErrorAction Stop
+        if (-not $commitInfo.sha) { throw 'the commits API returned no sha' }
+        [System.IO.File]::WriteAllText($shaPath, $commitInfo.sha, [System.Text.UTF8Encoding]::new($false))
+    } catch {
+        Remove-Item -LiteralPath $shaPath -Force -ErrorAction SilentlyContinue
+        Write-Host ("Note: couldn't record install SHA ({0}); the update check is off until the next install." -f
+                    $_.Exception.Message) -ForegroundColor DarkGray
+    }
+}
+
 function Assert-InstallLanded {
     param([Parameter(Mandatory)][string]$InstallDir)
     $manifest = Join-Path $InstallDir 'TerminalStyles.psd1'
@@ -845,20 +909,7 @@ if (-not $TStylesInstallNoRun) {
     Remove-Item -LiteralPath $tempDir -Recurse -Force -ErrorAction SilentlyContinue
 
     # --- Record install SHA for the update checker ---
-    try {
-        # GitHub's API documents User-Agent as required for unauthenticated requests.
-        $commitInfo = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/commits/$branch" `
-                                        -Headers @{ 'User-Agent' = 'TerminalStyles-Installer' } `
-                                        -TimeoutSec 5 -ErrorAction Stop
-        if ($commitInfo.sha) {
-            [System.IO.File]::WriteAllText(
-                (Join-Path $installDir '.installed-sha'),
-                $commitInfo.sha,
-                [System.Text.UTF8Encoding]::new($false))
-        }
-    } catch {
-        Write-Host "Note: couldn't record install SHA (network?); update checker will be disabled." -ForegroundColor DarkGray
-    }
+    Write-InstallSha -InstallDir $installDir -Repo $repo -Branch $branch
 
     # --- Register loader in every detected shell ---
     $shells = @(Get-PowerShellEngineCandidate)
@@ -878,13 +929,7 @@ if (-not $TStylesInstallNoRun) {
         # Not a throw: the files are already installed by this point, so failing
         # here left the user installed-but-unloaded with a stack trace. Tell them
         # the one line that fixes it instead.
-        Write-Host ""
-        Write-Host ("No PowerShell engine found on PATH (looked for: {0})." -f
-                    ((Get-PowerShellEngineCandidate).Exe -join ', ')) -ForegroundColor Yellow
-        Write-Host "TerminalStyles is installed at $installDir, but no `$PROFILE loader was registered." -ForegroundColor Yellow
-        Write-Host "Add this line to your PowerShell profile to load it:" -ForegroundColor Yellow
-        Write-Host "    Import-Module TerminalStyles -DisableNameChecking" -ForegroundColor Cyan
-        Write-Host ""
+        Write-NoEngineNotice -InstallDir $installDir -LoaderImport $loaderImport
     }
 
     # Gather the bundled theme names for the "Ready" panel

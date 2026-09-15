@@ -304,7 +304,12 @@ $loaderEnd
     }
     Write-Host ""
     Write-Host "The loader is one line wrapped in BEGIN/END markers:" -ForegroundColor Gray
-    Write-Host "  Import-Module TerminalStyles -DisableNameChecking" -ForegroundColor Cyan
+    # $loaderImport, not a second literal of it. The whole job of this screen is
+    # "here is the one line I am about to put in your $PROFILE", and it named the
+    # by-name form on a bootstrap install, where the line actually written is the
+    # full-path one -- the same half-a-symmetry 0.8.21 left behind when it fixed
+    # the WRITE. Printing the variable is what stops the two drifting again.
+    Write-Host "  $loaderImport" -ForegroundColor Cyan
     Write-Host ""
     # `$ans -match '^(?i)n'` was falsy at EOF -- AutomationNull compares as an
     # empty collection -- so `tstyles register < /dev/null` wrote the loader
@@ -376,7 +381,12 @@ $loaderEnd
     # tab will load, and nothing loads out of a file the block never reached.
     if ($failed.Count -lt @($toWrite).Count) {
         Write-Host "TerminalStyles will auto-load on every new shell tab." -ForegroundColor Cyan
-        Write-Host "To verify in this session: Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Gray
+        # Same variable again, with -Force appended rather than spliced in: on a
+        # bootstrap install the by-name form this used to print resolves to
+        # nothing, so the hint died with a red "no valid module file was found in
+        # any module directory" immediately under "Registered in <profile>" --
+        # reading as a registration that had just failed when it had succeeded.
+        Write-Host "To verify in this session: $loaderImport -Force" -ForegroundColor Gray
         Write-Host ""
     }
 }

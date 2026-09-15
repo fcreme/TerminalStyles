@@ -176,6 +176,53 @@ target has been resolved and found valid.
     }
 }
 
+Describe 'only a redraw loop takes the backup quietly' {
+    # -Quiet suppresses "Backed up settings to: <path>", and its own docstring
+    # scopes it: "The picker and the tuner take this as crash-recovery behind a
+    # menu that redraws every frame; announcing it would be noise." Nothing
+    # enforced that, so `tstyles font` -- a linear one-shot command with ordinary
+    # line output -- inherited the silence without the reason for it, spent the
+    # single rolling .bak, and printed only "Applied '<family>' to '<target>'".
+    #
+    # The rule is in prose in one place and applied in five others, which is the
+    # shape this project keeps finding. This is the lint for it.
+    It 'passes -Quiet only from the picker loop and the tuner' {
+        $allowed = @('Invoke-TerminalStyle', 'Invoke-TerminalStyleTune')
+
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $files = Get-ChildItem -LiteralPath $repoRoot -Recurse -Filter '*.ps1' -File |
+            Where-Object { $_.FullName -notmatch '[\\/](tests|out)[\\/]' }
+
+        $callSites = 0
+        $quietSites = @()
+        foreach ($f in $files) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null)
+            $calls = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Save-SettingsBackup' }, $true))
+            foreach ($c in $calls) {
+                $callSites++
+                $isQuiet = @($c.CommandElements | Where-Object {
+                    $_ -is [System.Management.Automation.Language.CommandParameterAst] -and
+                    $_.ParameterName -eq 'Quiet' }).Count -gt 0
+                if (-not $isQuiet) { continue }
+                # Walk out to the function that holds the call; a bare script-level
+                # call has none, and is reported as such rather than skipped.
+                $fn = $c.Parent
+                while ($fn -and $fn -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $fn = $fn.Parent }
+                $quietSites += if ($fn) { $fn.Name } else { "$($f.Name) (top level)" }
+            }
+        }
+
+        $callSites  | Should -BeGreaterThan 2 -Because 'the lint must actually be finding call sites'
+        $quietSites.Count | Should -BeGreaterThan 0 -Because 'the two redraw loops still take it quietly'
+        @($quietSites | Where-Object { $_ -notin $allowed }) -join ', ' | Should -BeNullOrEmpty -Because @'
+-Quiet exists for a menu that redraws every frame. Any other command spends the
+user's single rolling settings.json.bak without a word on screen.
+'@
+    }
+}
+
 Describe 'the test suite itself still parses' {
     # A parse error in a test file does not fail the run -- Pester drops that
     # file's tests and reports GREEN with a smaller total. That happened while

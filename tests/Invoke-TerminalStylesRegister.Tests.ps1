@@ -185,6 +185,55 @@ Describe 'register writes a loader the install can actually resolve' {
                 Should -Match '(?m)^Import-Module TerminalStyles -DisableNameChecking\s*$' `
                 -Because 'PSModulePath resolves it, and the version-stamped path would pin an old one'
         }
+
+        # The WRITE was fixed and the two messages around it were left naming the
+        # pre-fix line: a consent screen whose whole job is "here is the one line
+        # I am about to put in your $PROFILE", and a closing hint that on a
+        # bootstrap install errored with the very "no valid module file was found
+        # in any module directory" this Describe exists to prevent. Both are
+        # asserted against the line read back OUT of the file, never a literal --
+        # a literal here would just be a fourth copy to keep in step.
+        It 'the consent screen shows the loader line a BOOTSTRAP install really gets' {
+            $fakeRoot = Join-Path $TestDrive 'bootstrap-root'
+            New-Item -ItemType Directory -Path $fakeRoot -Force | Out-Null
+            Mock Get-TStylesDataRoot { $fakeRoot }
+            $script:TStylesModuleRoot = $fakeRoot
+            Get-TerminalStylesInstallKind | Should -Be 'Bootstrap' -Because 'the fixture must set the branch under test'
+
+            $out = Invoke-TerminalStylesRegister -Yes 6>&1 -Targets @([pscustomobject]@{
+                Label = 'PowerShell 7'; ProfilePath = $script:fakeProfile; Exists = $false; HasLoader = $false }) |
+                Out-String
+
+            # @(...)[0]: without the array subexpression a single matching line
+            # indexes into the string itself and yields 'I'.
+            $written = @([System.IO.File]::ReadAllText($script:fakeProfile) -split "`r?`n" |
+                         Where-Object { $_ -match '^Import-Module ' })[0]
+            $written | Should -Match 'TerminalStyles\.psd1' -Because 'the fixture must be on the bootstrap branch'
+
+            $out | Should -Match ([regex]::Escape($written)) `
+                -Because 'the user consents to the line that is actually written'
+            $out | Should -Match ('To verify in this session: ' + [regex]::Escape($written)) `
+                -Because 'the closing hint must name a command that can resolve THIS install'
+        }
+
+        It 'a PSGallery install sees the bare name in both messages' {
+            # So the fix cannot be "print the path everywhere": there the bare
+            # name is what is written, and it is what both messages must say.
+            $modRoot = Join-Path $TestDrive 'psgallery-root'
+            New-Item -ItemType Directory -Path $modRoot -Force | Out-Null
+            Mock Get-TStylesDataRoot { Join-Path $TestDrive 'a-different-data-root' }
+            $script:TStylesModuleRoot = $modRoot
+            Get-TerminalStylesInstallKind | Should -Be 'PSResourceGet'
+
+            $out = Invoke-TerminalStylesRegister -Yes 6>&1 -Targets @([pscustomobject]@{
+                Label = 'PowerShell 7'; ProfilePath = $script:fakeProfile; Exists = $false; HasLoader = $false }) |
+                Out-String
+
+            $out | Should -Match '(?m)^\s+Import-Module TerminalStyles -DisableNameChecking\s*$'
+            $out | Should -Match ([regex]::Escape('To verify in this session: Import-Module TerminalStyles -DisableNameChecking -Force'))
+            $out | Should -Not -Match 'TerminalStyles\.psd1' `
+                -Because 'nothing on a PSGallery install writes a path'
+        }
     }
 }
 
