@@ -160,8 +160,14 @@ function Invoke-TerminalStylesUpdate {
 }
 
 function Invoke-TerminalStylesRegister {
-    # Adds `Import-Module TerminalStyles -DisableNameChecking` to both
-    # PowerShell engines' $PROFILE files, wrapped in the same
+    # Adds `Import-Module TerminalStyles -DisableNameChecking` to the $PROFILE
+    # of every PowerShell engine Get-PowerShellEngineCandidate names AND
+    # Get-Command finds -- two on Windows, and on macOS/Linux whichever of
+    # pwsh / pwsh-preview is installed. Not "both": the loop `continue`s past
+    # an engine that is not on PATH, and saying "both" is how the help text
+    # for this command ended up naming Windows PowerShell 5.1 to macOS users.
+    #
+    # The block is wrapped in the same
     # # ===== TerminalStyles BEGIN ===== / END markers that
     # Invoke-TerminalStylesUninstall knows how to strip.
     #
@@ -619,7 +625,23 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "  - Remove install-managed files from $dataDir" -ForegroundColor Yellow
         }
     }
-    Write-Host "  - Strip the loader block from pwsh 7 and Windows PowerShell 5.1 `$PROFILE files" -ForegroundColor Yellow
+    # Read off the engine table, not typed. This bullet is part of a CONSENT
+    # screen -- a stronger claim than help text, because it is the list a user
+    # says yes to -- and it named "pwsh 7 and Windows PowerShell 5.1" on every
+    # platform. On macOS and Linux there is no Windows PowerShell at all: the
+    # engines probed are pwsh and pwsh-preview, and the strip below runs over
+    # whichever of them Get-UninstallProfileTarget actually found. A second
+    # literal of the engine list is exactly how the `help register` topic went
+    # stale, and it is the same list.
+    #
+    # The labels go on their own indented line, like the rc paths below, rather
+    # than at the end of a long sentence: on Windows the two labels together
+    # push the single-line form past 120 columns, and the console wraps it --
+    # breaking "Windows PowerShell 5.1" across the fold, which is where a
+    # reader stops trusting a consent screen.
+    $engineLabels = @(Get-PowerShellEngineCandidate | ForEach-Object { $_.Label })
+    Write-Host "  - Strip the loader block from each PowerShell engine's `$PROFILE:" -ForegroundColor Yellow
+    Write-Host ("      {0}" -f ($engineLabels -join ', ')) -ForegroundColor Yellow
     # The zsh/bash half of step 2, which this listing did not mention at all.
     # Step 2 was ADDED because uninstall used to leave the shell side running;
     # the behaviour was fixed and the consent text never caught up, so the

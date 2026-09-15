@@ -170,11 +170,42 @@ Describe 'the uninstall consent listing names what it will change' {
                 -Because 'listing files it will not touch would be its own kind of wrong'
         }
 
-        It 'still names the PowerShell side' {
-            # The bullet that was already right must survive the new one.
+        It 'names the PowerShell engines this platform really strips' {
+            # The bullet that was already right must survive the new one -- but
+            # it was only right on Windows. It read "pwsh 7 and Windows
+            # PowerShell 5.1" everywhere, and this assertion pinned that literal,
+            # so a consent screen naming an engine that does not exist on macOS
+            # or Linux ran green on both of those legs for as long as it stood.
+            # Derived from the same table the strip walks, so it cannot say one
+            # thing here and another there again.
+            # -Width, because Out-String otherwise folds at the host's console
+            # width and a label can land across the fold: on the Windows leg
+            # this assertion failed against a real consent screen reading
+            # "... (PowerShell 7, Windows PowerShell\n5.1)". The message was
+            # changed to put the labels on their own short line -- a consent
+            # screen that wraps mid-name is its own defect -- and the capture
+            # no longer depends on how wide the runner's console happens to be.
             script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h 6>&1 | Out-String
-            $out | Should -Match 'Windows PowerShell 5\.1'
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h 6>&1 | Out-String -Width 500
+
+            $labels = @(Get-PowerShellEngineCandidate | ForEach-Object { $_.Label })
+            @($labels).Count | Should -BeGreaterThan 0 -Because 'an empty list would assert nothing'
+            foreach ($label in $labels) {
+                $out | Should -Match ([regex]::Escape($label)) `
+                    -Because "the strip runs over $label on this platform, so the consent must name it"
+            }
+            $out | Should -Match '\$PROFILE' -Because 'the bullet must still say what it edits'
+
+            # And nothing from another platform's table. 'Windows PowerShell 5.1'
+            # on a Mac is the defect itself.
+            $foreign = @(@('Windows', 'MacOS', 'Linux') |
+                         ForEach-Object { Get-PowerShellEngineCandidate -Platform $_ } |
+                         ForEach-Object { $_.Label } | Sort-Object -Unique |
+                         Where-Object { $_ -notin $labels })
+            foreach ($label in $foreign) {
+                $out | Should -Not -Match ([regex]::Escape($label)) `
+                    -Because "$label is not an engine on this platform"
+            }
         }
     }
 }
@@ -187,8 +218,17 @@ Describe 'help describes the files these commands really touch' {
         }
 
         It 'shell-init help names ~/.profile, which it can write to' {
-            $d = (Get-TerminalStyleHelpData | Where-Object Name -eq 'shell-init').Detail -join ' '
-            $d | Should -Match '~/\.profile'
+            # Asked of the platforms where shell-init really registers rc files.
+            # The topic is platform-qualified now -- on Windows it describes the
+            # gap instead of promising a styled tab it cannot deliver -- so
+            # asking the ambient platform would have meant this assertion
+            # testing a different sentence on the two Windows CI legs.
+            foreach ($platform in @('MacOS', 'Linux')) {
+                $d = (Get-TerminalStyleHelpData -Platform $platform |
+                      Where-Object Name -eq 'shell-init').Detail -join ' '
+                $d | Should -Match '~/\.profile' `
+                    -Because "shell-init can write ~/.profile on $platform, so the topic must name it"
+            }
         }
     }
 }

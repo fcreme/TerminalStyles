@@ -1100,7 +1100,13 @@ function Invoke-TerminalStylesShellInit {
         # Test seam: real callers omit it and the live $HOME is used.
         [string]$HomeDir = $HOME,
         # The zsh config dir. Omitted by real callers, who get $env:ZDOTDIR.
-        [string]$ZDotDir
+        [string]$ZDotDir,
+        # Test seam, the same shape as Get-PowerShellEngineCandidate's and
+        # Get-TStylesDataRoot's: real callers omit it. It exists so the Windows
+        # caveat below can be exercised from the macOS and Linux CI legs --
+        # there is no Windows runner carrying an MSYS bash for it otherwise,
+        # and this message is a claim about what the command delivers there.
+        [string]$Platform = (Get-TStylesPlatform)
     )
 
     # Forwarded by what the caller actually BOUND, not by value. All three
@@ -1142,6 +1148,45 @@ function Invoke-TerminalStylesShellInit {
             Write-Host "  Open a new tab to get your original prompt back."
         }
         return
+    }
+
+    # WHAT THIS COMMAND CAN DELIVER HERE, said BEFORE it writes anything.
+    #
+    # On Windows it cannot deliver the thing it is for, and every message
+    # around it said otherwise: `tstyles help shell-init` promised "a zsh or
+    # bash tab comes up in the applied style", and the run itself printed two
+    # green "added" lines and "source ~/.bashrc" -- for rc files it had just
+    # INVENTED, since $env:SHELL is unset on Windows and the bash rescue below
+    # then creates ~/.bashrc and ~/.bash_profile for a shell the user may not
+    # have.
+    #
+    # The gap is not WSL. A WSL bash reads /home/<user>, which this command
+    # never touches, and pwsh running inside WSL is an ordinary Linux install
+    # where both halves already agree. It is an MSYS/Cygwin bash -- Git Bash --
+    # sharing the Windows $HOME: shell/tstyles.sh has no MINGW/MSYS/CYGWIN arm,
+    # so it resolves TSTYLES_DATA to $HOME/.local/share/TerminalStyles, while
+    # the PowerShell side stages to %LOCALAPPDATA%\TerminalStyles. Measured:
+    # under a `uname` stub returning MINGW64_NT-10.0, MSYS_NT-10.0 or
+    # CYGWIN_NT-10.0 the runtime resolves the Linux path in all three. Nothing
+    # it needs is at that path, so the tab keeps the user's own prompt and the
+    # shell's `tstyles` command answers "not initialised. Run this once from
+    # pwsh: tstyles shell-init" -- the command they just ran.
+    #
+    # The block is still written rather than refused: it is inert, removing it
+    # is `tstyles shell-remove`, and the honest fix for the gap is to make the
+    # two halves agree on a data root, not to decide for the user. What changed
+    # is that the limit is stated first, where consent is given, instead of
+    # implied to be absent.
+    if ($Platform -eq 'Windows') {
+        Write-Host ""
+        Write-Host "  On Windows this does not produce a styled zsh/bash tab." -ForegroundColor Yellow
+        Write-Host "  A Git Bash / MSYS shell shares this home, so the loader would be read --" -ForegroundColor Gray
+        Write-Host "  but it looks for the applied style under `$HOME/.local/share/TerminalStyles," -ForegroundColor Gray
+        Write-Host "  and an apply stages it to %LOCALAPPDATA%\TerminalStyles. The tab comes up" -ForegroundColor Gray
+        Write-Host "  with your own prompt, and 'tstyles' in that shell reports 'not initialised'." -ForegroundColor Gray
+        Write-Host "  The zsh/bash loader is a macOS/Linux feature; on Windows, PowerShell is" -ForegroundColor Gray
+        Write-Host "  where tstyles styles your shell." -ForegroundColor Gray
+        Write-Host "  Writing the block anyway (it is inert; 'tstyles shell-remove' takes it out)." -ForegroundColor DarkGray
     }
 
     # Two different failures, two different sentences. One boolean here named
@@ -1350,9 +1395,17 @@ function Invoke-TerminalStylesShellInit {
     $written  = @($touched | Where-Object { $_.Action -notin @('failed', 'malformed') })
     $hintPath = (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written |
                  Select-Object -First 1).Path
+    # On Windows the sign-off also says what sourcing that file will not do.
+    # The closing line is the last thing read and it is where "it worked" gets
+    # inferred from, so printing the same one on the platform where the loader
+    # finds nothing to paint is the shape this project ships most often: a
+    # success line on a path that silently no-opped.
     if ($hintPath) {
         $shown = if ($hintPath.StartsWith($HomeDir)) { '~' + $hintPath.Substring($HomeDir.Length) } else { $hintPath }
         Write-Host ("  Open a new tab, or run:  source {0}" -f $shown) -ForegroundColor DarkGray
+        if ($Platform -eq 'Windows') {
+            Write-Host "  The tab will look the same either way -- see the note above." -ForegroundColor DarkGray
+        }
     } else {
         Write-Host "  Open a new tab to pick it up." -ForegroundColor DarkGray
     }

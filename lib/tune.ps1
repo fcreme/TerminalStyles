@@ -1435,15 +1435,13 @@ function Invoke-TerminalStyleTune {
         # outright when the composed path resolved back onto styles/<name>.
         # The whole SESSION directory goes, not just the style inside it, so a
         # tuner run leaves nothing behind under .tune-preview.
+        #
+        # Through Test-PathIsUnderRoot, the same guard the delete path's
+        # containment proof is built on: this was the third open-coded copy of
+        # one GetFullPath/TrimEnd/StartsWith rule, and the two in
+        # lib/deletestyle.ps1 had already drifted apart from each other.
         if (Test-Path -LiteralPath $scratchSession) {
-            $sep  = [System.IO.Path]::DirectorySeparatorChar
-            $safe = $false
-            try {
-                $full = [System.IO.Path]::GetFullPath($scratchSession).TrimEnd($sep)
-                $root = [System.IO.Path]::GetFullPath($scratchRoot).TrimEnd($sep)
-                $safe = $full.StartsWith($root + $sep, [System.StringComparison]::Ordinal)
-            } catch { $safe = $false }
-            if ($safe) {
+            if (Test-PathIsUnderRoot -Path $scratchSession -Root $scratchRoot) {
                 Remove-Item -LiteralPath $scratchSession -Recurse -Force -ErrorAction SilentlyContinue
             }
         }

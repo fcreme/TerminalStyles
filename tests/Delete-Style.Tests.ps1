@@ -876,3 +876,131 @@ Describe 'the prompt describes what will actually happen to a tuned child' {
         }
     }
 }
+
+Describe 'the containment proof in front of the move and the recursive delete' {
+    # THE GAP THIS FILLS. Test-PathIsStyleDirChild is what stands between a
+    # composed path and a Move-Item plus a Remove-Item -Recurse -Force, and
+    # nothing exercised it: replacing its whole body with `return $true` and
+    # running the suite left 1805 of 1805 real tests green. Nothing asserted on
+    # Get-StyleDeletePlan's 'outside' Reason either, nor on
+    # Move-StyleDirectoryToTrash's 'Refusing to move' throw.
+    #
+    # It was also the only one of the three guards in this codebase that THREW
+    # instead of answering: `-Path ''` and `-Path $null` came back
+    # "Cannot bind argument to parameter 'Path' because it is an empty string"
+    # from the parameter binder, before a line of the guard ran. Its two
+    # siblings, Test-StyleNameIsSingleSegment and Test-StyleNameValid, both
+    # carry [AllowEmptyString()][AllowNull()] and both document "never throws".
+    #
+    # Driven directly rather than through `Get-StyleDeletePlan -Name`: the
+    # 'outside' arm is unreachable that way today (Get-StyleOrigin answers
+    # 'bundled' first for anything outside the user root, and Get-StyleDir
+    # cannot compose a grandchild), so a test aimed at it would be measuring
+    # nothing.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData = $script:TStylesDataRoot
+            $script:root      = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot = $script:root
+            $script:userStyles = Join-Path $script:root 'styles'
+            New-Item -ItemType Directory -Path (Join-Path $script:userStyles 'eva') -Force | Out-Null
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'answers an empty or a null path rather than throwing at the binder' {
+            # The before-state of both rows is an exception, not $false -- and a
+            # guard that throws on the input it exists to reject is not a guard.
+            Test-PathIsStyleDirChild -Path ''    | Should -BeFalse
+            Test-PathIsStyleDirChild -Path $null | Should -BeFalse
+            Test-PathIsStyleDirChild -Path '   ' | Should -BeFalse
+        }
+
+        It 'admits a direct child of the styles root and nothing else' {
+            $sep   = [System.IO.Path]::DirectorySeparatorChar
+            $child = Join-Path $script:userStyles 'eva'
+
+            Test-PathIsStyleDirChild -Path $child          | Should -BeTrue
+            Test-PathIsStyleDirChild -Path ($child + $sep) | Should -BeTrue `
+                -Because 'a trailing separator does not make it a different directory'
+
+            # The root is not a child of itself: answering $true here would put
+            # the whole styles directory in front of the move.
+            Test-PathIsStyleDirChild -Path $script:userStyles            | Should -BeFalse
+            Test-PathIsStyleDirChild -Path ($script:userStyles + $sep)   | Should -BeFalse
+
+            # Deeper than one segment: the trash sweep and the move both name a
+            # style directory, never something inside one.
+            Test-PathIsStyleDirChild -Path (Join-Path $child 'nested')   | Should -BeFalse
+
+            # Composed paths that LOOK contained. `tstyles tune ../styles/eva`
+            # deleted a real style exactly this way.
+            Test-PathIsStyleDirChild -Path (Join-Path $script:userStyles '..' | Join-Path -ChildPath 'eva') |
+                Should -BeFalse -Because '<root>/../eva is outside the styles root'
+            Test-PathIsStyleDirChild -Path (Join-Path $child '..') |
+                Should -BeFalse -Because '<root>/eva/.. is the root itself'
+            # ...and one that looks like it escapes and does not: normalised
+            # first, then compared, so this really is the direct child.
+            Test-PathIsStyleDirChild -Path (Join-Path (Join-Path $script:userStyles '..') 'styles' | Join-Path -ChildPath 'eva') |
+                Should -BeTrue
+
+            # A character-prefix SIBLING of the root. StartsWith with no
+            # separator boundary admits it -- the same defect the prompt halves
+            # had against $HOME, where a sibling rendered as "~Xtra".
+            Test-PathIsStyleDirChild -Path (Join-Path ($script:userStyles + 'X') 'eva') |
+                Should -BeFalse -Because '<root>X is not <root>'
+
+            # Not a path at all: resolved against the process directory, which
+            # is never the sandboxed styles root.
+            Test-PathIsStyleDirChild -Path 'eva' | Should -BeFalse
+        }
+
+        It 'refuses to move a directory that is not a style directory, and sweeps nothing when it does' {
+            # The assertion that would have gone red in the stub run above.
+            # Move-StyleDirectoryToTrash re-proves containment at the moment of
+            # the move, and the reversible step runs FIRST on purpose: a refused
+            # move must not erase expired trash on its way out.
+            $outside = Join-Path $script:root 'not-a-style'
+            New-Item -ItemType Directory -Path $outside -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $outside 'keep.txt'), 'the user''s own file')
+
+            $expired = Join-Path (Get-StyleTrashRoot) 'old-20200101-000000'
+            New-Item -ItemType Directory -Path $expired -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $expired 'scheme.json'), '{"name":"old"}')
+
+            $plan = [pscustomobject]@{
+                Name         = 'not-a-style'
+                Dir          = $outside
+                TrashPath    = (Join-Path (Get-StyleTrashRoot) 'not-a-style-20260101-000000')
+                SweepTargets = @(Get-Item -LiteralPath $expired -Force)
+            }
+
+            { Move-StyleDirectoryToTrash -Plan $plan } |
+                Should -Throw -ExpectedMessage '*Refusing to move*'
+
+            Test-Path -LiteralPath $outside | Should -BeTrue `
+                -Because 'a directory outside the styles root must be left where it is'
+            Test-Path -LiteralPath (Join-Path $outside 'keep.txt') | Should -BeTrue
+            Test-Path -LiteralPath $expired | Should -BeTrue `
+                -Because 'a move that did not happen erases nothing'
+        }
+
+        It 'lets a real style directory through' {
+            # The other half: the guard must not refuse the case it exists to
+            # permit, or the whole command is dead and this file would not
+            # notice.
+            $mine = Join-Path $script:userStyles 'mine'
+            New-Item -ItemType Directory -Path $mine -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $mine 'scheme.json'), '{"name":"mine"}')
+
+            $plan = [pscustomobject]@{
+                Name         = 'mine'
+                Dir          = $mine
+                TrashPath    = (Join-Path (Get-StyleTrashRoot) 'mine-20260101-000000')
+                SweepTargets = @()
+            }
+            Move-StyleDirectoryToTrash -Plan $plan
+            Test-Path -LiteralPath $mine | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $plan.TrashPath 'scheme.json') | Should -BeTrue
+        }
+    }
+}
