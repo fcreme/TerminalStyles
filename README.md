@@ -566,23 +566,33 @@ entirely by flags. It writes a timestamped `settings.json.bak-<timestamp>`
 keeping a full audit trail of every run. See `apply.ps1 -?` for the
 full parameter list.
 
-### Recovering from a bad direct apply
+### Recovering from a bad write to `settings.json`
 
-`tstyles <name>` and `tstyles random` write a rolling backup to
-`settings.json.bak` (no timestamp — overwritten on each direct apply)
-in the same directory as `settings.json` before each change. To restore
-the last-known-good state:
+There is exactly ONE rolling backup, `settings.json.bak` (no timestamp),
+in the same directory as `settings.json`. Every command that writes
+`settings.json` rolls it first: `tstyles <name>`, `tstyles random`,
+`tstyles reset`, `tstyles font <name>`, `tstyles tune`, and opening the
+picker (`tstyles` with no arg, which backs up before its first preview).
+So it holds the state from immediately before the **most recent** of
+those — a font change or a tune after an apply is what you will get
+back, not the file from before the apply. To restore it:
 
 ```powershell
 $wt = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
 Copy-Item "$wt.bak" $wt -Force
 ```
 
-The picker (`tstyles` with no arg) writes the same rolling `.bak` before
-its first preview, so a crash mid-pick is recoverable too. Pressing Esc
-reverts in-memory to the exact prior bytes without needing it. If you
-want a full history of changes rather than just "undo the most recent
-apply", use `apply.ps1` — it keeps a timestamped backup per run.
+`tstyles reset` is not a substitute: it removes the fields a style
+added, but it cannot put back what the style overwrote — your own
+`colorScheme`, your `font.face`, or the JSONC comments a successful
+apply drops when it re-serializes the file. The `.bak` is the only
+route back to those.
+
+A crash mid-pick or mid-tune is recoverable from the same file. Pressing
+Esc in the picker reverts in-memory to the exact prior bytes without
+needing it. If you want a full history of changes rather than just "undo
+the most recent write", use `apply.ps1` — it keeps a timestamped backup
+per run.
 
 ## Updating
 

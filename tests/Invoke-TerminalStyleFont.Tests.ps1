@@ -91,6 +91,33 @@ Describe 'Invoke-TerminalStyleFont' {
                     "$Object" -match 'Could not locate Windows Terminal'
                 }
             }
+
+            It 'says that it spent the rolling backup, and really took it' {
+                # There is ONE settings.json.bak, and README teaches it as the
+                # undo for the last apply. This path rolled it with -Quiet, whose
+                # own docstring scopes the switch to "the picker and the tuner
+                # ... a menu that redraws every frame" -- so a linear one-shot
+                # command inherited the silence without the reason for it, and
+                # `tstyles font` printed two lines, neither of them the one that
+                # says the undo is gone.
+                #
+                # The announcement is asserted TOGETHER with the copy, so it can
+                # never be satisfied by printing without backing up.
+                $sPath = Join-Path $TestDrive 'settings.json'
+                $live = '{ "profiles": { "list": [ { "name": "P", "guid": "{1}" } ] } }'
+                [System.IO.File]::WriteAllText($sPath, $live, [System.Text.UTF8Encoding]::new($false))
+                [System.IO.File]::WriteAllText("$sPath.bak", '{"THE-USERS-UNDO":true}', [System.Text.UTF8Encoding]::new($false))
+
+                Mock Find-WTSettingsPath { $sPath }
+                Mock Set-ProfileFont { $true }
+
+                Invoke-TerminalStyleFont -Name 'JetBrains Mono' -Target 'P'
+
+                Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Backed up settings to' } `
+                    -Because 'a command that consumes the documented undo has to say so'
+                [System.IO.File]::ReadAllText("$sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
+                    Should -Be $live -Because 'and the line must name a copy it actually made'
+            }
         }
     }
 }
