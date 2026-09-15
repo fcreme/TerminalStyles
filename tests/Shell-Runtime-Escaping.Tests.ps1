@@ -36,7 +36,16 @@ BeforeDiscovery {
     # BASH_VERSION, which is why the 'sh' arm survived this long on the
     # maintainer's platform; /bin/dash ships on macOS and on every Debian
     # derivative, so name it explicitly rather than trusting `sh`.
-    $script:HasDash = [bool](Get-Command dash -ErrorAction SilentlyContinue)
+    #
+    # ...and require a Unix platform, not just the binary. Git for Windows puts
+    # a dash on PATH, so `Get-Command dash` SUCCEEDS on the windows-latest
+    # runners -- and invoking it there produced no output at all, which failed
+    # the one test gated on HasDash alone while its siblings escaped only
+    # because they also need `script`, which Windows does not have. The subject
+    # here is a POSIX login shell reading ~/.profile on a Unix machine; a dash
+    # shipped inside a Windows Git distribution is not that.
+    $script:HasDash = [bool](Get-Command dash -ErrorAction SilentlyContinue) -and
+                      -not ($PSVersionTable.PSVersion.Major -lt 6 -or $IsWindows)
     # `script` is the only portable way to hand a shell a real pty, and ts_load
     # returns early without one. Two incompatible flavours exist:
     #   BSD (macOS)       script -q <file> <cmd...>
