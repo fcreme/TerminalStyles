@@ -87,9 +87,11 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'register'; Usage = 'register'; Summary = 'Add the loader to your $PROFILE'
-            Detail = @("Adds the Import-Module loader to both PowerShell 7 and Windows",
-                       "PowerShell 5.1 `$PROFILE files (with a confirm prompt) so tstyles",
-                       "loads on every new tab.")
+            Detail = @("Adds the Import-Module loader to the `$PROFILE of every PowerShell",
+                       "engine on this machine -- pwsh 7 and Windows PowerShell 5.1 on",
+                       "Windows, pwsh and pwsh-preview elsewhere -- so tstyles loads on every",
+                       "new tab. Where two engines share one `$PROFILE it is written once.",
+                       "The confirm prompt names each file first.")
             Keys = @(); Examples = @('tstyles register')
         }
         [pscustomobject]@{
@@ -135,13 +137,15 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'uninstall'; Usage = 'uninstall'; Summary = 'Remove the module (keeps your styles)'
-            Detail = @("Removes the module and strips the `$PROFILE loader from both",
-                       "PowerShell engines. It also strips the zsh/bash loader block from",
-                       "your shell rc files -- the same files shell-remove sweeps -- so an",
-                       "uninstall does not leave a shell sourcing a runtime it just deleted.",
+            Detail = @("Removes the module and strips the loader from the `$PROFILE of every",
+                       "PowerShell engine on this machine. It also strips the zsh/bash loader",
+                       "block from your shell rc files -- the same files shell-remove sweeps",
+                       "-- so an uninstall does not leave a shell sourcing a runtime it just",
+                       "deleted.",
                        "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
-                       "The confirmation names every rc file it is about to change.")
+                       "The confirmation names every file it is about to change, `$PROFILE and",
+                       "rc alike, and the sign-off names any it could not.")
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
         }
         [pscustomobject]@{

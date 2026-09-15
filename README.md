@@ -53,8 +53,10 @@ Import-Module TerminalStyles -DisableNameChecking
 
 Add the `Import-Module` line to your `$PROFILE` so it loads on every
 new shell tab — or run `tstyles register` once and it does that for
-you (both pwsh 7 and Windows PowerShell 5.1 `$PROFILE` files, with a
-confirm prompt first). Then:
+you: the `$PROFILE` of every PowerShell engine it finds (pwsh 7 and
+Windows PowerShell 5.1 on Windows, `pwsh` and `pwsh-preview`
+elsewhere, written once where two of them share one file), with a
+confirm prompt that names each one first. Then:
 
 ```powershell
 tstyles
@@ -635,6 +637,12 @@ tstyles uninstall
 - **Bootstrap** → removes the install-managed files from
   `%LOCALAPPDATA%\TerminalStyles\` (script files, bundled styles) and
   strips the loader.
+
+The confirmation lists every file it is about to edit by name — each
+engine's `$PROFILE` and each shell rc file that actually carries a
+block. If it cannot strip one (a read-only profile, or a block
+hand-edited down to a stray `BEGIN`), it names that file at the end
+instead of closing on "TerminalStyles uninstalled."
 
 **Either path preserves your user state by default** — your active
 style (`current-style.ps1`), update-check throttle, and cached

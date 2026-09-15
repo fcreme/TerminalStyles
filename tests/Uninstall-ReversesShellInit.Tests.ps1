@@ -635,6 +635,123 @@ Describe 'both rc-removal callers report every file they could not strip' {
     }
 }
 
+Describe 'uninstall reports a $PROFILE it could not strip, not just an rc file' {
+    # The same rule as the Describe above, on the other half of the symmetry --
+    # and the half nothing covered. Remove-PowerShellProfileLoader printed
+    # 'malformed' and 'failed' per file and then returned a COUNT, so neither
+    # status reached the caller and the sign-off had no way to know. Every test
+    # in this file passes -ProfileTarget @() plus a Mock of the discovery, which
+    # is what kept the $PROFILE side out of the one assertion that matters:
+    #
+    #   uninstall closed on the unqualified "TerminalStyles uninstalled." and
+    #   "Open a new pwsh tab to confirm the loader is gone." with the loader
+    #   still in a profile it had just said it could not write -- one step after
+    #   step 1 removed the module the block imports, so every new tab opens on a
+    #   red "no valid module file was found in any module directory".
+    #
+    # The rc side is deliberately CLEAN here, so the only thing that can qualify
+    # the sign-off is the $PROFILE half.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $script:data
+            Mock Get-TStylesDataRoot { $script:data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            # Nothing may reach the operator's own $PROFILE: -ProfileTarget is
+            # bound on every call below, and this is the second lock on the one
+            # seam that resolves by RUNNING each engine.
+            Mock Get-PowerShellProfileTarget { @() }
+            Mock Confirm-Action { $true }
+
+            # An rc file that strips cleanly, so $shellProblems stays empty.
+            $script:rc = Join-Path $script:h '.zshrc'
+            [System.IO.File]::WriteAllText($script:rc, "# original`nexport MINE=1`n",
+                [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $script:rc | Should -Be 'added' -Because 'the fixture must plant a real block'
+
+            # Two $PROFILE files in the two states that are not 'removed'.
+            $script:ro    = Join-Path $script:h 'ro-profile.ps1'
+            $script:broke = Join-Path $script:h 'broken-profile.ps1'
+            foreach ($p in $script:ro, $script:broke) {
+                [System.IO.File]::WriteAllText($p, "function prompt { 'mine> ' }`n",
+                    [System.Text.UTF8Encoding]::new($false))
+                Register-ShellLoader -Path $p | Should -Be 'added'
+            }
+            $t = [System.IO.File]::ReadAllText($script:broke, [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::WriteAllText($script:broke,
+                ($t -replace '# ===== TerminalStyles END =====\r?\n?', ''),
+                [System.Text.UTF8Encoding]::new($false))
+            # IsReadOnly rather than chmod: one .NET attribute on every platform
+            # the suite runs on, where chmod is an external binary that only
+            # happens to exist on the Windows runners. -Force on Get-Item for
+            # the reason CLAUDE.md gives -- without it a dotfile comes back
+            # $null and the assignment silently does nothing.
+            (Get-Item -LiteralPath $script:ro -Force).IsReadOnly = $true
+
+            $script:targets = @(
+                [pscustomobject]@{ ProfilePath = $script:ro;    Label = 'PowerShell 7'; Labels = @('PowerShell 7') }
+                [pscustomobject]@{ ProfilePath = $script:broke; Label = 'PowerShell 7 (preview)'; Labels = @('PowerShell 7 (preview)') }
+            )
+        }
+        AfterEach {
+            (Get-Item -LiteralPath $script:ro -Force).IsReadOnly = $false
+            $script:TStylesDataRoot = $script:savedData
+        }
+
+        It 'names both profiles, and does not claim it finished' {
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes `
+                       -ProfileTarget $script:targets 6>&1 | Out-String
+
+            $out | Should -Match ([regex]::Escape($script:ro))
+            $out | Should -Match 'could not write'
+            $out | Should -Match ([regex]::Escape($script:broke))
+            $out | Should -Match 'no matching END'
+
+            # The last lines the user reads. Both were printed unconditionally.
+            $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$'
+            $out | Should -Match 'EXCEPT'
+            $out | Should -Not -Match 'Open a new pwsh tab to confirm the loader is gone' `
+                -Because 'it is not gone, and the warning three lines up says so'
+
+            # The half that makes the silence a lie rather than a cosmetic slip.
+            foreach ($p in $script:ro, $script:broke) {
+                [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false)) |
+                    Should -Match 'TerminalStyles BEGIN' -Because "$p would otherwise have been reported gone"
+            }
+            # ...while the rc file it COULD strip still came out clean.
+            $after = [System.IO.File]::ReadAllText($script:rc, [System.Text.UTF8Encoding]::new($false))
+            $after | Should -Not -Match 'TerminalStyles BEGIN'
+            $after | Should -Match 'export MINE=1'
+        }
+
+        It 'says why a leftover $PROFILE is worse than a leftover rc file' {
+            # An rc block is inert once the staged style state is cleared; a
+            # $PROFILE block is an Import-Module of a module step 1 has just
+            # deleted, so every new tab opens on a red error. The sign-off says
+            # one thing about the files it lists, so it has to say which.
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes `
+                       -ProfileTarget $script:targets 6>&1 | Out-String
+
+            $out | Should -Match 'every new tab opens on a red error'
+        }
+
+        It 'still runs step 4 and reaches the end of the command' {
+            # The status has to be REPORTED, not thrown: an unwritable $PROFILE
+            # must not take down the rest of an uninstall.
+            { Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes `
+                  -ProfileTarget $script:targets 6>&1 | Out-Null } | Should -Not -Throw
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes `
+                       -ProfileTarget $script:targets 6>&1 | Out-String
+            $out | Should -Match 'User state preserved at'
+        }
+    }
+}
+
 Describe 'uninstall says nothing extra when every rc file came out clean' {
     # The other direction: a command that now qualifies its sign-off must not
     # qualify it on the ordinary path, or the qualifier stops meaning anything.
@@ -661,6 +778,8 @@ Describe 'uninstall says nothing extra when every rc file came out clean' {
 
             $out | Should -Match '(?m)^TerminalStyles uninstalled\.\s*$'
             $out | Should -Not -Match 'EXCEPT'
+            $out | Should -Match 'Open a new pwsh tab to confirm the loader is gone' `
+                -Because 'the guard on that line must not swallow it on the ordinary path'
             [System.IO.File]::ReadAllText($rc, [System.Text.UTF8Encoding]::new($false)) |
                 Should -Not -Match 'TerminalStyles BEGIN'
         }
