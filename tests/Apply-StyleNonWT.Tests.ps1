@@ -299,7 +299,12 @@ Describe 'Reset-StyleNonWT' {
             $script:TStylesDataRoot = $TestDrive
             $script:TStylesCurrent  = Join-Path $TestDrive 'current-style.ps1'
             Mock Get-TerminalKind { 'AppleTerminal' }
-            Mock Write-HostOscPacket { }
+            # $true, not `{ }`. A mock that returns nothing is $false to the
+            # caller, so these four drove the FAILED-repaint path while being
+            # named for the ordinary one -- and nothing here could tell, because
+            # the function printed the same sentence either way. The Describe
+            # below is the one that measures which sentence.
+            Mock Write-HostOscPacket { $true }
             Mock Write-Host { }
         }
 
@@ -322,6 +327,76 @@ Describe 'Reset-StyleNonWT' {
 
         It 'is safe to run when no style was ever applied' {
             { Reset-StyleNonWT } | Should -Not -Throw
+        }
+    }
+}
+
+Describe 'Reset-StyleNonWT says which of the two things happened' {
+    # "Reset <terminal> to its unstyled default." was printed whether the OSC
+    # packet reached a terminal or reached nothing at all. Measured on main, with
+    # the data root and $script:TStylesCurrent sandboxed: the two opposite
+    # outcomes produced byte-identical output.
+    #
+    # Its apply sibling has said the narrow truth since 0.8.27 -- "Colors were
+    # not applied to this session: its output is redirected, so there is no
+    # terminal to repaint" -- and the reset half, on the same terminal in the
+    # same session, still claimed the repaint.
+    #
+    # Not mocking Write-Host here, deliberately: the Describe above does, and
+    # that is exactly why four tests could drive this branch without seeing it.
+    # The information stream is captured instead.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            $script:TStylesCurrent  = Join-Path $TestDrive 'current-style.ps1'
+            Mock Get-TerminalKind { 'AppleTerminal' }
+        }
+
+        It 'does not claim a repaint that did not happen' {
+            Mock Write-HostOscPacket { $false }
+            $out = (Reset-StyleNonWT -OutputRedirected:$true 6>&1 | Out-String)
+
+            Should -Invoke Write-HostOscPacket -Times 1 -Scope It `
+                -Because 'a branch that was never reached would report green'
+            $out | Should -Not -Match 'to its unstyled default'
+            $out | Should -Match 'no terminal to repaint'
+        }
+
+        It 'still says what DID happen when the repaint failed' {
+            # The record and the staged shell files really are gone, so a new
+            # tab really does come up unstyled. Saying nothing at all would be
+            # the opposite defect.
+            Mock Write-HostOscPacket { $false }
+            $out = (Reset-StyleNonWT -OutputRedirected:$true 6>&1 | Out-String)
+            $out | Should -Match 'a new tab comes up unstyled'
+            $out | Should -Match 'Open a new tab to restore your default prompt'
+        }
+
+        It 'blames the terminal only when the terminal is really what refused' {
+            # Not redirected, and the packet still did not land. "its output is
+            # redirected" would be false here, and it is the half a user acts on.
+            Mock Write-HostOscPacket { $false }
+            $out = (Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String)
+            $out | Should -Not -Match 'to its unstyled default'
+            $out | Should -Not -Match 'output is redirected'
+            $out | Should -Match 'did not accept the color reset'
+        }
+
+        It 'does print the success line when the reset really painted' {
+            # The complement, so a fix that simply always reports failure fails
+            # here. Named in full: -match is substring-matching, and "unstyled"
+            # alone appears in the failure wording too.
+            Mock Write-HostOscPacket { $true }
+            $out = (Reset-StyleNonWT -OutputRedirected:$true 6>&1 | Out-String)
+            $out | Should -Match 'to its unstyled default'
+            $out | Should -Not -Match 'no terminal to repaint'
+            $out | Should -Not -Match 'did not accept'
+        }
+
+        It 'names the terminal it reset' {
+            Mock Write-HostOscPacket { $true }
+            $out = (Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String)
+            $out | Should -Match ([regex]::Escape((Get-TerminalDisplayName -Kind 'AppleTerminal')))
         }
     }
 }

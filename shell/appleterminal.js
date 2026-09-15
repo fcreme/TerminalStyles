@@ -63,6 +63,15 @@ function archivedColor(hex) {
     // components without complaint, and the archive then carries
     // NSRGB = "nan nan nan" -- which Terminal rejects as a corrupt profile,
     // naming no key. The caller's try/catch cannot help, because nothing throws.
+    //
+    // A LAST-RESORT guard, not the place the question is decided. This test was
+    // stricter than ConvertTo-NormalHex, which is what the rest of the module
+    // means by "a colour": `#013`, `#0011339f`, ` #ff0000` and `##aa0000` all
+    // paint the live window over OSC, and all four failed here and were dropped
+    // by the catch below -- silently, into a profile that then showed
+    // Terminal.app's own defaults for those slots. Get-AppleTerminalColorSpec
+    // now normalises every value to `#rrggbb` before it reaches this file, so
+    // nothing a user can write in a scheme.json reaches this throw.
     if (!/^[0-9a-fA-F]{6}$/.test(h)) {
         throw new Error('not a 6-digit hex color: ' + hex);
     }
@@ -107,6 +116,10 @@ function run(argv) {
         if (!colors.hasOwnProperty(key)) { continue; }
         var hex = colors[key];
         if (!hex) { continue; }
+        // A skip is no longer silent: the caller compares the keys it asked for
+        // against the keys that come back and names any that went missing.
+        // Still a skip rather than a throw -- one unarchivable slot is not worth
+        // losing the other nineteen and the background image with them.
         try { out[key] = archivedColor(hex); } catch (e) { /* skip a bad color, keep the rest */ }
     }
 

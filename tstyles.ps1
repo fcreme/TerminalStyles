@@ -1329,24 +1329,31 @@ function Invoke-TerminalStyle {
 
         # Per-keystroke instant retint (OSC color packet). The deferred
         # settings.json write is $applyTheme, passed as -OnPreview.
-        $onRetint = { param($i) [Console]::Out.Write($oscPackets[$i]) }
+        # Through Write-HostOscPacket, not a raw [Console]::Out.Write: that is the
+        # one function that refuses to put escape bytes into a redirected stream,
+        # and a picker frame is no more welcome in a captured stdout than an
+        # apply's packet is.
+        $onRetint = { param($i) Write-HostOscPacket -Packet $oscPackets[$i] | Out-Null }
 
         # Esc: restore the byte-exact original settings.json and undo the live
         # OSC retint so the cancelled preview's colors don't linger.
         #
-        # Get-OscResetPacket hands color control back to the terminal's OWN
-        # defaults, which is right on Windows Terminal -- settings.json has just
-        # been restored and WT repaints from it. Off Windows Terminal there is no
-        # such file: the style the user arrived with was itself only escape
-        # sequences, so resetting drops them to the terminal's stock palette
-        # rather than back to their style. Re-emit it instead.
+        # Which packet that is -- the starting style re-emitted, or the reset
+        # that hands color control back to the terminal's own defaults -- is
+        # Get-RevertOscPacket's question, asked the same way by the tuner's Esc.
+        # It used to be an inline `if` here and a second one there, and both were
+        # pinned by nothing but a source-text match: swapping the arms is exactly
+        # the regression the rule exists to prevent, and it left the whole suite
+        # green. Missing key, unreadable scheme and "nothing was applied" all come
+        # back as the reset, so this side does not re-derive any of them.
+        #
+        # ONE emit path for both answers, and it is Write-HostOscPacket: the
+        # else arm wrote straight to [Console]::Out, which skips the redirected-
+        # stream guard that function exists to enforce.
         $restoreOriginalLook = {
             & $restoreOriginalSettings
-            if (-not $useSettingsFile -and $hadCurrentStyle -and $schemes.ContainsKey($startIdx)) {
-                Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$startIdx]) | Out-Null
-            } else {
-                [Console]::Out.Write((Get-OscResetPacket))
-            }
+            Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$useSettingsFile `
+                -HadStartingStyle:$hadCurrentStyle -StartingScheme $schemes[$startIdx]) | Out-Null
             $pickerState.Reverted = $true
         }
         $onRevert = $restoreOriginalLook
