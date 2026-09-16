@@ -7,6 +7,12 @@
 # Get-PowerShellEngineCandidate. All three say "duplicated ... keep in sync" and
 # nothing checked that they were.
 #
+# The module side is BOTH tstyles.ps1 and terminals.ps1. It was tstyles.ps1
+# alone, and that is why the fourth duplicate went unchecked for a release:
+# Get-RcFileEncoding lives in terminals.ps1, so the installer's copy of the one
+# rule that keeps a user's non-UTF-8 $PROFILE byte intact was compared against
+# nothing at all.
+#
 # The reason it matters is not just tidiness. `tstyles update` on a bootstrap
 # install runs `Invoke-Expression $installerScript` (lib/update.ps1) -- INSIDE
 # the module's scope. So install.ps1's copies do not merely sit beside the
@@ -39,7 +45,8 @@ BeforeDiscovery {
     }
 
     $installFns = script:Get-FunctionNames (Join-Path $repoRoot 'install.ps1')
-    $moduleFns  = script:Get-FunctionNames (Join-Path $repoRoot 'tstyles.ps1')
+    $moduleFns  = @(script:Get-FunctionNames (Join-Path $repoRoot 'tstyles.ps1')) +
+                  @(script:Get-FunctionNames (Join-Path $repoRoot 'terminals.ps1'))
     $script:SharedFns = @($installFns | Where-Object { $moduleFns -contains $_ } | Sort-Object -Unique)
 }
 
@@ -53,13 +60,19 @@ BeforeAll {
     # after the same trap was fixed in Lib-Loading.Tests.ps1.
     $installAst = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $script:repoRoot 'install.ps1'), [ref]$null, [ref]$null)
-    $moduleAst = [System.Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $script:repoRoot 'tstyles.ps1'), [ref]$null, [ref]$null)
+    # Both module files, for the reason in the header: a duplicate whose
+    # original lives in terminals.ps1 was compared against nothing.
+    $script:ModuleFiles = @(
+        (Join-Path $script:repoRoot 'tstyles.ps1'),
+        (Join-Path $script:repoRoot 'terminals.ps1')
+    )
     $nameOf = { param($a) @($a.FindAll({ param($n)
         $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
         ForEach-Object { $_.Name }) }
     $iNames = & $nameOf $installAst
-    $mNames = & $nameOf $moduleAst
+    $mNames = @(foreach ($f in $script:ModuleFiles) {
+        & $nameOf ([System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null))
+    })
     $script:SharedFns = @($iNames | Where-Object { $mNames -contains $_ } | Sort-Object -Unique)
 
     # Code only: tokens inside the function's extent, minus comments and layout.
@@ -84,22 +97,30 @@ BeforeAll {
 
 Describe 'install.ps1 duplicates the module faithfully' {
 
-    It 'still duplicates the three it is supposed to' {
+    It 'still duplicates the ones it is supposed to' {
         # If this drops to zero the rest of the file silently tests nothing --
         # the exact failure mode this suite has been cleaning up all week.
         @($script:SharedFns).Count | Should -BeGreaterOrEqual 3
-        foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate') {
-            $script:SharedFns | Should -Contain $n
+        foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate',
+                       'Get-RcFileEncoding', 'Test-PathIsSymlink',
+                       'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers') {
+            $script:SharedFns | Should -Contain $n -Because (
+                "$n is duplicated into install.ps1 and this file is what compares the two copies")
         }
     }
 
-    It '<_> is identical in install.ps1 and tstyles.ps1' -ForEach $script:SharedFns {
-        $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1')  -Name $_
-        $b = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'tstyles.ps1') -Name $_
+    It '<_> is identical in install.ps1 and the module' -ForEach $script:SharedFns {
+        $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1') -Name $_
+        $b = $null
+        $from = $null
+        foreach ($f in $script:ModuleFiles) {
+            $b = script:Get-FunctionCode -Path $f -Name $_
+            if ($b) { $from = (Split-Path -Leaf $f); break }
+        }
         $a | Should -Not -BeNullOrEmpty
-        $b | Should -Not -BeNullOrEmpty
+        $b | Should -Not -BeNullOrEmpty -Because 'the module half has to be found, or this compares nothing'
         $a | Should -Be $b -Because @"
-$_ is duplicated in install.ps1 and must match tstyles.ps1 exactly.
+$_ is duplicated in install.ps1 and must match the module's copy ($from) exactly.
 `tstyles update` Invoke-Expressions install.ps1 INSIDE the module's scope, so a
 drifted copy replaces the module's version for the rest of that session.
 "@

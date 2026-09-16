@@ -117,6 +117,213 @@ Describe 'Write-TextFileAtomic' {
         Write-TextFileAtomic -Path $p -Content 'data'
         @(Get-ChildItem -LiteralPath $dir -Filter '*.tmp-*' -Force).Count | Should -Be 0
     }
+
+    Context 'the destination cannot be written at all' {
+        # Existing coverage stopped at the success path. The failure path is
+        # where the temp file was left behind: the catch printed "atomic write
+        # unavailable on this volume", called WriteAllText, and THEN removed the
+        # temp -- as a trailing statement, not in a finally. When the direct
+        # write also fails (a read-only $PROFILE, a cloud-synced placeholder,
+        # the exact state lib/update.ps1:412 names out loud) the exception
+        # escaped past that line and `.<profile>.tmp-<guid>` stayed beside the
+        # user's $PROFILE, with a fresh GUID per call so re-running the
+        # installer piled them up. Measured with `chflags uchg` on a real
+        # profile: 1 orphan after the first attempt, 2 after the second.
+        # lib/wtsettings.ps1's Write-SettingsAtomic is the same shape and was
+        # fixed for exactly this; this copy never was.
+        #
+        # A DIRECTORY at the destination forces both halves to fail on every
+        # platform and both engines, with no privileges and no filesystem
+        # flags: Test-Path says the path exists, File.Replace refuses it, and
+        # File.WriteAllText refuses it too. The temp sibling is still created
+        # first, because its parent is writable -- which is the whole point.
+        BeforeEach {
+            $script:leakDir = Join-Path $TestDrive ('leak-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $script:leakDir | Out-Null
+            $script:leakTarget = Join-Path $script:leakDir 'Microsoft.PowerShell_profile.ps1'
+            New-Item -ItemType Directory -Force -Path $script:leakTarget | Out-Null
+        }
+
+        It 'leaves no temp file beside an unwritable target' {
+            try { Write-TextFileAtomic -Path $script:leakTarget -Content 'x' } catch { }
+            try { Write-TextFileAtomic -Path $script:leakTarget -Content 'x' } catch { }
+            # -Force, and PSIsContainer filtered out: the temp name starts with
+            # a dot, so without -Force this counts nothing on Unix and passes
+            # while measuring nothing.
+            @(Get-ChildItem -LiteralPath $script:leakDir -Filter '*.tmp-*' -Force |
+                Where-Object { -not $_.PSIsContainer }).Count |
+                Should -Be 0 -Because 'two failed attempts must not leave two temp files in the user''s profile directory'
+        }
+
+        It 'blames the permissions it can see, not the volume it cannot' {
+            # The message is a claim. "atomic write unavailable on this volume"
+            # was printed BEFORE the write it describes, so it was printed on a
+            # run where nothing was written at all -- and the next line then
+            # died with a raw .NET "Access to the path ... is denied", which is
+            # the diagnosis lib/update.ps1 turns into an instruction for the
+            # very same file.
+            $err = $null
+            try { Write-TextFileAtomic -Path $script:leakTarget -Content 'x' } catch { $err = $_ }
+            $err | Should -Not -BeNullOrEmpty -Because 'an unwritable destination has to be reported'
+            "$err" | Should -Match "permissions" `
+                -Because 'the failure must carry the same guidance the module half prints'
+            "$err" | Should -Not -Match 'atomic write unavailable' `
+                -Because 'the volume is not what refused the write'
+        }
+    }
+
+    Context 'the destination is a symlink into a dotfiles repo' {
+        # File.Replace operates on the LINK: it swapped a $PROFILE symlinked
+        # into stow / chezmoi / nix home-manager for a regular file, orphaning
+        # the repo copy. Nothing is lost on either side, which is what made it
+        # silent -- the repo simply stops governing the profile, and the next
+        # `chezmoi apply` / `home-manager switch` / `stow -R` conflicts on an
+        # unexpected regular file or overwrites it, taking the loader with it.
+        # Every other writer of a user-owned file in this repo is a plain
+        # WriteAllText and follows the link; this was the lone outlier.
+        BeforeEach {
+            $script:sl = Join-Path $TestDrive ('sl-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path (Join-Path $script:sl 'dotfiles') | Out-Null
+            New-Item -ItemType Directory -Force -Path (Join-Path $script:sl 'home')     | Out-Null
+            $script:slReal = Join-Path $script:sl 'dotfiles/powershell_profile.ps1'
+            $script:slLink = Join-Path $script:sl 'home/Microsoft.PowerShell_profile.ps1'
+            [System.IO.File]::WriteAllText($script:slReal,
+                "# managed by my dotfiles repo`r`nSet-Alias ll Get-ChildItem`r`n",
+                [System.Text.UTF8Encoding]::new($false))
+            $script:slMade = $false
+            try {
+                New-Item -ItemType SymbolicLink -Path $script:slLink -Target $script:slReal -ErrorAction Stop | Out-Null
+                $script:slMade = $true
+            } catch { $script:slMade = $false }
+        }
+
+        It 'writes THROUGH a symlinked $PROFILE instead of replacing the link' {
+            if (-not $script:slMade) {
+                # Windows without Developer Mode or an elevated account cannot
+                # create one. Skipped at RUN time, not with -Skip:, which is
+                # evaluated at discovery and would never see this flag.
+                Set-ItResult -Skipped -Because 'this platform or account cannot create symlinks'
+                return
+            }
+            Write-TextFileAtomic -Path $script:slLink -Content 'LOADER-BLOCK'
+
+            # -Force on Get-Item is load-bearing: without it a dotfile-shaped
+            # path answers nothing on Unix and both sides compare $null.
+            (Get-Item -LiteralPath $script:slLink -Force).LinkType |
+                Should -Be 'SymbolicLink' -Because 'the link must survive the write'
+            [System.IO.File]::ReadAllText($script:slReal, $script:enc) |
+                Should -Be 'LOADER-BLOCK' -Because 'the dotfiles copy is what the link points at'
+        }
+
+        It 'still swaps atomically when the destination is a real file' {
+            # The guard must not have turned the atomic replace off everywhere.
+            # A hard link observes the difference: an atomic Replace swaps in a
+            # brand-new file, so the original -- still reachable through the
+            # second name -- keeps its OLD bytes. (PowerShell reports LinkType
+            # 'HardLink' here, which is why the symlink test above is spelled
+            # -eq 'SymbolicLink' and not "LinkType says anything".)
+            $f    = Join-Path $script:sl 'plain.txt'
+            $hard = Join-Path $script:sl 'plain.hardlink.txt'
+            [System.IO.File]::WriteAllText($f, 'OLD', $script:enc)
+            $made = $true
+            try { New-Item -ItemType HardLink -Path $hard -Target $f -ErrorAction Stop | Out-Null }
+            catch { $made = $false }
+            if (-not $made) {
+                Set-ItResult -Skipped -Because 'this platform or account cannot create hard links'
+                return
+            }
+            Write-TextFileAtomic -Path $f -Content 'NEW'
+            [System.IO.File]::ReadAllText($f, $script:enc)    | Should -Be 'NEW'
+            [System.IO.File]::ReadAllText($hard, $script:enc) | Should -Be 'OLD'
+        }
+    }
+}
+
+Describe 'Register-LoaderInProfile round-trips the user''s own bytes' {
+    # The $PROFILE is the USER's file and predates us, and this function reads
+    # the whole of it and writes the whole of it back. Read as UTF-8, a byte
+    # that is not valid UTF-8 -- a latin-1 comment, a stray byte from an old
+    # editor, anything at all in a Windows PowerShell 5.1 profile saved in the
+    # ANSI codepage, which is its default -- decodes to U+FFFD and is written
+    # back as ef bf bd. terminals.ps1's rc half (CHANGELOG 554) and
+    # lib/update.ps1's $PROFILE half (CHANGELOG 292, this exact `# café`
+    # fixture) were both moved to Get-RcFileEncoding for it. install.ps1's copy,
+    # the third and the only one that runs on `iwr | iex`, never was.
+    #
+    # Measured on the shipped function before the fix:
+    #   BEFORE 23 20 63 61 66 e9 0d 0a ...
+    #   AFTER  23 20 63 61 66 ef bf bd 0d ...
+    # on the first install AND on the re-install -- which is the path `tstyles
+    # update` takes on every bootstrap install, and the one that keeps no copy.
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+        $script:begin = '# ===== TerminalStyles BEGIN ====='
+        $script:end   = '# ===== TerminalStyles END ====='
+        $script:body  = "$script:begin`r`nImport-Module 'X' -DisableNameChecking`r`n$script:end"
+    }
+    BeforeEach {
+        $script:fixture = Join-Path $TestDrive ('enc-' + [guid]::NewGuid().Guid.Substring(0,8))
+        New-Item -ItemType Directory -Force -Path (Join-Path $script:fixture 'styles') | Out-Null
+        $script:profileDir = Join-Path $script:fixture 'profile'
+        New-Item -ItemType Directory -Force -Path $script:profileDir | Out-Null
+        $script:profilePath = Join-Path $script:profileDir 'Microsoft.PowerShell_profile.ps1'
+        # "# caf" + 0xE9 + CRLF -- a latin-1 'é', which is not valid UTF-8.
+        $script:cafe = [byte[]]@(0x23, 0x20, 0x63, 0x61, 0x66, 0xE9, 0x0D, 0x0A)
+    }
+    function script:RegisterFixture {
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end `
+            -LoaderBody $script:body 6>&1 | Out-Null
+    }
+    function script:ProfileHex {
+        ([System.BitConverter]::ToString([System.IO.File]::ReadAllBytes($script:profilePath)) -replace '-', '')
+    }
+
+    It 'keeps a byte that is not valid UTF-8 (first install)' {
+        [System.IO.File]::WriteAllBytes($script:profilePath,
+            $script:cafe + [System.Text.Encoding]::ASCII.GetBytes("Set-Alias ll Get-ChildItem`r`n"))
+        RegisterFixture
+        [System.IO.File]::ReadAllBytes($script:profilePath) | Should -Contain 0xE9 `
+            -Because 'the user''s own byte must survive a tool that was only asked to append a loader'
+        ProfileHex | Should -Not -Match 'EFBFBD' `
+            -Because 'U+FFFD in their file means the original byte is gone for good'
+    }
+
+    It 'keeps it on a RE-install too, where no backup is taken' {
+        # The sharp one. `tstyles update` on a bootstrap install re-runs this
+        # whole script, and the first-touch rule skips the backup for a file
+        # that already carries our block -- so on this path the corruption is
+        # unrecoverable. The count is asserted first, so the test proves there
+        # is no copy to fall back on rather than assuming it.
+        [System.IO.File]::WriteAllBytes($script:profilePath,
+            $script:cafe + [System.Text.Encoding]::ASCII.GetBytes("`r`n$script:body`r`n"))
+        RegisterFixture
+        @(Get-ChildItem -LiteralPath $script:profileDir -Filter '*.bak-*' -Force).Count |
+            Should -Be 0 -Because 'a re-register only swaps our own block, so no backup is taken'
+        [System.IO.File]::ReadAllBytes($script:profilePath) | Should -Contain 0xE9
+        ProfileHex | Should -Not -Match 'EFBFBD'
+    }
+
+    It 'still recognises a bundled style profile it has to migrate' {
+        # The other side of the same change: the migration compares the user's
+        # $PROFILE against every shipped profile.ps1, and reading the two with
+        # DIFFERENT encodings would make a style whose banner is not pure ASCII
+        # -- which is most of the sixteen -- never match itself, silently
+        # switching the migration off.
+        $styleDir = Join-Path $script:fixture 'styles/eva'
+        New-Item -ItemType Directory -Force -Path $styleDir | Out-Null
+        $styleBytes = [System.Text.Encoding]::UTF8.GetBytes(
+            "# eva`r`nWrite-Host '" + [char]0x2500 + [char]0x2500 + " NERV " + [char]0x2500 + [char]0x2500 + "'`r`n")
+        [System.IO.File]::WriteAllBytes((Join-Path $styleDir 'profile.ps1'), $styleBytes)
+        [System.IO.File]::WriteAllBytes($script:profilePath, $styleBytes)
+
+        RegisterFixture
+
+        Test-Path -LiteralPath (Join-Path $script:fixture 'current-style.ps1') |
+            Should -BeTrue -Because 'a $PROFILE that IS a bundled style must still be migrated into TerminalStyles'
+    }
 }
 
 Describe 'Register-LoaderInProfile backup rule' {

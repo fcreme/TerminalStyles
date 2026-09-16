@@ -130,6 +130,37 @@ Describe 'the picker stages shell state on confirm' {
         }
     }
 
+    It 'every Write-HostOscPacket call inside the picker consumes its status too' {
+        # Same rule, the sibling that was missed. Write-HostOscPacket returns
+        # $true/$false by contract ("the bytes actually reached a terminal", see
+        # terminals.ps1), and terminals.ps1 spells the rule out for the other
+        # status: "Both call sites must CONSUME the status -- a bare statement
+        # would emit it into `tstyles`' own output."
+        #
+        # Two of the picker's three call sites piped it to Out-Null and the
+        # third -- the initial preview, the one path where the packet IS the
+        # whole preview -- did not. Measured: a literal `True` in the picker's
+        # byte stream on iTerm2, and, durably, a completed non-WT picker session
+        # RETURNING one [System.Boolean] out of Invoke-TerminalStyle.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+        $calls = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Write-HostOscPacket' }, $true))
+
+        @($calls).Count | Should -BeGreaterThan 0 -Because 'the picker still paints previews with it'
+        foreach ($c in $calls) {
+            $pipeline = $c.Parent
+            $consumed =
+                ($pipeline -is [System.Management.Automation.Language.PipelineAst] -and
+                 $pipeline.PipelineElements.Count -gt 1) -or
+                ($pipeline.Parent -is [System.Management.Automation.Language.AssignmentStatementAst]) -or
+                ($pipeline.Parent -is [System.Management.Automation.Language.ParenExpressionAst]) -or
+                ($pipeline.Parent -is [System.Management.Automation.Language.SubExpressionAst])
+            $consumed | Should -BeTrue -Because ("the call at {0}:{1} emits its status into tstyles' own output" -f
+                (Split-Path -Leaf $c.Extent.File), $c.Extent.StartLineNumber)
+        }
+    }
+
     It 'every Set-ShellStyleState call passes a Scheme' {
         # Set-ShellStyleState computes current-style.osc from -Scheme. Omitting
         # it is a Mandatory-parameter prompt at confirm time, on a screen the
@@ -470,7 +501,70 @@ Describe 'the update notice survives the picker clearing the screen' {
             Should -BeLessThan $src.IndexOf('Invoke-StylePickerLoop')
         # ...and it is actually printed somewhere after the confirm output.
         $src.IndexOf('Style applied: ') |
-            Should -BeLessThan $src.LastIndexOf('$pendingUpdate')
+            Should -BeLessThan $src.LastIndexOf('$showPendingUpdate')
+    }
+
+    It 'is taken BELOW the console guard and the early returns, not at the top' {
+        # The check stamps .last-update-check on every attempt, and that stamp
+        # is the 24-hour throttle list / current / random / apply all read. Sat
+        # at the top of the command it ran above the redirected-console guard
+        # and above the "No styles found." / "Could not locate Windows Terminal
+        # settings.json." returns, so a run that showed nobody anything still
+        # spent the day's check. Behaviour for the redirected case is driven in
+        # tests/Picker-ConsoleGuards.Tests.ps1; the ORDERING is pinned here,
+        # because the other early returns cannot be reached from Pester.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+
+        $guard = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.IfStatementAst] -and
+            $n.Clauses[0].Item1.Extent.Text -match 'IsOutputRedirected' }, $true))
+        @($guard).Count | Should -Be 1 -Because 'the console guard is what the check has to sit below'
+
+        $check = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Test-UpdateAvailable' }, $true))
+        @($check).Count | Should -Be 1 -Because 'one check, one stamp'
+        $check[0].Extent.StartOffset | Should -BeGreaterThan $guard[0].Extent.StartOffset
+
+        # And below every early return that prints an error instead of a menu.
+        $errors = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Write-Error' }, $true))
+        @($errors).Count | Should -BeGreaterThan 0 -Because 'those returns are the other half of the same problem'
+        foreach ($e in $errors) {
+            $check[0].Extent.StartOffset | Should -BeGreaterThan $e.Extent.StartOffset `
+                -Because 'a run that returns on an error has nobody to show a notice to either'
+        }
+    }
+
+    It 'prints the notice on the cancel path as well as the confirm path' {
+        # $pendingUpdate was read in the confirm branch only, so Esc -- which
+        # prints "Reverted." and returns -- spent the check and showed nothing,
+        # and every later command that day found the throttle already stamped.
+        # Measured on a pty: Esc -> 'Update available' lines 0, stampWritten
+        # True; Enter -> 1, stampWritten True.
+        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
+
+        # The one printer, so the two exits cannot word it differently.
+        $defs = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+            $n.Left.Extent.Text -eq '$showPendingUpdate' }, $true))
+        @($defs).Count | Should -Be 1 -Because 'the notice is printed from one place'
+
+        $calls = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.Extent.Text -match '^&\s+\$showPendingUpdate' }, $true))
+        @($calls).Count | Should -BeGreaterOrEqual 2 -Because 'the picker has two exits and both were paid for'
+
+        # One of them inside the cancelled branch, specifically.
+        $cancelled = @($fn.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.IfStatementAst] -and
+            $n.Clauses[0].Item1.Extent.Text -match "Outcome -eq 'cancelled'" }, $true))
+        @($cancelled).Count | Should -Be 1
+        @($cancelled[0].FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.Extent.Text -match '^&\s+\$showPendingUpdate' }, $true)).Count |
+            Should -Be 1 -Because 'Esc burns the check too, so Esc has to show what it bought'
     }
 
     It 'still throttles through Test-UpdateAvailable rather than checking twice' {

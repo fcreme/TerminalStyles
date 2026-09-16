@@ -789,6 +789,54 @@ function Get-RcFileEncoding {
     return [System.Text.Encoding]::GetEncoding(28591)
 }
 
+function Test-PathIsSymlink {
+    <#
+    .SYNOPSIS
+    Is this path a symlink (or other reparse point) rather than a real file?
+
+    .DESCRIPTION
+    The files this project writes on the user's behalf -- the `$PROFILE`, the rc
+    files, Windows Terminal's `settings.json` -- are very often symlinks into a
+    dotfiles repo: stow, chezmoi, nix home-manager all work that way.
+
+    Every writer here except one is a plain `[System.IO.File]::WriteAllText`,
+    which FOLLOWS such a link and updates the repo's copy in place. The
+    exception was the temp-sibling-plus-`[System.IO.File]::Replace` shape:
+    Replace operates on the link itself, so it swapped the link for a regular
+    file. Nothing is lost on either side, which is what made it silent -- but
+    the dotfiles repo stops governing the file, and the next `chezmoi apply` /
+    `home-manager switch` / `stow -R` either conflicts on an unexpected regular
+    file or overwrites it, taking our block with it. Replace also only needs
+    write permission on the CONTAINING directory, so it succeeded on a link
+    pointing into a read-only nix store -- a permission barrier the module half
+    correctly refuses at.
+
+    `-Force` on Get-Item is load-bearing, and is the reason this is a function
+    rather than an inline test: without it a dotfile on Unix comes back as
+    nothing and every path most likely to be a link reads as "not a link".
+
+    SYMLINKS only, which is why the test is `-eq 'SymbolicLink'` and not
+    "LinkType says anything". PowerShell also reports `LinkType = 'HardLink'`
+    for an ordinary file that simply has a second name, and a hard link is not
+    a pointer to be preserved -- both names ARE the file. Taking every non-empty
+    LinkType would have turned the atomic replace off for a plain file with two
+    names, which is what `tests/Write-SettingsAtomic.Tests.ps1` builds to prove
+    the replace is atomic at all.
+
+    Anything that cannot be read answers `$false`: an atomic write to a file we
+    cannot even stat is no worse than what happened before.
+    #>
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return $false }
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($item.PSObject.Properties.Match('LinkType').Count -gt 0 -and
+            $item.LinkType -eq 'SymbolicLink') { return $true }
+        return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq
+                [System.IO.FileAttributes]::ReparsePoint)
+    } catch { return $false }
+}
+
 function Save-FirstTouchBackup {
     <#
     .SYNOPSIS

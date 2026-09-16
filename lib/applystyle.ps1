@@ -17,6 +17,10 @@ function Show-StyleList {
     # Show-FontList uses for its installed-font set.
     $claim = Get-InstalledStyleClaim
     $rootsAreOne = Test-StylesRootsAreOne
+    # The style fingerprints the install recorded, for the same reason and in
+    # the same breath: Get-StyleOrigin reads them to tell a bundled style the
+    # user has edited from the one the install placed.
+    $styleHash = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
     $anyYours = $false
     Write-Host ""
     Write-Host "Available styles:" -ForegroundColor Cyan
@@ -44,7 +48,8 @@ function Show-StyleList {
         # bundled set. Degrades to no badge on any failure, like the swatch above.
         $badge = ''
         try {
-            switch (Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim -RootsAreOne $rootsAreOne) {
+            switch (Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim `
+                        -RootsAreOne $rootsAreOne -StyleHash $styleHash) {
                 'yours'  { $badge = "  $([char]27)[38;2;160;160;160myours$([char]27)[0m"; $anyYours = $true }
                 'shadow' { $badge = "  $([char]27)[38;2;160;160;160myours (shadows bundled)$([char]27)[0m"; $anyYours = $true }
             }
@@ -445,6 +450,56 @@ function Publish-StyleWezTermConfig {
     return $path
 }
 
+function Get-UnsupportedStyleFeatureNote {
+    <#
+    .SYNOPSIS
+    "<terminal> can't show: <list>." for one style, or $null when it can show
+    everything the style ships.
+
+    .DESCRIPTION
+    Two doors apply a style off Windows Terminal -- `tstyles <name>`
+    (Apply-StyleNonWT) and the picker's confirm -- and only one of them told the
+    user which parts of the style would not appear. On iTerm2, `tstyles eva`
+    printed "iTerm2 can't show: tab color." while choosing eva in the picker
+    printed nothing at all about it, for the same apply on the same terminal.
+    The line lives here so the two doors cannot answer differently.
+
+    Capability FIRST, deliberately: Get-StyleBundledBackground can make up to
+    four serial 10-second HTTP attempts against the gifs branch, so as the LEFT
+    operand of the -and it ran even where the answer could not matter. Ordered
+    this way it is mutually exclusive with the profile writer's own resolution,
+    and an apply resolves the background at most once -- which
+    tests/Apply-StyleNonWT.Tests.ps1 pins with -Times 1 -Exactly.
+
+    A style with no theme.json has no background field and no tabColor, so
+    nothing is asked and nothing is fetched.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StyleDir,
+        [Parameter(Mandatory)][string]$Kind
+    )
+
+    $themePath = Join-Path $StyleDir 'theme.json'
+    if (-not (Test-Path -LiteralPath $themePath)) { return $null }
+    $theme = $null
+    try {
+        $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } catch { $theme = $null }
+    if (-not $theme) { return $null }
+
+    $caps = Get-TerminalCapability -Kind $Kind
+    $unsupported = @()
+    if (-not $caps.BackgroundImage -and (Get-StyleBundledBackground -StyleDir $StyleDir)) {
+        $unsupported += 'background image'
+    }
+    if ($theme.PSObject.Properties.Match('tabColor').Count -gt 0 -and -not $caps.TabColor) {
+        $unsupported += 'tab color'
+    }
+    if ($unsupported.Count -eq 0) { return $null }
+    return ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $Kind), ($unsupported -join ', '))
+}
+
 function Apply-StyleNonWT {
     # Apply a style on a terminal that is not Windows Terminal.
     #
@@ -478,7 +533,6 @@ function Apply-StyleNonWT {
     )
 
     $kind = Get-TerminalKind
-    $caps = Get-TerminalCapability -Kind $kind
 
     $schemePath = Join-Path $StyleDir 'scheme.json'
     if (-not (Test-Path -LiteralPath $schemePath)) {
@@ -580,31 +634,20 @@ function Apply-StyleNonWT {
 
     # Tell the user which parts of the style this terminal cannot show, once,
     # rather than letting them wonder why it doesn't match the screenshot.
-    $unsupported = @()
+    # Through the shared note, so the picker's confirm answers this question the
+    # same way -- it used not to answer it at all.
+    $unsupportedNote = Get-UnsupportedStyleFeatureNote -StyleDir $StyleDir -Kind $kind
+    if ($unsupportedNote) {
+        Write-Host ""
+        Write-Host $unsupportedNote -ForegroundColor DarkGray
+    }
+
     $theme = $null
     $themePath = Join-Path $StyleDir 'theme.json'
     if (Test-Path -LiteralPath $themePath) {
         try {
             $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
         } catch { $theme = $null }
-    }
-    if ($theme) {
-        # Capability first, deliberately. Get-StyleBundledBackground can make up
-        # to four serial 10-second HTTP attempts against the gifs branch, so as
-        # the LEFT operand it ran even where the answer could not matter -- and
-        # ran a second time below. Ordered this way the two calls below and here
-        # are mutually exclusive on $caps.BackgroundImage, so an apply resolves
-        # the background at most once.
-        if (-not $caps.BackgroundImage -and (Get-StyleBundledBackground -StyleDir $StyleDir)) {
-            $unsupported += 'background image'
-        }
-        if ($theme.PSObject.Properties.Match('tabColor').Count -gt 0 -and -not $caps.TabColor) {
-            $unsupported += 'tab color'
-        }
-    }
-    if ($unsupported.Count -gt 0) {
-        Write-Host ""
-        Write-Host ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $kind), ($unsupported -join ', ')) -ForegroundColor DarkGray
     }
 
     Publish-StyleBackgroundProfile -StyleName $StyleName -StyleDir $StyleDir `
@@ -626,7 +669,15 @@ function Apply-StyleNonWT {
     #
     # The shell's copy is the one to keep: it is the one that actually changes
     # the prompt the user is looking at.
-    if (-not $global:TStylesNoAutoLoad -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+    #
+    # Asked through Test-ShouldLiveReloadPrompt rather than inline, because the
+    # picker's confirm asks the same question and the two answers diverged: this
+    # half honoured the flag and the picker's did not, so the defect this
+    # comment describes stayed live on the other door for several releases.
+    # Off Windows Terminal this session IS PowerShell, so -IsPwshTarget is $true.
+    if (Test-ShouldLiveReloadPrompt -IsPwshTarget $true `
+            -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent) `
+            -AutoLoadSuppressed ([bool]$global:TStylesNoAutoLoad)) {
         . $script:TStylesCurrent
     }
 }

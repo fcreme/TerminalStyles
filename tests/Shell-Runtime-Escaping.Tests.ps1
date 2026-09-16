@@ -414,12 +414,27 @@ Describe 'an apply prints its banner once, not twice' {
         # real, printing it a SECOND time. Two banners per apply, for every zsh
         # and bash user.
         #
-        # $TStylesNoAutoLoad is the signal the shim already sets.
-        $src = InModuleScope TerminalStyles {
-            (Get-Command Apply-StyleNonWT).ScriptBlock.ToString()
+        # $TStylesNoAutoLoad is the signal the shim already sets. Both apply
+        # doors -- `tstyles <name>` and the picker's confirm -- now ask
+        # Test-ShouldLiveReloadPrompt with it, because this half being fixed
+        # inline while the picker asked a gate that could not see the flag is
+        # exactly how the second banner survived on the other door. The truth
+        # table lives in tests/Test-ShouldLiveReloadPrompt.Tests.ps1; what is
+        # pinned here is that BOTH doors feed the flag into it.
+        InModuleScope TerminalStyles {
+            foreach ($name in 'Apply-StyleNonWT', 'Invoke-TerminalStyle') {
+                $calls = @((Get-Command $name).ScriptBlock.Ast.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.CommandAst] -and
+                    $n.GetCommandName() -eq 'Test-ShouldLiveReloadPrompt' }, $true))
+                @($calls).Count | Should -BeGreaterThan 0 -Because "$name must ask the shared gate"
+                foreach ($c in $calls) {
+                    $c.Extent.Text | Should -Match 'TStylesNoAutoLoad' `
+                        -Because "$name must pass the shim's own signal"
+                }
+            }
+            Test-ShouldLiveReloadPrompt -IsPwshTarget $true -ProfilePresent $true -AutoLoadSuppressed $true |
+                Should -BeFalse -Because 'and the gate must act on it'
         }
-        $src | Should -Match '-not \$global:TStylesNoAutoLoad[^\n]*TStylesCurrent' `
-            -Because 'the reload must be gated on the shim''s own signal'
     }
 
     It 'the shim still sets that signal' {
