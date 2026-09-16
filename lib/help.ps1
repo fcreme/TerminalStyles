@@ -58,7 +58,10 @@ function Get-TerminalStyleHelpData {
                        "  -NewWindow               Terminal.app only: open a NEW window",
                        "                           carrying the style's background image. No",
                        "                           escape sequence can put an image on the",
-                       "                           window you are already in.",
+                       "                           window you are already in. If the style",
+                       "                           ships no image, or it could not be",
+                       "                           downloaded, it says which -- it never just",
+                       "                           opens nothing.",
                        "  -Target <name>           Windows Terminal profile to apply to,",
                        "                           instead of the tab's own. 'defaults' is a",
                        "                           name in its own right -- it is what the",
@@ -113,7 +116,14 @@ function Get-TerminalStyleHelpData {
                        "settings.json.bak is written first. Elsewhere there is no",
                        "settings.json to strip: the reset is an escape sequence handing",
                        "color control back to the terminal's own profile, so there is",
-                       "nothing to back up and no .bak is written.")
+                       "nothing to back up and no .bak is written.",
+                       "",
+                       "A profile also inherits from profiles.defaults. A background image",
+                       "this tool put THERE is cleared along with the profile -- which",
+                       "removes it from every profile inheriting it, so the command says so.",
+                       "An inherited colorScheme is left alone for the same reason it would",
+                       "be removed: it belongs to every profile, not the one you named. Reset",
+                       "names it and points at 'tstyles reset -Target defaults'.")
             Keys = @(); Examples = @('tstyles reset', "tstyles reset -Target 'Ubuntu'")
         }
         [pscustomobject]@{

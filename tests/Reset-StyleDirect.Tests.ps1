@@ -236,3 +236,232 @@ Describe 'Reset-StyleDirect' {
         }
     }
 }
+
+# `tstyles reset` and the background a profile INHERITS.
+#
+# THE DEFECT. Windows Terminal resolves every named profile against
+# profiles.defaults, so "what the profile shows" is not the same question as
+# "what its own entry spells out". Merge-StyleIntoSettings was taught that in
+# 0.8.26: its 'remove' branch strips the four background fields off
+# profiles.defaults too when Test-ManagedBackgroundPath says the inherited image
+# is ours, with the reason in the code -- "stripping the entry alone hands the
+# profile straight back to the inherited copy, which is the same bleed one level
+# up".
+#
+# Reset-StyleDirect is the other remove, and it never learned it. Its strip loop
+# walked $script:TStylesThemeFields over $entry alone and then printed
+# "Reset '<name>' to its unstyled default." in green. Measured on 0.8.28, on the
+# state `tstyles eva -Target defaults` then `tstyles rain` leaves behind:
+#
+#   named profile bg fields left          : (none)
+#   profiles.defaults.backgroundImage     : <module>/styles/eva/background.gif
+#   profiles.defaults.colorScheme         : eva
+#   Test-ManagedBackgroundPath on it      : True
+#   EFFECTIVE background after reset      : <module>/styles/eva/background.gif
+#   green success line printed?           : True
+#
+# So the window still showed eva's GIF and eva's palette while the command
+# reported a plain default. The ownership proof it needed was already imported
+# and already true in the same run.
+Describe 'Reset-StyleDirect and what the profile INHERITS' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesCurrent = Join-Path $TestDrive 'current-style.ps1'
+            $script:fakeSettings   = Join-Path $TestDrive 'inherit-settings.json'
+            $script:written        = $null
+            $script:out            = [System.Collections.ArrayList]::new()
+
+            Mock Find-WTSettingsPath          { $script:fakeSettings }
+            Mock Get-TerminalKind             { 'WindowsTerminal' }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Get-CurrentWTProfileName     { 'PowerShell' }
+            Mock Write-SettingsFile           { param($Path, $Settings) $script:written = $Settings }
+            Mock Write-Host                   { [void]$script:out.Add("$Object") }
+            # Nothing on this path should ask for consent; if something starts
+            # to, it must not be answered by console detection.
+            Mock Confirm-Action               { $false }
+
+            # Under the module root, which is what Test-ManagedBackgroundPath
+            # calls ours -- the same shape Get-StyleBundledBackground writes and
+            # the merge recognises. The file need not exist: the shipped
+            # ownership check is path math, and so is this.
+            $script:ourEvaBg  = Join-Path $script:TStylesModuleRoot 'styles/eva/background.gif'
+            $script:ourRainBg = Join-Path $script:TStylesModuleRoot 'styles/rain/background.gif'
+
+            # Exactly what `tstyles eva -Target defaults` then `tstyles rain`
+            # leaves behind. Both scheme names are real bundled styles, because
+            # the ownership marker asks Get-AvailableStyles.
+            function script:Write-InheritFixture {
+                param([string]$DefaultsBackground, [string]$DefaultsScheme = 'eva')
+                $defaults = [pscustomobject]@{ }
+                if ($DefaultsScheme) {
+                    $defaults | Add-Member -NotePropertyName colorScheme -NotePropertyValue $DefaultsScheme
+                }
+                if ($DefaultsBackground) {
+                    $defaults | Add-Member -NotePropertyName backgroundImage            -NotePropertyValue $DefaultsBackground
+                    $defaults | Add-Member -NotePropertyName backgroundImageOpacity     -NotePropertyValue 0.35
+                    $defaults | Add-Member -NotePropertyName backgroundImageStretchMode -NotePropertyValue 'uniformToFill'
+                    $defaults | Add-Member -NotePropertyName backgroundImageAlignment   -NotePropertyValue 'center'
+                }
+                $obj = [pscustomobject]@{
+                    schemes  = @([pscustomobject]@{ name = 'eva' }, [pscustomobject]@{ name = 'rain' })
+                    profiles = [pscustomobject]@{
+                        defaults = $defaults
+                        list     = @([pscustomobject]@{
+                            name = 'PowerShell'; guid = '{x}'
+                            colorScheme = 'rain'
+                            backgroundImage = $script:ourRainBg
+                            historySize = 9001
+                        })
+                    }
+                }
+                [System.IO.File]::WriteAllText($script:fakeSettings,
+                    ($obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+            }
+
+            function script:Get-DefaultsBgFieldsLeft {
+                # Projected with Where-Object, never read off the object as a
+                # member: member access on an empty array yields one $null, and
+                # a count of 1 would read as "one field left" forever.
+                $d = $script:written.profiles.defaults
+                return @($script:TStylesBgFields | Where-Object {
+                    $d.PSObject.Properties.Match($_).Count -gt 0 })
+            }
+        }
+
+        It 'clears a TerminalStyles background off profiles.defaults, which is what the profile was showing' {
+            script:Write-InheritFixture -DefaultsBackground $script:ourEvaBg
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $script:written | Should -Not -BeNullOrEmpty -Because 'rain is a real bundled style'
+            @(script:Get-DefaultsBgFieldsLeft).Count | Should -Be 0 `
+                -Because 'stripping the entry alone hands the profile back to the inherited image'
+        }
+
+        It 'leaves the profile showing no TerminalStyles background at all' {
+            # The same thing asked the way the user experiences it: resolve what
+            # Windows Terminal would actually render, then ask the shipped
+            # ownership test about it.
+            script:Write-InheritFixture -DefaultsBackground $script:ourEvaBg
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $entry = $script:written.profiles.list | Where-Object name -eq 'PowerShell'
+            $shown = if ($entry.PSObject.Properties.Match('backgroundImage').Count) {
+                        [string]$entry.backgroundImage
+                     } elseif ($script:written.profiles.defaults.PSObject.Properties.Match('backgroundImage').Count) {
+                        [string]$script:written.profiles.defaults.backgroundImage
+                     } else { $null }
+            Test-ManagedBackgroundPath -Path $shown | Should -BeFalse `
+                -Because 'reset says "unstyled default" and the window was still showing our GIF'
+        }
+
+        It 'leaves a background the USER put on profiles.defaults exactly where it is' {
+            # The guard the fix must not overshoot, mirrored from the apply side
+            # (tests/Background-Carryover.Tests.ps1): an image the user chose for
+            # every profile is theirs, and reset removes only what an apply put
+            # there. README says so in as many words.
+            # Shaped for the engine running the test, so the ownership check
+            # does the real root comparison rather than bailing at "not even
+            # rooted here". NOT $IsWindows: that is PowerShell Core only, and on
+            # the 5.1 leg it is $null -- which would silently pick the other
+            # branch and measure the early return instead.
+            $theirs = if ([System.IO.Path]::DirectorySeparatorChar -eq '\') {
+                          'C:\Users\me\Pictures\wallpaper.png'
+                      } else { '/Users/me/Pictures/wallpaper.png' }
+            script:Write-InheritFixture -DefaultsBackground $theirs
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $d = $script:written.profiles.defaults
+            $d.backgroundImage | Should -Be $theirs
+            @(script:Get-DefaultsBgFieldsLeft).Count | Should -Be 4 `
+                -Because 'every field of a background the user set stays'
+
+            # ...and the profile it was asked about is still reset.
+            $entry = $script:written.profiles.list | Where-Object name -eq 'PowerShell'
+            $entry.PSObject.Properties.Match('backgroundImage').Count | Should -Be 0
+            $entry.PSObject.Properties.Match('colorScheme').Count     | Should -Be 0
+        }
+
+        It 'says it cleared the image off profiles.defaults, because that reaches every profile' {
+            # Removing a key from defaults changes every profile inheriting it,
+            # which is more than the one the user named. A command that does that
+            # silently is the defect this project ships most.
+            script:Write-InheritFixture -DefaultsBackground $script:ourEvaBg
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $text = $script:out -join "`n"
+            $text | Should -Match 'profiles\.defaults'
+            $text | Should -Match 'inheriting'
+        }
+
+        It 'stops claiming an unstyled default while profiles.defaults still styles the profile' {
+            # The colorScheme is deliberately NOT stripped from defaults -- that
+            # would restyle every other profile on a command that named one -- so
+            # the sign-off has to say what is still coming from there.
+            script:Write-InheritFixture -DefaultsBackground $script:ourEvaBg -DefaultsScheme 'eva'
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $text = $script:out -join "`n"
+            $text | Should -Not -Match 'unstyled default' `
+                -Because 'the profile still renders eva''s palette, inherited from defaults'
+            $text | Should -Match "colorScheme 'eva'"
+            $text | Should -Match 'tstyles reset -Target defaults'
+            # And it really is left there, rather than quietly removed.
+            $script:written.profiles.defaults.colorScheme | Should -Be 'eva'
+        }
+
+        It 'still reports an unstyled default when nothing is inherited' {
+            # The counterweight: the new sentences must not replace the old one
+            # on the ordinary case. No defaults block at all here.
+            $obj = [pscustomobject]@{
+                schemes  = @([pscustomobject]@{ name = 'rain' })
+                profiles = [pscustomobject]@{
+                    list = @([pscustomobject]@{
+                        name = 'PowerShell'; guid = '{x}'; colorScheme = 'rain'; opacity = 80
+                    })
+                }
+            }
+            [System.IO.File]::WriteAllText($script:fakeSettings,
+                ($obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $text = $script:out -join "`n"
+            $text | Should -Match "Reset 'PowerShell' to its unstyled default"
+            $text | Should -Not -Match 'profiles\.defaults'
+        }
+
+        It 'says nothing about inheriting when the target IS defaults' {
+            # -Target defaults resolves to the defaults block itself; telling the
+            # user it still inherits from the thing they just reset would be a
+            # message about nothing.
+            script:Write-InheritFixture -DefaultsBackground $script:ourEvaBg
+
+            Reset-StyleDirect -Target 'defaults'
+
+            $text = $script:out -join "`n"
+            $text | Should -Match 'unstyled default'
+            $text | Should -Not -Match 'tstyles reset -Target defaults'
+            @(script:Get-DefaultsBgFieldsLeft).Count | Should -Be 0
+        }
+
+        It 'leaves a foreign field on profiles.defaults alone' {
+            # Only the four background keys come off defaults -- nothing else
+            # the user configured there.
+            script:Write-InheritFixture -DefaultsBackground $script:ourEvaBg
+            $obj = [System.IO.File]::ReadAllText($script:fakeSettings, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            $obj.profiles.defaults | Add-Member -NotePropertyName historySize -NotePropertyValue 4242
+            [System.IO.File]::WriteAllText($script:fakeSettings,
+                ($obj | ConvertTo-Json -Depth 32), [System.Text.UTF8Encoding]::new($false))
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            $script:written.profiles.defaults.historySize | Should -Be 4242
+        }
+    }
+}

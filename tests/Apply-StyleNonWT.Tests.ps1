@@ -612,3 +612,100 @@ Describe 'Apply-StyleNonWT resolves the background at most once' {
         }
     }
 }
+
+# The notice reaches the SCREEN, not just the helper's return value.
+#
+# On 0.8.28, driving this same function over the bundled `forest` on
+# Terminal.app, the full transcript was:
+#
+#   Style applied: forest
+#   Terminal:      Terminal.app
+#   Terminal.app can't show: tab color.
+#
+# with caps Font=False Opacity=False CursorShape=False Padding=False and the
+# theme asking for font=Cascadia Code 11pt, cursorShape=filledBox, padding=12.
+# One of five named, and the one named was the one the user was least likely to
+# be looking for.
+Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:enc = [System.Text.UTF8Encoding]::new($false)
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+
+            $script:sDir = Join-Path $script:TStylesDataRoot 'styles/forestish'
+            New-Item -ItemType Directory -Force -Path $script:sDir | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:sDir 'scheme.json'),
+                '{"name":"forestish","background":"#0d1a12","foreground":"#e8f0e8"}', $script:enc)
+            # The bundled `forest` field set, which fifteen of the sixteen
+            # shipped styles share.
+            [System.IO.File]::WriteAllText((Join-Path $script:sDir 'theme.json'), (@'
+{
+    "colorScheme": "forestish",
+    "tabTitle": "FOREST",
+    "tabColor": "#d49680",
+    "cursorShape": "filledBox",
+    "useAcrylic": false,
+    "opacity": 100,
+    "font": { "face": "Cascadia Code", "size": 11 },
+    "padding": "12",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}"
+}
+'@), $script:enc)
+
+            Mock Write-HostOscPacket { $true }
+            Mock Get-StyleBundledBackground { $null }
+            # Publish-StyleWezTermConfig is NOT given a -HomeDir by the apply, so
+            # on Kind=WezTerm the real ~/.config/wezterm/terminalstyles.lua is
+            # what it would write. Mocked for that reason, not for speed.
+            Mock Publish-StyleWezTermConfig { $null }
+            Mock Publish-StyleBackgroundProfile { $null }
+
+            function script:Get-ApplyOutput {
+                param([string]$Kind)
+                Mock Get-TerminalKind { $Kind }.GetNewClosure()
+                Apply-StyleNonWT -StyleName 'forestish' -StyleDir $script:sDir `
+                    -OutputRedirected $false 6>&1 | Out-String
+            }
+        }
+
+        It 'names the font, cursor shape and padding Terminal.app drops' {
+            $out = script:Get-ApplyOutput -Kind 'AppleTerminal'
+
+            $out | Should -Match "can't show:"
+            $out | Should -Match 'font'
+            $out | Should -Match 'cursor shape'
+            $out | Should -Match 'padding'
+            $out | Should -Match 'tab color'
+        }
+
+        It 'does not name the tab title, which the style''s prompt sets everywhere' {
+            # -match is case-insensitive and matches substrings, so this is asked
+            # of the notice line alone rather than of a transcript that also
+            # carries the style's own tabTitle text.
+            $line = @(script:Get-ApplyOutput -Kind 'AppleTerminal' -split "`n" |
+                      Where-Object { $_ -match "can't show" })
+            @($line).Count | Should -Be 1
+            $line[0] | Should -Not -Match 'tab title'
+        }
+
+        It 'names only what WezTerm really cannot do' {
+            # The record drives it: font and padding are written by
+            # Get-WezTermStyleLua, so they must not appear.
+            $line = @(script:Get-ApplyOutput -Kind 'WezTerm' -split "`n" |
+                      Where-Object { $_ -match "can't show" })
+            @($line).Count | Should -Be 1
+            $line[0] | Should -Match 'cursor shape'
+            $line[0] | Should -Match 'tab color'
+            $line[0] | Should -Not -Match 'font'
+            $line[0] | Should -Not -Match 'padding'
+        }
+
+        It 'says nothing at all for a style that declares nothing' {
+            [System.IO.File]::WriteAllText((Join-Path $script:sDir 'theme.json'),
+                '{"colorScheme":"forestish"}', $script:enc)
+            script:Get-ApplyOutput -Kind 'AppleTerminal' | Should -Not -Match "can't show"
+        }
+    }
+}
