@@ -317,8 +317,29 @@ Describe 'README claims that the code can settle' {
         $topics = InModuleScope TerminalStyles {
             @(Get-TerminalStyleHelpData | ForEach-Object { $_.Name })
         }
-        @($topics | Where-Object { $named -notcontains $_ }) -join ', ' |
+
+        # `apply` is the one topic that is NOT a subcommand: it documents
+        # `tstyles <style>`, and its own data says so with Dispatches = $false.
+        # A `tstyles apply` line in the README would name a command that does
+        # not exist -- this file's own defect class, pointed the other way -- so
+        # the requirement is on the topics that really dispatch. The exemption
+        # is not a hole: the assertion below requires the apply topic to be
+        # shown anyway, in the style-name form it actually takes.
+        $dispatched = InModuleScope TerminalStyles {
+            @(Get-TerminalStyleHelpData |
+              Where-Object { $_.PSObject.Properties.Name -notcontains 'Dispatches' -or $_.Dispatches } |
+              ForEach-Object { $_.Name })
+        }
+        @($topics).Count | Should -BeGreaterThan @($dispatched).Count `
+            -Because 'if nothing is exempt the exemption is silently doing nothing'
+        @($dispatched | Where-Object { $named -notcontains $_ }) -join ', ' |
             Should -BeNullOrEmpty -Because 'a command with a help topic belongs in the README command list'
+
+        $styleLine = @($fence.Groups[1].Value -split "`n" |
+                       Where-Object { $_ -match '^tstyles\s+([A-Za-z0-9-]+)' -and
+                                      $topics -notcontains $Matches[1] })
+        @($styleLine).Count | Should -BeGreaterThan 0 `
+            -Because 'the block must still show the bare `tstyles <style>` form, which is what the apply topic documents'
 
         # The other direction, and NOT "every token is a subcommand": the first
         # line of the block is `tstyles umbrella`, a STYLE name, and one line is
