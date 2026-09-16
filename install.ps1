@@ -164,11 +164,20 @@ $loaderEnd
 
 function Write-InstallBanner {
     # Cyan rule + wordmark + tagline + cyan rule.
+    #
+    # Not "Windows Terminal themes for pwsh". This installer runs on macOS and
+    # Linux, where there is no Windows Terminal at all, and the module styles
+    # Terminal.app, iTerm2, kitty, WezTerm, Ghostty, Alacritty and VS Code --
+    # so the tagline named the one terminal the reader was certainly not using,
+    # in the first three lines of their first run. The wording is the module's
+    # own, which `tstyles help` has printed since 0.8.21; the two are pinned
+    # together by a test because install.ps1 cannot dot-source lib/help.ps1 and
+    # a second literal of one sentence is how these drift.
     $rule = '-' * 52
     Write-Host ''
     Write-Host "  $rule" -ForegroundColor Cyan
     Write-Host '   tstyles' -ForegroundColor White -NoNewline
-    Write-Host '  --  Windows Terminal themes for pwsh' -ForegroundColor DarkGray
+    Write-Host '  --  themed styles for your terminal' -ForegroundColor DarkGray
     Write-Host "  $rule" -ForegroundColor Cyan
     Write-Host ''
 }

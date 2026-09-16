@@ -314,7 +314,25 @@ tstyles() {
         if command -v "$_ts_c" >/dev/null 2>&1; then _ts_exe="$_ts_c"; break; fi
     done
     if [ -z "$_ts_exe" ]; then
-        printf 'tstyles: PowerShell not found. Install it with: brew install powershell\n' >&2
+        # The remedy is platform-specific and this file is sourced on Linux as
+        # much as on macOS -- the data root a few lines up derives an XDG path
+        # for exactly that host, and then this line told them to run Homebrew.
+        #
+        # `uname -s` again rather than a variable from the data-root branch:
+        # that branch runs only when TSTYLES_DATA is unset (the documented
+        # sandbox seam), so there is nothing to reuse. It stays INSIDE this
+        # branch on purpose. Hoisting it to file scope would put a subprocess
+        # in every interactive shell start, which this file's header exists to
+        # avoid; here it is a cold path, reached once, when the CLI cannot run
+        # at all.
+        case "$(uname -s)" in
+            Darwin)
+                printf 'tstyles: PowerShell not found. Install it with: brew install powershell\n' >&2
+                ;;
+            *)
+                printf 'tstyles: PowerShell not found. Install it from your package manager, or see https://aka.ms/powershell\n' >&2
+                ;;
+        esac
         return 127
     fi
     if [ ! -r "$TSTYLES_DATA/tstyles-cli.ps1" ]; then

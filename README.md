@@ -121,6 +121,8 @@ tstyles random                    # Pick a random style and apply it
 tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
 tstyles delete [name]             # Delete a style you made (bundled styles are refused)
+tstyles trash                     # List deleted styles, and how long each one has left
+tstyles restore [name]            # Put a deleted style back; never overwrites a live one
 tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
@@ -131,7 +133,22 @@ tstyles help [command]            # Show all commands, or details for one
 ```
 
 Tab completion works on the subcommand and style names:
-`tstyles u<TAB>` cycles `umbrella`, `uninstall`, `update`.
+`tstyles u<TAB>` cycles `umbrella`, `uninstall`, `update`. `tstyles delete
+<TAB>` offers only the styles you may delete, and `tstyles restore <TAB>`
+only the names sitting in the trash.
+
+### Deleting a style, and changing your mind
+
+`tstyles delete <name>` never erases: it **moves** the folder to
+`.deleted/<name>-<timestamp>` in your data dir and keeps it for **7
+days**. `tstyles trash` lists what is in there, when each one went and
+how many of its days are left; `tstyles restore <name>` moves the newest
+copy back under the plain name — the timestamp does not come with it.
+
+A restore refuses rather than overwriting: if you have since made a new
+style under that name, it says so and leaves the trashed copy where it
+is. Nothing in the trash is erased until the **next** `tstyles delete`,
+which lists every expired folder in red on the screen you confirm.
 
 ### Tuning a theme
 
@@ -374,7 +391,7 @@ the window you are sitting in immediately — and, because the choice is recorde
 every tab you open afterwards too.
 
 ```powershell
-brew install powershell                  # if you don't have pwsh yet
+brew install powershell                  # macOS; on Linux, your package manager or https://aka.ms/powershell
 pwsh
 Install-PSResource -Name TerminalStyles
 Import-Module TerminalStyles -DisableNameChecking

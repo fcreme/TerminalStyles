@@ -251,6 +251,27 @@ Describe 'the uninstall consent listing names what it will change' {
                 -Because 'there is no $PROFILE to strip it from'
             $out | Should -Match 'zsh/bash loader' -Because 'the rc bullet is unaffected'
         }
+
+        It '-DeleteData names the styles and the trash it empties' {
+            # Same rule as the rc files, on the other bullet. That parenthetical
+            # bounds itself -- "active style, cached GIFs, throttle stamp" -- so
+            # a reader is entitled to treat it as the whole list, and the two
+            # things in the data root that nothing can give back were missing
+            # from it. `tstyles restore` now presents the trash as a safety net
+            # for seven days; this is the one command that empties it early, and
+            # it was doing so without naming it.
+            $saved = $script:TStylesDataRoot
+            try {
+                $script:TStylesDataRoot = Join-Path $script:h 'data'
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -DeleteData 6>&1 | Out-String
+                $out | Should -Match 'DELETE the entire'
+                $out | Should -Match '(?i)styles you made'
+                $out | Should -Match '(?i)trash'
+                $out | Should -Match 'Cancelled' -Because 'consent was refused, so nothing ran'
+            } finally {
+                $script:TStylesDataRoot = $saved
+            }
+        }
     }
 }
 
