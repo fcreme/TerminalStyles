@@ -17,6 +17,14 @@ function Get-StyleTrashRoot {
     Join-Path $script:TStylesDataRoot '.deleted'
 }
 
+# How long a deleted style is kept. ONE definition: Get-StyleTrashEntry decides
+# expiry from it, Get-StyleTrashSweepTarget filters that, and every message that
+# quotes a number interpolates it. A literal in a message is a second answer to
+# the same question, and the message is the half that goes stale -- "kept for 7
+# days" outliving a changed window is this project's most-shipped defect class
+# in one line.
+$script:TStylesTrashKeepDays = 7
+
 function Test-StylesRootsAreOne {
     <#
     .SYNOPSIS
@@ -406,6 +414,84 @@ function Get-StyleDeletePlan {
     return $plan
 }
 
+function Get-StyleTrashEntry {
+    <#
+    .SYNOPSIS
+    What is in the trash right now: one row per deleted style, with how long it
+    has left.
+
+    .DESCRIPTION
+    The trash was write-only. `tstyles delete` printed the folder it had just
+    moved a style into, and after that scrollback line nothing in the tool could
+    say what was in there, when it went, or how much of its window was left --
+    while the next delete of any style erased everything past it. A user who
+    deleted a style, stopped deleting and came back a month later had a folder
+    no command would list and no command would clear. Measured: `tstyles list`,
+    `tstyles current` and every other subcommand said nothing about an expired
+    entry sitting on disk, and `tstyles trash` did not exist to ask.
+
+    Pure -- it reads the trash root and writes nothing -- so the listing can be
+    printed without touching anything, exactly like Get-StyleTrashSweepTarget,
+    which is now a FILTER over this: the window is decided in one place.
+
+    No -KeepDays parameter, for the reason the sweep's own comment gives: a
+    second place to set the window is a second answer to disagree with the
+    first. $script:TStylesTrashKeepDays is that place.
+
+    Newest deletion first, which is also the order `tstyles restore` resolves a
+    repeated name in.
+    #>
+    [CmdletBinding()]
+    param([datetime]$Now = (Get-Date))
+
+    $trashRoot = Get-StyleTrashRoot
+    if (-not (Test-Path -LiteralPath $trashRoot)) { return @() }
+
+    $rows = foreach ($d in @(Get-ChildItem -LiteralPath $trashRoot -Directory -Force -ErrorAction SilentlyContinue)) {
+        # The same containment proof the sweep insists on. Something nested
+        # deeper, or reached through a link, is not a folder this tool put here,
+        # and neither listing it as recoverable nor offering to move it is honest.
+        if (-not (Test-PathIsStyleDirChild -Path $d.FullName -Root $trashRoot)) { continue }
+
+        $deletedAt = Get-StyleTrashTimestamp -Name $d.Name -Fallback $d.LastWriteTime
+        $expiresAt = $deletedAt.AddDays($script:TStylesTrashKeepDays)
+
+        # The name WITHOUT the stamp this tool appended. A restore lands at
+        # styles/<StyleName>: the stamped name must never reach styles/, where
+        # it would be a directory no listing shows under the name the user is
+        # looking for and the next delete of the real name would not touch.
+        # Same anchored pattern Get-StyleTrashTimestamp reads, so a style called
+        # `solarized-2024` keeps its digits.
+        $styleName = [regex]::Replace($d.Name, '-(\d{8})-(\d{6})$', '')
+        if ([string]::IsNullOrWhiteSpace($styleName)) { $styleName = $d.Name }
+
+        [pscustomobject]@{
+            Name      = $d.Name
+            StyleName = $styleName
+            Path      = $d.FullName
+            DeletedAt = $deletedAt
+            ExpiresAt = $expiresAt
+            # -lt, matching the sweep's `$deletedAt -ge $cutoff` exactly:
+            # deleted-at + window < now is the same comparison, moved.
+            Expired   = ($expiresAt -lt $Now)
+            DaysLeft  = [int][math]::Ceiling(($expiresAt - $Now).TotalDays)
+            # A folder with no scheme.json restores to something Get-StyleDir
+            # cannot resolve and no listing can show. Carried so the restore can
+            # say that instead of reporting a style.
+            IsStyle   = (Test-Path -LiteralPath (Join-Path $d.FullName 'scheme.json'))
+            # Whether the name is free to restore INTO. Asked of the user styles
+            # dir, not of Get-StyleDir: a trashed style that shadowed a bundled
+            # one restores over nothing, and refusing that would refuse the
+            # shadow case the delete plan goes out of its way to explain.
+            NameFree  = -not (Test-Path -LiteralPath (Join-Path (Join-Path $script:TStylesDataRoot 'styles') $styleName))
+            # The DirectoryInfo itself, so the sweep keeps the object it needs
+            # for the ReparsePoint test rather than re-enumerating the disk.
+            Item      = $d
+        }
+    }
+    @($rows | Sort-Object -Property DeletedAt -Descending)
+}
+
 function Get-StyleTrashSweepTarget {
     <#
     .SYNOPSIS
@@ -425,20 +511,22 @@ function Get-StyleTrashSweepTarget {
     can name the folders before the question is asked, and
     Move-StyleDirectoryToTrash sweeps exactly what was named because the rule
     lives here rather than in both.
+
+    A filter over Get-StyleTrashEntry, which is the same argument one level up:
+    `tstyles trash` prints the window to the user and this erases by it, so the
+    two must not each own a copy of the comparison. -KeepDays is gone with the
+    duplicate -- nothing ever passed it, and a per-call window is exactly the
+    second answer this docstring argues against.
+
+    Returns the DirectoryInfo rows, not the entries: Move-StyleDirectoryToTrash
+    tests .Attributes for a ReparsePoint before deleting, and Show-StyleDeletePlan
+    prints .Name. Projected with ForEach-Object, since member access on an empty
+    array yields one $null.
     #>
     [CmdletBinding()]
-    param([int]$KeepDays = 7, [datetime]$Now = (Get-Date))
+    param([datetime]$Now = (Get-Date))
 
-    $trashRoot = Get-StyleTrashRoot
-    if (-not (Test-Path -LiteralPath $trashRoot)) { return @() }
-
-    $cutoff = $Now.AddDays(-$KeepDays)
-    @(foreach ($old in @(Get-ChildItem -LiteralPath $trashRoot -Directory -Force -ErrorAction SilentlyContinue)) {
-        if ((Get-StyleTrashTimestamp -Name $old.Name -Fallback $old.LastWriteTime) -ge $cutoff) { continue }
-        # Same containment proof the sweep itself insists on.
-        if (-not (Test-PathIsStyleDirChild -Path $old.FullName -Root $trashRoot)) { continue }
-        $old
-    })
+    @(Get-StyleTrashEntry -Now $Now | Where-Object { $_.Expired } | ForEach-Object { $_.Item })
 }
 
 function Show-StyleDeletePlan {
@@ -495,14 +583,16 @@ function Show-StyleDeletePlan {
     }
     # RED, because this is the one thing on the list that does not come back.
     foreach ($sw in $Plan.SweepTargets) {
-        Write-Host ("  - ERASE {0}, deleted over 7 days ago" -f $sw.Name) -ForegroundColor Red
+        Write-Host ("  - ERASE {0}, deleted over {1} days ago" -f $sw.Name, $script:TStylesTrashKeepDays) -ForegroundColor Red
     }
     if ($Plan.SweepTargets.Count -gt 0) {
-        Write-Host "      the trash keeps 7 days; this delete is what clears the rest" -ForegroundColor DarkGray
+        Write-Host "      the trash keeps $($script:TStylesTrashKeepDays) days; this delete is what clears the rest" -ForegroundColor DarkGray
+        Write-Host "      tstyles trash lists them, with the days each has left" -ForegroundColor DarkGray
     }
     # Scoped to THIS style. Unqualified, it was the opposite of what the line
-    # above describes.
-    Write-Host "  - Nothing of '$($Plan.Name)' is erased: move the folder back to undo." -ForegroundColor Gray
+    # above describes. It named the undo as a file-manager move because that was
+    # the only undo there was; `tstyles restore` is the one the tool performs.
+    Write-Host "  - Nothing of '$($Plan.Name)' is erased: tstyles restore $($Plan.Name) puts it back." -ForegroundColor Gray
     Write-Host ""
 }
 
@@ -625,6 +715,169 @@ function Move-StyleDirectoryToTrash {
     }
 }
 
+function Show-StyleTrashList {
+    <#
+    .SYNOPSIS
+    `tstyles trash` -- what is in the trash, and what the next delete erases.
+
+    .DESCRIPTION
+    Read-only, on purpose. The erasure keeps the one consent screen it already
+    has -- the delete plan, which names every expired folder in red before the
+    question is asked -- and this command exists so that screen is not the only
+    place the state is ever visible. It erases nothing itself.
+
+    Colours follow Show-StyleDeletePlan: RED for what does not come back.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $entries = @(Get-StyleTrashEntry)
+
+    Write-Host ""
+    if (-not $entries) {
+        Write-Host "  The trash is empty." -ForegroundColor Gray
+        Write-Host "  Deleting a style moves it here for $($script:TStylesTrashKeepDays) days: tstyles delete <name>" -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    # A name can be in here twice -- deleted, made again, deleted again -- and
+    # `tstyles restore <name>` puts back exactly one of them. Saying which is
+    # the difference between a listing and a listing you can act on.
+    $repeated = @($entries | Group-Object -Property StyleName |
+        Where-Object { $_.Count -gt 1 } | ForEach-Object { $_.Name })
+    $newestSeen = @{}
+
+    Write-Host "Deleted styles:" -ForegroundColor Cyan
+    Write-Host ""
+    foreach ($e in $entries) {
+        $when = $e.DeletedAt.ToString('yyyy-MM-dd HH:mm', [cultureinfo]::InvariantCulture)
+        if ($e.Expired) {
+            Write-Host ("    {0,-16}  deleted {1}  EXPIRED -- the next delete erases it" -f $e.StyleName, $when) -ForegroundColor Red
+        } else {
+            $left = if ($e.DaysLeft -eq 1) { '1 day left' } else { "$($e.DaysLeft) days left" }
+            Write-Host ("    {0,-16}  deleted {1}  {2}" -f $e.StyleName, $when, $left)
+        }
+        if ($repeated -contains $e.StyleName) {
+            # Newest first, so the first row of a group is the one restore takes.
+            if (-not $newestSeen.ContainsKey($e.StyleName)) {
+                $newestSeen[$e.StyleName] = $true
+                Write-Host ("      folder {0} -- the copy 'tstyles restore {1}' puts back" -f $e.Name, $e.StyleName) -ForegroundColor DarkGray
+            } else {
+                Write-Host ("      folder {0} -- an older copy of the same name; move it back by hand" -f $e.Name) -ForegroundColor DarkGray
+            }
+        }
+        if (-not $e.NameFree) {
+            Write-Host ("      a style called '{0}' exists again, so restoring refuses until that one is renamed or deleted" -f $e.StyleName) -ForegroundColor DarkGray
+        }
+        if (-not $e.IsStyle) {
+            Write-Host ("      no scheme.json in it: restored, nothing would list it") -ForegroundColor DarkGray
+        }
+    }
+    Write-Host ""
+    Write-Host "  Put one back with: tstyles restore <name>" -ForegroundColor DarkGray
+    Write-Host "  Kept for $($script:TStylesTrashKeepDays) days under $(Get-StyleTrashRoot)" -ForegroundColor DarkGray
+    Write-Host "  Nothing here is erased until the next tstyles delete, which lists what it takes." -ForegroundColor DarkGray
+    Write-Host ""
+}
+
+function Invoke-TerminalStyleRestore {
+    <#
+    .SYNOPSIS
+    `tstyles restore [name]` -- put a deleted style back.
+
+    .DESCRIPTION
+    The reverse of the move Move-StyleDirectoryToTrash makes, and deliberately
+    only that: it moves the folder back and touches nothing else. The delete's
+    other halves -- the reset or re-apply it ran, the cache and Terminal.app
+    profile it KEPT -- are not undone here, because two of them were never
+    changed and the third is the user's current terminal, which this command has
+    no business repainting.
+
+    Nothing is overwritten. If the name is in use again the restore REFUSES: the
+    folder standing there is a style the user has since made, and no consent was
+    given to spend it. That is what makes this safe to run without a prompt.
+
+    Returns a STATUS, not a boolean -- 'restored' / 'noname' / 'none' / 'taken'
+    / 'outside' / 'failed' -- the convention Unregister-ShellLoader established
+    here after "it failed" and "there was nothing to do" became the same answer
+    and the user was told the opposite of the truth.
+
+    The timestamp is stripped unconditionally: see Get-StyleTrashEntry.
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyString()][AllowNull()][string]$Name)
+
+    if ([string]::IsNullOrWhiteSpace($Name)) {
+        # Same shape as `tstyles delete` with no name: show what the command can
+        # act on rather than an error about the argument.
+        Show-StyleTrashList
+        return 'noname'
+    }
+
+    # The segment gate, not the stricter create-time one -- a trashed style is
+    # whatever folder name the user chose, and this resolves an existing one.
+    if (-not (Test-StyleNameIsSingleSegment -Name $Name)) {
+        Write-Host "'$Name' is not a style name." -ForegroundColor Yellow
+        return 'outside'
+    }
+
+    $entry = @(Get-StyleTrashEntry | Where-Object { $_.StyleName -eq $Name }) | Select-Object -First 1
+    if (-not $entry) {
+        Write-Host "Nothing in the trash under '$Name'." -ForegroundColor Yellow
+        Write-Host "  tstyles trash      lists what is in there" -ForegroundColor DarkGray
+        return 'none'
+    }
+
+    $dest = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $entry.StyleName
+    if (Test-Path -LiteralPath $dest) {
+        Write-Host "'$($entry.StyleName)' is taken -- something already lives at" -ForegroundColor Yellow
+        Write-Host "  $dest" -ForegroundColor Yellow
+        Write-Host "  Refusing rather than overwriting it. Rename or delete that one first;" -ForegroundColor DarkGray
+        Write-Host "  the trashed copy stays where it is:" -ForegroundColor DarkGray
+        Write-Host "  $($entry.Path)" -ForegroundColor DarkGray
+        return 'taken'
+    }
+
+    # Containment re-proved at the moment of the move, on BOTH ends, rather than
+    # trusted from the row the listing was built from.
+    if (-not (Test-PathIsStyleDirChild -Path $entry.Path -Root (Get-StyleTrashRoot))) {
+        Write-Host "Refusing to move '$($entry.Path)': it is not a trashed style directory." -ForegroundColor Yellow
+        return 'outside'
+    }
+    if (-not (Test-PathIsStyleDirChild -Path $dest)) {
+        Write-Host "Refusing to restore to '$dest': it is not a direct child of your styles directory." -ForegroundColor Yellow
+        return 'outside'
+    }
+
+    try {
+        $stylesRoot = Join-Path $script:TStylesDataRoot 'styles'
+        if (-not (Test-Path -LiteralPath $stylesRoot)) {
+            New-Item -ItemType Directory -Path $stylesRoot -Force | Out-Null
+        }
+        Move-Item -LiteralPath $entry.Path -Destination $dest -ErrorAction Stop
+        if ((Test-Path -LiteralPath $entry.Path) -or -not (Test-Path -LiteralPath $dest)) {
+            throw "Move did not complete: '$($entry.Path)' -> '$dest'."
+        }
+    } catch {
+        Write-Host "Could not restore '$($entry.StyleName)': $_" -ForegroundColor Red
+        return 'failed'
+    }
+
+    Write-Host ""
+    Write-Host "  Restored $($entry.StyleName)." -ForegroundColor Green
+    Write-Host "  to $dest" -ForegroundColor Gray
+    if ($entry.IsStyle) {
+        Write-Host "  Apply it with: tstyles $($entry.StyleName)" -ForegroundColor DarkGray
+    } else {
+        # It is back, and saying "restored" and stopping would be a claim the
+        # listing cannot keep.
+        Write-Host "  It carries no scheme.json, so tstyles list and the picker will not show it." -ForegroundColor Yellow
+    }
+    Write-Host ""
+    return 'restored'
+}
+
 function Show-DeletableStyleList {
     # `tstyles delete` with no name. Shows only what the command can act on.
     [CmdletBinding()]
@@ -654,8 +907,10 @@ function Show-DeletableStyleList {
     }
     Write-Host ""
     Write-Host "  Delete one with: tstyles delete <name>" -ForegroundColor DarkGray
-    Write-Host "  Bundled styles are refused. A deleted folder is kept for 7 days under" -ForegroundColor DarkGray
+    Write-Host "  Bundled styles are refused. A deleted folder is kept for $($script:TStylesTrashKeepDays) days under" -ForegroundColor DarkGray
     Write-Host "  $(Get-StyleTrashRoot)" -ForegroundColor DarkGray
+    Write-Host "  tstyles trash      lists what is in there, with the days each has left" -ForegroundColor DarkGray
+    Write-Host "  tstyles restore <name>   puts one back" -ForegroundColor DarkGray
     Write-Host ""
 }
 
@@ -721,7 +976,11 @@ function Invoke-TerminalStyleDelete {
 
     Write-Host ""
     Write-Host "  Deleted $($plan.Name)." -ForegroundColor Green
-    Write-Host "  Kept for 7 days at $($plan.TrashPath)" -ForegroundColor Gray
+    Write-Host "  Kept for $($script:TStylesTrashKeepDays) days at $($plan.TrashPath)" -ForegroundColor Gray
+    # The recovery route, on the screen where it is needed. It was a `Move-Item`
+    # the user had to compose from the path above, documented only in
+    # `tstyles help delete`.
+    Write-Host "  Undo with: tstyles restore $($plan.Name)" -ForegroundColor DarkGray
     if ($plan.KeptCache)   { Write-Host "  Kept $($plan.KeptCache)" -ForegroundColor DarkGray }
     if ($plan.KeptProfile) { Write-Host "  Kept $($plan.KeptProfile)" -ForegroundColor DarkGray }
 

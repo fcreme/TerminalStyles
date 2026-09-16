@@ -405,6 +405,151 @@ Describe 'the install panel names the engines it actually registered' {
         @($editionReads).Count | Should -Be 0 `
             -Because 'inverting the edition is what named Windows PowerShell 5.1 on a Mac'
     }
+
+    It 'says nothing about a row that already names the engine the user is in' {
+        # The trap a de-duplicated list walks straight into. Once a row can name
+        # more than one engine -- "PowerShell 7 / PowerShell 7 (preview)", the
+        # two names for ONE $PROFILE on a Mac carrying the preview build --
+        # `$_ -ne (Get-CurrentEngineLabel)` matches it, and the panel goes back
+        # to telling the user to open a new tab for the engine they are already
+        # sitting in. That is the 0.8.21 defect arriving by a third route, so the
+        # subtraction has to be membership, not string equality.
+        #
+        # Positional, filling the same two positions the installer fills, so this
+        # measures what the panel DOES with the list rather than failing to bind.
+        $current = Get-CurrentEngineLabel
+        $rows = @(
+            [pscustomobject]@{ ProfilePath = '/x/shared-profile.ps1'
+                               Label  = "$current / Some Other Engine"
+                               Labels = @($current, 'Some Other Engine') }
+        )
+        $out = Write-InstallPanel @('sober') $rows 6>&1 | Out-String
+
+        $out | Should -Not -Match 'Also wired up' `
+            -Because 'that one file is the one the caller is already loading out of'
+        $out | Should -Match 'themes installed' -Because 'the panel itself must still print'
+    }
+
+    It 'still names a row whose $PROFILE really is a different file' {
+        # The other direction: the subtraction must not swallow a genuine second
+        # profile (Windows' two engines keep separate ones).
+        $current = Get-CurrentEngineLabel
+        $rows = @(
+            [pscustomobject]@{ ProfilePath = '/x/shared-profile.ps1'
+                               Label  = "$current / Some Other Engine"
+                               Labels = @($current, 'Some Other Engine') }
+            [pscustomobject]@{ ProfilePath = '/x/third-profile.ps1'
+                               Label  = 'A Third Engine'; Labels = @('A Third Engine') }
+        )
+        $out = Write-InstallPanel @('sober') $rows 6>&1 | Out-String
+
+        $out | Should -Match 'Also wired up for A Third Engine'
+        $out | Should -Not -Match 'Also wired up for[^\r\n]*Some Other Engine' `
+            -Because 'the user is already in the engine that shares that file'
+    }
+}
+
+Describe 'the installer registers one loader per $PROFILE, not one per engine' {
+    # install.ps1 probes for two engines. Off Windows they are `pwsh` and
+    # `pwsh-preview`, and on a machine carrying the 7-preview build both report
+    # the same $PROFILE -- so the loop wrote that one file twice, printed
+    # "Registered loader:" twice, and handed the panel two labels for one file,
+    # which is what made its "more than one engine" branch true and told the user
+    # the install was "Also wired up for PowerShell 7" for the binary they were
+    # running in.
+    #
+    # The module half of this rule lives in Resolve-PowerShellProfileTarget;
+    # install.ps1 is fetched and piped to iex before the module exists, so the
+    # copy is unavoidable and the parity test lives in
+    # tests/Get-PowerShellEngineCandidate.Tests.ps1 with the other one.
+    BeforeAll {
+        $script:installPath = Join-Path (Split-Path $PSScriptRoot -Parent) 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+    }
+    BeforeEach {
+        $script:d = Join-Path $TestDrive ([guid]::NewGuid().Guid.Substring(0,8))
+        New-Item -ItemType Directory -Force -Path $script:d | Out-Null
+
+        # A stand-in engine, never a real one -- the same device
+        # Resolve-ExecutionPolicy's tests use. Get-Command hands back an
+        # ExternalScriptInfo for a .ps1 path, and Get-ShellInfo's single
+        # `& $cmd.Source -NoProfile -NonInteractive -Command '<one string>'`
+        # binds to its param block exactly as a real engine's command line does.
+        # Named apart from the Resolve-ExecutionPolicy stub further down: both
+        # would otherwise live in the file's shared `script:` scope, and which
+        # one a test got would depend on Describe order.
+        function script:New-ProfileStubEngine {
+            param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$ProfilePath)
+            $path = Join-Path $script:d "$Name.ps1"
+            $src = @'
+param([switch]$NoProfile, [switch]$NonInteractive, [string]$Command)
+Write-Output ('PROFILE=' + '__P__')
+Write-Output 'POLICY=RemoteSigned'
+'@.Replace('__P__', $ProfilePath)
+            [System.IO.File]::WriteAllText($path, $src, [System.Text.UTF8Encoding]::new($false))
+            # Every assertion below reads an empty plan if Get-Command cannot
+            # resolve the stub, which would pass some of them vacuously. Fail
+            # here, where the reason is legible.
+            if (-not (Get-Command -Name $path -ErrorAction SilentlyContinue)) {
+                throw "Stub engine '$path' is not resolvable by Get-Command on this platform."
+            }
+            $path
+        }
+    }
+
+    It 'merges two engines that answer with the same file' {
+        $shared = Join-Path $script:d 'Microsoft.PowerShell_profile.ps1'
+        $plan = @(Get-EngineProfilePlan -Engine @(
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'a' -ProfilePath $shared); Label = 'PowerShell 7' }
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'b' -ProfilePath $shared); Label = 'PowerShell 7 (preview)' }
+        ))
+
+        $plan.Count | Should -Be 1 -Because 'it is one file'
+        $plan[0].ProfilePath | Should -Be $shared
+        @($plan[0].Labels) | Should -Be @('PowerShell 7', 'PowerShell 7 (preview)')
+        $plan[0].Label | Should -Be 'PowerShell 7 / PowerShell 7 (preview)'
+        @($plan[0].Engines).Count | Should -Be 2 `
+            -Because 'the execution policy is per engine even where the profile is shared'
+    }
+
+    It 'keeps two engines with separate profiles apart' {
+        $pa = Join-Path $script:d 'a-profile.ps1'
+        $pb = Join-Path $script:d 'b-profile.ps1'
+        $plan = @(Get-EngineProfilePlan -Engine @(
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'a' -ProfilePath $pa); Label = 'PowerShell 7' }
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'b' -ProfilePath $pb); Label = 'Windows PowerShell 5.1' }
+        ))
+
+        $plan.Count | Should -Be 2
+        @($plan | ForEach-Object { $_.ProfilePath }) | Should -Be @($pa, $pb)
+    }
+
+    It 'skips an engine that is not on PATH without dropping the others' {
+        $pa = Join-Path $script:d 'a-profile.ps1'
+        $plan = @(Get-EngineProfilePlan -Engine @(
+            [pscustomobject]@{ Exe = (Join-Path $script:d 'not-installed.ps1'); Label = 'PowerShell 7 (preview)' }
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'a' -ProfilePath $pa); Label = 'PowerShell 7' }
+        ) 6>$null)
+
+        $plan.Count | Should -Be 1
+        $plan[0].Label | Should -Be 'PowerShell 7'
+    }
+
+    It 'the panel says nothing extra for a plan that resolves to one shared file' {
+        # The two halves together, which is where the user actually meets this:
+        # the plan the loop builds, fed to the panel that describes it.
+        $shared = Join-Path $script:d 'Microsoft.PowerShell_profile.ps1'
+        $current = Get-CurrentEngineLabel
+        $plan = @(Get-EngineProfilePlan -Engine @(
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'a' -ProfilePath $shared); Label = $current }
+            [pscustomobject]@{ Exe = (script:New-ProfileStubEngine -Name 'b' -ProfilePath $shared); Label = 'Some Other Engine' }
+        ))
+
+        $out = Write-InstallPanel -ThemeNames @('sober') -RegisteredProfile $plan 6>&1 | Out-String
+        $out | Should -Not -Match 'Also wired up' `
+            -Because 'both engines load out of the file the caller is already using'
+    }
 }
 
 Describe 'Resolve-ExecutionPolicy verifies the effective policy, not the scope it wrote' {
@@ -531,5 +676,51 @@ else                                                                  { 'Restric
         $out | Should -Match 'RemoteSigned' `
             -Because 'the value printed is the one the engine reported'
         $out | Should -Not -Match 'still'
+    }
+}
+
+Describe 'the installer banner' {
+    # Every user-facing message is a claim, and this one is three lines into a
+    # first run: "tstyles  --  Windows Terminal themes for pwsh". The bootstrap
+    # installer is the path README offers to macOS and Linux users, where there
+    # is no Windows Terminal at all -- and the module styles Terminal.app,
+    # iTerm2, kitty, WezTerm, Ghostty, Alacritty and VS Code on Windows too.
+    # `tstyles help` has said "themed styles for your terminal" since 0.8.21,
+    # with a comment above it recording exactly this reasoning; the banner was
+    # never revisited.
+    #
+    # Behavioural, not a source-text match: the banner is captured and read.
+    BeforeAll {
+        $script:repoRoot    = Split-Path $PSScriptRoot -Parent
+        $script:installPath = Join-Path $script:repoRoot 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+        Import-Module (Join-Path $script:repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+
+        $script:banner = (Write-InstallBanner 6>&1 | Out-String)
+    }
+
+    It 'prints a banner at all' {
+        # A capture that came back empty would make every assertion below pass
+        # while measuring nothing.
+        $script:banner | Should -Match 'tstyles'
+    }
+
+    It 'does not name one terminal' {
+        $script:banner | Should -Not -Match 'Windows Terminal' `
+            -Because 'the reader of this line is as likely to be on Terminal.app or kitty'
+    }
+
+    It 'prints the same tagline the module itself prints' {
+        # install.ps1 is standalone -- it cannot dot-source lib/help.ps1, so this
+        # test is the only place the two literals meet. Compared with .Contains,
+        # not -match: -match is case-insensitive and would accept a drifted case.
+        $help = (& (Get-Module TerminalStyles) { Show-TerminalStyleHelp } 6>&1 | Out-String)
+        $m = [regex]::Match($help, '(?m)^tstyles - (?<tag>.+?)(?:\s*\(v[^)]*\))?\s*$')
+        $m.Success | Should -BeTrue -Because 'the module title is where the wording is settled'
+        $tag = $m.Groups['tag'].Value
+        $tag | Should -Be 'themed styles for your terminal'
+        $script:banner.Contains($tag) | Should -BeTrue `
+            -Because "the banner must carry the module's own tagline, not a second literal of it"
     }
 }

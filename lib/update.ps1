@@ -160,14 +160,8 @@ function Invoke-TerminalStylesUpdate {
 }
 
 function Invoke-TerminalStylesRegister {
-    # Adds `Import-Module TerminalStyles -DisableNameChecking` to the $PROFILE
-    # of every PowerShell engine Get-PowerShellEngineCandidate names AND
-    # Get-Command finds -- two on Windows, and on macOS/Linux whichever of
-    # pwsh / pwsh-preview is installed. Not "both": the loop `continue`s past
-    # an engine that is not on PATH, and saying "both" is how the help text
-    # for this command ended up naming Windows PowerShell 5.1 to macOS users.
-    #
-    # The block is wrapped in the same
+    # Adds `Import-Module TerminalStyles -DisableNameChecking` to both
+    # PowerShell engines' $PROFILE files, wrapped in the same
     # # ===== TerminalStyles BEGIN ===== / END markers that
     # Invoke-TerminalStylesUninstall knows how to strip.
     #
@@ -233,24 +227,23 @@ $loaderImport
 $loaderEnd
 "@
 
-    if (-not $Targets) {
-        # Discover both engines, get $PROFILE per engine
-        $shells = @(Get-PowerShellEngineCandidate)
-        $targets = @()
-        foreach ($s in $shells) {
-            $cmd = Get-Command -Name $s.Exe -ErrorAction SilentlyContinue
-            if (-not $cmd) { continue }
-            $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
-            if (-not $profilePath) { continue }
-            $profilePath = "$profilePath".Trim()
-            if (-not $profilePath) { continue }
-            $targets += [pscustomobject]@{
-                Label       = $s.Label
-                ProfilePath = $profilePath
-                Exists      = Test-Path -LiteralPath $profilePath
-                HasLoader   = $false
-            }
-        }
+    if (-not $PSBoundParameters.ContainsKey('Targets')) {
+        # Discover every engine's $PROFILE -- one target per distinct FILE.
+        #
+        # This was its own copy of the discovery loop, with no merge step, while
+        # the uninstall half had been de-duplicated. Off Windows the two
+        # candidates are `pwsh` and `pwsh-preview`, which on a machine carrying
+        # the 7-preview build both answer with the same path: the listing below
+        # printed that one file on two rows, consent said "2 PowerShell profile
+        # file(s)", and the write loop rewrote it twice.
+        #
+        # -IncludeMissing because registration CREATES a $PROFILE that is not
+        # there yet; removal is the half that wants existing files only.
+        #
+        # Bound, not truthy: `-Targets @()` is a caller asking for an empty list,
+        # and reading it as "no targets given" sent a test's empty sandbox
+        # straight back to the real engines on the operator's machine.
+        $targets = @(Resolve-PowerShellProfileTarget -IncludeMissing)
     } else {
         $targets = @($Targets)
         # For test-injected targets, ensure required fields exist
@@ -280,15 +273,38 @@ $loaderEnd
     # skips a file that already carries a BEGIN.
     $blockPattern = "(?ms)$([regex]::Escape($loaderBegin))(?:(?!$([regex]::Escape($loaderBegin)))[\s\S])*?$([regex]::Escape($loaderEnd))\r?\n?"
     foreach ($t in $targets) {
+        $malformed = $false
         if ($t.Exists) {
             $content = [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
             $t.HasLoader = ($content -match $blockPattern)
+            # A BEGIN marker with no END to close it: the state
+            # Register-ShellLoader and Unregister-ShellLoader both call
+            # 'malformed', on the rc half of this same job. This half had no
+            # such arm, and the two halves of the pair may not disagree about
+            # what a file IS. Without it a $PROFILE carrying an orphan marker --
+            # a hand edit, a merged dotfile, an interrupted write -- was written
+            # anyway: the tempered pattern above matches nothing, so the strip
+            # was a no-op and a second, complete block was appended below the
+            # orphan. It was also the one shape that got NO backup, because the
+            # first-touch rule was being asked about the bare BEGIN marker
+            # rather than about a block we own. Refusing is the answer the rc
+            # half already gives.
+            $malformed = (-not $t.HasLoader) -and ($content -match [regex]::Escape($loaderBegin))
         }
+        $t | Add-Member -NotePropertyName Malformed -NotePropertyValue $malformed -Force
     }
 
     # Decide what to do per target
     $toWrite = @()
+    $refused = @()
     foreach ($t in $targets) {
+        if ($t.Malformed) {
+            Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $t.ProfilePath) -ForegroundColor Red
+            Write-Host "    Nothing was written. Complete or delete that block by hand and run this" -ForegroundColor Red
+            Write-Host "    again -- registering around it would leave two markers we cannot tell apart." -ForegroundColor Red
+            $refused += $t
+            continue
+        }
         if ($t.HasLoader -and -not $Force) {
             Write-Host "  Already registered in $($t.ProfilePath) (use -Force to replace)" -ForegroundColor Gray
             continue
@@ -298,7 +314,14 @@ $loaderEnd
 
     if (-not $toWrite) {
         Write-Host ""
-        Write-Host "Nothing to do." -ForegroundColor Yellow
+        # "Nothing to do." is true for a file that is already registered and
+        # false for one we refused to touch, and the second is the user's cue to
+        # go and fix it.
+        if ($refused.Count -gt 0) {
+            Write-Host ("Not registered in: {0}" -f (($refused | ForEach-Object { $_.Label }) -join ', ')) -ForegroundColor Red
+        } else {
+            Write-Host "Nothing to do." -ForegroundColor Yellow
+        }
         return
     }
 
@@ -349,6 +372,10 @@ $loaderEnd
             $existing = if ($t.Exists) {
                 [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
             } else { '' }
+            # The file as the USER last left it. Both arguments to the
+            # first-touch rule below are about this, not about what is left
+            # after the strip.
+            $original = $existing
 
             if ($existing -match $blockPattern) {
                 $existing = [regex]::Replace($existing, $blockPattern, '')
@@ -358,7 +385,20 @@ $loaderEnd
             # Same first-touch rule the bootstrap installer has always applied to
             # $PROFILE. The module half never did, so `tstyles register` rewrote a
             # hand-maintained profile with no copy kept.
-            $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $existing -BlockPattern ([regex]::Escape($loaderBegin))
+            #
+            # Asked with the ORIGINAL content and with the block pattern, which
+            # is what install.ps1's Register-LoaderInProfile has always asked
+            # (`$originalContent -notmatch $blockPattern`). This asked with the
+            # POST-STRIP content and with the bare BEGIN marker, so both halves
+            # of the question were wrong and in opposite directions: on a
+            # $PROFILE already carrying our block, -Force had just stripped the
+            # marker out of the string being examined, so the rule saw a file it
+            # had never touched and copied it again on EVERY run -- measured as
+            # four .bak- files from four runs, against a CHANGELOG entry (0.8.18)
+            # promising "Re-running does not pile up backups". The malformed arm
+            # above covers the other direction, where the bare marker matched a
+            # file that carried no block of ours at all and skipped the copy.
+            $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $original -BlockPattern $blockPattern
             [System.IO.File]::WriteAllText($t.ProfilePath, $final, (Get-RcFileEncoding))
         } catch {
             # The backup was taken of a file we then never modified, and the
@@ -379,8 +419,12 @@ $loaderEnd
     }
 
     Write-Host ""
-    if ($failed.Count -gt 0) {
-        Write-Host ("Not registered in: {0}" -f (($failed | ForEach-Object { $_.Label }) -join ', ')) -ForegroundColor Red
+    # The refused ones too: a file we would not touch is as unregistered as one
+    # we could not write, and the line that names them is the only place either
+    # is summarised.
+    $notRegistered = @($failed + $refused)
+    if ($notRegistered.Count -gt 0) {
+        Write-Host ("Not registered in: {0}" -f (($notRegistered | ForEach-Object { $_.Label }) -join ', ')) -ForegroundColor Red
         Write-Host ""
     }
     # Only when something really was written. The promise is about what a new
@@ -471,10 +515,88 @@ function Get-UninstallPlan {
     }
 }
 
+function Resolve-PowerShellProfileTarget {
+    <#
+    .SYNOPSIS
+    One target per DISTINCT $PROFILE file, naming every engine that reports it.
+
+    .DESCRIPTION
+    The ONE implementation of "ask each engine where its $PROFILE is, and merge
+    the engines that turn out to share one file". There are three consumers of
+    that rule -- uninstall (through Get-PowerShellProfileTarget),
+    `tstyles register`, and install.ps1's own copy -- and only the first of them
+    had it.
+
+    Two engines can share one $PROFILE. On a Mac carrying the 7-preview build,
+    `pwsh` and `pwsh-preview` both report
+    ~/.config/powershell/Microsoft.PowerShell_profile.ps1. So `tstyles register`
+    listed
+
+        PowerShell 7: ~/.config/powershell/Microsoft.PowerShell_profile.ps1
+        PowerShell 7 (preview): ~/.config/powershell/Microsoft.PowerShell_profile.ps1
+
+    asked consent for "2 PowerShell profile file(s)", wrote that one file twice
+    and printed two "Registered in" lines -- two rows, two writes and a count,
+    for one file. Uninstall was de-duplicated when its strip moved into this
+    file; nothing else was.
+
+    Label is every engine sharing the file, joined, so a row names what it
+    really covers instead of picking one engine and silently dropping the other.
+    Labels keeps them apart for the caller that has to decide about ONE engine:
+    install.ps1's panel subtracts the engine the user is already sitting in, and
+    string equality against a merged label never matches.
+
+    -IncludeMissing is why this could not simply be reused as-is. Removal wants
+    only files that EXIST -- a $PROFILE that was never created has no block in
+    it -- and registration must be able to create one.
+
+    Paths are compared Ordinal off Windows and OrdinalIgnoreCase on it, the way
+    the two filesystems compare them; two engines with genuinely separate
+    profile directories (Windows' pair) stay two targets.
+    #>
+    [CmdletBinding()]
+    param([switch]$IncludeMissing)
+
+    $cmp = if ((Get-TStylesPlatform) -eq 'Windows') { [System.StringComparison]::OrdinalIgnoreCase }
+           else                                     { [System.StringComparison]::Ordinal }
+
+    $targets = @()
+    foreach ($e in (Get-PowerShellEngineCandidate)) {
+        $cmd = Get-Command -Name $e.Exe -ErrorAction SilentlyContinue
+        if (-not $cmd) { continue }
+        $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
+        if (-not $profilePath) { continue }
+        # Cast before Trim: an engine that answered with more than one line
+        # hands back an array here, which has no .Trim().
+        $profilePath = "$profilePath".Trim()
+        if (-not $profilePath) { continue }
+        $exists = Test-Path -LiteralPath $profilePath
+        if (-not $exists -and -not $IncludeMissing) { continue }
+
+        $seen = $null
+        foreach ($t in $targets) {
+            if ([string]::Equals($t.ProfilePath, $profilePath, $cmp)) { $seen = $t; break }
+        }
+        if ($seen) {
+            $seen.Labels = @($seen.Labels + $e.Label)
+            $seen.Label  = ($seen.Labels -join ' / ')
+            continue
+        }
+        $targets += [pscustomobject]@{
+            ProfilePath = $profilePath
+            Label       = $e.Label
+            Labels      = @($e.Label)
+            Exists      = $exists
+            HasLoader   = $false
+        }
+    }
+    @($targets)
+}
+
 function Get-PowerShellProfileTarget {
     <#
     .SYNOPSIS
-    The $PROFILE files of the PowerShell engines present on this machine.
+    The EXISTING $PROFILE files of the PowerShell engines on this machine.
 
     .DESCRIPTION
     Pulled out of Invoke-TerminalStylesUninstall so the strip below can be run
@@ -485,34 +607,21 @@ function Get-PowerShellProfileTarget {
     same seam Invoke-TerminalStylesRegister already carries as -Targets.
 
     Only files that exist: a $PROFILE that was never created has no block in it.
-
-    Distinct by path. Two engines can share one $PROFILE -- on this machine
-    `pwsh` and `pwsh-preview` both report
-    ~/.config/powershell/Microsoft.PowerShell_profile.ps1 -- and processing it
-    twice would print the malformed and unwritable warnings twice for one file.
-    Windows' two engines keep separate directories, so nothing merges there.
+    That, and nothing else, is what this adds to Resolve-PowerShellProfileTarget
+    -- which is also where the "two engines, one file" merge lives, so the
+    uninstall listing and the strip cannot count a file twice.
     #>
     [CmdletBinding()]
     param()
 
-    $seen = @{}
-    @(foreach ($e in (Get-PowerShellEngineCandidate)) {
-        $cmd = Get-Command -Name $e.Exe -ErrorAction SilentlyContinue
-        if (-not $cmd) { continue }
-        $profilePath = & $cmd.Source -NoProfile -NonInteractive -Command 'Write-Output $PROFILE' 2>$null
-        if (-not $profilePath) { continue }
-        $profilePath = $profilePath.Trim()
-        if (-not (Test-Path -LiteralPath $profilePath)) { continue }
-        if ($seen.ContainsKey($profilePath)) { continue }
-        $seen[$profilePath] = $true
-        [pscustomobject]@{ ProfilePath = $profilePath; Label = $e.Label }
-    })
+    @(Resolve-PowerShellProfileTarget)
 }
 
 function Remove-PowerShellProfileLoader {
     <#
     .SYNOPSIS
-    Strip the loader block from each engine's $PROFILE. Returns how many went.
+    Strip the loader block from each engine's $PROFILE, and report what happened
+    to each.
 
     .DESCRIPTION
     This was a second, open-coded implementation of Unregister-ShellLoader, and
@@ -545,6 +654,21 @@ function Remove-PowerShellProfileLoader {
     -Target is an internal/test injection of {ProfilePath, Label} objects, the
     same shape and the same purpose as Invoke-TerminalStylesRegister -Targets.
     Real callers omit it and get Get-PowerShellProfileTarget.
+
+    .OUTPUTS
+    [pscustomobject] Removed  = how many blocks went
+                     Problems = the $PROFILE paths still carrying one
+
+    The same shape Remove-ShellLoaderBlock returns for the rc half, and for the
+    same reason. This returned a COUNT, so 'malformed' and 'failed' were printed
+    per file and then thrown away -- they never reached the caller, and
+    uninstall's sign-off has no other source of truth. The command therefore
+    closed on the unqualified "TerminalStyles uninstalled." and "Open a new pwsh
+    tab to confirm the loader is gone" with the block still in a $PROFILE it had
+    just said it could not write, one step after step 1 removed the module: every
+    new tab then opens on a red module-not-found, and the last two lines the user
+    read said the opposite. The rc half of this exact rule has been pinned since
+    it was fixed; the $PROFILE half was covered by nothing.
     #>
     [CmdletBinding()]
     param([object[]]$Target)
@@ -554,6 +678,7 @@ function Remove-PowerShellProfileLoader {
     }
 
     $removed = 0
+    $problems = @()
     foreach ($t in $Target) {
         switch (Unregister-ShellLoader -Path $t.ProfilePath) {
             'removed' {
@@ -563,17 +688,19 @@ function Remove-PowerShellProfileLoader {
             'malformed' {
                 Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $t.ProfilePath) -ForegroundColor Red
                 Write-Host "    Nothing was removed. Delete the block by hand -- it still loads on every tab." -ForegroundColor Red
+                $problems += $t.ProfilePath
             }
             'failed' {
                 Write-Host ("  ! could not write {0}" -f $t.ProfilePath) -ForegroundColor Red
                 Write-Host "    The loader is still there. Check the file's permissions (a read-only" -ForegroundColor Red
                 Write-Host "    profile, or one managed by nix or chezmoi) and remove the block by hand." -ForegroundColor Red
+                $problems += $t.ProfilePath
             }
             # 'none' is the ordinary case for an engine that was never
             # registered, and says nothing on purpose.
         }
     }
-    return $removed
+    [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
 }
 
 function Invoke-TerminalStylesUninstall {
@@ -601,8 +728,20 @@ function Invoke-TerminalStylesUninstall {
     if ($PSBoundParameters.ContainsKey('HomeDir')) { $rcSplat.HomeDir = $HomeDir }
     if ($PSBoundParameters.ContainsKey('ZDotDir')) { $rcSplat.ZDotDir = $ZDotDir }
 
-    $profileSplat = @{}
-    if ($PSBoundParameters.ContainsKey('ProfileTarget')) { $profileSplat.Target = $ProfileTarget }
+    # Resolved ONCE, before the listing, and handed to step 3 further down --
+    # the listing and the sweep are then the same list by construction. It is
+    # resolved once for cost as much as for truth: each entry comes from
+    # LAUNCHING an engine, about half a second apiece, so asking a second time
+    # at step 3 would pay for it twice and could still answer differently.
+    # The @() wraps the WHOLE if, not each arm. A single-element array emitted
+    # from an if block is unrolled on its way out, so `= if (...) { @($x) }`
+    # assigns $x itself -- and `.Count` on a bare PSCustomObject answers 1 under
+    # pwsh 7 and $null under Windows PowerShell 5.1. That is enough to omit the
+    # bullet below on exactly one engine, on exactly the leg that has it: the
+    # machine with ONE $PROFILE carrying the loader was never told the file was
+    # about to be edited, while a machine with two was.
+    $profileTargets = @(if ($PSBoundParameters.ContainsKey('ProfileTarget')) { $ProfileTarget }
+                        else { Get-PowerShellProfileTarget })
 
     # Get-WezTermModulePath takes no -ZDotDir, so it gets its own splat rather
     # than $rcSplat. These two lines were on the branch that added the WezTerm
@@ -625,23 +764,21 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "  - Remove install-managed files from $dataDir" -ForegroundColor Yellow
         }
     }
-    # Read off the engine table, not typed. This bullet is part of a CONSENT
-    # screen -- a stronger claim than help text, because it is the list a user
-    # says yes to -- and it named "pwsh 7 and Windows PowerShell 5.1" on every
-    # platform. On macOS and Linux there is no Windows PowerShell at all: the
-    # engines probed are pwsh and pwsh-preview, and the strip below runs over
-    # whichever of them Get-UninstallProfileTarget actually found. A second
-    # literal of the engine list is exactly how the `help register` topic went
-    # stale, and it is the same list.
-    #
-    # The labels go on their own indented line, like the rc paths below, rather
-    # than at the end of a long sentence: on Windows the two labels together
-    # push the single-line form past 120 columns, and the console wraps it --
-    # breaking "Windows PowerShell 5.1" across the fold, which is where a
-    # reader stops trusting a consent screen.
-    $engineLabels = @(Get-PowerShellEngineCandidate | ForEach-Object { $_.Label })
-    Write-Host "  - Strip the loader block from each PowerShell engine's `$PROFILE:" -ForegroundColor Yellow
-    Write-Host ("      {0}" -f ($engineLabels -join ', ')) -ForegroundColor Yellow
+    # The $PROFILE bullet, from the same list step 3 actually sweeps rather than
+    # from a literal. It read "Strip the loader block from pwsh 7 and Windows
+    # PowerShell 5.1 $PROFILE files" on every platform -- and Windows PowerShell
+    # 5.1 does not exist on macOS or Linux, where the pair is pwsh and
+    # pwsh-preview, so the screen named an engine the machine cannot have and a
+    # file that cannot exist. The rc bullet below already prints its real paths
+    # for the same reason; this is the other half of that. Omitted entirely when
+    # no $PROFILE carries anything, because listing files it will not touch
+    # would be its own kind of wrong.
+    if ($profileTargets.Count -gt 0) {
+        Write-Host "  - Strip the loader block from:" -ForegroundColor Yellow
+        foreach ($t in $profileTargets) {
+            Write-Host ("      {0}: {1}" -f $t.Label, $t.ProfilePath) -ForegroundColor Yellow
+        }
+    }
     # The zsh/bash half of step 2, which this listing did not mention at all.
     # Step 2 was ADDED because uninstall used to leave the shell side running;
     # the behaviour was fixed and the consent text never caught up, so the
@@ -667,7 +804,13 @@ function Invoke-TerminalStylesUninstall {
         Write-Host "       and becomes a no-op once this file is gone)" -ForegroundColor DarkGray
     }
     if ($DeleteData) {
-        Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp)" -ForegroundColor Red
+        # The parenthetical is a bounded listing, so it has to be complete: the
+        # styles the user made and the ones waiting in .deleted are the two
+        # things in there that nothing else can give back. `tstyles restore`
+        # makes the trash look like a safety net, and this is the one command
+        # that empties it without naming it.
+        Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp," -ForegroundColor Red
+        Write-Host "      the styles you made, and every style in the trash awaiting tstyles restore)" -ForegroundColor Red
     } else {
         Write-Host "  - PRESERVE user state ($dataDir contents -- pass -DeleteData to wipe)" -ForegroundColor Gray
     }
@@ -769,8 +912,13 @@ function Invoke-TerminalStylesUninstall {
         Write-Host "  Open a new zsh/bash tab to get your original prompt back." -ForegroundColor Gray
     }
 
-    # 3. Strip the loader from both PowerShell engines' $PROFILE
-    Remove-PowerShellProfileLoader @profileSplat | Out-Null
+    # 3. Strip the loader from every PowerShell engine's $PROFILE.
+    #
+    # The same list the consent screen named, and its problems join the rc
+    # half's: an unwritable or malformed $PROFILE was reported per file and then
+    # dropped, so the sign-off below could not know about it.
+    $profileSweep    = Remove-PowerShellProfileLoader -Target $profileTargets
+    $profileProblems = @($profileSweep.Problems)
 
     # 4. Optionally remove user state
     if ($DeleteData) {
@@ -785,29 +933,50 @@ function Invoke-TerminalStylesUninstall {
     }
 
     Write-Host ""
-    # The last line the user reads, and it was printed unconditionally. An rc
-    # file this command could not strip is one the user now has to find and edit
-    # by hand: step 1 has removed the module, so `tstyles shell-remove` -- the
+    # The last line the user reads, and it was printed unconditionally. A file
+    # this command could not strip is one the user now has to find and edit by
+    # hand: step 1 has removed the module, so `tstyles shell-remove` -- the
     # documented way out -- cannot run any more.
-    if ($shellProblems.Count -gt 0) {
+    #
+    # Both halves, not just the rc one. The $PROFILE strip reported an unwritable
+    # or malformed file and then returned a bare count, so its problems reached
+    # nothing: the command closed on the plain "TerminalStyles uninstalled." with
+    # the block still in a file it had just said it could not write.
+    $allProblems = @($shellProblems + $profileProblems)
+    if ($allProblems.Count -gt 0) {
         Write-Host "TerminalStyles uninstalled, EXCEPT the loader block in:" -ForegroundColor Yellow
-        foreach ($p in $shellProblems) {
+        foreach ($p in $allProblems) {
             Write-Host ("  {0}" -f $p) -ForegroundColor Yellow
         }
         # Single-quoted: a backtick opens an escape in a double-quoted string,
         # and `t is a tab.
         Write-Host 'Delete those blocks by hand -- the module is gone, so `tstyles shell-remove`' -ForegroundColor Yellow
+        Write-Host "cannot do it for you now." -ForegroundColor Yellow
         # What is safe to promise about the leftovers, and no more: the staged
         # style state has just been cleared, so whatever the block still finds
         # to source has nothing left to paint. Whether the runtime file itself
         # survives depends on the install kind, and this is not the line to
         # explain that in.
-        Write-Host "cannot do it for you now. Until you do, they paint nothing: the staged style" -ForegroundColor Gray
-        Write-Host "state is gone, so there is nothing left for them to apply." -ForegroundColor Gray
+        if ($shellProblems.Count -gt 0) {
+            Write-Host "Until you do, the rc files above paint nothing: the staged style state is gone," -ForegroundColor Gray
+            Write-Host "so there is nothing left for them to apply." -ForegroundColor Gray
+        }
+        # A leftover $PROFILE block is not inert in that way, and saying so is
+        # the difference between "untidy" and "every new tab opens broken": the
+        # block is an Import-Module of the module step 1 has just removed.
+        if ($profileProblems.Count -gt 0) {
+            Write-Host "A PowerShell profile is not inert like that: the block there imports a module" -ForegroundColor Gray
+            Write-Host "step 1 has just removed, so every new tab opens on a red error until you delete it." -ForegroundColor Gray
+        }
     } else {
         Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
     }
-    Write-Host "Open a new pwsh tab to confirm the loader is gone." -ForegroundColor Gray
+    # Only when the $PROFILE side really did come out clean. This was printed
+    # unconditionally, directly under a warning that the loader is still in a
+    # profile file -- the same sentence, about the same file, in both directions.
+    if ($profileProblems.Count -eq 0) {
+        Write-Host "Open a new pwsh tab to confirm the loader is gone." -ForegroundColor Gray
+    }
     Write-Host "Your settings.json was NOT modified. If you want a default look back," -ForegroundColor Gray
     Write-Host "restore a settings.json.bak-* backup or edit it via WT Settings -> Open JSON file." -ForegroundColor Gray
     Write-Host ""

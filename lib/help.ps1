@@ -124,14 +124,38 @@ function Get-TerminalStyleHelpData {
             Detail = @("With no name, lists the styles this command can act on.",
                        "",
                        "The folder is MOVED to .deleted/<name>-<timestamp> in your data dir",
-                       "and kept for 7 days, so a mistake is undone by moving it back. The",
-                       "cached background and any Terminal.app profile are left alone.",
+                       "and kept for $($script:TStylesTrashKeepDays) days: 'tstyles trash' lists what is in there and",
+                       "'tstyles restore <name>' puts one back. The cached background and any",
+                       "Terminal.app profile are left alone.",
                        "",
                        "If your style shadows a bundled one of the same name, deleting yours",
                        "does not remove the name -- it reveals the bundled style again. The",
                        "confirmation says which of the two will happen, and names any style",
                        "tuned from this one that loses its adjustments.")
             Keys = @(); Examples = @('tstyles delete', 'tstyles delete my-theme')
+        }
+        [pscustomobject]@{
+            Name = 'trash'; Usage = 'trash'; Summary = 'List deleted styles and how long each has left'
+            Detail = @("Deleting a style moves it to .deleted/<name>-<timestamp> in your data",
+                       "dir. This lists what is in there, when each one went, and how many of",
+                       "its $($script:TStylesTrashKeepDays) days are left.",
+                       "",
+                       "Read-only: it erases nothing. An entry past the window is shown in red",
+                       "because the next 'tstyles delete' erases it -- that command names it",
+                       "again, in red, on the screen you confirm.")
+            Keys = @(); Examples = @('tstyles trash')
+        }
+        [pscustomobject]@{
+            Name = 'restore'; Usage = 'restore [name]'; Summary = 'Put a deleted style back'
+            Detail = @("Moves the newest trashed copy of <name> back into your styles dir under",
+                       "the plain name -- the timestamp never comes with it. With no name, it",
+                       "lists the trash.",
+                       "",
+                       "Nothing is overwritten: if a style of that name exists again the",
+                       "restore refuses, says so, and leaves the trashed copy where it is. It",
+                       "restores the folder and nothing else -- it does not re-apply the style",
+                       "or undo the reset the delete performed.")
+            Keys = @(); Examples = @('tstyles restore', 'tstyles restore my-theme')
         }
         [pscustomobject]@{
             Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font and apply it to the active profile'
@@ -157,7 +181,8 @@ function Get-TerminalStyleHelpData {
                        "every new tab.",
                        "",
                        ("On {0} the engines looked for are: {1}." -f $Platform, ($engineLabels -join ', ')),
-                       "An engine that is not installed is skipped, not written to.")
+                       "An engine that is not installed is skipped, not written to.",
+                       "Where two engines share one `$PROFILE it is written once.")
             Keys = @(); Examples = @('tstyles register')
         }
         [pscustomobject]@{
@@ -230,13 +255,15 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'uninstall'; Usage = 'uninstall'; Summary = 'Remove the module (keeps your styles)'
-            Detail = @("Removes the module and strips the `$PROFILE loader from both",
-                       "PowerShell engines. It also strips the zsh/bash loader block from",
-                       "your shell rc files -- the same files shell-remove sweeps -- so an",
-                       "uninstall does not leave a shell sourcing a runtime it just deleted.",
+            Detail = @("Removes the module and strips the loader from the `$PROFILE of every",
+                       "PowerShell engine on this machine. It also strips the zsh/bash loader",
+                       "block from your shell rc files -- the same files shell-remove sweeps",
+                       "-- so an uninstall does not leave a shell sourcing a runtime it just",
+                       "deleted.",
                        "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
-                       "The confirmation names every rc file it is about to change.")
+                       "The confirmation names every file it is about to change, `$PROFILE and",
+                       "rc alike, and the sign-off names any it could not.")
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
         }
         [pscustomobject]@{

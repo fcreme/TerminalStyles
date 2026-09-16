@@ -337,6 +337,258 @@ Describe 'register tells the truth about a $PROFILE it could not write' {
     }
 }
 
+Describe 'register backs up the pristine $PROFILE, once' {
+    # The three cases install.ps1's half has had pinned since 0.8.18
+    # (tests/Install-Hardening.Tests.ps1) and the module half never did, plus the
+    # fourth shape that showed the same one-line defect pointing the other way.
+    #
+    # Save-FirstTouchBackup was called with the POST-STRIP content and with the
+    # bare BEGIN marker as the "already ours" pattern. Both arguments were wrong:
+    #
+    #   * -Force strips our block out of the string BEFORE the rule is asked, so
+    #     on a profile that already carries one the rule saw a file it had never
+    #     touched and copied it AGAIN -- a fresh <profile>.bak-<timestamp> on
+    #     every run, measured as four copies from four runs, against a CHANGELOG
+    #     entry (0.8.18) that says "Re-running does not pile up backups". Only
+    #     the oldest is the pristine copy, and nothing says which that is.
+    #   * A $PROFILE carrying an orphan BEGIN and no END matched the bare marker,
+    #     so the rule called it "already ours" and skipped the copy -- on the one
+    #     shape where the write is a rewrite of a file we do not understand.
+    #
+    # Counted with -Force on Get-ChildItem for the reason CLAUDE.md gives: on
+    # Unix a hidden or dot-prefixed fixture comes back as nothing without it, and
+    # the count then compares 0 to 0 while measuring nothing.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:d -Force | Out-Null
+            $script:p = Join-Path $script:d 'fake-profile.ps1'
+            $script:begin = '# ===== TerminalStyles BEGIN ====='
+            $script:end   = '# ===== TerminalStyles END ====='
+
+            function script:Baks {
+                @(Get-ChildItem -LiteralPath $script:d -Filter 'fake-profile.ps1.bak-*' -Force)
+            }
+            function script:Target {
+                [pscustomobject]@{ Label = 'PowerShell 7'; ProfilePath = $script:p
+                                   Exists = (Test-Path -LiteralPath $script:p); HasLoader = $false }
+            }
+        }
+
+        It 'takes no backup of a $PROFILE that did not exist' {
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:Target)) 6>&1 | Out-Null
+            [System.IO.File]::ReadAllText($script:p) | Should -Match 'TerminalStyles BEGIN'
+            @(script:Baks).Count | Should -Be 0 -Because 'there was nothing of the user''s to keep'
+        }
+
+        It 'takes exactly one backup, of the file as the user left it' {
+            [System.IO.File]::WriteAllText($script:p, "# my own prompt`r`nSet-Alias ll Get-ChildItem`r`n",
+                [System.Text.UTF8Encoding]::new($false))
+
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:Target)) 6>&1 | Out-Null
+
+            @(script:Baks).Count | Should -Be 1
+            $copy = [System.IO.File]::ReadAllText((script:Baks)[0].FullName)
+            $copy | Should -Match 'my own prompt'
+            $copy | Should -Not -Match 'TerminalStyles BEGIN' `
+                -Because 'the pristine version is the one the user would want back'
+        }
+
+        It 'does not pile up a new backup on every -Force' {
+            [System.IO.File]::WriteAllText($script:p, "# my own prompt`r`nSet-Alias ll Get-ChildItem`r`n",
+                [System.Text.UTF8Encoding]::new($false))
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:Target)) 6>&1 | Out-Null
+            @(script:Baks).Count | Should -Be 1 -Because 'the fixture must start from one copy'
+
+            # The stamp is to the SECOND, and Copy-Item -Force overwrites: two
+            # backups inside one second are indistinguishable from one, so this
+            # has to wait or it passes on the unfixed code while measuring
+            # nothing.
+            Start-Sleep -Milliseconds 1100
+            $out = Invoke-TerminalStylesRegister -Yes -Force -Targets @((script:Target)) 6>&1 | Out-String
+
+            @(script:Baks).Count | Should -Be 1 `
+                -Because 'our block is already in the file, so a fresh copy captures a file that carries it'
+            $out | Should -Not -Match 'Backed up your existing' `
+                -Because 'the line and the write are the same claim'
+            [System.IO.File]::ReadAllText($script:p) | Should -Match 'my own prompt'
+        }
+
+        It 'refuses a $PROFILE carrying a BEGIN with no END, and leaves it alone' {
+            # Register-ShellLoader calls this 'malformed' and refuses; this half
+            # had no such arm, so it appended a SECOND complete block below the
+            # orphan marker -- and took no backup on the way, because the bare
+            # marker read as "already ours".
+            $before = "# my hand-written profile`r`nSet-Alias ll Get-ChildItem`r`n$script:begin`r`nImport-Module TerminalStyles`r`n"
+            [System.IO.File]::WriteAllText($script:p, $before, [System.Text.UTF8Encoding]::new($false))
+            $bytes = [System.IO.File]::ReadAllBytes($script:p)
+
+            $out = Invoke-TerminalStylesRegister -Yes -Targets @((script:Target)) 6>&1 | Out-String
+
+            $out | Should -Match 'no matching END'
+            $out | Should -Match 'by hand'
+            $out | Should -Match 'Not registered in'
+            $out | Should -Not -Match 'Registered in ' -Because 'nothing was written'
+            $out | Should -Not -Match 'auto-load on every new shell tab'
+
+            [System.IO.File]::ReadAllBytes($script:p) | Should -Be $bytes `
+                -Because 'a file we do not understand is not one to rewrite'
+            ([regex]::Matches([System.IO.File]::ReadAllText($script:p),
+                              [regex]::Escape($script:begin))).Count | Should -Be 1 `
+                -Because 'appending a second block leaves two markers we cannot tell apart'
+        }
+
+        It 'still refuses under -Force' {
+            # -Force is "replace our block", not "write over anything". The
+            # strip's own pattern does not match here, so -Force would rewrite
+            # the file with the orphan still in it.
+            $before = "# mine`r`n$script:begin`r`nImport-Module TerminalStyles`r`n"
+            [System.IO.File]::WriteAllText($script:p, $before, [System.Text.UTF8Encoding]::new($false))
+            $bytes = [System.IO.File]::ReadAllBytes($script:p)
+
+            Invoke-TerminalStylesRegister -Yes -Force -Targets @((script:Target)) 6>&1 | Out-Null
+
+            [System.IO.File]::ReadAllBytes($script:p) | Should -Be $bytes
+        }
+    }
+}
+
+Describe 'register asks about each $PROFILE once, however many engines report it' {
+    # Two engines can share one $PROFILE -- off Windows the pair probed for is
+    # `pwsh` and `pwsh-preview`, and on a Mac carrying the 7-preview build both
+    # answer with the same path. Uninstall was de-duplicated when its strip moved
+    # into lib/update.ps1; register kept its own open-coded discovery loop, so it
+    # listed one file on two rows, asked consent for "2 PowerShell profile
+    # file(s)", and wrote that file twice.
+    #
+    # -Targets cannot exercise this: that seam BYPASSES the discovery loop where
+    # the bug lives, so a test built on it passes before and after. These drive
+    # the real loop through STAND-IN engines: Get-Command hands back an
+    # ExternalScriptInfo for a .ps1 path, and `& $cmd.Source -NoProfile
+    # -NonInteractive -Command '<one string>'` binds to its param block exactly
+    # as a real engine's command line does. Nothing here launches pwsh, and no
+    # path leaves TestDrive.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:d -Force | Out-Null
+
+            function script:New-StubEngine {
+                param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Answers)
+                $path = Join-Path $script:d "$Name.ps1"
+                $src = @'
+param([switch]$NoProfile, [switch]$NonInteractive, [string]$Command)
+if ($Command -match 'PROFILE=') {
+    Write-Output ('PROFILE=' + '__P__')
+    Write-Output 'POLICY=RemoteSigned'
+} else {
+    Write-Output '__P__'
+}
+'@.Replace('__P__', $Answers)
+                [System.IO.File]::WriteAllText($path, $src, [System.Text.UTF8Encoding]::new($false))
+                # A stub Get-Command cannot resolve would make the discovery
+                # return nothing, which some of these assertions would read as a
+                # pass. Fail here, where the reason is legible.
+                if (-not (Get-Command -Name $path -ErrorAction SilentlyContinue)) {
+                    throw "Stub engine '$path' is not resolvable by Get-Command on this platform."
+                }
+                $path
+            }
+        }
+
+        It 'merges two engines that report one file into one target' {
+            $shared = Join-Path $script:d 'Microsoft.PowerShell_profile.ps1'
+            $a = script:New-StubEngine -Name 'engine-a' -Answers $shared
+            $b = script:New-StubEngine -Name 'engine-b' -Answers $shared
+            Mock Get-PowerShellEngineCandidate {
+                @([pscustomobject]@{ Exe = $a; Label = 'PowerShell 7' },
+                  [pscustomobject]@{ Exe = $b; Label = 'PowerShell 7 (preview)' })
+            }
+
+            $t = @(Resolve-PowerShellProfileTarget -IncludeMissing)
+
+            $t.Count | Should -Be 1 -Because 'it is one file'
+            $t[0].ProfilePath | Should -Be $shared
+            @($t[0].Labels) | Should -Be @('PowerShell 7', 'PowerShell 7 (preview)')
+            $t[0].Label | Should -Be 'PowerShell 7 / PowerShell 7 (preview)' `
+                -Because 'the row must name every engine that loads out of it'
+        }
+
+        It 'keeps two engines with genuinely separate profiles apart' {
+            # The Windows shape, which must not regress into one row.
+            $pa = Join-Path $script:d 'a-profile.ps1'
+            $pb = Join-Path $script:d 'b-profile.ps1'
+            $a = script:New-StubEngine -Name 'engine-a' -Answers $pa
+            $b = script:New-StubEngine -Name 'engine-b' -Answers $pb
+            Mock Get-PowerShellEngineCandidate {
+                @([pscustomobject]@{ Exe = $a; Label = 'PowerShell 7' },
+                  [pscustomobject]@{ Exe = $b; Label = 'Windows PowerShell 5.1' })
+            }
+
+            $t = @(Resolve-PowerShellProfileTarget -IncludeMissing)
+
+            $t.Count | Should -Be 2
+            @($t | ForEach-Object { $_.ProfilePath }) | Should -Be @($pa, $pb)
+        }
+
+        It 'only offers files that exist unless asked for the missing ones' {
+            # The difference between the removal half and the registration half,
+            # and the reason this could not simply be reused as-is.
+            $shared = Join-Path $script:d 'Microsoft.PowerShell_profile.ps1'
+            $a = script:New-StubEngine -Name 'engine-a' -Answers $shared
+            Mock Get-PowerShellEngineCandidate { @([pscustomobject]@{ Exe = $a; Label = 'PowerShell 7' }) }
+
+            @(Resolve-PowerShellProfileTarget).Count | Should -Be 0 `
+                -Because 'a $PROFILE that was never created has no block in it'
+            @(Resolve-PowerShellProfileTarget -IncludeMissing).Count | Should -Be 1 `
+                -Because 'registration has to be able to create one'
+        }
+
+        It 'lists one row and asks consent for one file' {
+            # The consumer, end to end, with consent REFUSED: this is the screen
+            # the user reads, and on this machine it showed the same path twice.
+            $shared = Join-Path $script:d 'Microsoft.PowerShell_profile.ps1'
+            $a = script:New-StubEngine -Name 'engine-a' -Answers $shared
+            $b = script:New-StubEngine -Name 'engine-b' -Answers $shared
+            Mock Get-PowerShellEngineCandidate {
+                @([pscustomobject]@{ Exe = $a; Label = 'PowerShell 7' },
+                  [pscustomobject]@{ Exe = $b; Label = 'PowerShell 7 (preview)' })
+            }
+            Mock Confirm-Action { $false }
+
+            $out = Invoke-TerminalStylesRegister 6>&1 | Out-String
+
+            ([regex]::Matches($out, [regex]::Escape($shared))).Count | Should -Be 1 `
+                -Because 'one file is one row'
+            Should -Invoke Confirm-Action -Times 1 -Exactly -ParameterFilter {
+                $Consequence -match 'writes the loader block into 1 PowerShell profile file\(s\)'
+            }
+            Test-Path -LiteralPath $shared | Should -BeFalse -Because 'consent was refused'
+        }
+
+        It 'writes the shared file once' {
+            $shared = Join-Path $script:d 'Microsoft.PowerShell_profile.ps1'
+            [System.IO.File]::WriteAllText($shared, "# my own prompt`r`n", [System.Text.UTF8Encoding]::new($false))
+            $a = script:New-StubEngine -Name 'engine-a' -Answers $shared
+            $b = script:New-StubEngine -Name 'engine-b' -Answers $shared
+            Mock Get-PowerShellEngineCandidate {
+                @([pscustomobject]@{ Exe = $a; Label = 'PowerShell 7' },
+                  [pscustomobject]@{ Exe = $b; Label = 'PowerShell 7 (preview)' })
+            }
+
+            $out = Invoke-TerminalStylesRegister -Yes 6>&1 | Out-String
+
+            $after = [System.IO.File]::ReadAllText($shared)
+            ([regex]::Matches($after, [regex]::Escape('# ===== TerminalStyles BEGIN ====='))).Count |
+                Should -Be 1
+            ([regex]::Matches($out, 'Registered in ')).Count | Should -Be 1 `
+                -Because 'one write is one line'
+            @(Get-ChildItem -LiteralPath $script:d -Filter 'Microsoft.PowerShell_profile.ps1.bak-*' -Force).Count |
+                Should -Be 1 -Because 'one file, one first touch'
+        }
+    }
+}
+
 Describe 'register and install.ps1 agree on what a loader line looks like' {
     # install.ps1 is fetched and piped to iex before the module exists, so it
     # cannot dot-source lib/ and the two loader forms are necessarily written

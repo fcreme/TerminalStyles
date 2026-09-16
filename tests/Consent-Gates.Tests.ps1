@@ -125,6 +125,12 @@ Describe 'the destructive commands route their consent through the gate' {
 
             Mock Test-InteractiveConsole { $false }
             Mock Write-Host {}
+            # The consent LISTING resolves the $PROFILE targets now, so that it
+            # can name them -- and that resolution runs each engine to ask where
+            # its $PROFILE is. Reading, not writing, but this test binds no
+            # -ProfileTarget, so the mock keeps it off the operator's machine
+            # and out of the timing.
+            Mock Get-PowerShellProfileTarget { @() }
             # Anything that would actually destroy something fails the test.
             Mock Remove-Item { throw 'uninstall must not remove anything without consent' }
             # Only where it exists. Uninstall-PSResource ships with

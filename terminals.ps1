@@ -1450,6 +1450,45 @@ $script:TStylesAppleColorMap = [ordered]@{
     brightWhite         = 'ANSIBrightWhiteColor'
 }
 
+function Get-AppleTerminalColorSpec {
+    <#
+    .SYNOPSIS
+    A scheme's colours as Terminal.app profile keys, in the form the JXA helper
+    reads: canonical `#rrggbb`.
+
+    .DESCRIPTION
+    Pure, and separate from the osascript call, because the question it answers
+    -- which of a style's colour slots reach Terminal.app -- is the question
+    Get-SchemeOscPacket answers for the live window, and the two used to give
+    different answers.
+
+    This half handed the raw scheme value straight to appleterminal.js, which
+    tests `^[0-9a-fA-F]{6}$` and skips anything else without a word. So a slot
+    written `#013`, `#0011339f`, ` #ff0000` or `##aa0000` -- every one of which
+    ConvertTo-NormalHex admits, and every one of which the OSC path therefore
+    paints -- was dropped from the `.terminal` profile, and Terminal.app filled
+    it from its own profile defaults instead. Measured on a six-slot scheme of
+    those forms: six OSC sequences emitted, `Get-SchemeUnreadableSlots` reporting
+    nothing skipped, and two keys in the profile.
+
+    Asking ConvertTo-NormalHex makes it one rule with one implementation, and
+    leaves the regex in the JS as a last-resort guard over input that has already
+    been normalised rather than as a second, stricter notion of "a colour".
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Scheme)
+
+    $colors = [ordered]@{}
+    foreach ($field in $script:TStylesAppleColorMap.Keys) {
+        # No outer `if ($hex)` guard: ConvertTo-NormalHex takes $null and an
+        # empty string and answers $null, which is the same "not a colour" this
+        # loop already skips.
+        $norm = ConvertTo-NormalHex -Hex $Scheme.$field
+        if ($norm) { $colors[$script:TStylesAppleColorMap[$field]] = $norm }
+    }
+    return $colors
+}
+
 function Get-AppleTerminalProfileData {
     # Run the JXA helper over a scheme (+ optional image) and return a hashtable
     # of Terminal profile key -> base64 archive. Returns $null when the helper
@@ -1461,11 +1500,7 @@ function Get-AppleTerminalProfileData {
     $helper = Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'appleterminal.js'
     if (-not (Test-Path -LiteralPath $helper)) { return $null }
 
-    $colors = [ordered]@{}
-    foreach ($field in $script:TStylesAppleColorMap.Keys) {
-        $hex = $Scheme.$field
-        if ($hex) { $colors[$script:TStylesAppleColorMap[$field]] = [string]$hex }
-    }
+    $colors = Get-AppleTerminalColorSpec -Scheme $Scheme
 
     $tmpRoot  = [System.IO.Path]::GetTempPath()
     $runId    = [guid]::NewGuid().Guid.Substring(0, 8)
@@ -1491,6 +1526,19 @@ function Get-AppleTerminalProfileData {
             $result[$p.Name] = [string]$p.Value
         }
         if ($result.Count -eq 0) { return $null }
+
+        # A partial answer is no longer allowed to pass as a whole one. Every
+        # value above was normalised to `#rrggbb`, so the helper's own hex guard
+        # can no longer reject one -- if a key still went missing, the archiver
+        # failed on it and the profile will show Terminal.app's default for that
+        # slot with nothing on screen saying so. Not fatal: the rest of the
+        # profile, the background image included, is still worth writing, and
+        # returning $null here would take the whole feature down over one slot.
+        $missing = @($colors.Keys | Where-Object { -not $result.ContainsKey($_) })
+        if ($missing.Count -gt 0) {
+            Write-Warning ("Terminal.app profile: {0} color(s) could not be archived and keep Terminal's own default -- {1}." -f
+                           $missing.Count, ($missing -join ', '))
+        }
         return $result
     } catch {
         return $null

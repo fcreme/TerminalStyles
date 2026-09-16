@@ -206,6 +206,54 @@ function Test-ShouldRestoreWindowTitle {
     return -not [string]::IsNullOrWhiteSpace($Title)
 }
 
+function Get-RevertOscPacket {
+    <#
+    .SYNOPSIS
+    The escape packet that puts the terminal back when a preview is cancelled.
+
+    .DESCRIPTION
+    The picker's Esc and the tuner's Esc ask one question, and each used to
+    answer it with its own inline `if`: re-emit the style the user arrived with,
+    or hand colour control back to the terminal with Get-OscResetPacket?
+
+    Get-OscResetPacket resets to the TERMINAL's own configured colours, which is
+    right on Windows Terminal -- settings.json has just been restored and WT
+    repaints from it. Off Windows Terminal there is no such file: the style the
+    user arrived with was itself only escape sequences, so a reset drops them to
+    the stock palette instead of back to their style.
+
+    Both copies of that rule were pinned by nothing but a `-Match` against the
+    caller's own source text, which cannot see which arm is which: swapping the
+    two arms -- the exact regression the rule exists to prevent -- left all 1821
+    tests green. Asking one function makes the answer a value a test can compare,
+    on every CI leg, with no console.
+
+    Returns a string, never $null or empty. A cancel that emits nothing leaves
+    the cancelled preview painted, so a starting scheme this tool cannot read
+    falls back to the reset rather than to silence.
+    #>
+    [CmdletBinding()]
+    param(
+        # $true on Windows Terminal, where a settings.json was just restored.
+        [Parameter(Mandatory)][bool]$UseSettingsFile,
+        # Was a style actually active when the preview opened? NOT the same
+        # question as "is $StartingScheme non-null": with nothing applied the
+        # picker's cursor starts on the first style in the list, whose scheme is
+        # a real one the user was never looking at. The stock palette is the
+        # correct end state there.
+        [bool]$HadStartingStyle,
+        # The scheme to re-emit: the style the user OPENED, not the working base
+        # -- on a tuned style those are different files.
+        $StartingScheme
+    )
+
+    if (-not $UseSettingsFile -and $HadStartingStyle -and $null -ne $StartingScheme) {
+        $packet = Get-SchemeOscPacket -Scheme $StartingScheme
+        if ($packet) { return $packet }
+    }
+    return (Get-OscResetPacket)
+}
+
 function Invoke-StylePickerLoop {
     # The interactive picker's selection loop, with all I/O / rendering / input
     # injected as seams so it can be driven by tests. Owns ONLY the highlight

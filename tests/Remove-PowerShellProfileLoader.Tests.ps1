@@ -144,16 +144,57 @@ Describe 'Remove-PowerShellProfileLoader' {
             }
         }
 
-        Context 'the count it returns' {
+        Context 'what it reports back to the caller' {
+            # A COUNT was all it reported, and that is the shape of the defect
+            # the whole file is about, one level up: 'malformed' and 'failed'
+            # were printed per file and then dropped, so uninstall's sign-off
+            # had no way to know about them and closed on the unqualified
+            # "TerminalStyles uninstalled." with the block still in a file it
+            # had just said it could not write. Remove-ShellLoaderBlock, the rc
+            # half of the same job, has returned Removed + Problems since it was
+            # fixed; this is the other half of that symmetry.
             It 'counts only the profiles it really stripped' {
                 $ok   = script:New-Profile 'a.ps1' ([byte[]]@())
                 $bad  = script:New-Profile 'b.ps1' ([byte[]]@()) -Malformed
                 $none = Join-Path $script:d 'c.ps1'
                 [System.IO.File]::WriteAllText($none, "# mine`n")
 
-                $n = Remove-PowerShellProfileLoader -Target @(
+                $r = Remove-PowerShellProfileLoader -Target @(
                         $ok, $bad, [pscustomobject]@{ ProfilePath = $none; Label = 'x' }) 6>$null
-                $n | Should -Be 1
+                $r.Removed | Should -Be 1
+            }
+
+            It 'hands back every profile still carrying a block' {
+                $ok   = script:New-Profile 'a.ps1' ([byte[]]@())
+                $bad  = script:New-Profile 'b.ps1' ([byte[]]@()) -Malformed
+                $ro   = script:New-Profile 'c.ps1' ([byte[]]@())
+                $none = Join-Path $script:d 'd.ps1'
+                [System.IO.File]::WriteAllText($none, "# mine`n")
+                # IsReadOnly rather than chmod: one .NET attribute on every
+                # platform the suite runs on. -Force because the same call on a
+                # dotfile fixture returns nothing without it, and an assertion
+                # against $null passes while measuring nothing.
+                $f = Get-Item -LiteralPath $ro.ProfilePath -Force
+                $f.IsReadOnly = $true
+                try {
+                    $r = Remove-PowerShellProfileLoader -Target @(
+                            $ok, $bad, $ro, [pscustomobject]@{ ProfilePath = $none; Label = 'x' }) 6>$null
+
+                    $r.Removed        | Should -Be 1
+                    @($r.Problems)    | Should -Contain $bad.ProfilePath
+                    @($r.Problems)    | Should -Contain $ro.ProfilePath
+                    @($r.Problems).Count | Should -Be 2 `
+                        -Because 'a clean strip and a file that never carried a block are not problems'
+                } finally { $f.IsReadOnly = $false }
+            }
+
+            It 'reports no problems when every profile came out clean' {
+                # The other direction: a caller that qualifies its sign-off on
+                # this list must not qualify it on the ordinary path.
+                $ok = script:New-Profile 'a.ps1' ([byte[]]@())
+                $r = Remove-PowerShellProfileLoader -Target @($ok) 6>$null
+                @($r.Problems).Count | Should -Be 0
+                $r.Removed | Should -Be 1
             }
         }
     }
