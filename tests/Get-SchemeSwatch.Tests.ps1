@@ -80,6 +80,57 @@ Describe 'Get-SchemeSwatch' {
     }
 
 
+    Context 'Every slot the OSC packet renders' {
+        It 'can render a cell for each of them' {
+            # THE DEFECT: this function hand-wrote ten slot names against the
+            # packet builder's twenty, so ten slots -- black, red, green,
+            # yellow, blue, purple, cyan, white, brightBlack, brightWhite --
+            # were invisible to it. A style coloured only through those applied
+            # perfectly and listed as a blank row, which is the hazard
+            # Get-SchemeUnreadableSlots' own docstring refuses to create ("a
+            # second copy of the twenty names here would go quiet about
+            # precisely the slot that had just been added to the builder"): the
+            # swatch WAS that second copy.
+            #
+            # No list is typed here either. The universe of names comes from the
+            # shipped scheme.json files, and whether a name is a colour slot at
+            # all is asked of Get-SchemeOscPacket -- the same one-slot probe
+            # Get-SchemeUnreadableSlots uses -- so the two can never disagree
+            # about what a colour slot is.
+            $repoRoot = $script:repoRoot
+            InModuleScope TerminalStyles -Parameters @{ RepoRoot = $repoRoot } {
+                param($RepoRoot)
+                $names = @{}
+                foreach ($dir in (Get-ChildItem -Path (Join-Path $RepoRoot 'styles') -Directory)) {
+                    $schemePath = Join-Path $dir.FullName 'scheme.json'
+                    if (-not (Test-Path -LiteralPath $schemePath)) { continue }
+                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    foreach ($prop in $scheme.PSObject.Properties) { $names[$prop.Name] = $true }
+                }
+                # ForEach-Object, not .Count on the member: an empty collection
+                # would otherwise report one.
+                @($names.Keys | ForEach-Object { $_ }).Count | Should -BeGreaterThan 15 `
+                    -Because 'the shipped schemes have to be read for the loop below to compare anything'
+
+                $slots  = 0
+                $missed = @()
+                foreach ($name in @($names.Keys | Sort-Object)) {
+                    $probe = [pscustomobject]@{}
+                    $probe | Add-Member -NotePropertyName $name -NotePropertyValue '#123456'
+                    # Not a colour slot at all (e.g. `name`): the builder emits
+                    # nothing for it, so neither should the swatch.
+                    if (-not (Get-SchemeOscPacket -Scheme $probe)) { continue }
+                    $slots++
+                    if ((Get-SchemeSwatch -Scheme $probe) -notmatch '\[48;2;') { $missed += $name }
+                }
+                $slots | Should -BeGreaterThan 15 `
+                    -Because 'the probe must actually find the palette, or every verdict below is vacuous'
+                $missed -join ', ' | Should -BeNullOrEmpty `
+                    -Because 'a style coloured only through these paints correctly and lists as an empty row'
+            }
+        }
+    }
+
     Context 'Malformed colors' {
         It 'skips invalid hex values instead of throwing' {
             InModuleScope TerminalStyles {

@@ -120,6 +120,67 @@ Describe 'picker background handling off Windows Terminal' {
     }
 }
 
+Describe "Write-HostOscPacket's bool stays out of the command's output stream" {
+    # Write-HostOscPacket returns $true/$false -- the contract
+    # tests/Apply-StyleNonWT.Tests.ps1 pins, and the one
+    # Invoke-TerminalStyleOscApply branches on. A call made as a bare pipeline
+    # STATEMENT therefore puts that bool on the enclosing function's success
+    # stream, and Invoke-TerminalStyle is exported: measured on a pty, bare
+    # `tstyles` printed "True" between the OSC palette and the picker's first
+    # Clear-Host, and `@(Invoke-TerminalStyle)` came back holding one [bool].
+    # The initial non-WT paint was the one call site of four that did not end in
+    # | Out-Null.
+    #
+    # This is a pipeline-SHAPE assertion over the AST, not a text match: it
+    # survives renames and reformatting, it says nothing about the body of the
+    # function, and it generalises to any call site added later -- which is why
+    # it sweeps every source file rather than the picker alone. The branch
+    # itself cannot be driven from a test (it needs a real console, and the
+    # guard at the top of the picker returns first when stdin is redirected),
+    # the reason this file already gives for its other AST cases.
+    BeforeAll {
+        $script:repoRoot = Split-Path $PSScriptRoot -Parent
+        $script:sourceFiles = @(
+            (Join-Path $script:repoRoot 'tstyles.ps1')
+            (Join-Path $script:repoRoot 'terminals.ps1')
+            (Join-Path $script:repoRoot 'apply.ps1')
+        ) + @(Get-ChildItem -LiteralPath (Join-Path $script:repoRoot 'lib') -Filter '*.ps1' |
+                ForEach-Object { $_.FullName })
+    }
+
+    It 'is swallowed or consumed at every call site' {
+        $calls  = 0
+        $leaked = @()
+        foreach ($file in $script:sourceFiles) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($file, [ref]$null, [ref]$null)
+            foreach ($c in $ast.FindAll({ param($n)
+                        $n -is [System.Management.Automation.Language.CommandAst] -and
+                        $n.GetCommandName() -eq 'Write-HostOscPacket' }, $true)) {
+                $calls++
+                # Only a call that IS the pipeline can be in statement position;
+                # one inside `if (...)`, `return (...)` or an assignment sits
+                # under a condition, a paren or an assignment instead, and its
+                # value is consumed by that.
+                $pipe = $c.Parent
+                if ($pipe -isnot [System.Management.Automation.Language.PipelineAst]) { continue }
+                $last = $pipe.PipelineElements[$pipe.PipelineElements.Count - 1]
+                if ($last -is [System.Management.Automation.Language.CommandAst] -and
+                    $last.GetCommandName() -eq 'Out-Null') { continue }
+                $parent = $pipe.Parent
+                if ($parent -is [System.Management.Automation.Language.StatementBlockAst] -or
+                    $parent -is [System.Management.Automation.Language.NamedBlockAst]) {
+                    $leaked += ('{0}:{1}' -f (Split-Path -Leaf $file), $c.Extent.StartLineNumber)
+                }
+            }
+        }
+        # Coverage before verdict: a renamed function would find no call at all
+        # and this would pass while measuring nothing.
+        $calls | Should -BeGreaterThan 3 -Because 'the four known call sites have to be found before their shape means anything'
+        $leaked -join ', ' | Should -BeNullOrEmpty `
+            -Because 'a bare call puts $true/$false on the output of whatever function it sits in'
+    }
+}
+
 Describe 'picker header target label' {
     BeforeAll {
         $script:pickerFn = InModuleScope TerminalStyles {

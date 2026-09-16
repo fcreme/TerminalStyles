@@ -979,6 +979,49 @@ function Resolve-TuneOpenedScheme {
     } catch { return $BaseScheme }
 }
 
+function Restore-TuneBaseLook {
+    <#
+    .SYNOPSIS
+    Put settings.json and the terminal's colours back the way the tuner found
+    them -- at most once per tune session.
+
+    .DESCRIPTION
+    The tuner has three ways out that must undo the preview: Escape, an aborted
+    save, and the finally that catches everything else. The first two do it
+    explicitly and then fall into the third, whose only gate is $applied --
+    which a cancel never sets. So a cancel ran the revert twice: a second
+    byte-identical Write-SettingsAtomic over a file the user owns, and a second
+    OSC revert packet. Neither is free. The picker records the same fact in
+    $pickerState.Reverted and says why in as many words: "it bumps the mtime,
+    and Windows Terminal watches the file and reloads on the change".
+
+    $State is the caller's own hashtable, so the flag survives the scriptblock
+    scopes the tuner calls this from. Returns 'reverted' or 'already' rather
+    than a bool: "it put things back" and "there was nothing left to put back"
+    are different answers, and collapsing a status into a boolean is how this
+    project has lost the difference before.
+
+    -OpenedScheme is the style the user OPENED, not the working base -- on a
+    tuned style those are different files. Which packet that implies is
+    Get-RevertOscPacket's question, asked identically by the picker.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$State,
+        [switch]$UseSettingsFile,
+        [AllowNull()][AllowEmptyString()][string]$SettingsPath,
+        [AllowNull()][AllowEmptyString()][string]$OriginalJson,
+        $OpenedScheme
+    )
+
+    if ($State.Reverted) { return 'already' }
+    if ($UseSettingsFile) { Write-SettingsAtomic -Path $SettingsPath -Json $OriginalJson }
+    Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$UseSettingsFile `
+        -HadStartingStyle:($null -ne $OpenedScheme) -StartingScheme $OpenedScheme) | Out-Null
+    $State.Reverted = $true
+    return 'reverted'
+}
+
 function Invoke-TerminalStyleTune {
     # `tstyles tune [name]` -- interactive live tuning of a style's brightness,
     # saturation, opacity, font face, and font size. Colors retint instantly
@@ -1380,7 +1423,7 @@ function Invoke-TerminalStyleTune {
         }
         Write-Host ""
         Write-Host "  Preview  " -NoNewline
-        Write-Host (Get-SchemeSwatch -Scheme $adjusted)
+        Write-Host (Get-SchemeSwatchOrNote -Scheme $adjusted)
         Write-Host ""
     }
 
@@ -1417,10 +1460,24 @@ function Invoke-TerminalStyleTune {
     # $openedScheme, not $baseScheme: on a tuned style those are different files,
     # and the base is not what the user was looking at. That half IS this
     # caller's decision, so it stays here.
+    #
+    # The body lives in Restore-TuneBaseLook, and the run-at-most-once rule
+    # lives with it. Both explicit callers -- Escape and the aborted save -- are
+    # followed by the finally below, whose only gate is $applied, which a cancel
+    # never sets, so a cancel reverted TWICE: settings.json rewritten with the
+    # same bytes a second time and the OSC revert packet emitted again (measured
+    # on a pty: two ESC]104 sequences for one Esc, against the picker's one).
+    # Neither is free -- the extra write bumps the mtime, and Windows Terminal
+    # watches settings.json and reloads on the change, so a cancelled tune
+    # flickered twice.
+    #
+    # A hashtable rather than a plain variable, for the reason the picker's
+    # $pickerState is one: an assignment inside a scriptblock lands in the
+    # scriptblock's own child scope and is never seen out here.
+    $tuneState = @{ Reverted = $false }
     $restoreBaseLook = {
-        if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
-        Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$tuneUsesSettings `
-            -HadStartingStyle:($null -ne $openedScheme) -StartingScheme $openedScheme) | Out-Null
+        Restore-TuneBaseLook -State $tuneState -UseSettingsFile:$tuneUsesSettings `
+            -SettingsPath $settingsPath -OriginalJson $originalJson -OpenedScheme $openedScheme | Out-Null
     }
     $showPendingUpdate = {
         if ($pendingUpdate) {
@@ -1660,6 +1717,9 @@ function Invoke-TerminalStyleTune {
             # applied. Esc / aborted-save already reverted explicitly; this also
             # covers an exception thrown mid-session (the key loop is not tested).
             # $restoreBaseLook may not exist yet if something threw very early.
+            # On those two explicit paths this is now a no-op rather than a
+            # second write: Restore-TuneBaseLook answers 'already' once
+            # $tuneState.Reverted is set, so the safety net stays a safety net.
             if ($restoreBaseLook) { & $restoreBaseLook }
             if (Test-ShouldRestoreWindowTitle -Title $originalTitle) {
                 $Host.UI.RawUI.WindowTitle = $originalTitle

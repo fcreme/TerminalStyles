@@ -163,6 +163,54 @@ Describe 'Register-LoaderInProfile backup rule' {
         CountBaks | Should -Be 0
     }
 
+    # THE ENCODING HALF. Register-LoaderInProfile reads the WHOLE $PROFILE and
+    # Write-TextFileAtomic writes the WHOLE file back, so the encoding it picks
+    # decides whether the user's own bytes survive being appended to. Under
+    # UTF-8 -- what both halves used -- any byte that is not valid UTF-8 decoded
+    # to U+FFFD and was written back as EF BF BD. lib/update.ps1 was fixed for
+    # exactly this in 0.8.24 (Get-RcFileEncoding, ISO-8859-1, which round-trips
+    # every byte 0-255); the installer was the last writer in the repo that
+    # still corrupted.
+    #
+    # Bytes, through [System.IO.File]::ReadAllBytes -- not Get-Content and not
+    # Get-Item, which without -Force answers nothing at all for a dotfile on
+    # Unix and lets both sides of an assertion pass while comparing nothing.
+    #
+    # 0xE9 is 'e' with an acute accent in latin-1: one byte, and not valid UTF-8
+    # on its own.
+    It 'preserves a byte that is not valid UTF-8 on first touch' {
+        [System.IO.File]::WriteAllBytes($script:profilePath,
+            [byte[]]@(0x23, 0x20, 0x63, 0x61, 0x66, 0xE9, 0x0D, 0x0A))   # "# cafe<0xE9>"
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
+
+        $bytes = [System.IO.File]::ReadAllBytes($script:profilePath)
+        $bytes | Should -Contain 0xE9 -Because "the installer was asked to append three lines, not to rewrite the user's text"
+        ($bytes -join ',') | Should -Not -Match '239,191,189' -Because 'EF BF BD is the replacement character being written back'
+        # Not vacuous: the loader really did go in, so the write under test ran.
+        [System.IO.File]::ReadAllText($script:profilePath, (Get-ProfileFileEncoding)) |
+            Should -Match ([regex]::Escape($script:begin))
+    }
+
+    It 'preserves it on a RE-register, where no backup is taken' {
+        # The half the severity turns on. The first-touch backup is deliberately
+        # skipped once our BEGIN marker is in the file -- and that is every
+        # `iwr -useb ... | iex` re-run, which install.ps1 documents as the
+        # upgrade path and which registers unconditionally. So on this path the
+        # round-trip ran with no .bak written and nothing printed about it:
+        # nothing recovered, nothing announced.
+        $head = [System.Text.Encoding]::GetEncoding(28591).GetBytes("$script:body`r`n# caf")
+        [System.IO.File]::WriteAllBytes($script:profilePath, ($head + [byte[]]@(0xE9, 0x0D, 0x0A)))
+
+        Register-LoaderInProfile -ProfilePath $script:profilePath -Label 'PowerShell 7' `
+            -InstallDir $script:fixture -LoaderBegin $script:begin -LoaderEnd $script:end -LoaderBody $script:body
+
+        CountBaks | Should -Be 0 -Because 'this is the path that takes no backup, which is why the bytes have to survive it'
+        $bytes = [System.IO.File]::ReadAllBytes($script:profilePath)
+        $bytes | Should -Contain 0xE9
+        ($bytes -join ',') | Should -Not -Match '239,191,189'
+    }
+
     It 'replaces only its own block when a stray BEGIN sits above it' {
         # install.ps1 keeps its own copy of the marker pattern -- it is fetched
         # and piped to iex before the module exists -- and had the same hole the

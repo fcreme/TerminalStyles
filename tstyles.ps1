@@ -1178,7 +1178,15 @@ function Invoke-TerminalStyle {
             # down, for the per-keystroke path, and is still $null here --
             # indexing it threw "Cannot index into a null array" and took the
             # picker down before it drew a single row.
-            Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$idx])
+            #
+            # | Out-Null for the same reason as its three siblings ($onRetint,
+            # $restoreOriginalLook, and the tuner's $restoreBaseLook): this is a
+            # bare pipeline statement inside Invoke-TerminalStyle, so the bool
+            # Write-HostOscPacket returns is the exported command's own output.
+            # Unassigned, `tstyles` printed "True" on the line between the OSC
+            # palette and the picker's first Clear-Host; captured, `@(tstyles)`
+            # came back holding a [bool] nobody asked for.
+            Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$idx]) | Out-Null
         }
         if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
 

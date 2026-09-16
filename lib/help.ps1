@@ -63,7 +63,16 @@ function Get-TerminalStyleHelpData {
                        "                           downloaded, it says which -- it never just",
                        "                           opens nothing.",
                        "  -Target <name>           Windows Terminal profile to apply to,",
-                       "                           instead of the tab's own.",
+                       "                           instead of the tab's own. 'defaults' is a",
+                       "                           name in its own right -- it is what the",
+                       "                           not-found message offers first -- and it",
+                       "                           means Windows Terminal's profiles.defaults:",
+                       "                           every profile that does not set a field",
+                       "                           itself inherits it, so a style applied",
+                       "                           there styles all of them. Applying a later",
+                       "                           style with no background image of its own",
+                       "                           clears the image from defaults, and from",
+                       "                           every profile that was inheriting it.",
                        "  -BackgroundImage <path>  Use this image instead of the style's.",
                        "                           An empty string ('') turns the background",
                        "                           OFF. Both are Windows Terminal only --",
@@ -73,7 +82,8 @@ function Get-TerminalStyleHelpData {
                        "Whatever the current terminal cannot show is named as the style is",
                        "applied, rather than dropped in silence.")
             Keys = @()
-            Examples = @('tstyles eva', 'tstyles eva -KeepPrompt', "tstyles eva -BackgroundImage ''")
+            Examples = @('tstyles eva', 'tstyles eva -KeepPrompt', "tstyles eva -BackgroundImage ''",
+                         'tstyles eva -Target defaults')
         }
         [pscustomobject]@{
             Name = 'list'; Usage = 'list'; Summary = "List all styles; '*' marks the active one"
@@ -97,6 +107,10 @@ function Get-TerminalStyleHelpData {
             Detail = @("Strips the colors, cursor, font, opacity, and background a style added",
                        "to the target profile, and restores your own prompt. The inverse of",
                        "applying a style.",
+                       "",
+                       "-Target takes 'defaults' as well as a profile name: that is Windows",
+                       "Terminal's profiles.defaults, which every profile inherits from, so",
+                       "resetting it reaches the ones that never set those fields themselves.",
                        "",
                        "On Windows Terminal that means editing settings.json, and a",
                        "settings.json.bak is written first. Elsewhere there is no",

@@ -38,7 +38,9 @@ function Show-StyleList {
         $swatch = ''
         try {
             $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            $swatch = Get-SchemeSwatch -Scheme $scheme
+            # Through the note-aware reader: a scheme this tool can read no
+            # colour out of prints a reason, not an empty column.
+            $swatch = Get-SchemeSwatchOrNote -Scheme $scheme
         } catch {
             $swatch = Get-UnreadableSchemeSwatch
         }
@@ -103,10 +105,11 @@ function Show-CurrentStyle {
                 # branch that draws the swatch, so every redirected run (all of
                 # CI) took the Write-Output path and never touched the file.
                 # Two implementations of one rule, and this was the half that
-                # never learned it.
+                # never learned it. Both halves now read the same three lines,
+                # note-aware reader included, so neither can drift again.
                 try {
                     $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                    $swatch = Get-SchemeSwatch -Scheme $scheme
+                    $swatch = Get-SchemeSwatchOrNote -Scheme $scheme
                 } catch { $swatch = Get-UnreadableSchemeSwatch }
             }
             if ($swatch) {
