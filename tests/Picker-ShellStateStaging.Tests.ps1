@@ -272,14 +272,15 @@ Describe 'the picker puts the terminal back when you cancel' {
     # the tab, so emitting Get-OscResetPacket -- which hands control back to the
     # terminal's OWN defaults -- dropped the user to a stock palette instead of
     # the style they arrived with.
-
-    It 'revert re-emits the starting style off Windows Terminal' {
-        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
-        $src = $fn.Extent.Text
-        $src | Should -Match '\$startIdx'
-        $src | Should -Match '\$hadCurrentStyle'
-        $src | Should -Match 'Get-SchemeOscPacket -Scheme \$schemes\[\$startIdx\]'
-    }
+    #
+    # WHICH of those two a cancel emits is no longer asked here. It used to be,
+    # as three `-Match`es against Invoke-TerminalStyle's whole extent -- and both
+    # arms of the branch live inside that one extent, so swapping them (the exact
+    # regression above) left this Describe, and all 1821 tests, green. The
+    # decision is Get-RevertOscPacket's now and tests/Get-RevertOscPacket.Tests.ps1
+    # compares the bytes it returns. What stays here is the part no helper can
+    # see: that the value it is asked about is captured before the cursor moves,
+    # and that every exit path reaches the revert at all.
 
     It 'captures the starting index before the cursor moves' {
         # $idx is the live cursor and has moved by the time Esc arrives, so the
@@ -307,12 +308,6 @@ Describe 'the picker puts the terminal back when you cancel' {
         $firstLoop   = ($loopCall | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
         $firstAssign | Should -BeLessThan $firstLoop `
             -Because 'the revert reads $startIdx, so it must be captured before the cursor starts moving'
-    }
-
-    It 'still hands control back to the terminal when there was no active style' {
-        # Nothing to restore: the stock palette IS correct there.
-        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
-        $fn.Extent.Text | Should -Match 'Get-OscResetPacket'
     }
 
     It 'reverts on Ctrl+C or an exception, not only on Esc' {

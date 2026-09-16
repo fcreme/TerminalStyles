@@ -205,6 +205,101 @@ Describe 'Terminal.app profile generation' {
             @($script:TStylesAppleColorMap.Keys).Count | Should -Be 20
         }
 
+        It 'admits every hex form ConvertTo-NormalHex admits' {
+            # The divergence: this half handed the raw scheme value to
+            # appleterminal.js, whose `^[0-9a-fA-F]{6}$` is a stricter notion of
+            # "a colour" than the rest of the module's. Every form below paints
+            # the live window over OSC -- Get-SchemeUnreadableSlots reports
+            # nothing skipped for this scheme -- and four of the six never
+            # reached the .terminal profile, which then showed Terminal.app's
+            # own defaults for them with nothing saying so.
+            #
+            # Asked of the pure half, so it runs on all four CI legs: the JXA
+            # helper is macOS-only, but WHICH slots are offered to it is not.
+            $scheme = [pscustomobject]@{
+                background          = '#013'
+                foreground          = '#0011339f'
+                cursorColor         = ' #ff0000'
+                selectionBackground = '##aa0000'
+                black               = '#AABBCC'
+                red                 = '#112233'
+            }
+            $spec = Get-AppleTerminalColorSpec -Scheme $scheme
+
+            # ForEach-Object, not @($spec.Keys).Count: member access on an empty
+            # collection yields one $null, so a count of 1 would mean nothing.
+            @($spec.Keys | ForEach-Object { $_ }).Count | Should -Be 6
+
+            foreach ($k in 'BackgroundColor', 'TextColor', 'CursorColor',
+                           'SelectionColor', 'ANSIBlackColor', 'ANSIRedColor') {
+                $spec.Contains($k) | Should -BeTrue `
+                    -Because "$k reaches the live terminal over OSC, so it must reach the profile too"
+            }
+
+            # The same canonical form the OSC packet carries, not the raw text.
+            $spec['BackgroundColor'] | Should -Be '#001133'
+            $spec['TextColor']       | Should -Be '#001133'   # alpha dropped
+            $spec['CursorColor']     | Should -Be '#ff0000'
+            $spec['SelectionColor']  | Should -Be '#aa0000'
+            $spec['ANSIBlackColor']  | Should -Be '#aabbcc'   # lowercased
+        }
+
+        It 'offers exactly the slots the OSC packet paints' {
+            # One rule, asked twice. A slot in the profile that the live window
+            # does not get -- or the other way round -- is the divergence this
+            # test exists to keep closed, whichever direction it reopens in.
+            $scheme = [pscustomobject]@{
+                background  = '#013'          # readable
+                foreground  = 'black'         # an X11 word: neither path can read it
+                cursorColor = 'rgb(1,2,3)'    # nor this
+                black       = '#112233'       # readable
+                notAColour  = '#445566'       # not a palette slot at all
+            }
+            $spec = Get-AppleTerminalColorSpec -Scheme $scheme
+            @($spec.Keys | ForEach-Object { $_ }).Count | Should -Be 2
+            $spec.Contains('BackgroundColor') | Should -BeTrue
+            $spec.Contains('ANSIBlackColor')  | Should -BeTrue
+
+            # The live half's own answer about the same scheme.
+            $unreadable = @(Get-SchemeUnreadableSlots -Scheme $scheme)
+            $unreadable | Should -Contain 'foreground'
+            $unreadable | Should -Contain 'cursorColor'
+            $unreadable | Should -Not -Contain 'background'
+            $unreadable | Should -Not -Contain 'black'
+        }
+
+        It 'is empty for a scheme with no readable colours, and does not throw' {
+            # New-AppleTerminalProfile's caller falls back to the OSC-only path
+            # on $null; an exception here would take the background feature down
+            # instead. ConvertTo-NormalHex tolerates an absent slot, which is
+            # why the old `if ($hex)` guard could be dropped.
+            $spec = $null
+            { $script:emptySpec = Get-AppleTerminalColorSpec -Scheme ([pscustomobject]@{ name = 'x' }) } |
+                Should -Not -Throw
+            @($script:emptySpec.Keys | ForEach-Object { $_ }).Count | Should -Be 0
+        }
+
+        It 'carries those slots through to a real Terminal.app profile' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
+            # The end-to-end half, on the one leg that has the JXA runtime. The
+            # -Skip: is spelled out inline for the reason the Describe's header
+            # gives: it is decided at discovery.
+            $scheme = [pscustomobject]@{
+                background          = '#013'
+                foreground          = '#0011339f'
+                cursorColor         = ' #ff0000'
+                selectionBackground = '##aa0000'
+                black               = '#AABBCC'
+                red                 = '#112233'
+            }
+            $data = Get-AppleTerminalProfileData -Scheme $scheme
+            $data | Should -Not -BeNullOrEmpty
+            @($data.Keys | ForEach-Object { $_ }).Count | Should -Be 6
+            foreach ($k in 'BackgroundColor', 'TextColor', 'CursorColor',
+                           'SelectionColor', 'ANSIBlackColor', 'ANSIRedColor') {
+                $data.ContainsKey($k) | Should -BeTrue -Because "$k must survive the archiver too"
+            }
+        }
+
         It 'writes a valid plist profile' -Skip:(-not ($IsMacOS -and (Get-Command osascript -ErrorAction SilentlyContinue))) {
             $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
             $out = Join-Path $TestDrive 'test.terminal'
