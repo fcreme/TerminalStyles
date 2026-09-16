@@ -727,7 +727,9 @@ function Apply-StyleDirect {
         try {
             Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget
         } catch {
-            Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
+            # One sentence, one place: three of the five callers of the single
+            # rolling .bak used to swallow this failure entirely.
+            Write-Host (Get-BackupFailureNote -Reason "$_") -ForegroundColor Yellow
         }
 
         # Into a SEPARATE variable, and checked before the write. This was
@@ -990,7 +992,7 @@ function Reset-StyleDirect {
     try {
         Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedTarget
     } catch {
-        Write-Host "Warning: could not write backup ($_); proceeding anyway." -ForegroundColor Yellow
+        Write-Host (Get-BackupFailureNote -Reason "$_") -ForegroundColor Yellow
     }
 
     # Strip every TerminalStyles field that is present on the entry.

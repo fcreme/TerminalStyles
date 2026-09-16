@@ -99,7 +99,11 @@ Describe 'the rolling backup is not spent on a command that does nothing' {
         It 'font with a bad -Target keeps the previous backup' {
             Mock Get-FontCatalog       { @([pscustomobject]@{ name='jb'; family='JetBrains Mono'; license='OFL'; url='x'; sha256='y' }) }
             Mock Test-FontInstalled    { $true }
-            Mock Get-TerminalCapability { [pscustomobject]@{ Font = $true } }
+            # No Get-TerminalCapability mock: the gate this has to get past is
+            # Test-FontCommandCanApply, which asks Get-TerminalKind -- mocked to
+            # 'WindowsTerminal' in the BeforeEach above. Mocking the capability
+            # here suggested the capability was the gate, which is the defect
+            # that let `tstyles font` fall through to settings.json on WezTerm.
 
             Invoke-TerminalStyleFont -Name 'jb' -Target 'NoSuchProfile'
 
@@ -219,6 +223,103 @@ Describe 'only a redraw loop takes the backup quietly' {
         @($quietSites | Where-Object { $_ -notin $allowed }) -join ', ' | Should -BeNullOrEmpty -Because @'
 -Quiet exists for a menu that redraws every frame. Any other command spends the
 user's single rolling settings.json.bak without a word on screen.
+'@
+    }
+}
+
+Describe 'a backup that could not be taken is not a backup that was' {
+    # The apply path has printed a yellow warning here since 0.8.x
+    # (Apply-StyleDirect-Backup.Tests.ps1). The font path had the same call in
+    # `try { ... } catch { }` and said nothing at all: measured with the .bak
+    # alone unwritable while its directory stayed writable, settings.json was
+    # rewritten, the .bak kept the state from the user's LAST REAL APPLY, and
+    # the whole of what the user saw was "Applied 'JetBrains Mono' to
+    # 'PowerShell'." On the success path the same site prints "Backed up
+    # settings to: <path>", so the two outcomes differed only by an absence.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:fPath = Join-Path $TestDrive 'font-settings.json'
+            [System.IO.File]::WriteAllText($script:fPath,
+                '{"profiles":{"list":[{"name":"PowerShell","guid":"{x}"}]}}',
+                [System.Text.UTF8Encoding]::new($false))
+
+            Mock Find-WTSettingsPath { $script:fPath }
+            Mock Get-TerminalKind    { 'WindowsTerminal' }
+            Mock Get-FontCatalog     { @([pscustomobject]@{ name='jb'; family='JetBrains Mono'; license='OFL'; url='x'; sha256='y' }) }
+            Mock Test-FontInstalled  { $true }
+            Mock Set-ProfileFont     { $true }
+            Mock Write-Host          { }
+        }
+
+        It 'tstyles font warns when the rolling .bak could not be written' {
+            Mock Copy-Item { throw 'simulated permission denied' } `
+                -ParameterFilter { $Destination -like '*.bak' }
+
+            { Invoke-TerminalStyleFont -Name 'jb' -Target 'PowerShell' } | Should -Not -Throw
+
+            Should -Invoke Write-Host -Times 1 -ParameterFilter {
+                $ForegroundColor -eq 'Yellow' -and "$Object" -match 'could not write backup'
+            } -Because 'the undo the user is told to rely on was not refreshed'
+        }
+
+        It 'and says nothing of the sort when it worked' {
+            # The half that stops "warn unconditionally" from passing.
+            Invoke-TerminalStyleFont -Name 'jb' -Target 'PowerShell'
+            Should -Invoke Write-Host -Times 0 -ParameterFilter {
+                "$Object" -match 'could not write backup'
+            }
+        }
+    }
+}
+
+Describe 'no caller of the rolling backup swallows its failure' {
+    # The picker and the tuner cannot be driven here -- both are key loops, and
+    # lib/tune.ps1's own comment concedes "the key loop is not tested" -- so the
+    # rule is enforced structurally, the same shape as the -Quiet lint above.
+    # Not a name match against a helper: this walks to the catch clause and asks
+    # whether it contains anything at all.
+    It 'every Save-SettingsBackup call has a catch that does something' {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $files = Get-ChildItem -LiteralPath $repoRoot -Recurse -Filter '*.ps1' -File |
+            Where-Object { $_.FullName -notmatch '[\\/](tests|out)[\\/]' }
+
+        $checked   = 0
+        $offenders = @()
+        foreach ($f in $files) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($f.FullName, [ref]$null, [ref]$null)
+            $calls = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Save-SettingsBackup' }, $true))
+            foreach ($c in $calls) {
+                $checked++
+                # Walk out to the enclosing try, stopping at the function
+                # boundary so an outer try somewhere else cannot answer for it.
+                $node = $c.Parent
+                while ($node -and
+                       $node -isnot [System.Management.Automation.Language.TryStatementAst] -and
+                       $node -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) {
+                    $node = $node.Parent
+                }
+                if ($node -isnot [System.Management.Automation.Language.TryStatementAst]) {
+                    # Not wrapped at all: the failure propagates, which is loud.
+                    continue
+                }
+                foreach ($clause in $node.CatchClauses) {
+                    if (@($clause.Body.Statements).Count -eq 0) {
+                        $fn = $c.Parent
+                        while ($fn -and $fn -isnot [System.Management.Automation.Language.FunctionDefinitionAst]) { $fn = $fn.Parent }
+                        $offenders += if ($fn) { "$($f.Name)::$($fn.Name)" } else { "$($f.Name) (top level)" }
+                    }
+                }
+            }
+        }
+
+        $checked | Should -BeGreaterThan 2 -Because 'the lint must actually be finding call sites'
+        $offenders -join ', ' | Should -BeNullOrEmpty -Because @'
+there is ONE rolling settings.json.bak and README calls it the only route back to
+a colorScheme, a font.face or the JSONC comments an apply drops. A caller that
+cannot take it must say so -- in the frame, where a redraw loop's message can be
+read, or on the line, for a one-shot command.
 '@
     }
 }

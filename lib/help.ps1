@@ -158,7 +158,13 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles restore', 'tstyles restore my-theme')
         }
         [pscustomobject]@{
-            Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font and apply it to the active profile'
+            # "and apply it to the active profile" is Windows Terminal only, and
+            # this Summary is rendered by an overview loop with no platform
+            # branch in it -- so on every other terminal the shortest
+            # description of the command promised an apply the command then
+            # declined. Phrased to be true everywhere; the Detail below draws
+            # the platform line.
+            Name = 'font'; Usage = 'font [name]'; Summary = 'Install a coding font (and apply it where tstyles can)'
             Detail = @("With no argument, lists available coding fonts with installed/installable",
                        "markers. With a font name, installs it (if not already present) and,",
                        "on Windows Terminal, applies it to the active profile.",

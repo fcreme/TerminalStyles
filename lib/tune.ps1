@@ -313,6 +313,17 @@ function Save-TunedStyle {
         # colours come from the style itself while the lineage must survive.
         [string]$LineageBase,
         [string]$LineageBaseDir,
+        # The directory of the style the TUNER WAS OPENED ON, when the caller
+        # has one. It answers a question $BaseStyleDir cannot: whether this save
+        # is writing over SOMEONE ELSE'S style. A tuned style's base is a
+        # different directory from the style itself, so "the destination is not
+        # the base" is true on every ordinary re-tune as well -- keying the
+        # background removal below on that would delete the user's hand-placed
+        # image on a routine brightness tweak.
+        #
+        # Omitted means "assume the destination is the style being tuned", which
+        # is the non-destructive answer.
+        [string]$OpenedStyleDir,
         [int]$Brightness, [int]$Saturation, [int]$Opacity,
         [string]$FontFace, [int]$FontSize
     )
@@ -402,6 +413,32 @@ function Save-TunedStyle {
         }
     }
 
+    # The background image, which is NOT one of the artefacts copied from the
+    # base: a base's image lives in the data-root cache and reaches a tuned
+    # style by reference, through tune.json. A background.* sitting in a style
+    # directory is a file the user put there, and it is tier 1 of
+    # Get-StyleBundledBackground -- checked before the cache and before the
+    # inherited image, so it outranks the new base's permanently.
+    #
+    # That made the Save-As collision prompt untrue in the way that shows on
+    # screen: 'mytheme' was REPLACED, kept its own wallpaper, and went on
+    # painting it under the new style's colours -- while the tuner's own
+    # preview, whose scratch dir carries no image, had shown the BASE's.
+    #
+    # Gated on "the destination is a different style", not on $sameDir. Measured
+    # on the $sameDir form: an ordinary Enter-save of a brightness tweak deleted
+    # the override, because a tuned style's base is another directory.
+    $replacingAnotherStyle = $false
+    if ($OpenedStyleDir) {
+        $replacingAnotherStyle = -not (Test-SameStyleDirectory -A $destDir -B $OpenedStyleDir)
+    }
+    if ($replacingAnotherStyle) {
+        $staleBackground = Get-BackgroundFileIn -Directory $destDir
+        if ($staleBackground) {
+            Remove-Item -LiteralPath $staleBackground -Force -ErrorAction SilentlyContinue
+        }
+    }
+
     if (-not $LineageBase)    { $LineageBase    = $BaseName }
     if (-not $LineageBaseDir) { $LineageBaseDir = $BaseStyleDir }
 
@@ -426,6 +463,108 @@ function Save-TunedStyle {
         [System.Text.UTF8Encoding]::new($false))
 
     return $destDir
+}
+
+function Get-TuneOverwriteChoice {
+    <#
+    .SYNOPSIS
+    What "[1] Overwrite '<name>'" will do, and the note that says so.
+
+    .DESCRIPTION
+    Two questions, not one, and folding them into a single Test-Path made the
+    label false on the layout most users have.
+
+    Replaces -- is there a file where Save-TunedStyle is about to write? That is
+    a question about the DESTINATION, $DataRoot/styles/<name>/scheme.json, and it
+    is what gates the "cannot be undone" y/N. It is right in both layouts and is
+    left exactly as it was.
+
+    Note -- whose style is that? Get-StyleOrigin's question, and on a BOOTSTRAP
+    install (module root == data root) the two answers disagree. A shipped style
+    sits in the destination directory, so the gate fires correctly while the
+    label said "(REPLACES your saved style)" about a style the user had never
+    touched -- and the "(shadows the bundled style)" branch, whose own comment
+    promises the original "comes back if the user copy is deleted", is
+    unreachable there: there is no second directory to come back from. Measured
+    on a real pty: the same four keypresses produce a true statement on the
+    PSGallery layout and a false possessive on the one install.sh gives everyone
+    else.
+
+    Answering with Get-StyleOrigin ALONE would be worse than the defect: it
+    reports 'bundled' for exactly the destructive one-root case, so the user
+    would lose the warning and the y/N gate as well as being told the original
+    was safe. Hence two fields.
+
+    -Claim / -RootsAreOne are Get-StyleOrigin's seams, forwarded so a test can
+    drive both layouts without building two installs.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir,
+        $Claim = '__unset__',
+        $RootsAreOne = $null
+    )
+
+    $destDir  = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
+    $replaces = Test-Path -LiteralPath (Join-Path $destDir 'scheme.json')
+    $origin   = Get-StyleOrigin -Name $StyleName -StyleDir $StyleDir -Claim $Claim -RootsAreOne $RootsAreOne
+
+    $note =
+        if (-not $replaces) {
+            # Nothing at the destination: the save CREATES the user copy and the
+            # original stays where it is. Only a style resolved out of the module
+            # root can be in this state, but say the weaker thing if it ever is not.
+            if ($origin -eq 'bundled') { '(shadows the bundled style)' }
+            else { "(saves '$StyleName' in your styles dir)" }
+        } elseif ($origin -eq 'bundled') {
+            # One root: the shipped style IS the destination. `tstyles update`
+            # will not put it back either -- Sync-InstallTree skips a style
+            # directory carrying tune.json -- so there is nothing to fall back to
+            # until that directory is deleted.
+            "(REPLACES the bundled '$StyleName' -- no copy to fall back to)"
+        } elseif ($origin -eq 'unknown') {
+            # No usable manifest, one root: ownership cannot be proved either way,
+            # so claim neither. What is certain is that the name has one provider.
+            "(REPLACES '$StyleName' -- nothing else provides that name)"
+        } else {
+            '(REPLACES your saved style)'
+        }
+
+    return [pscustomobject]@{
+        Replaces = [bool]$replaces
+        Origin   = $origin
+        Note     = $note
+    }
+}
+
+function Get-TuneReplaceWarning {
+    <#
+    .SYNOPSIS
+    The question asked before the tuner writes over a style that already exists.
+
+    .DESCRIPTION
+    A sentence rather than a literal at the Read-Host, because what the save
+    takes with it depends on the destination: replacing ANOTHER style also
+    removes the background image its owner placed beside it (see
+    Save-TunedStyle), and a prompt that bounds itself is entitled to be read as
+    complete. An Overwrite re-tune keeps that image, and says nothing about it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$DestDir,
+        # The destination is the style being tuned (Overwrite), not another
+        # style being replaced (Save As).
+        [switch]$SameStyle
+    )
+
+    $sentence = if ($SameStyle) { "'$Name' will be replaced and cannot be undone." }
+                else            { "'$Name' already exists and will be REPLACED." }
+    if (-not $SameStyle -and (Get-BackgroundFileIn -Directory $DestDir)) {
+        $sentence += " Its background image goes with it."
+    }
+    return "  $sentence Continue? [y/N]"
 }
 
 function Get-TunedBaseBackground {
@@ -479,6 +618,25 @@ function Resolve-TuneSeed {
         # merely changed. The notice wording differs and so does the advice.
         BaseMissing = $false
         BaseChanged = $false
+        # BaseChanged is true, but the base has NOT changed: the recorded
+        # fingerprint is this style's own, which only a save taken while the
+        # base was missing can produce (the fallback records the style itself as
+        # the lineage base dir, so Save-TunedStyle hashes the file it has just
+        # baked). Keeping that value is deliberate -- it is the only recorded
+        # value that forces "colours from self, lineage kept", and both of the
+        # obvious repairs, $null and the base's real hash, make Test-TuneBaseMoved
+        # answer false and re-apply deltas measured against the style's OWN
+        # colours on top of the base's. Measured: previewing #040404 against a
+        # style whose scheme.json says #000000, and a save from there discards
+        # the earlier adjustment.
+        #
+        # So what was wrong was the SENTENCE, not the seeding: the next open
+        # said "'eva' has changed since this style was tuned" about a base that
+        # is byte-identical to the one it was saved against. This flag is how
+        # the notice tells the two apart. It self-heals: the drift branch below
+        # records both lineage fields, so one save from here writes the base's
+        # real fingerprint and the state is gone.
+        BaseColoursBaked = $false
         # The name of the base that moved, for the notice. Distinct from
         # BaseName, which stays the style itself when the deltas are dropped.
         ChangedBaseName = $null
@@ -586,12 +744,33 @@ function Resolve-TuneSeed {
                     $seed.BaseMissing     = $true
                     $seed.ChangedBaseName = [string]$tune.base
                     $seed.LineageBase     = [string]$tune.base
+                    # Set, not left for the caller's `else { $seed.BaseDir }`
+                    # fallback to guess. The drift branch below sets both lineage
+                    # fields and this one set only the name, which is the
+                    # asymmetry the whole BaseColoursBaked state comes out of:
+                    # the guessed value is the style itself, so the save records
+                    # the style's own fingerprint as the base's. The value is
+                    # unchanged -- this says it on purpose.
+                    $seed.LineageBaseDir  = $StyleDir
                 }
                 if (-not $baseIsSelf) {
                     $baseMoved = Test-TuneBaseMoved -RecordedFingerprint $recordedFp -BaseDir $resolvedBaseDir
                 }
                 if ($baseMoved) {
                     $seed.BaseChanged = $true
+                    # ...but "moved" is not the only way to get here. A save
+                    # taken while the base was MISSING records this style's own
+                    # fingerprint as the base's, so the comparison above differs
+                    # for ever after -- and the notice then told the user their
+                    # base had changed when the base was byte-identical to the
+                    # one they restored on the tool's own advice. Only that save
+                    # can produce this equality (an Overwrite save records the
+                    # base's hash and is caught by the self-reference guard
+                    # instead), so it names the state exactly.
+                    if ($recordedFp -and
+                        $recordedFp -eq (Get-StyleSchemeFingerprint -StyleDir $StyleDir)) {
+                        $seed.BaseColoursBaked = $true
+                    }
                     # The name of the base that MOVED. $seed.BaseName stays the
                     # style itself here (the fallback seeds from its own
                     # theme.json), so without this the on-screen notice named
@@ -704,6 +883,66 @@ function Resolve-TuneSeed {
     }
 
     return $seed
+}
+
+function Get-TuneSeedNotice {
+    <#
+    .SYNOPSIS
+    What the tuner says above the knobs about where its starting values came from.
+
+    .DESCRIPTION
+    Every one of these lines is a claim about the user's own files, and the key
+    loop that printed them cannot be driven by a test -- it needs a real console
+    and a pty, which no CI leg has. So the decision is made here, on the seed
+    object alone, and the loop only paints what it is handed.
+
+    Tone is the chrome role ('Warn' / 'Dim') the tuner fits to the previewed
+    background; the caller looks it up rather than this function knowing about
+    escape sequences.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Seed)
+
+    $lines = @()
+    $line = {
+        param([string]$Tone, [string]$Text)
+        [pscustomobject]@{ Tone = $Tone; Text = $Text }
+    }
+
+    if ($Seed.BaseChanged) {
+        # Silence here read as "the tuner forgot my settings". It did not: the
+        # base was re-baked under this style, so the saved deltas no longer
+        # describe a distance from it and re-applying them would double the tune.
+        #
+        # Three states, not two. GONE says the values are not recorded anywhere
+        # else any more. BAKED says the base is fine and the colours in front of
+        # you are the style's own. MOVED is the original case.
+        if ($Seed.BaseMissing) {
+            $lines += & $line 'Warn' "  '$($Seed.ChangedBaseName)' is gone, so the adjustments measured against it are not shown."
+            $lines += & $line 'Dim'  "  Restore that style to get them back; saving now records this style's own colours."
+        } elseif ($Seed.BaseColoursBaked) {
+            # The sentence this replaces said "'<base>' has changed since this
+            # style was tuned", about a base the user had just restored
+            # byte-identically because the line above told them to. What
+            # actually happened is that the save taken while it was gone baked
+            # this style's own colours in and recorded them as the base's.
+            $lines += & $line 'Warn' "  '$($Seed.ChangedBaseName)' was unavailable when this style was last saved, so its colours are baked in."
+            $lines += & $line 'Dim'  "  Adjustments start from those colours; '$($Seed.ChangedBaseName)' itself is unchanged, and saving re-links to it."
+        } else {
+            $lines += & $line 'Warn' "  '$($Seed.ChangedBaseName)' has changed since this style was tuned -- starting from its current colours."
+        }
+    } elseif ($Seed.TuneUnusable) {
+        # The same silence, through a third door: tune.json is there and
+        # unusable, so the knobs came up neutral with nothing on screen to say
+        # why. No name is quoted, on purpose -- ChangedBaseName is empty in this
+        # state, and reusing the branch above would have printed "'' is gone".
+        # The second line is the harder claim and the reason this needs saying
+        # before a key is pressed: with no lineage recovered, Save-TunedStyle
+        # records the style as its own base.
+        $lines += & $line 'Warn' "  This style's tune.json could not be used, so any adjustments it recorded are not shown."
+        $lines += & $line 'Dim'  "  Repair or restore that file to get them back; saving now records this style as its own base."
+    }
+    return $lines
 }
 
 function Resolve-TuneOpenedScheme {
@@ -862,12 +1101,9 @@ function Invoke-TerminalStyleTune {
     $opacity    = $seed.Opacity
     $fontFace   = $seed.FontFace
     $fontSize   = $seed.FontSize
-    $baseChanged = $seed.BaseChanged
-    $changedBaseName = $seed.ChangedBaseName
-    $baseMissing     = $seed.BaseMissing
-    # The style's own tune.json could not be used at all, so there is no base
-    # name to quote and the knobs came up neutral. Its own sentence, below.
-    $tuneUnusable    = $seed.TuneUnusable
+    # What the seed has to SAY -- about a base that moved, vanished, or was
+    # unavailable at the last save, and about a tune.json that could not be read
+    # -- is Get-TuneSeedNotice's, and $drawMenu below prints whatever it returns.
 
     $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
@@ -1120,31 +1356,14 @@ function Invoke-TerminalStyleTune {
         Write-Host "$($ui.Title)'$StyleName'$($ui.Reset)" -NoNewline
         Write-Host "$($ui.Dim)                      base: $baseName$($ui.Reset)"
         Write-Host "$hint  Up/Down select   Left/Right adjust   R reset color   Enter save   Esc cancel$reset"
-        if ($baseChanged) {
-            # Silence here read as "the tuner forgot my settings". It did not:
-            # the base was re-baked under this style, so the saved deltas no
-            # longer describe a distance from it and re-applying them would
-            # double the tune.
-            # A base that has MOVED and a base that is GONE need different
-            # sentences: one tells you why the knobs look different, the other
-            # tells you the values are not recorded anywhere else any more.
-            if ($baseMissing) {
-                Write-Host "$($ui.Warn)  '$changedBaseName' is gone, so the adjustments measured against it are not shown.$($ui.Reset)"
-                Write-Host "$($ui.Dim)  Restore that style to get them back; saving now records this style's own colours.$($ui.Reset)"
-            } else {
-                Write-Host "$($ui.Warn)  '$changedBaseName' has changed since this style was tuned -- starting from its current colours.$($ui.Reset)"
-            }
-        } elseif ($tuneUnusable) {
-            # The same silence, through a third door: tune.json is there and
-            # unusable, so the knobs came up neutral with nothing on screen to
-            # say why. No name is quoted, on purpose -- $changedBaseName is
-            # empty in this state, and reusing the branch above would have
-            # printed "'' is gone". The second line is the harder claim and the
-            # reason this needs saying before a key is pressed: with no lineage
-            # recovered, Save-TunedStyle records the style as its own base.
-            Write-Host "$($ui.Warn)  This style's tune.json could not be used, so any adjustments it recorded are not shown.$($ui.Reset)"
-            Write-Host "$($ui.Dim)  Repair or restore that file to get them back; saving now records this style as its own base.$($ui.Reset)"
+        foreach ($notice in (Get-TuneSeedNotice -Seed $seed)) {
+            Write-Host ($ui.($notice.Tone) + $notice.Text + $ui.Reset)
         }
+        # The rolling backup could not be taken. Said HERE, and not where it
+        # happened: this menu Clear-Host's on every redraw, so the line printed
+        # beside the failure is wiped before a human can read it -- the same
+        # reason the update notice is held back to the end.
+        if ($backupNote) { Write-Host ($ui.Warn + $backupNote + $ui.Reset) }
         Write-Host ""
         $rows = @(
             @{ Label = 'Brightness'; Display = (& $bar $brightness -100 100); Value = ('{0:+#;-#;0}' -f $brightness) },
@@ -1170,9 +1389,17 @@ function Invoke-TerminalStyleTune {
     # the process). Same rolling .bak the direct-apply/reset paths write.
     # Crash-recovery copy -- only meaningful where a settings.json is written.
     # Same single writer as the picker and the direct apply.
+    # A failure here was swallowed by `catch { }`: the preview writes went
+    # ahead over a .bak still holding the state from the user's last real apply,
+    # and nothing said so -- with -Quiet the failed and successful backups
+    # produce byte-identical output. Captured into a note $drawMenu paints
+    # inside the frame instead, because anything printed from here is wiped by
+    # the menu's own Clear-Host.
+    $backupNote = $null
     if ($tuneUsesSettings) {
         $resolvedForBackup = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $target
-        try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedForBackup -Quiet } catch { }
+        try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolvedForBackup -Quiet }
+        catch { $backupNote = Get-BackupFailureNote -Reason "$_" -InFrame }
     }
 
     [Console]::CursorVisible = $false
@@ -1318,10 +1545,16 @@ function Invoke-TerminalStyleTune {
         # unconditionally, which for that case asserted the exact opposite of
         # what was about to happen. Save As twenty lines below has drawn this
         # distinction since 0.8.x; option [1] never did.
-        $overwriteUserDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
-        $overwriteReplaces = Test-Path -LiteralPath (Join-Path $overwriteUserDir 'scheme.json')
-        $overwriteNote = if ($overwriteReplaces) { '(REPLACES your saved style)' }
-                         else                    { '(shadows the bundled style)' }
+        # Two questions with two answers; see Get-TuneOverwriteChoice. .Replaces
+        # is "is there a file where the save is about to write", which gates the
+        # y/N below and is unchanged. .Note is "whose style is that", which on a
+        # bootstrap install is a different question -- and was answered with the
+        # first one, so an untouched SHIPPED style was labelled "your saved
+        # style" and the "(shadows the bundled style)" branch was unreachable.
+        $overwriteChoice   = Get-TuneOverwriteChoice -StyleName $StyleName -StyleDir $styleDir
+        $overwriteReplaces = $overwriteChoice.Replaces
+        $overwriteNote     = $overwriteChoice.Note
+        $overwriteUserDir  = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
 
         Write-Host "    [1] Overwrite '$StyleName'   $overwriteNote"
         Write-Host "    [2] Save as a new name"
@@ -1331,7 +1564,7 @@ function Invoke-TerminalStyleTune {
         if ($choice -eq '1') {
             # Gated the same way Save As gates the same outcome.
             if ($overwriteReplaces) {
-                $warn = "$(Read-Host "  '$StyleName' will be replaced and cannot be undone. Continue? [y/N]")".Trim()
+                $warn = "$(Read-Host (Get-TuneReplaceWarning -Name $StyleName -DestDir $overwriteUserDir -SameStyle))".Trim()
                 if ($warn -notmatch '^(?i)y') {
                     Write-Host ($saveUi.Dim + "  Cancelled." + $saveUi.Reset)
                 } else {
@@ -1365,7 +1598,10 @@ function Invoke-TerminalStyleTune {
                 # one and stay silent about the destructive one.
                 $userDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $candidate
                 if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) {
-                    $warn = "$(Read-Host "  '$candidate' already exists and will be REPLACED. Continue? [y/N]")".Trim()
+                    # Through the helper, because REPLACED now also takes the
+                    # background image the destination's owner placed beside it
+                    # -- and a prompt that bounds itself gets read as complete.
+                    $warn = "$(Read-Host (Get-TuneReplaceWarning -Name $candidate -DestDir $userDir))".Trim()
                     if ($warn -notmatch '^(?i)y') { continue }
                 } else {
                     $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $candidate
@@ -1392,6 +1628,7 @@ function Invoke-TerminalStyleTune {
         Save-TunedStyle -AdjustedScheme $finalScheme -SaveName $saveName `
             -BaseStyleDir $baseDir -BaseName $baseName `
             -LineageBase $lineageBase -LineageBaseDir $lineageBaseDir `
+            -OpenedStyleDir $styleDir `
             -Brightness $brightness -Saturation $saturation -Opacity $opacity `
             -FontFace $fontFace -FontSize $fontSize | Out-Null
 

@@ -14,6 +14,16 @@
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
+# Imported explicitly, like every other file here. Without it, the
+# InModuleScope blocks below bind to whatever TerminalStyles the session happens
+# to have auto-loaded -- on a developer machine that is the INSTALLED module,
+# which is a different (older) version of the code this suite is testing: the
+# help data it answered with was missing a topic the repo has had for releases.
+# In CI it only worked because an alphabetically earlier file had imported it.
+BeforeDiscovery {
+    Import-Module (Join-Path (Split-Path $PSScriptRoot -Parent) 'TerminalStyles.psd1') `
+        -Force -DisableNameChecking *> $null
+}
 BeforeAll {
     $script:repoRoot     = Split-Path $PSScriptRoot -Parent
     # Explicit, like every other file in the suite. The cache-directory It below
@@ -181,6 +191,165 @@ Describe 'README claims that the code can settle' {
         foreach ($w in $writers) {
             $section | Should -BeLike "*$($commandFor[$w])*" `
                 -Because "$w rolls the one .bak the recipe tells the user to restore"
+        }
+    }
+
+    It 'does not tell a -KeepPrompt user their style goes unreported' {
+        # README said a -KeepPrompt apply "isn't reported by `tstyles current` /
+        # the `*` in `tstyles list`, because active-style detection is
+        # prompt-based". The premise is true -- current-style.ps1 really is left
+        # absent -- and the conclusion is false: Get-CurrentStyleName falls back
+        # to the record every apply writes, and the comment beside that fallback
+        # names -KeepPrompt as the case it exists for. The claim would talk an Oh
+        # My Posh or Starship user out of four things that work.
+        $detected = InModuleScope TerminalStyles {
+            # Saved and put back: these are MODULE-scope variables, so a sandbox
+            # left in place here would follow the module into every test file
+            # that runs after this one.
+            $savedData   = $script:TStylesDataRoot
+            $savedModule = $script:TStylesModuleRoot
+            $savedCurrent = $script:TStylesCurrent
+            try {
+                $script:TStylesDataRoot   = Join-Path $TestDrive ('kp-' + [guid]::NewGuid().ToString('n'))
+                $script:TStylesModuleRoot = $script:TStylesDataRoot
+                # Computed from the data root at module load, so it moves too.
+                $script:TStylesCurrent    = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+
+                $dir = Join-Path $script:TStylesDataRoot 'styles/mine'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                $enc = [System.Text.UTF8Encoding]::new($false)
+                [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'),
+                    '{"name":"mine","background":"#101010","foreground":"#f0f0f0"}', $enc)
+                [System.IO.File]::WriteAllText((Join-Path $dir 'profile.ps1'), '# my prompt', $enc)
+
+                Mock Get-TerminalKind           { 'AppleTerminal' }
+                Mock Write-HostOscPacket        { }
+                Mock Write-Host                 { }
+                Mock Get-StyleBundledBackground { $null }   # keeps this off the network
+
+                Apply-StyleNonWT -StyleName 'mine' -StyleDir $dir -KeepPrompt
+
+                [pscustomobject]@{
+                    Name            = (Get-CurrentStyleName)
+                    PromptInstalled = (Test-Path -LiteralPath $script:TStylesCurrent)
+                }
+            } finally {
+                $script:TStylesDataRoot   = $savedData
+                $script:TStylesModuleRoot = $savedModule
+                $script:TStylesCurrent    = $savedCurrent
+            }
+        }
+
+        $detected.PromptInstalled | Should -BeFalse `
+            -Because 'this is the README''s own premise: -KeepPrompt installs no prompt file'
+        $detected.Name | Should -Be 'mine' `
+            -Because 'and the style is still reported, off the record rather than off the prompt'
+
+        $script:readme | Should -Not -Match "(?i)apply (isn't|is not) reported" `
+            -Because 'tstyles current, tstyles list, the picker and tstyles tune all find it'
+    }
+
+    It 'does not offer a settings.json.bak where the reset writes no file' {
+        # The help topic has said this since 0.8.21 ("Elsewhere there is no
+        # settings.json to strip... nothing to back up and no .bak is written")
+        # and tests/Show-TerminalStyleHelp.Tests.ps1 pins that half. The README
+        # sentence was never revisited, so it offered a safety net that does not
+        # exist off Windows Terminal.
+        #
+        # Guarded on the measured fact, so it dissolves on its own if a non-WT
+        # backup is ever added.
+        $created = InModuleScope TerminalStyles {
+            $savedData    = $script:TStylesDataRoot
+            $savedModule  = $script:TStylesModuleRoot
+            $savedCurrent = $script:TStylesCurrent
+            try {
+                $root = Join-Path $TestDrive ('rs-' + [guid]::NewGuid().ToString('n'))
+                New-Item -ItemType Directory -Path $root -Force | Out-Null
+                $script:TStylesDataRoot   = $root
+                $script:TStylesModuleRoot = $root
+                $script:TStylesCurrent    = Join-Path $root 'current-style.ps1'
+
+                Mock Get-TerminalKind    { 'AppleTerminal' }
+                Mock Write-HostOscPacket { }
+                Mock Write-Host          { }
+
+                Reset-StyleNonWT
+
+                @(Get-ChildItem -LiteralPath $root -Recurse -Force -File | ForEach-Object { $_.Name })
+            } finally {
+                $script:TStylesDataRoot   = $savedData
+                $script:TStylesModuleRoot = $savedModule
+                $script:TStylesCurrent    = $savedCurrent
+            }
+        }
+        @($created) | Should -BeNullOrEmpty -Because 'the non-WT reset is an escape sequence; it writes nothing'
+
+        $section = ([regex]::Match($script:readme, '(?ms)^### Resetting a profile.*?(?=^#{2,3} )')).Value
+        $section | Should -Not -BeNullOrEmpty -Because 'the section this test is about must still exist'
+        if ($section -match 'settings\.json\.bak') {
+            # NOT '(?i)windows terminal' among the alternatives, however natural
+            # it looks: the section opens "return a profile to Windows Terminal's
+            # plain default", so that clause is present in the defective text too
+            # and the assertion would pass while measuring nothing. What has to
+            # be there is the OTHER half -- what happens everywhere else.
+            $section | Should -Match '(?i)(elsewhere|outside|other terminals?|nothing to back up|no `?\.bak)' `
+                -Because 'off Windows Terminal there is no settings.json and no .bak is written'
+        }
+    }
+
+    It 'names every subcommand in the one consolidated command reference' {
+        # The `### Subcommands` fence is the only place in the README that lists
+        # the commands, and it went two behind: shell-init and shell-remove had
+        # help topics, dispatched, and appeared only 270 lines further down, in a
+        # section about zsh and bash. Parsed from the shipped file and compared
+        # with the live module, so it fails on a real documentation defect and
+        # survives any refactor that keeps the two in agreement.
+        $fence = [regex]::Match($script:readme, '(?ms)^### Subcommands\s*\r?\n```powershell\r?\n(.*?)```')
+        $fence.Success | Should -BeTrue -Because 'the block this test is about must still exist'
+
+        $named = @($fence.Groups[1].Value -split "`n" |
+                   ForEach-Object { if ($_ -match '^tstyles\s+([A-Za-z0-9-]+)') { $Matches[1] } })
+        $named.Count | Should -BeGreaterThan 5 -Because 'a fence that parsed to nothing would pass silently'
+
+        # From the help data, not from $script:TStylesSubcommands: the dispatcher
+        # list carries the `ls` alias, which is not a topic and wants no README
+        # line. Get-TerminalStyleHelpData.Tests.ps1 filters it for the same reason.
+        $topics = InModuleScope TerminalStyles {
+            @(Get-TerminalStyleHelpData | ForEach-Object { $_.Name })
+        }
+
+        # `apply` is the one topic that is NOT a subcommand: it documents
+        # `tstyles <style>`, and its own data says so with Dispatches = $false.
+        # A `tstyles apply` line in the README would name a command that does
+        # not exist -- this file's own defect class, pointed the other way -- so
+        # the requirement is on the topics that really dispatch. The exemption
+        # is not a hole: the assertion below requires the apply topic to be
+        # shown anyway, in the style-name form it actually takes.
+        $dispatched = InModuleScope TerminalStyles {
+            @(Get-TerminalStyleHelpData |
+              Where-Object { $_.PSObject.Properties.Name -notcontains 'Dispatches' -or $_.Dispatches } |
+              ForEach-Object { $_.Name })
+        }
+        @($topics).Count | Should -BeGreaterThan @($dispatched).Count `
+            -Because 'if nothing is exempt the exemption is silently doing nothing'
+        @($dispatched | Where-Object { $named -notcontains $_ }) -join ', ' |
+            Should -BeNullOrEmpty -Because 'a command with a help topic belongs in the README command list'
+
+        $styleLine = @($fence.Groups[1].Value -split "`n" |
+                       Where-Object { $_ -match '^tstyles\s+([A-Za-z0-9-]+)' -and
+                                      $topics -notcontains $Matches[1] })
+        @($styleLine).Count | Should -BeGreaterThan 0 `
+            -Because 'the block must still show the bare `tstyles <style>` form, which is what the apply topic documents'
+
+        # The other direction, and NOT "every token is a subcommand": the first
+        # line of the block is `tstyles umbrella`, a STYLE name, and one line is
+        # a flag variant. What must hold is that every token names something.
+        $styleNames = InModuleScope TerminalStyles {
+            @(Get-AvailableStyles | ForEach-Object { $_.Name })
+        }
+        foreach ($t in ($named | Sort-Object -Unique)) {
+            ($topics -contains $t -or $styleNames -contains $t) |
+                Should -BeTrue -Because "'tstyles $t' must name something that exists"
         }
     }
 

@@ -288,9 +288,21 @@ Describe 'a tuned style does not double-apply when its base is re-baked' {
         }
 
         It 'tells the user why the knobs came up neutral' {
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match '\$baseChanged = \$seed\.BaseChanged'
-            $src | Should -Match 'has changed since this style was tuned'
+            # The sentence lives in Get-TuneSeedNotice now, so this drives it off
+            # a REAL drifted seed instead of matching the tuner's source text --
+            # the key loop needs a console no CI leg has, and a source match
+            # proves nothing about what reaches the screen anyway.
+            $adj = [pscustomobject]@{ name = 'eva'; background = '#050003' }
+            Save-TunedStyle -AdjustedScheme $adj -SaveName 'eva-night' `
+                -BaseStyleDir $script:evaDir -BaseName 'eva' `
+                -Brightness -35 -Saturation 20 -Opacity 75 -FontFace 'Menlo' -FontSize 11 | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:evaDir 'scheme.json'),
+                '{"name":"eva","background":"#060004","foreground":"#a6a7aa"}', $script:enc)
+
+            $seed = Resolve-TuneSeed -StyleName 'eva-night' -StyleDir (Join-Path $script:styles 'eva-night')
+            $seed.BaseChanged | Should -BeTrue
+            @(Get-TuneSeedNotice -Seed $seed | ForEach-Object { $_.Text }) -join ' ' |
+                Should -Match "'eva' has changed since this style was tuned"
         }
     }
 }
@@ -606,31 +618,40 @@ Describe 'a tune.json the seeder cannot use is not seeded over in silence' {
             # ever reads passes the whole suite and ships the same silence with
             # more code in it. The WORDING is not asserted here; it was checked
             # by driving the real tuner on a pty against a corrupt tune.json.
+            # The behavioural half, which the extraction made possible: the
+            # sentence exists, is conditional on the state, and names it.
+            [System.IO.File]::WriteAllText($script:tunePath, 'not json {{{', $script:enc)
+            $unusable = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+            $unusable.TuneUnusable | Should -BeTrue
+            $said = @(Get-TuneSeedNotice -Seed $unusable | ForEach-Object { $_.Text })
+            $said.Count | Should -BeGreaterThan 0
+            ($said -join ' ') | Should -Match 'tune\.json could not be used'
+
+            [System.IO.File]::WriteAllText($script:tunePath, $script:goodTune, $script:enc)
+            $fine = Resolve-TuneSeed -StyleName 'mytheme' -StyleDir $script:mineDir
+            @(Get-TuneSeedNotice -Seed $fine | ForEach-Object { $_.Text }) |
+                Should -BeNullOrEmpty -Because 'a healthy style must get no notice at all'
+
+            # The structural half, still: that the tuner PAINTS what it is
+            # handed. $drawMenu is local to Invoke-TerminalStyleTune and the
+            # function returns on [Console]::IsInputRedirected long before it,
+            # which is always true under Pester -- so without this, a notice
+            # nothing prints passes the whole suite.
             $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
-
-            $reads = @($ast.FindAll({ param($n)
-                $n -is [System.Management.Automation.Language.MemberExpressionAst] -and
-                $n.Member.Extent.Text -eq 'TuneUnusable' }, $true))
-            $reads.Count | Should -BeGreaterThan 0 -Because 'a flag nothing reads is the same silence with more code'
-
-            # The branch, AND something inside it that reaches the terminal. An
-            # empty `elseif ($tuneUnusable) { }` would satisfy a shape check and
-            # print exactly as much as the empty catch did.
-            $notices = @($ast.FindAll({ param($n)
-                $n -is [System.Management.Automation.Language.IfStatementAst] }, $true) |
-                ForEach-Object { $_.Clauses } |
+            $loops = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true) |
                 Where-Object {
-                    @($_.Item1.FindAll({ param($v)
-                        $v -is [System.Management.Automation.Language.VariableExpressionAst] -and
-                        $v.VariablePath.UserPath -eq 'tuneUnusable' }, $true)).Count -gt 0
+                    @($_.Condition.FindAll({ param($c)
+                        $c -is [System.Management.Automation.Language.CommandAst] -and
+                        $c.GetCommandName() -eq 'Get-TuneSeedNotice' }, $true)).Count -gt 0
                 } |
                 Where-Object {
-                    @($_.Item2.FindAll({ param($c)
+                    @($_.Body.FindAll({ param($c)
                         $c -is [System.Management.Automation.Language.CommandAst] -and
                         $c.GetCommandName() -eq 'Write-Host' }, $true)).Count -gt 0
                 })
-            $notices.Count | Should -BeGreaterThan 0 `
-                -Because 'the notice must be conditional on the state it describes, and must actually print'
+            $loops.Count | Should -BeGreaterThan 0 `
+                -Because 'the tuner must print every line the notice returns, or the flag is silence with more code'
         }
     }
 }

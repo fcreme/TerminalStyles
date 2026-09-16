@@ -24,25 +24,123 @@ BeforeAll {
 }
 
 Describe 'the Overwrite option describes what it is about to do' {
+    # These were three source-text assertions, which is why the defect below
+    # survived them: the literals and the Test-Path were all present, and both
+    # install layouts matched them identically. What differs between the layouts
+    # is the ANSWER, so the answer is what is measured now -- Get-TuneOverwriteChoice
+    # exists so there is something to measure.
     InModuleScope TerminalStyles {
-        BeforeAll {
-            $script:src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
+        BeforeEach {
+            $script:enc  = [System.Text.UTF8Encoding]::new($false)
+            $script:sand = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+
+            function script:New-Style {
+                param([string]$Root, [string]$Name, [switch]$Tuned)
+                $d = Join-Path (Join-Path $Root 'styles') $Name
+                New-Item -ItemType Directory -Path $d -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'),
+                    ('{{"name":"{0}","background":"#0a0006"}}' -f $Name), $script:enc)
+                if ($Tuned) {
+                    [System.IO.File]::WriteAllText((Join-Path $d 'tune.json'),
+                        '{"schemaVersion":1,"base":"eva","brightness":-20}', $script:enc)
+                }
+                return $d
+            }
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
         }
 
-        It 'decides the label from where the style actually lives' {
-            # It was the literal "(shadows the bundled style)", unconditionally.
-            $script:src | Should -Match 'REPLACES your saved style'
-            $script:src | Should -Match 'shadows the bundled style'
-            $script:src | Should -Match '\$overwriteReplaces\s*=\s*Test-Path'
+        It 'does not call an untouched SHIPPED style "yours" on a one-root install' {
+            # The bootstrap layout install.sh gives everyone: module root IS data
+            # root, so the shipped style already sits where Save-TunedStyle
+            # writes. Test-Path alone therefore said "yours" about a style the
+            # user had never touched -- and the "(shadows the bundled style)"
+            # branch, whose comment promises the original "comes back if the user
+            # copy is deleted", is unreachable here: there is no second copy.
+            $script:TStylesDataRoot   = $script:sand
+            $script:TStylesModuleRoot = $script:sand
+            $dir = script:New-Style -Root $script:sand -Name 'eva'
+            [System.IO.File]::WriteAllText((Join-Path $script:sand '.installed-files'),
+                "tstyles.ps1`nstyles/eva`n", $script:enc)
+
+            $choice = Get-TuneOverwriteChoice -StyleName 'eva' -StyleDir $dir
+            $choice.Replaces | Should -BeTrue `
+                -Because 'there IS a file where the save is about to write, so the y/N gate must still fire'
+            $choice.Note | Should -Not -Match '(?i)your' `
+                -Because 'the installer placed this style; the user never saved it'
+            $choice.Note | Should -Not -Match '(?i)shadow' `
+                -Because 'nothing is shadowed when there is only one styles directory'
+            $choice.Note | Should -Match '(?i)bundled'
+        }
+
+        It 'says "shadows" only where a bundled original really survives the save' {
+            # Split roots (a PSGallery install): the save lands in the data root
+            # and the module's copy is untouched, so the original does come back
+            # if the user copy is deleted.
+            $script:TStylesDataRoot   = Join-Path $script:sand 'data'
+            $script:TStylesModuleRoot = Join-Path $script:sand 'module'
+            $dir = script:New-Style -Root $script:TStylesModuleRoot -Name 'eva'
+
+            $choice = Get-TuneOverwriteChoice -StyleName 'eva' -StyleDir $dir
+            $choice.Replaces | Should -BeFalse `
+                -Because 'nothing sits at the destination, so there is nothing to warn about'
+            $choice.Note | Should -Match 'shadows the bundled style'
+        }
+
+        It 'still calls a style the user saved "yours" -- <case>' -ForEach @(
+            @{ case = 'one root, tuned in place'; oneRoot = $true }
+            @{ case = 'split roots, a user copy'; oneRoot = $false }
+        ) {
+            if ($oneRoot) {
+                $script:TStylesDataRoot   = $script:sand
+                $script:TStylesModuleRoot = $script:sand
+                $dir = script:New-Style -Root $script:sand -Name 'eva' -Tuned
+                [System.IO.File]::WriteAllText((Join-Path $script:sand '.installed-files'),
+                    "tstyles.ps1`nstyles/eva`n", $script:enc)
+            } else {
+                $script:TStylesDataRoot   = Join-Path $script:sand 'data'
+                $script:TStylesModuleRoot = Join-Path $script:sand 'module'
+                script:New-Style -Root $script:TStylesModuleRoot -Name 'eva' | Out-Null
+                $dir = script:New-Style -Root $script:TStylesDataRoot -Name 'eva'
+            }
+
+            $choice = Get-TuneOverwriteChoice -StyleName 'eva' -StyleDir $dir
+            $choice.Replaces | Should -BeTrue
+            $choice.Note     | Should -Match '(?i)your'
+        }
+
+        It 'claims no ownership it cannot prove' {
+            # One root and no manifest: Get-StyleOrigin answers 'unknown' on
+            # purpose. The gate must still fire -- something is about to be
+            # overwritten -- but neither possessive is honest.
+            $script:TStylesDataRoot   = $script:sand
+            $script:TStylesModuleRoot = $script:sand
+            $dir = script:New-Style -Root $script:sand -Name 'eva'
+
+            $choice = Get-TuneOverwriteChoice -StyleName 'eva' -StyleDir $dir
+            $choice.Origin   | Should -Be 'unknown'
+            $choice.Replaces | Should -BeTrue
+            $choice.Note     | Should -Match 'REPLACES'
+            $choice.Note     | Should -Not -Match '(?i)(your|bundled)'
         }
 
         It 'asks before replacing a style that has no bundled original' {
             # The same y/N gate Save-As has applied to the same outcome since
             # 0.8.x. Overwrite had none: it destroyed the style in place, with
-            # no backup, one line after claiming the original was safe.
-            $script:src | Should -Match 'cannot be undone'
-            $block = [regex]::Match($script:src, '(?s)if \(\$choice -eq .1.\) \{.*?\n        \} else \{').Value
-            $block | Should -Match "warn -notmatch '\^\(\?i\)y'"
+            # no backup, one line after claiming the original was safe. Replaces
+            # is what the tuner gates that question on, so it is asserted here
+            # rather than by matching the Read-Host line.
+            $script:TStylesDataRoot   = Join-Path $script:sand 'data'
+            $script:TStylesModuleRoot = Join-Path $script:sand 'module'
+            $dir = script:New-Style -Root $script:TStylesDataRoot -Name 'mine'
+
+            (Get-TuneOverwriteChoice -StyleName 'mine' -StyleDir $dir).Replaces | Should -BeTrue
+            Get-TuneReplaceWarning -Name 'mine' -DestDir $dir -SameStyle |
+                Should -Match 'cannot be undone'
         }
     }
 }
