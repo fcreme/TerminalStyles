@@ -733,8 +733,15 @@ function Invoke-TerminalStylesUninstall {
     # resolved once for cost as much as for truth: each entry comes from
     # LAUNCHING an engine, about half a second apiece, so asking a second time
     # at step 3 would pay for it twice and could still answer differently.
-    $profileTargets = if ($PSBoundParameters.ContainsKey('ProfileTarget')) { @($ProfileTarget) }
-                      else { @(Get-PowerShellProfileTarget) }
+    # The @() wraps the WHOLE if, not each arm. A single-element array emitted
+    # from an if block is unrolled on its way out, so `= if (...) { @($x) }`
+    # assigns $x itself -- and `.Count` on a bare PSCustomObject answers 1 under
+    # pwsh 7 and $null under Windows PowerShell 5.1. That is enough to omit the
+    # bullet below on exactly one engine, on exactly the leg that has it: the
+    # machine with ONE $PROFILE carrying the loader was never told the file was
+    # about to be edited, while a machine with two was.
+    $profileTargets = @(if ($PSBoundParameters.ContainsKey('ProfileTarget')) { $ProfileTarget }
+                        else { Get-PowerShellProfileTarget })
 
     # Get-WezTermModulePath takes no -ZDotDir, so it gets its own splat rather
     # than $rcSplat. These two lines were on the branch that added the WezTerm

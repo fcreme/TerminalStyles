@@ -224,6 +224,16 @@ Describe 'the uninstall consent listing names what it will change' {
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h `
                        -ProfileTarget @($script:profileTarget) 6>&1 | Out-String
 
+            # Anchor first. Every assertion below is a Should -Not -Match, and
+            # the whole bullet is omitted when the target list is empty -- so
+            # without this line the test passes loudest at the moment the
+            # listing has stopped naming the file it is about to edit. That is
+            # not hypothetical: it is how the single-element unroll at
+            # update.ps1's $profileTargets reached CI green on three legs and
+            # red on one.
+            $out | Should -Match 'Strip the loader block from' `
+                -Because 'there is a target, so the bullet must be there to test'
+
             $labels = @((Get-PowerShellEngineCandidate).Label)
             foreach ($absent in @('PowerShell 7', 'PowerShell 7 (preview)', 'Windows PowerShell 5.1') |
                                 Where-Object { $labels -notcontains $_ }) {
