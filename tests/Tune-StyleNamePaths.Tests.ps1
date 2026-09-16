@@ -122,7 +122,13 @@ Describe 'the tuner leaves the style it was tuning on disk' {
             $src | Should -Match '\$PID'
             # And the recursive delete is proven to target the session dir --
             # the whole session goes, so nothing accumulates under .tune-preview.
-            $src | Should -Match 'GetFullPath\(\$scratchSession\)'
+            # The proof is Test-PathIsUnderRoot's now, not a third open-coded
+            # GetFullPath/TrimEnd/StartsWith of its own: the delete path carried
+            # two copies of that rule and they had already drifted (one of them
+            # threw a raw binding error on the empty path instead of refusing
+            # it), which is why the rule is in one function and this asserts on
+            # the call rather than on its arithmetic.
+            $src | Should -Match 'Test-PathIsUnderRoot -Path \$scratchSession -Root \$scratchRoot'
             $src | Should -Match 'Remove-Item -LiteralPath \$scratchSession'
 
             # But the style directory INSIDE the session still carries the base

@@ -171,7 +171,7 @@ Describe 'the uninstall consent listing names what it will change' {
             $rc = script:New-Rc $script:h '.zshrc' -WithBlock
             $before = [System.IO.File]::ReadAllBytes($rc)
 
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
 
             $out | Should -Match ([regex]::Escape($rc)) `
                 -Because 'the prompt must name the file it is about to edit'
@@ -183,13 +183,13 @@ Describe 'the uninstall consent listing names what it will change' {
 
         It 'names ~/.profile when that is where the loader went' {
             $rc = script:New-Rc $script:h '.profile' -WithBlock
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
             $out | Should -Match ([regex]::Escape($rc))
         }
 
         It 'says nothing about shell rc files when none carry a block' {
             script:New-Rc $script:h '.zshrc' | Out-Null
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
             $out | Should -Not -Match 'zsh/bash loader' `
                 -Because 'listing files it will not touch would be its own kind of wrong'
         }
@@ -204,7 +204,7 @@ Describe 'the uninstall consent listing names what it will change' {
             script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
 
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h `
-                       -ProfileTarget @($script:profileTarget) 6>&1 | Out-String
+                       -ProfileTarget @($script:profileTarget) 6>&1 | Out-String -Width 500
 
             $out | Should -Match ([regex]::Escape($script:fakeProfile)) `
                 -Because 'the prompt must name the file it is about to edit'
@@ -222,7 +222,7 @@ Describe 'the uninstall consent listing names what it will change' {
             script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
 
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h `
-                       -ProfileTarget @($script:profileTarget) 6>&1 | Out-String
+                       -ProfileTarget @($script:profileTarget) 6>&1 | Out-String -Width 500
 
             # Anchor first. Every assertion below is a Should -Not -Match, and
             # the whole bullet is omitted when the target list is empty -- so
@@ -235,8 +235,16 @@ Describe 'the uninstall consent listing names what it will change' {
                 -Because 'there is a target, so the bullet must be there to test'
 
             $labels = @((Get-PowerShellEngineCandidate).Label)
-            foreach ($absent in @('PowerShell 7', 'PowerShell 7 (preview)', 'Windows PowerShell 5.1') |
-                                Where-Object { $labels -notcontains $_ }) {
+            @($labels).Count | Should -BeGreaterThan 0 -Because 'an empty list would assert nothing'
+
+            # Derived from every platform's own table, not hand-typed. A second
+            # copy of the engine list here is the same duplication this test
+            # exists to catch, and it would go stale the same way.
+            $foreign = @(@('Windows', 'MacOS', 'Linux') |
+                         ForEach-Object { Get-PowerShellEngineCandidate -Platform $_ } |
+                         ForEach-Object { $_.Label } | Sort-Object -Unique |
+                         Where-Object { $labels -notcontains $_ })
+            foreach ($absent in $foreign) {
                 $out | Should -Not -Match ([regex]::Escape($absent)) `
                     -Because "$absent is not an engine this platform registers"
             }
@@ -246,7 +254,7 @@ Describe 'the uninstall consent listing names what it will change' {
             # Same rule as the rc bullet above, which is already pinned on it:
             # an empty list means the bullet is omitted, not printed empty.
             script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
             $out | Should -Not -Match 'Strip the loader block from' `
                 -Because 'there is no $PROFILE to strip it from'
             $out | Should -Match 'zsh/bash loader' -Because 'the rc bullet is unaffected'
@@ -263,7 +271,7 @@ Describe 'the uninstall consent listing names what it will change' {
             $saved = $script:TStylesDataRoot
             try {
                 $script:TStylesDataRoot = Join-Path $script:h 'data'
-                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -DeleteData 6>&1 | Out-String
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -DeleteData 6>&1 | Out-String -Width 500
                 $out | Should -Match 'DELETE the entire'
                 $out | Should -Match '(?i)styles you made'
                 $out | Should -Match '(?i)trash'
@@ -283,8 +291,17 @@ Describe 'help describes the files these commands really touch' {
         }
 
         It 'shell-init help names ~/.profile, which it can write to' {
-            $d = (Get-TerminalStyleHelpData | Where-Object Name -eq 'shell-init').Detail -join ' '
-            $d | Should -Match '~/\.profile'
+            # Asked of the platforms where shell-init really registers rc files.
+            # The topic is platform-qualified now -- on Windows it describes the
+            # gap instead of promising a styled tab it cannot deliver -- so
+            # asking the ambient platform would have meant this assertion
+            # testing a different sentence on the two Windows CI legs.
+            foreach ($platform in @('MacOS', 'Linux')) {
+                $d = (Get-TerminalStyleHelpData -Platform $platform |
+                      Where-Object Name -eq 'shell-init').Detail -join ' '
+                $d | Should -Match '~/\.profile' `
+                    -Because "shell-init can write ~/.profile on $platform, so the topic must name it"
+            }
         }
     }
 }

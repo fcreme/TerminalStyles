@@ -38,8 +38,44 @@
 # that disagreed were exactly those two defects. One row of this grid catches
 # either of them; the old single point caught neither.
 #
+# WHAT IT NOW COMPARES, and why the comparison is byte-exact. Both captures
+# used to be put through a strip -- `-replace "\e[0-9;]*m"` and
+# `-replace "\e]<n>;...\a"` -- before they were compared, so the harness was
+# blind to the two things a style paints that are not letters: its COLOURS and
+# its tab title. A style whose PowerShell half said 38;2;255;61;90 where its
+# shell half said 38;2;0;255;0 rendered coral-red in one shell and green in the
+# other, and this file certified the two identical.
+#
+# Measured on 16 styles x 4 directories x both legs: with the strip deleted
+# outright, every capture already agrees BYTE FOR BYTE -- 32 of 32 green -- so
+# neither clause was ever load-bearing; they were only hiding divergence. With
+# the strip in place, eva's PowerShell half recoloured to green and its shell
+# half left alone still passed 32/32; without it that one style fails, naming
+# the two lengths (162 vs 152). The guard Describe at the bottom of this file
+# is that measurement, kept.
+#
+# If a legitimate spelling difference ever does turn up on one leg -- a shell
+# writing the same colour with a different SGR parameter list -- NORMALISE it
+# (canonicalise the parameter list and go on comparing it). Do not re-add a
+# blanket delete: that trades a real difference the harness cannot see for a
+# cosmetic one it need not see.
+#
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
+
+BeforeAll {
+    # THE comparison, in one place, so the guard Describe at the bottom
+    # exercises the assertion the parity tests really make rather than a copy
+    # of it that could stay honest while this one rotted.
+    #
+    # -BeExactly, not -Be: `Should -Be` is case-insensitive, and every
+    # prompt.sh header promises its half renders the same bytes as the
+    # PowerShell one.
+    function script:Assert-PromptsMatch {
+        param([string]$Rendered, [string]$Reference, [string]$Because)
+        $Rendered | Should -BeExactly $Reference -Because $Because
+    }
+}
 
 Describe 'a style renders the same prompt in PowerShell, zsh and bash' {
     BeforeDiscovery {
@@ -105,11 +141,6 @@ Describe 'a style renders the same prompt in PowerShell, zsh and bash' {
         # than whatever pwsh happens to be on PATH.
         $script:Engine = (Get-Process -Id $PID).Path
 
-        $script:StripSgr = {
-            param($s)
-            ($s -replace "`e\[[0-9;]*m", '' -replace "`e\][0-9]*;[^`a]*`a", '')
-        }
-
         # Each half renders EVERY cwd in one process, writing <TSPn> before each
         # prompt, so the whole sweep costs three children per style.
         function script:Split-Prompts {
@@ -167,11 +198,11 @@ Describe 'a style renders the same prompt in PowerShell, zsh and bash' {
         $zshParts = script:Split-Prompts -Blob $zshBlob -Count $cwds.Count
 
         for ($i = 0; $i -lt $cwds.Count; $i++) {
-            $psText  = & $script:StripSgr ([string]$psParts[$i]).TrimEnd()
-            $zshText = & $script:StripSgr ([string]$zshParts[$i]).TrimEnd()
+            $psText  = ([string]$psParts[$i]).TrimEnd()
+            $zshText = ([string]$zshParts[$i]).TrimEnd()
             $psText | Should -Not -BeNullOrEmpty `
                 -Because "the PowerShell half must render something at $($cwds[$i])"
-            $psText | Should -Be $zshText `
+            script:Assert-PromptsMatch -Rendered $psText -Reference $zshText `
                 -Because "$_'s two halves must show the same prompt at $($cwds[$i])"
         }
     }
@@ -242,11 +273,11 @@ Describe 'a style renders the same prompt in PowerShell, zsh and bash' {
         $zshParts  = script:Split-Prompts -Blob $zshBlob  -Count $cwds.Count
 
         for ($i = 0; $i -lt $cwds.Count; $i++) {
-            $bashText = & $script:StripSgr ([string]$bashParts[$i]).TrimEnd()
-            $zshText  = & $script:StripSgr ([string]$zshParts[$i]).TrimEnd()
+            $bashText = ([string]$bashParts[$i]).TrimEnd()
+            $zshText  = ([string]$zshParts[$i]).TrimEnd()
             $bashText | Should -Not -BeNullOrEmpty `
                 -Because "the bash half must render something at $($cwds[$i])"
-            $bashText | Should -Be $zshText `
+            script:Assert-PromptsMatch -Rendered $bashText -Reference $zshText `
                 -Because "$_'s bash and zsh halves must show the same prompt at $($cwds[$i])"
         }
     }
@@ -414,5 +445,103 @@ try {
         $r.ctrlw | Should -Be 'ForwardWord'           -Because "$style must not rebuild PSReadLine's keymap over the user's Ctrl+w"
         $r.up    | Should -Be 'HistorySearchBackward' -Because "$style must not revert UpArrow, the binding PSReadLine's own docs tell users to make"
         $r.chord | Should -Be 'CustomAction'          -Because "$style must not drop the user's chord bindings ($($r.total) handlers bound after the style loaded)"
+    }
+}
+
+Describe 'the parity comparison sees what only one half paints' {
+    # THE DEFECT THIS EXISTS FOR. The two Describes above rendered both halves
+    # in real shells and then threw away the part of the render a style is
+    # mostly made of: every capture went through
+    #
+    #     ($s -replace "<ESC>\[[0-9;]*m", '' -replace "<ESC>\][0-9]*;[^<BEL>]*<BEL>", '')
+    #
+    # before being compared -- the first clause deleting every SGR colour, the
+    # second every OSC sequence, i.e. the tab/window title. What was left was
+    # the letters, so "renders identically" meant "spells the same words", and a
+    # style painting coral-red in PowerShell and green in zsh was certified as
+    # having two identical halves. Measured: with eva's PowerShell half alone
+    # recoloured (38;2;255;61;90 -> 38;2;0;255;0), the stripping harness passed
+    # 32 of 32; the byte-exact one fails, naming eva and the two lengths.
+    #
+    # The strip was not paying for itself either: with it deleted outright,
+    # 16 styles x 4 directories x both legs agree byte for byte with nothing
+    # normalised at all. Neither clause was load-bearing -- shell/tstyles.sh
+    # guards its OSC title behind `[ -t 1 ]` and neither leg has a tty -- so
+    # both were pure blindness.
+    #
+    # This Describe is that measurement, kept. It renders two real prompts that
+    # differ ONLY in a colour (and, below, only in a tab title) and asserts the
+    # comparison the tests above make rejects them. It needs no zsh, so it also
+    # runs on the Windows legs, where the parity tests themselves cannot.
+    BeforeAll {
+        # The engine running the suite, so the 5.1 leg measures 5.1.
+        $script:GuardEngine = (Get-Process -Id $PID).Path
+        $script:GuardDir    = Join-Path $TestDrive 'parity-guard'
+        New-Item -ItemType Directory -Path $script:GuardDir -Force | Out-Null
+
+        # ESC and BEL built from [char], never "`e": that escape is PowerShell
+        # 6+, and on 5.1 "`e" is the letter e -- which would leave both regexes
+        # below matching nothing and both assertions passing while measuring
+        # the wrong thing.
+        $script:GuardEsc = [char]27
+        $script:GuardBel = [char]7
+
+        # A REAL render of a real PowerShell half: a file defining
+        # global:prompt exactly as a style's profile.ps1 does, dot-sourced in a
+        # child process and captured the way the parity tests capture it.
+        function script:Get-GuardPrompt {
+            param([string]$Name, [string]$Body)
+            $half = Join-Path $script:GuardDir "$Name-profile.ps1"
+            [System.IO.File]::WriteAllText($half, "function global:prompt { $Body }",
+                [System.Text.UTF8Encoding]::new($false))
+            $probe = Join-Path $script:GuardDir "$Name-probe.ps1"
+            [System.IO.File]::WriteAllText($probe,
+                (". '$half'" + "`n" + "[Console]::Out.Write('<TSP0>' + (prompt))"),
+                [System.Text.UTF8Encoding]::new($false))
+            $blob = ((& $script:GuardEngine -NoProfile -File $probe 2>$null) -join "`n")
+            $i = $blob.IndexOf('<TSP0>')
+            if ($i -lt 0) { return '' }
+            return $blob.Substring($i + '<TSP0>'.Length)
+        }
+    }
+
+    It 'rejects two halves that differ only in an SGR colour' {
+        $coral = script:Get-GuardPrompt -Name 'coral' -Body '"$([char]27)[38;2;255;61;90mPS>$([char]27)[0m"'
+        $green = script:Get-GuardPrompt -Name 'green' -Body '"$([char]27)[38;2;0;255;0mPS>$([char]27)[0m"'
+
+        # That anything was rendered at all. Two empty strings would satisfy
+        # every assertion below by accident.
+        $coral | Should -Not -BeNullOrEmpty -Because 'the guard must really render a prompt'
+        $green | Should -Not -BeNullOrEmpty -Because 'the guard must really render a prompt'
+
+        # The two differ ONLY in the colour: with the SGR sequences deleted --
+        # the first clause of the strip that used to stand here -- they are one
+        # string. That is the shape that passed.
+        $sgr = [string]$script:GuardEsc + '\[[0-9;]*m'
+        ($coral -replace $sgr, '') | Should -BeExactly ($green -replace $sgr, '') `
+            -Because 'the guard must differ in nothing but the colour, or it proves nothing'
+
+        { script:Assert-PromptsMatch -Rendered $coral -Reference $green `
+            -Because 'a colour only one half paints is a real difference' } |
+            Should -Throw -Because 'the parity comparison must compare the colours too'
+    }
+
+    It 'rejects two halves that differ only in an OSC tab title' {
+        $here  = script:Get-GuardPrompt -Name 'title-a' -Body '"$([char]27)]0;tsparity$([char]7)PS>"'
+        $there = script:Get-GuardPrompt -Name 'title-b' -Body '"$([char]27)]0;elsewhere$([char]7)PS>"'
+
+        $here  | Should -Not -BeNullOrEmpty -Because 'the guard must really render a prompt'
+        $there | Should -Not -BeNullOrEmpty -Because 'the guard must really render a prompt'
+
+        # Same again for the second clause: with every OSC sequence deleted the
+        # two titles are the same prompt, so the harness could not see a style
+        # that titles the tab in one shell and not in the other.
+        $osc = [string]$script:GuardEsc + '\][0-9]*;[^' + [string]$script:GuardBel + ']*' + [string]$script:GuardBel
+        ($here -replace $osc, '') | Should -BeExactly ($there -replace $osc, '') `
+            -Because 'the guard must differ in nothing but the title, or it proves nothing'
+
+        { script:Assert-PromptsMatch -Rendered $here -Reference $there `
+            -Because 'a tab title only one half sets is a real difference' } |
+            Should -Throw -Because 'the parity comparison must compare the tab title too'
     }
 }

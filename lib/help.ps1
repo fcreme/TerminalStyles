@@ -8,11 +8,70 @@
 
 function Get-TerminalStyleHelpData {
     # Single source of truth for `tstyles help`. Ordered command descriptors.
-    # Name is the dispatch token AND the `help <Name>` topic key. The picker
-    # and `tstyles <style>` are arg-less modes described in the overview
-    # preamble (Show-TerminalStyleHelp), not topics here. A drift-guard test
-    # asserts every dispatched subcommand has an entry.
+    # Name is the dispatch token AND the `help <Name>` topic key -- except for
+    # the one entry carrying Dispatches = $false, `apply`, which documents
+    # `tstyles <style>`: a mode rather than a word the dispatcher matches. The
+    # picker is the other mode, described in the overview preamble
+    # (Show-TerminalStyleHelp). A drift-guard test asserts every dispatched
+    # subcommand has an entry and every dispatching entry names a subcommand.
+    #
+    # -Platform is a test seam; real callers omit it. Two topics describe what
+    # the tool does to PowerShell engines and to shell rc files, and both
+    # answers differ by platform -- the register topic named Windows
+    # PowerShell 5.1 on macOS and Linux for four releases because the sentence
+    # was a literal rather than a reading of the engine table the command
+    # itself probes with.
+    param([string]$Platform = (Get-TStylesPlatform))
+
+    # Projected with ForEach-Object: member access on an empty array yields one
+    # $null, so `.Label` on a candidate list that came back empty would be a
+    # one-element list holding nothing, and the sentence would name it.
+    $engineLabels = @(Get-PowerShellEngineCandidate -Platform $Platform |
+                      ForEach-Object { $_.Label })
+
     @(
+        [pscustomobject]@{
+            # NOT a dispatch token, and the one entry that is not. `tstyles
+            # <style>` is a MODE: the dispatcher falls through every subcommand
+            # arm and matches the argument against the style list, so there is
+            # no 'apply' word to type -- `tstyles help apply` is where the mode
+            # is documented. Dispatches = $false is what tells the drift guard
+            # in tests/Get-TerminalStyleHelpData.Tests.ps1 that this topic has
+            # no matching subcommand on purpose; it is a named exception there,
+            # not a blanket skip. It is deliberately NOT added to
+            # $script:TStylesSubcommands: that list is also what
+            # Test-StyleNameValid rejects style names against, and a style
+            # called 'apply' would then be forbidden for a command that does
+            # not dispatch.
+            Name = 'apply'; Dispatches = $false
+            Usage = '<style> [-KeepPrompt] [-NewWindow]'
+            Summary = 'Apply a style by name (umbrella, eva, ...)'
+            Detail = @("The command this tool is for, and the only one that is not a",
+                       "subcommand: 'tstyles eva' applies the style called eva to the",
+                       "terminal you are sitting in, and records it so new tabs come up in",
+                       "it too.",
+                       "",
+                       "  -KeepPrompt              Apply the colors, font, opacity and",
+                       "                           background, but leave your own prompt and",
+                       "                           banner alone -- for Oh My Posh, Starship,",
+                       "                           or any prompt you would rather keep.",
+                       "  -NewWindow               Terminal.app only: open a NEW window",
+                       "                           carrying the style's background image. No",
+                       "                           escape sequence can put an image on the",
+                       "                           window you are already in.",
+                       "  -Target <name>           Windows Terminal profile to apply to,",
+                       "                           instead of the tab's own.",
+                       "  -BackgroundImage <path>  Use this image instead of the style's.",
+                       "                           An empty string ('') turns the background",
+                       "                           OFF. Both are Windows Terminal only --",
+                       "                           it is the only host whose background this",
+                       "                           tool writes as a setting.",
+                       "",
+                       "Whatever the current terminal cannot show is named as the style is",
+                       "applied, rather than dropped in silence.")
+            Keys = @()
+            Examples = @('tstyles eva', 'tstyles eva -KeepPrompt', "tstyles eva -BackgroundImage ''")
+        }
         [pscustomobject]@{
             Name = 'list'; Usage = 'list'; Summary = "List all styles; '*' marks the active one"
             Detail = @("Prints every available style (bundled + your own), one per line,",
@@ -117,26 +176,61 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'register'; Usage = 'register'; Summary = 'Add the loader to your $PROFILE'
-            Detail = @("Adds the Import-Module loader to the `$PROFILE of every PowerShell",
-                       "engine on this machine -- pwsh 7 and Windows PowerShell 5.1 on",
-                       "Windows, pwsh and pwsh-preview elsewhere -- so tstyles loads on every",
-                       "new tab. Where two engines share one `$PROFILE it is written once.",
-                       "The confirm prompt names each file first.")
+            # Built from the engine table rather than repeating it. This line
+            # said "both PowerShell 7 and Windows PowerShell 5.1" on every
+            # platform, and was wrong twice off Windows: there is no Windows
+            # PowerShell there (the engines probed are pwsh and pwsh-preview),
+            # and "both" is wrong wherever only one of them is installed --
+            # register skips an engine it does not find, and says so.
+            Detail = @("Adds the Import-Module loader (with a confirm prompt) to the `$PROFILE",
+                       "of each PowerShell engine found on your PATH, so tstyles loads on",
+                       "every new tab.",
+                       "",
+                       ("On {0} the engines looked for are: {1}." -f $Platform, ($engineLabels -join ', ')),
+                       "An engine that is not installed is skipped, not written to.",
+                       "Where two engines share one `$PROFILE it is written once.")
             Keys = @(); Examples = @('tstyles register')
         }
         [pscustomobject]@{
             Name = 'shell-init'; Usage = 'shell-init'; Summary = 'Style zsh/bash too, not just PowerShell'
-            Detail = @("Adds a loader to your ~/.zshrc, ~/.bashrc and ~/.bash_profile so a zsh",
-                       "or bash tab comes up in the applied style -- colors, prompt, and banner.",
-                       "Also defines a 'tstyles' command for those shells.",
-                       "",
-                       "Two files it does not name above, in the layouts that need them:",
-                       "your ~/.profile, when that is the only file your login shell reads,",
-                       "and `$ZDOTDIR/.zshrc when you keep zsh config outside your home.",
-                       "",
-                       "Colors belong to the terminal rather than to any one shell, so without",
-                       "this a zsh user still sees the palette but keeps their own prompt.",
-                       "Re-run it any time; it refreshes the block instead of adding a second.")
+            # Qualified per platform, the way the `font` and `reset` topics
+            # already qualify themselves. This promised "a zsh or bash tab
+            # comes up in the applied style" on every platform, and on Windows
+            # no configuration can produce it: the apply path that stages
+            # current-style.osc and current-prompt.sh runs only off Windows
+            # Terminal, and shell/tstyles.sh has no MSYS/MinGW/Cygwin arm at
+            # all -- under Git Bash it resolves TSTYLES_DATA to
+            # $HOME/.local/share/TerminalStyles while the PowerShell side
+            # stages to %LOCALAPPDATA%\TerminalStyles. So the command would
+            # write (and, for a user with no bash, INVENT) rc files under
+            # C:\Users\<you> that can never find a style to paint.
+            Detail = $(if ($Platform -eq 'Windows') {
+                @("The zsh/bash loader is a macOS/Linux feature, and this command cannot",
+                  "deliver it on Windows -- it is listed here so the limit is not a",
+                  "surprise.",
+                  "",
+                  "A Git Bash / MSYS shell shares your Windows home, so the loader would",
+                  "go into C:\Users\<you>\.bashrc -- but the runtime it sources looks for",
+                  "the applied style under `$HOME/.local/share/TerminalStyles, while the",
+                  "apply writes it to %LOCALAPPDATA%\TerminalStyles. The tab would come",
+                  "up with your own prompt and no style.",
+                  "",
+                  "On macOS and Linux the same command wires the shell side up in full:",
+                  "the loader goes into ~/.zshrc, ~/.bashrc and ~/.bash_profile, and the",
+                  "runtime finds the staged style where the apply put it.")
+            } else {
+                @("Adds a loader to your ~/.zshrc, ~/.bashrc and ~/.bash_profile so a zsh",
+                  "or bash tab comes up in the applied style -- colors, prompt, and banner.",
+                  "Also defines a 'tstyles' command for those shells.",
+                  "",
+                  "Two files it does not name above, in the layouts that need them:",
+                  "your ~/.profile, when that is the only file your login shell reads,",
+                  "and `$ZDOTDIR/.zshrc when you keep zsh config outside your home.",
+                  "",
+                  "Colors belong to the terminal rather than to any one shell, so without",
+                  "this a zsh user still sees the palette but keeps their own prompt.",
+                  "Re-run it any time; it refreshes the block instead of adding a second.")
+            })
             Keys = @(); Examples = @('tstyles shell-init')
         }
         [pscustomobject]@{
@@ -249,7 +343,12 @@ function Show-TerminalStyleHelp {
     Write-Host ""
     Write-Host "COMMANDS" -ForegroundColor DarkGray
     Write-Host "  (no command)      Open the interactive picker"
-    Write-Host "  <style>           Apply a style by name (umbrella, eva, ...)"
+    # The `<style>` line is the apply descriptor's own, not a literal beside
+    # it: it used to be typed here, which is how the tool's primary command
+    # ended up with a line in this list, no `help` topic, and two of its four
+    # flags (-KeepPrompt, -BackgroundImage) named nowhere in the help at all.
+    # One entry, printed here like every other, and `tstyles help apply`
+    # reaches the same record.
     foreach ($e in $data) {
         Write-Host ("  " + ('{0,-16}' -f $e.Usage) + "  " + $e.Summary)
     }

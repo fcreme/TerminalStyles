@@ -53,10 +53,11 @@ Import-Module TerminalStyles -DisableNameChecking
 
 Add the `Import-Module` line to your `$PROFILE` so it loads on every
 new shell tab — or run `tstyles register` once and it does that for
-you: the `$PROFILE` of every PowerShell engine it finds (pwsh 7 and
-Windows PowerShell 5.1 on Windows, `pwsh` and `pwsh-preview`
-elsewhere, written once where two of them share one file), with a
-confirm prompt that names each one first. Then:
+you, with a confirm prompt first. It writes to the `$PROFILE` of each
+PowerShell engine it finds on your PATH — on Windows that is pwsh 7 and
+Windows PowerShell 5.1; on macOS and Linux, `pwsh` and `pwsh-preview` —
+skips one that isn't installed, and writes once where two of them share
+one file. The prompt names each file first. Then:
 
 ```powershell
 tstyles
@@ -124,7 +125,7 @@ tstyles delete [name]             # Delete a style you made (bundled styles are 
 tstyles trash                     # List deleted styles, and how long each one has left
 tstyles restore [name]            # Put a deleted style back; never overwrites a live one
 tstyles font [name]               # List coding fonts, or install one and apply it
-tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
+tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to each engine's $PROFILE
 tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zshrc, ~/.bashrc, ~/.bash_profile
 tstyles shell-remove              # Remove that zsh/bash loader again
 tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
@@ -429,6 +430,15 @@ and the style's prompt — and those shells get a `tstyles` command of their own
 ```
 
 `tstyles shell-remove` takes the loader back out.
+
+> **macOS and Linux only.** On Windows this command writes the loader into rc
+> files under `C:\Users\<you>` and the tab still comes up unstyled: the runtime
+> resolves its data root to `$HOME/.local/share/TerminalStyles` under an
+> MSYS/Cygwin bash (Git Bash), while the PowerShell side stages the applied
+> style to `%LOCALAPPDATA%\TerminalStyles`. `tstyles shell-init` says so before
+> it writes anything. A WSL shell is unaffected either way — it has its own
+> `$HOME`, and a pwsh installed inside WSL is an ordinary Linux install where
+> both halves agree.
 
 The loader reads only files that were precomputed when you applied the style, so
 it never starts PowerShell on shell startup, and it produces **no output at all**
@@ -774,6 +784,12 @@ takes one PNG of the WT window, then restores your original theme.
   Windows Terminal. An apply says which parts the current terminal cannot show
   rather than dropping them silently. Hosts that render nothing (VS Code's
   integrated terminal, conhost) stay plain by design.
+- **The zsh/bash loader is a macOS/Linux feature.** `tstyles shell-init` on
+  Windows writes the block into your rc files, but nothing there can read the
+  applied style: `shell/tstyles.sh` has no MSYS/MinGW/Cygwin branch, so a Git
+  Bash tab looks under `$HOME/.local/share/TerminalStyles` while the apply
+  stages to `%LOCALAPPDATA%\TerminalStyles`, and the shell's own `tstyles`
+  command answers "not initialised". The command says this before it writes.
 - **zsh/bash styling covers the prompt, not the syntax highlighting.** The
   PowerShell profiles carry a PSReadLine color block; zsh and bash have no
   equivalent, so `prompt.sh` ports the title, banner, and prompt only.

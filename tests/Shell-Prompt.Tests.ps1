@@ -71,6 +71,92 @@ TSTYLES_DATA=/nonexistent/terminalstyles
 "@
         return (& $Shell -c $script 2>&1 | Out-String)
     }
+
+    # Source the runtime (and, given one, a style) in a real zsh and diff the
+    # variable table across it. Whatever the syntax -- eval, a for loop, a
+    # heredoc, typeset -- a name that exists afterwards and did not before is a
+    # name the user just lost.
+    #
+    # TWO THINGS THIS FIXES, both of which let a leaking style pass.
+    #
+    # 1. EVERY interpolated path is single-quoted. It was not, and zsh
+    #    word-splits an unquoted path: a checkout whose directory contains a
+    #    space made BOTH `source` lines fail, the before and after tables came
+    #    back identical, and "the style never loaded" produced the same green
+    #    result as "the style leaked nothing". Measured with a real leak
+    #    (MYVAR, PATH_BACKUP appended to gitbash/prompt.sh): from
+    #    '<scratch>/repo space' 17 passed and 0 failed; from
+    #    '<scratch>/reponospace' the same files failed, naming both variables.
+    #    Every developer whose checkout lives under "My Documents" or
+    #    "Google Drive" ran a green no-op.
+    #
+    # 2. A SENTINEL after each source, checked before the diff is believed.
+    #    Quoting closes the space; it does not close the shape. This assertion
+    #    compares two captures that stay perfectly valid when the thing under
+    #    test never ran, so the probe now has to prove it ran -- which also
+    #    covers a path containing a single quote, an unreadable file, and every
+    #    other reason a source can fail silently.
+    #
+    # The inner `2>&1` on each source is NOT what hid it: lines below already
+    # discard zsh's stderr at the PowerShell level (`& zsh -f $sf 2>$null`), so
+    # dropping it changes nothing. Measured: unquoted paths with the inner
+    # redirect removed still passed 17/0.
+    function script:Invoke-ShellLeakProbe {
+        param(
+            [Parameter(Mandatory)][string]$RuntimeSh,
+            # Omitted to measure the runtime itself rather than a style.
+            [string]$PromptSh,
+            [Parameter(Mandatory)][string]$ScriptPath,
+            # Names that are a documented contract rather than a leak.
+            [string[]]$Keep = @()
+        )
+
+        # Each marker is printed by a PREDICATE, never unconditionally: a
+        # `printf` on the next line proves only that the shell reached that
+        # line, which a failed `source` does too. The runtime marker asks
+        # whether ts_c is now callable; the style marker asks whether $PROMPT
+        # changed, which is the style's whole job.
+        $lines = @()
+        if ($PromptSh) {
+            # The runtime's own names are not this style's leak, so the BEFORE
+            # table is taken after it has loaded.
+            $lines += "source '$RuntimeSh' >/dev/null 2>&1"
+            $lines += 'command -v ts_c >/dev/null 2>&1 && printf ''%s\n'' ''<TSRUNTIME>'''
+            # Assigned before the BEFORE table so the probe's own name is in
+            # both and cannot read as a leak.
+            $lines += '_ts_probe_prompt="$PROMPT"'
+            $lines += 'ts_before=$(typeset +m "*" 2>/dev/null)'
+            $lines += "source '$PromptSh' >/dev/null 2>&1"
+            $lines += '[ "$PROMPT" != "$_ts_probe_prompt" ] && printf ''%s\n'' ''<TSSTYLE>'''
+        } else {
+            $lines += 'ts_before=$(typeset +m "*" 2>/dev/null)'
+            $lines += "source '$RuntimeSh' >/dev/null 2>&1"
+            $lines += 'command -v ts_c >/dev/null 2>&1 && printf ''%s\n'' ''<TSRUNTIME>'''
+        }
+        # `typeset +m '*'` prints names only. The two capture variables are
+        # themselves new names, so they are filtered with the namespaced ones.
+        $lines += 'ts_after=$(typeset +m "*" 2>/dev/null)'
+        $lines += 'comm -13 <(print -r -- "$ts_before" | sort -u) <(print -r -- "$ts_after" | sort -u)'
+
+        [System.IO.File]::WriteAllText($ScriptPath, ($lines -join "`n"),
+            [System.Text.UTF8Encoding]::new($false))
+
+        $out = @(& zsh -f $ScriptPath 2>$null)
+
+        $keepPattern = '^(_ts_|ts_before$|ts_after$'
+        foreach ($k in $Keep) { $keepPattern += '|' + [regex]::Escape($k) + '$' }
+        $keepPattern += ')'
+
+        [pscustomobject]@{
+            RuntimeLoaded = ($out -contains '<TSRUNTIME>')
+            StyleLoaded   = ($out -contains '<TSSTYLE>')
+            Leaked        = @($out |
+                               Where-Object { $_ -and $_ -notmatch '^<TS(RUNTIME|STYLE)>$' } |
+                               Where-Object { $_ -notmatch $keepPattern } |
+                               Sort-Object -Unique)
+            Raw           = ($out -join "`n")
+        }
+    }
 }
 
 Describe 'every style ships a shell prompt' {
@@ -244,28 +330,53 @@ Describe 'a style leaks nothing into the user shell -- measured, not linted' {
 
     It '<_> defines no bare name in a real zsh' -ForEach $script:LeakStyles -Skip:$script:NoZsh {
         $repoRoot  = Split-Path $PSScriptRoot -Parent
-        $promptSh  = Join-Path (Join-Path (Join-Path $repoRoot 'styles') $_) 'prompt.sh'
-        $runtimeSh = Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh'
+        $probe = script:Invoke-ShellLeakProbe `
+            -RuntimeSh (Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh') `
+            -PromptSh  (Join-Path (Join-Path (Join-Path $repoRoot 'styles') $_) 'prompt.sh') `
+            -ScriptPath (Join-Path $TestDrive "leak-$_.zsh")
 
-        # `typeset +m '*'` prints names only. The two capture variables are
-        # themselves new names, so they are filtered with the namespaced ones.
-        $script = @(
-            "source ${runtimeSh} >/dev/null 2>&1"
-            'ts_before=$(typeset +m "*" 2>/dev/null)'
-            "source ${promptSh} >/dev/null 2>&1"
-            'ts_after=$(typeset +m "*" 2>/dev/null)'
-            'comm -13 <(print -r -- "$ts_before" | sort -u) <(print -r -- "$ts_after" | sort -u)'
-        ) -join "`n"
+        # BEFORE the diff is believed. Two identical tables are what a failed
+        # source produces, and they are indistinguishable from a clean style.
+        $probe.RuntimeLoaded | Should -BeTrue `
+            -Because "shell/tstyles.sh must really have loaded, or nothing below measures anything: $($probe.Raw)"
+        $probe.StyleLoaded | Should -BeTrue `
+            -Because "$_/prompt.sh must really have loaded, or nothing below measures anything: $($probe.Raw)"
 
-        $sf = Join-Path $TestDrive ("leak-$_.zsh")
-        [System.IO.File]::WriteAllText($sf, $script, [System.Text.UTF8Encoding]::new($false))
+        $probe.Leaked -join ', ' | Should -BeNullOrEmpty `
+            -Because "sourcing $_/prompt.sh replaced the user's own $($probe.Leaked -join ', ')"
+    }
 
-        $out = & zsh -f $sf 2>$null
-        $leaked = @($out | Where-Object { $_ -and $_ -notmatch '^(_ts_|ts_before$|ts_after$)' } |
-                   Sort-Object -Unique)
+    It 'measures a style whose checkout path contains a space' -Skip:$script:NoZsh {
+        # THE HOLE THE SENTINEL AND THE QUOTING CLOSE, on every machine rather
+        # than only on a developer whose checkout happens to live under
+        # "My Documents". The paths are interpolated into a zsh script; zsh
+        # word-splits an unquoted one, so from a directory with a space in it
+        # both `source` lines failed and every style in the Describe above
+        # passed while nothing had been loaded at all.
+        #
+        # gitbash is the style used to measure it: with MYVAR and PATH_BACKUP
+        # appended to its prompt.sh, the shipped harness reported
+        # Passed=17 Failed=0 from '<scratch>/repo space' and Failed=1 naming
+        # both variables from '<scratch>/reponospace'.
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $spacey   = Join-Path $TestDrive 'spacey path'
+        New-Item -ItemType Directory -Path $spacey -Force | Out-Null
+        Copy-Item -LiteralPath (Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh') `
+                  -Destination (Join-Path $spacey 'tstyles.sh') -Force
+        Copy-Item -LiteralPath (Join-Path (Join-Path (Join-Path $repoRoot 'styles') 'gitbash') 'prompt.sh') `
+                  -Destination (Join-Path $spacey 'prompt.sh') -Force
 
-        $leaked -join ', ' | Should -BeNullOrEmpty `
-            -Because "sourcing $_/prompt.sh replaced the user's own $($leaked -join ', ')"
+        $probe = script:Invoke-ShellLeakProbe `
+            -RuntimeSh  (Join-Path $spacey 'tstyles.sh') `
+            -PromptSh   (Join-Path $spacey 'prompt.sh') `
+            -ScriptPath (Join-Path $spacey 'leak-spacey.zsh')
+
+        $probe.RuntimeLoaded | Should -BeTrue `
+            -Because "the runtime must load from a path with a space in it: $($probe.Raw)"
+        $probe.StyleLoaded | Should -BeTrue `
+            -Because "the style must load from a path with a space in it: $($probe.Raw)"
+        $probe.Leaked -join ', ' | Should -BeNullOrEmpty `
+            -Because "sourcing gitbash/prompt.sh replaced the user's own $($probe.Leaked -join ', ')"
     }
 }
 
@@ -288,25 +399,20 @@ Describe 'the runtime itself leaks nothing into the user shell -- measured, not 
     }
 
     It 'defines no bare name in a real zsh' -Skip:$script:NoZshRuntime {
-        $repoRoot  = Split-Path $PSScriptRoot -Parent
-        $runtimeSh = Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh'
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        # The same probe the style half uses -- so the quoting and the "did it
+        # actually load" sentinel are one implementation, not two. This half
+        # carried the identical unquoted interpolation and the identical blind
+        # spot.
+        $probe = script:Invoke-ShellLeakProbe `
+            -RuntimeSh  (Join-Path (Join-Path $repoRoot 'shell') 'tstyles.sh') `
+            -ScriptPath (Join-Path $TestDrive 'leak-runtime.zsh') `
+            -Keep 'TSTYLES_DATA'
 
-        $script = @(
-            'ts_before=$(typeset +m "*" 2>/dev/null)'
-            "source ${runtimeSh} >/dev/null 2>&1"
-            'ts_after=$(typeset +m "*" 2>/dev/null)'
-            'comm -13 <(print -r -- "$ts_before" | sort -u) <(print -r -- "$ts_after" | sort -u)'
-        ) -join "`n"
+        $probe.RuntimeLoaded | Should -BeTrue `
+            -Because "shell/tstyles.sh must really have loaded, or nothing below measures anything: $($probe.Raw)"
 
-        $sf = Join-Path $TestDrive 'leak-runtime.zsh'
-        [System.IO.File]::WriteAllText($sf, $script, [System.Text.UTF8Encoding]::new($false))
-
-        $out = & zsh -f $sf 2>$null
-        $leaked = @($out | Where-Object {
-                       $_ -and $_ -notmatch '^(_ts_|ts_before$|ts_after$|TSTYLES_DATA$)'
-                   } | Sort-Object -Unique)
-
-        $leaked -join ', ' | Should -BeNullOrEmpty `
-            -Because "sourcing shell/tstyles.sh replaced the user's own $($leaked -join ', ')"
+        $probe.Leaked -join ', ' | Should -BeNullOrEmpty `
+            -Because "sourcing shell/tstyles.sh replaced the user's own $($probe.Leaked -join ', ')"
     }
 }
