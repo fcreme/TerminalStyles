@@ -37,14 +37,23 @@ and mock `Confirm-Action` to refuse rather than relying on console detection.
 ## Capabilities are promises, not possibilities
 
 `Get-TerminalCapability` says what **TerminalStyles delivers**, not what the terminal
-could do. iTerm2 can do background images through Dynamic Profiles; nothing here writes
-one, so it claims only `OscPalette`/`TabTitle`. Claiming a capability no code delivers
-makes a style report success, paint nothing, and *suppress the notice that would have
-explained why*. If you add a writer, turn the flag on next to the code that delivers it.
+could do. iTerm2 can do background images and tab titles through Dynamic Profiles;
+nothing here writes one, so it claims `OscPalette` and nothing else. Claiming a
+capability no code delivers makes a style report success, paint nothing, and *suppress
+the notice that would have explained why*. If you add a writer, turn the flag on next to
+the code that delivers it.
 
-There are exactly two config writers in the repo: `Merge-StyleIntoSettings` (Windows
-Terminal `settings.json`) and `New-AppleTerminalProfile` (Terminal.app `.terminal`
-plist). Everything else is escape sequences.
+There are exactly three config writers in the repo: `Merge-StyleIntoSettings` (Windows
+Terminal `settings.json`), `New-AppleTerminalProfile` (Terminal.app `.terminal` plist)
+and `Get-WezTermStyleLua` (WezTerm's generated Lua module). Everything else is escape
+sequences.
+
+Corollary the table cost a release: a flag nothing reads is not a promise, it is a
+rumour. `Get-UnsupportedStyleField` is the reader — it walks theme.json field by field
+against the record and is the whole of the "can't show" notice, so turning a flag off is
+what puts the field on screen. `TabTitle` is the documented exception and says why in
+its own comment: the title arrives from the style's prompt on every terminal, so naming
+it there would be a false claim in the other direction.
 
 ## Every user-facing message is a claim
 

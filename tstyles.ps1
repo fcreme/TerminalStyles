@@ -1636,6 +1636,12 @@ function Invoke-TerminalStyle {
         # shell side at all: left unset, the Windows Terminal path would compare
         # $null against 'ok' and warn about a staging step it never ran.
         $stagedShell = 'ok'
+        # Empty up front for the same reason, and for one more: the notice is
+        # PRINTED below the Clear-Host, several screens from where it is
+        # computed. Printing it up here instead would have measured green in a
+        # test and shown the user nothing -- Clear-Host wipes everything this
+        # block writes.
+        $unsupportedFields = @()
         if ($useSettingsFile) {
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
@@ -1715,6 +1721,20 @@ function Invoke-TerminalStyle {
                                        -StyleDir $selectedStyle.FullName `
                                        -Scheme $schemes[$idx] `
                                        -Theme $wtTheme -Kind $termKind | Out-Null
+
+            # ...and which fields this terminal cannot show, which is the third
+            # thing `tstyles <name>` says on this door and the picker said
+            # nowhere: `tstyles` + Enter on Terminal.app printed "Style applied"
+            # and not one word about the font, cursor shape, padding or tab
+            # color it had just dropped. Computed here, where the theme is
+            # already parsed, and printed below the Clear-Host that would
+            # otherwise erase it.
+            #
+            # The Windows Terminal branch has nothing to add: it honours the
+            # whole theme.json field set, so the list is empty by construction
+            # and the $useSettingsFile arm leaves it at @().
+            $unsupportedFields = @(Get-UnsupportedStyleField -Theme $wtTheme `
+                                       -StyleDir $selectedStyle.FullName -Kind $termKind)
         }
 
         # -KeepPrompt means "this style's colors, my prompt". Copying the
@@ -1752,6 +1772,13 @@ function Invoke-TerminalStyle {
             Write-Host ""
         }
 
+        # And the same "can't show" line, from the same function, for the same
+        # reason. Below the Clear-Host on purpose -- see where the list is built.
+        if (@($unsupportedFields).Count -gt 0) {
+            Show-UnsupportedStyleField -Field $unsupportedFields -Kind $termKind
+            Write-Host ""
+        }
+
         # The same qualifier `tstyles <name>` prints, from the same function, so
         # the two doors give the same answer. Without it the picker claimed a
         # bare success for a style Windows Terminal was never told about. The
@@ -1777,11 +1804,22 @@ function Invoke-TerminalStyle {
             # the background image while choosing eva in the picker named
             # neither, and the frame's capability note is about the terminal,
             # not about the style that was just confirmed.
-            $confirmUnsupported = Get-UnsupportedStyleFeatureNote -StyleDir $selectedStyle.FullName -Kind $termKind
-            if ($confirmUnsupported) {
-                Write-Host $confirmUnsupported -ForegroundColor DarkGray
-                Write-Host ""
+            #
+            # Through Get-UnsupportedStyleField, the same reader the WT branch
+            # above and Apply-StyleNonWT use. The narrower note this branch was
+            # written against asked two hardcoded questions -- background image
+            # and tab color -- so it stayed silent about the font, cursor shape
+            # and padding that are $false in the table for the express purpose
+            # of being named here.
+            $confirmTheme = $null
+            $confirmThemePath = Join-Path $selectedStyle.FullName 'theme.json'
+            if (Test-Path -LiteralPath $confirmThemePath) {
+                try {
+                    $confirmTheme = [System.IO.File]::ReadAllText($confirmThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                } catch { $confirmTheme = $null }
             }
+            Show-UnsupportedStyleField -Kind $termKind -Field @(
+                Get-UnsupportedStyleField -Theme $confirmTheme -StyleDir $selectedStyle.FullName -Kind $termKind)
         }
         & $showPendingUpdate
 

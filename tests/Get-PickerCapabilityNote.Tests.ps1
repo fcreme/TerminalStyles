@@ -137,7 +137,7 @@ Describe 'the picker paints that note inside its frame, not above it' {
     }
 }
 
-Describe 'Get-UnsupportedStyleFeatureNote' {
+Describe 'the shared unsupported-field reader, as both doors call it' {
     InModuleScope TerminalStyles {
         BeforeEach {
             $script:enc = [System.Text.UTF8Encoding]::new($false)
@@ -148,28 +148,39 @@ Describe 'Get-UnsupportedStyleFeatureNote' {
             Mock Get-StyleBundledBackground { Join-Path $TestDrive 'bg.gif' }
         }
 
+        # Reads a parsed theme rather than the path, so each caller does its own
+        # guarded parse. These were written against Get-UnsupportedStyleFeatureNote,
+        # a second and NARROWER implementation of the same rule -- it asked two
+        # hardcoded questions and could not name font, cursor shape or padding.
+        # It is gone; the properties it pinned belong to the one that stayed.
+        function script:Read-Theme { param([string]$Json)
+            [System.IO.File]::WriteAllText((Join-Path $script:sd 'theme.json'), $Json, $script:enc)
+            [System.IO.File]::ReadAllText((Join-Path $script:sd 'theme.json'), $script:enc) | ConvertFrom-Json
+        }
+
         It 'names both when the terminal can show neither' {
-            [System.IO.File]::WriteAllText((Join-Path $script:sd 'theme.json'),
-                '{"colorScheme":"x","backgroundImage":"{{BACKGROUND_IMAGE}}","tabColor":"#ff0000"}', $script:enc)
-            $note = Get-UnsupportedStyleFeatureNote -StyleDir $script:sd -Kind 'ITerm2'
-            $note | Should -Match "can't show"
-            $note | Should -Match 'background image'
-            $note | Should -Match 'tab color'
+            $t = script:Read-Theme '{"colorScheme":"x","backgroundImage":"{{BACKGROUND_IMAGE}}","tabColor":"#ff0000"}'
+            $fields = @(Get-UnsupportedStyleField -Theme $t -StyleDir $script:sd -Kind 'ITerm2')
+            $fields | Should -Contain 'background image'
+            $fields | Should -Contain 'tab color'
+            (Show-UnsupportedStyleField -Field $fields -Kind 'ITerm2' 6>&1 | Out-String) |
+                Should -Match "can't show"
         }
 
         It 'says nothing for a style that ships no theme.json' {
             # ...and asks the network nothing either: Get-StyleBundledBackground
             # can make four serial 10-second attempts against the gifs branch.
-            Get-UnsupportedStyleFeatureNote -StyleDir $script:sd -Kind 'ITerm2' | Should -BeNullOrEmpty
+            @(Get-UnsupportedStyleField -Theme $null -StyleDir $script:sd -Kind 'ITerm2') |
+                Should -BeNullOrEmpty
             Should -Invoke Get-StyleBundledBackground -Times 0 -Exactly -Scope It
         }
 
         It 'does not resolve a background the terminal CAN show' {
             # Capability first: as the left operand of the -and, the resolver
             # ran even where the answer could not matter.
-            [System.IO.File]::WriteAllText((Join-Path $script:sd 'theme.json'),
-                '{"colorScheme":"x","backgroundImage":"{{BACKGROUND_IMAGE}}"}', $script:enc)
-            Get-UnsupportedStyleFeatureNote -StyleDir $script:sd -Kind 'AppleTerminal' | Should -BeNullOrEmpty
+            $t = script:Read-Theme '{"colorScheme":"x","backgroundImage":"{{BACKGROUND_IMAGE}}"}'
+            @(Get-UnsupportedStyleField -Theme $t -StyleDir $script:sd -Kind 'AppleTerminal') |
+                Should -BeNullOrEmpty
             Should -Invoke Get-StyleBundledBackground -Times 0 -Exactly -Scope It
         }
     }
@@ -188,7 +199,7 @@ Describe 'both apply doors answer the capability question the same way' {
             foreach ($name in 'Invoke-TerminalStyle', 'Apply-StyleNonWT') {
                 $calls = @((Get-Command $name).ScriptBlock.Ast.FindAll({ param($n)
                     $n -is [System.Management.Automation.Language.CommandAst] -and
-                    $n.GetCommandName() -eq 'Get-UnsupportedStyleFeatureNote' }, $true))
+                    $n.GetCommandName() -eq 'Get-UnsupportedStyleField' }, $true))
                 @($calls).Count | Should -BeGreaterThan 0 `
                     -Because "$name applies a style off Windows Terminal and owes the user this line"
             }
@@ -199,7 +210,12 @@ Describe 'both apply doors answer the capability question the same way' {
             # none at all.
             $repoRoot = Split-Path $PSScriptRoot -Parent
             $hits = @()
-            foreach ($f in @('tstyles.ps1') + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'lib') -Filter '*.ps1' |
+            # terminals.ps1 is in the set because that is where the one builder
+            # lives -- Show-UnsupportedStyleField. Scanning only tstyles.ps1 and
+            # lib/ made this assertion answer 0, which is the shape of a guard
+            # that has stopped watching the thing it names rather than of a
+            # defect: a file list is its own second implementation.
+            foreach ($f in @('tstyles.ps1', 'terminals.ps1') + @(Get-ChildItem -LiteralPath (Join-Path $repoRoot 'lib') -Filter '*.ps1' |
                                                  ForEach-Object { $_.FullName })) {
                 $p = if ([System.IO.Path]::IsPathRooted($f)) { $f } else { Join-Path $repoRoot $f }
                 $src = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
