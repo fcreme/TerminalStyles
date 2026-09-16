@@ -533,3 +533,49 @@ else                                                                  { 'Restric
         $out | Should -Not -Match 'still'
     }
 }
+
+Describe 'the installer banner' {
+    # Every user-facing message is a claim, and this one is three lines into a
+    # first run: "tstyles  --  Windows Terminal themes for pwsh". The bootstrap
+    # installer is the path README offers to macOS and Linux users, where there
+    # is no Windows Terminal at all -- and the module styles Terminal.app,
+    # iTerm2, kitty, WezTerm, Ghostty, Alacritty and VS Code on Windows too.
+    # `tstyles help` has said "themed styles for your terminal" since 0.8.21,
+    # with a comment above it recording exactly this reasoning; the banner was
+    # never revisited.
+    #
+    # Behavioural, not a source-text match: the banner is captured and read.
+    BeforeAll {
+        $script:repoRoot    = Split-Path $PSScriptRoot -Parent
+        $script:installPath = Join-Path $script:repoRoot 'install.ps1'
+        $TStylesInstallNoRun = $true
+        . $script:installPath
+        Import-Module (Join-Path $script:repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+
+        $script:banner = (Write-InstallBanner 6>&1 | Out-String)
+    }
+
+    It 'prints a banner at all' {
+        # A capture that came back empty would make every assertion below pass
+        # while measuring nothing.
+        $script:banner | Should -Match 'tstyles'
+    }
+
+    It 'does not name one terminal' {
+        $script:banner | Should -Not -Match 'Windows Terminal' `
+            -Because 'the reader of this line is as likely to be on Terminal.app or kitty'
+    }
+
+    It 'prints the same tagline the module itself prints' {
+        # install.ps1 is standalone -- it cannot dot-source lib/help.ps1, so this
+        # test is the only place the two literals meet. Compared with .Contains,
+        # not -match: -match is case-insensitive and would accept a drifted case.
+        $help = (& (Get-Module TerminalStyles) { Show-TerminalStyleHelp } 6>&1 | Out-String)
+        $m = [regex]::Match($help, '(?m)^tstyles - (?<tag>.+?)(?:\s*\(v[^)]*\))?\s*$')
+        $m.Success | Should -BeTrue -Because 'the module title is where the wording is settled'
+        $tag = $m.Groups['tag'].Value
+        $tag | Should -Be 'themed styles for your terminal'
+        $script:banner.Contains($tag) | Should -BeTrue `
+            -Because "the banner must carry the module's own tagline, not a second literal of it"
+    }
+}
