@@ -16,6 +16,13 @@
 
 BeforeAll {
     $script:repoRoot     = Split-Path $PSScriptRoot -Parent
+    # Explicit, like every other file in the suite. The cache-directory It below
+    # runs InModuleScope, and this file used to reach the module only as a side
+    # effect of a `Get-Command Invoke-TerminalStyle` in the picker-backup guard
+    # -- which auto-imports whatever TerminalStyles is INSTALLED on the machine
+    # (the PSGallery copy under ~/.local/share/powershell/Modules), not the one
+    # in this checkout. Measuring the repo means importing the repo.
+    Import-Module (Join-Path $script:repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
     $script:contributing = [System.IO.File]::ReadAllText(
         (Join-Path $script:repoRoot 'CONTRIBUTING.md'), [System.Text.UTF8Encoding]::new($false))
     $script:security     = [System.IO.File]::ReadAllText(
@@ -100,14 +107,33 @@ Describe 'README claims that the code can settle' {
     }
 
     It 'does not claim the picker skips the rolling backup' {
-        # It writes one before its first preview -- Invoke-TerminalStyle does
-        # WriteAllText to "$settingsPath.bak". The README said the opposite,
-        # which would have talked someone out of a recovery path that exists.
-        $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
-        $writesBak = $src -match '\$settingsPath\.bak'
-        if ($writesBak) {
-            $script:readme | Should -Not -Match "picker.*doesn't write a ``\.bak``"
-        }
+        # The picker writes one before its first preview -- Invoke-TerminalStyle
+        # calls Save-SettingsBackup, which copies settings.json to "<path>.bak".
+        # The README said the opposite, which would have talked someone out of a
+        # recovery path that exists.
+        #
+        # This assertion used to sit behind `if ($src -match '\$settingsPath\.bak')`
+        # -- a probe of Invoke-TerminalStyle's OWN SOURCE TEXT. The picker's
+        # backup moved into Save-SettingsBackup (lib/wtsettings.ps1), the probe
+        # went False, and the It ran zero assertions while still reporting
+        # green: fed the exact regression it guards ("Opening the picker
+        # doesn't write a `.bak`, so there is no way back.") it passed. A
+        # source-text probe cannot survive the refactors it is meant to outlive,
+        # and there is no state in which this claim should go unchecked -- the
+        # picker's backup is pinned behaviourally by
+        # tests/Backup-BeforeValidation.Tests.ps1 -- so it is asserted
+        # unconditionally now.
+        #
+        # Anchored to the `### Recovering` section the neighbouring It already
+        # extracts, so the two bound the same sentences from both sides: that
+        # one requires the section to NAME the picker among the writers, this
+        # one requires it not to deny that it writes.
+        $section = ([regex]::Match($script:readme, '(?ms)^### Recovering.*?(?=^#{2,3} )')).Value
+        $section | Should -Not -BeNullOrEmpty -Because 'the recovery recipe is what this test is about'
+        $section | Should -Match '(?i)picker' `
+            -Because 'a section that never mentions the picker would make the check below vacuous'
+        $section | Should -Not -Match '(?i)picker[^.]{0,80}\b(does not|doesn''t|never|skips)\b' `
+            -Because 'the picker rolls settings.json.bak before its first preview'
     }
 
     It 'names every command that spends the rolling backup' {

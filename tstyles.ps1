@@ -359,7 +359,8 @@ function Invoke-TerminalStylesStateMigration {
 # and reported "Reset <terminal> to its unstyled default."
 $script:TStylesSubcommands = @(
     'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
-    'reset', 'shell-init', 'shell-remove', 'tune', 'update', 'uninstall', 'profiles')
+    'reset', 'restore', 'shell-init', 'shell-remove', 'trash', 'tune', 'update',
+    'uninstall', 'profiles')
 
 function Test-StyleNameIsSingleSegment {
     <#
@@ -661,6 +662,12 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
     if ($Arg -eq 'shell-remove')         { Invoke-TerminalStylesShellInit -Remove; return }
     if ($Arg -eq 'delete')               { Invoke-TerminalStyleDelete -Name $SubArg -Target $Target -Yes:$Yes; return }
+    if ($Arg -eq 'trash')                { Show-StyleTrashList; return }
+    # [void], because this one returns a STATUS rather than printing only --
+    # 'restored' / 'none' / 'taken' / 'failed' is for callers and tests, and
+    # letting it fall out of the dispatcher would print the word to the console
+    # under everything the command already said.
+    if ($Arg -eq 'restore')              { [void](Invoke-TerminalStyleRestore -Name $SubArg); return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData -Yes:$Yes; return }
     if ($Arg -eq 'profiles')             { Invoke-TerminalStyleProfiles -Clean:$Clean -Yes:$Yes; return }
 
@@ -1621,9 +1628,21 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # wrong costs nothing, and not for `delete <name>`, where the argument is the
 # whole point and a typo is the difference between a refusal and the wrong
 # style. Offers only what delete will actually accept.
+#
+# `restore <name>` is the same argument with a different source: the names in
+# the trash, which are the ONLY thing that command accepts and the one list a
+# user cannot see without asking for it. Completing delete but not restore would
+# leave the half you cannot guess uncompleted.
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName SubArg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
-    if ("$($fakeBoundParameters['Arg'])" -ne 'delete') { return }
+    $sub = "$($fakeBoundParameters['Arg'])"
+    if ($sub -eq 'restore') {
+        @(Get-StyleTrashEntry | ForEach-Object StyleName | Sort-Object -Unique |
+            Where-Object { $_ -like "$wordToComplete*" }) |
+            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+        return
+    }
+    if ($sub -ne 'delete') { return }
     $claim = Get-InstalledStyleClaim
     $one   = Test-StylesRootsAreOne
     @(Get-AvailableStyles | Where-Object {

@@ -121,7 +121,7 @@ Image rules:
 ### CI checks on theme PRs
 
 Every PR runs the full Pester suite on both pwsh 7 and Windows
-PowerShell 5.1. Two checks exist specifically to guard themes:
+PowerShell 5.1. Three checks exist specifically to guard themes:
 
 - **Contrast floor** (`tests/Scheme-Contrast.Tests.ps1`): every
   chromatic ANSI color (`red`, `green`, `yellow`, `blue`, `purple`,
@@ -135,6 +135,14 @@ PowerShell 5.1. Two checks exist specifically to guard themes:
 - **No backgrounds on `main`** (`tests/No-Committed-Backgrounds.Tests.ps1`):
   fails if git tracks any `styles/*/background.*` file. Background
   images belong on the `gifs` branch.
+- **Your README describes the folder beside it**
+  (`tests/Style-README-Accuracy.Tests.ps1`): a `README.md` is optional,
+  but if yours carries an `## Includes` section that list is read as a
+  claim and checked **both ways** — it must name every file you ship,
+  and must not name one you do not. "No `theme.json`" is how you say a
+  file is absent; that is a denial rather than a claim and stays legal.
+  The same file also fails a README that denies a file it ships, and any
+  `#rrggbb` it quotes that sits in no slot of your `scheme.json`.
 
 Run everything locally before pushing:
 
