@@ -69,6 +69,58 @@ function Test-BackgroundProbeSuppressed {
     return (($Now.ToUniversalTime() - $at) -lt $ttl)
 }
 
+function Get-StyleBackgroundAbsence {
+    <#
+    .SYNOPSIS
+    WHY this style has no background image: 'absent', 'unreachable' or 'unknown'.
+
+    .DESCRIPTION
+    Get-StyleBundledBackground already draws the distinction -- it is the whole
+    reason the marker carries a `kind` and two different TTLs -- and then throws
+    it away at the return, handing every caller one undifferentiated $null. So a
+    style that genuinely ships no image and a style whose image could not be
+    downloaded were the same answer, and `tstyles <style> -NewWindow` on
+    Terminal.app returned in silence for both: no window, and not one word about
+    the background, on the one command whose entire purpose is the background.
+
+    Three answers rather than a boolean, for the reason Unregister-ShellLoader
+    returns four:
+
+      absent       every extension answered 404. The style ships no image.
+      unreachable  the network did not answer. Nothing is known about the image.
+      unknown      no marker to read -- the cache dir could not be created or
+                   written, or nobody has probed yet.
+
+    Read AFTER Get-StyleBundledBackground returns $null: that call either wrote
+    a fresh marker or was suppressed by an unexpired one, so the marker on disk
+    is the reason for the $null the caller is holding. Asked on its own it is a
+    cache reading, not a probe -- it never touches the network.
+    #>
+    param([Parameter(Mandatory)][string]$StyleDir)
+
+    $cacheDir = Get-StyleCacheDir -StyleName (Split-Path -Leaf $StyleDir)
+    $markerPath = Join-Path $cacheDir '.no-background'
+    if (-not (Test-Path -LiteralPath $markerPath)) { return 'unknown' }
+
+    $markerText = ''
+    try {
+        $markerText = [System.IO.File]::ReadAllText($markerPath, [System.Text.UTF8Encoding]::new($false))
+    } catch { return 'unknown' }
+
+    # An unparseable marker is 'unknown' for the same reason
+    # Test-BackgroundProbeSuppressed calls it expired: the content-free markers
+    # releases up to 0.8.5 wrote say nothing, and inventing a reason from one
+    # would put a sentence on screen that no measurement backs.
+    $marker = $null
+    try { $marker = $markerText | ConvertFrom-Json } catch { return 'unknown' }
+    if (-not $marker -or -not $marker.kind) { return 'unknown' }
+    switch ("$($marker.kind)") {
+        'absent'      { return 'absent' }
+        'unreachable' { return 'unreachable' }
+        default       { return 'unknown' }
+    }
+}
+
 function Get-BackgroundFileIn {
     # The background image sitting DIRECTLY in one directory, or $null.
     #

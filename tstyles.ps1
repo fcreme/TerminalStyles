@@ -1448,6 +1448,12 @@ function Invoke-TerminalStyle {
         # shell side at all: left unset, the Windows Terminal path would compare
         # $null against 'ok' and warn about a staging step it never ran.
         $stagedShell = 'ok'
+        # Empty up front for the same reason, and for one more: the notice is
+        # PRINTED below the Clear-Host, several screens from where it is
+        # computed. Printing it up here instead would have measured green in a
+        # test and shown the user nothing -- Clear-Host wipes everything this
+        # block writes.
+        $unsupportedFields = @()
         if ($useSettingsFile) {
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
@@ -1527,6 +1533,20 @@ function Invoke-TerminalStyle {
                                        -StyleDir $selectedStyle.FullName `
                                        -Scheme $schemes[$idx] `
                                        -Theme $wtTheme -Kind $termKind | Out-Null
+
+            # ...and which fields this terminal cannot show, which is the third
+            # thing `tstyles <name>` says on this door and the picker said
+            # nowhere: `tstyles` + Enter on Terminal.app printed "Style applied"
+            # and not one word about the font, cursor shape, padding or tab
+            # color it had just dropped. Computed here, where the theme is
+            # already parsed, and printed below the Clear-Host that would
+            # otherwise erase it.
+            #
+            # The Windows Terminal branch has nothing to add: it honours the
+            # whole theme.json field set, so the list is empty by construction
+            # and the $useSettingsFile arm leaves it at @().
+            $unsupportedFields = @(Get-UnsupportedStyleField -Theme $wtTheme `
+                                       -StyleDir $selectedStyle.FullName -Kind $termKind)
         }
 
         # -KeepPrompt means "this style's colors, my prompt". Copying the
@@ -1561,6 +1581,13 @@ function Invoke-TerminalStyle {
         # that forgot to stage those files at all for several releases.
         if ($stagedShell -ne 'ok') {
             Show-ShellStagingFailure -Status $stagedShell
+            Write-Host ""
+        }
+
+        # And the same "can't show" line, from the same function, for the same
+        # reason. Below the Clear-Host on purpose -- see where the list is built.
+        if (@($unsupportedFields).Count -gt 0) {
+            Show-UnsupportedStyleField -Field $unsupportedFields -Kind $termKind
             Write-Host ""
         }
 

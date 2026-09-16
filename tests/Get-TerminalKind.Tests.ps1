@@ -80,6 +80,46 @@ Describe 'Get-TerminalKind' {
                 Should -Be 'ITerm2'
         }
 
+        # ...and WezTerm's own markers must survive the same inheritance, which
+        # they did not: WezTerm was identified by TERM_PROGRAM alone, BELOW the
+        # ITERM_SESSION_ID gate, while exporting three unambiguous variables the
+        # function never read. Any session carrying an inherited ITERM_SESSION_ID
+        # -- a tmux server whose environment was captured under iTerm2, ssh with
+        # SendEnv, a WezTerm window launched from an iTerm2 shell -- resolved to
+        # 'ITerm2'.
+        #
+        # Measured on 0.8.28 through a real child-process environment, not just
+        # this seam: with ITERM_SESSION_ID set alongside TERM_PROGRAM=WezTerm and
+        # WEZTERM_PANE, the kind came back 'ITerm2' with Persist/Font/Padding/
+        # BackgroundImage all $false -- so Publish-StyleWezTermConfig returned at
+        # its `if ($Kind -ne 'WezTerm')` guard, wrote no Lua module, and printed
+        # nothing. kitty, Alacritty and Ghostty were already protected by
+        # own-marker checks placed above that gate; WezTerm, the one terminal off
+        # Windows with a config writer, was not.
+        It 'prefers <_> over an inherited ITERM_SESSION_ID' -ForEach @(
+            'WEZTERM_PANE', 'WEZTERM_EXECUTABLE', 'WEZTERM_UNIX_SOCKET') {
+            # Not named $env: that is the provider drive every other variable
+            # here is deliberately avoiding.
+            $table = @{ ITERM_SESSION_ID = 'w0t0p0:F1C2'; TERM_PROGRAM = 'WezTerm' }
+            $table[$_] = '0'
+            Get-TerminalKind -EnvTable $table | Should -Be 'WezTerm'
+        }
+
+        It 'still answers ITerm2 when only iTerm2 markers are present' {
+            # The counterweight: the new check must not swallow a real iTerm2
+            # session. Nothing here sets a WEZTERM_* variable.
+            Get-TerminalKind -EnvTable @{ ITERM_SESSION_ID = 'w0t0p0'; TERM_PROGRAM = 'iTerm.app' } |
+                Should -Be 'ITerm2'
+        }
+
+        It 'still lets Windows Terminal win over a WezTerm marker' {
+            # WT_SESSION stays first: WT is the host actually rendering, and a
+            # WEZTERM_* variable can be inherited into a WT tab exactly as
+            # ITERM_SESSION_ID can.
+            Get-TerminalKind -EnvTable @{ WT_SESSION = 'a-guid'; WEZTERM_PANE = '0' } |
+                Should -Be 'WindowsTerminal'
+        }
+
         It 'reads the live environment when no -EnvTable is supplied' {
             # Whatever is hosting the test run, the result must be one of the
             # known kinds -- never $null or an empty string.

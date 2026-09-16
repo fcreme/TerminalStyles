@@ -26,6 +26,24 @@ Describe 'Get-TerminalCapability' {
         $script:AllKinds = @('WindowsTerminal','AppleTerminal','ITerm2','Ghostty',
                              'WezTerm','Kitty','Alacritty','VSCode','Unknown')
 
+        # Every capability that can ONLY arrive through a config write -- which
+        # is every declared name but OscPalette and Persist itself. The two
+        # guards below are built on this list, so anything missing from it is a
+        # flag no test can falsify.
+        #
+        # It used to be five hand-typed names out of nine, and TabTitle and
+        # Padding sat outside it. Measured by mutation on a full copy of the
+        # repo, injecting one line into the Ghostty arm and re-running this file:
+        # Font=$true -> 35 passed / 2 failed, TabColor=$true -> 35/2,
+        # Persist=$true -> 36/1, but TabTitle=$true -> 37/0 and Padding=$true ->
+        # 37/0. Both blind. iTerm2 and Terminal.app were both claiming TabTitle
+        # with no writer behind either, and nothing in the suite could say so.
+        #
+        # Derived from $script:TStylesCapabilityNames rather than typed out, so
+        # a capability added to the model cannot be added outside the guard.
+        $script:StoredVisuals = @($script:TStylesCapabilityNames |
+            Where-Object { $_ -notin @('OscPalette', 'Persist') })
+
         It 'returns a record covering exactly the declared capability names for <_>' -ForEach $script:AllKinds {
             $caps = Get-TerminalCapability -Kind $_
             # Sorted comparison: the record must be neither missing a declared
@@ -86,7 +104,7 @@ Describe 'Get-TerminalCapability' {
             # .terminal profile writer, which carries colors and an image and
             # no font at all. Asserting it that way round is what kept five
             # terminals marked as font-capable with nothing behind it.
-            $stored = @('Font', 'Opacity', 'CursorShape', 'BackgroundImage', 'TabColor')
+            $stored = $script:StoredVisuals
             foreach ($k in $script:AllKinds) {
                 $caps = Get-TerminalCapability -Kind $k
                 foreach ($n in $stored) {
@@ -143,6 +161,30 @@ Describe 'Get-TerminalCapability' {
             $caps.Font        | Should -BeFalse
             $caps.Opacity     | Should -BeFalse
             $caps.CursorShape | Should -BeFalse
+        }
+
+        It 'does not claim a tab title for Terminal.app or iTerm2 either' {
+            # The claim that outlived the 0.8.x trim, because it sat outside the
+            # $stored list both guards above iterate. Nothing writes an iTerm2
+            # Dynamic Profile at all, and the Terminal.app profile this module
+            # builds carries name, type, ProfileCurrentVersion and twenty colour
+            # keys -- 23 in total, measured by running New-AppleTerminalProfile
+            # for real -- with no CustomTitle and no TitleDisplaysCustomTitle.
+            #
+            # The tab title DOES change on an apply, everywhere: the style's
+            # profile.ps1 sets $Host.UI.RawUI.WindowTitle and the staged
+            # prompt.sh emits OSC 0, both unconditionally and on every kind.
+            # That is what this flag is not about -- reading it as "the title
+            # works here" is how the two claims survived four audit rounds.
+            (Get-TerminalCapability -Kind 'AppleTerminal').TabTitle | Should -BeFalse
+            (Get-TerminalCapability -Kind 'ITerm2').TabTitle        | Should -BeFalse
+        }
+
+        It 'claims a tab title only where a config carries one' {
+            # Windows Terminal's settings.json has a tabTitle key and
+            # Merge-StyleIntoSettings writes it. It is the only one.
+            $claimed = @($script:AllKinds | Where-Object { (Get-TerminalCapability -Kind $_).TabTitle })
+            ($claimed -join ',') | Should -Be 'WindowsTerminal'
         }
 
         It 'still lets every OSC terminal preview colors' {

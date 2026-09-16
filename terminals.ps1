@@ -36,7 +36,16 @@ $script:TStylesCapabilityNames = @(
     'Opacity',         # window transparency
     'CursorShape',     # block / bar / underscore / filled
     'BackgroundImage', # a wallpaper behind the text
-    'TabTitle',        # per-profile tab title
+    # Can this module write the style's tabTitle into a config the terminal
+    # reads? True only for Windows Terminal's settings.json. Not to be confused
+    # with the tab title CHANGING when a style is applied, which happens on
+    # every terminal and owes nothing to this flag -- that is the style's own
+    # profile.ps1 ($Host.UI.RawUI.WindowTitle) and the staged prompt.sh (OSC 0),
+    # both copied unconditionally by the apply. Reading TabTitle as "the title
+    # works here" is what had iTerm2 and Terminal.app claiming it with no writer
+    # behind either, the same shape as the font and background-image over-claims
+    # trimmed in 0.8.x.
+    'TabTitle',
     'TabColor',        # per-profile tab accent color
     'Padding'          # interior window padding
 )
@@ -65,10 +74,27 @@ function Get-TerminalKind {
     # would otherwise match on TERM_PROGRAM below.
     if (& $get 'WT_SESSION') { return 'WindowsTerminal' }
 
+    # Own markers, before the generic ones. This block is what protects a
+    # terminal from a marker INHERITED from whatever launched it: the check
+    # below returns 'ITerm2' on ITERM_SESSION_ID alone, and that variable
+    # survives into any child environment -- a tmux server whose environment was
+    # captured under iTerm2, `ssh` with SendEnv, or another terminal started from
+    # an iTerm2 shell.
+    #
     # kitty and Alacritty set no TERM_PROGRAM, only their own markers.
     if (& $get 'KITTY_WINDOW_ID')    { return 'Kitty' }
     if (& $get 'ALACRITTY_WINDOW_ID'){ return 'Alacritty' }
     if (& $get 'GHOSTTY_RESOURCES_DIR') { return 'Ghostty' }
+    # WezTerm was identified by TERM_PROGRAM alone, below the iTerm2 gate, while
+    # exporting three unambiguous markers this function never read. So a WezTerm
+    # window carrying an inherited ITERM_SESSION_ID resolved to 'ITerm2', and
+    # WezTerm is the one terminal off Windows with a config writer: the whole
+    # Persist/Font/Padding/BackgroundImage set switched off, the Lua module never
+    # written, and the "add this line to your wezterm.lua" hint -- the user's only
+    # clue -- never printed. The protection the three above get, for the one that
+    # loses the most without it.
+    if ((& $get 'WEZTERM_PANE') -or (& $get 'WEZTERM_EXECUTABLE') -or
+        (& $get 'WEZTERM_UNIX_SOCKET')) { return 'WezTerm' }
 
     # ITERM_SESSION_ID is set even when TERM_PROGRAM has been clobbered by a
     # multiplexer, so it is the more reliable iTerm2 signal of the two.
@@ -93,6 +119,14 @@ function Get-TerminalCapability {
     # "TerminalStyles will not try", which degrades to a plainer theme; marking
     # something $true that the terminal ignores is worse, because the user is
     # told a setting was applied and sees nothing change.
+    #
+    # Get-UnsupportedStyleField is what makes that concrete: it walks a style's
+    # theme.json against this record and every $false flag whose field the style
+    # declares becomes a word in the apply's "can't show" line. So turning a flag
+    # on next to a new writer also stops the field being named, with nothing in
+    # the notice to edit. Several arms below justify a $false by naming that
+    # notice; the notice used to ask two hardcoded questions and mention none of
+    # them, which made the justification circular.
     param([string]$Kind = (Get-TerminalKind))
 
     # Baseline: nothing. Each block below turns on only what it can prove.
@@ -119,8 +153,13 @@ function Get-TerminalCapability {
             # kind is AppleTerminal), skipped the "can't show: background image"
             # notice that explains a plain result, and still had the picker
             # prefetch megabytes of GIFs that could never be drawn.
+            #
+            # TabTitle went the same way, one round later: nothing here writes
+            # an iTerm2 Dynamic Profile, so no tab title is written either. The
+            # title a user sees change on an apply is the style's prompt setting
+            # it, which needs no capability at all -- see the flag's comment
+            # above.
             $caps.OscPalette = $true
-            $caps.TabTitle   = $true
         }
         'AppleTerminal' {
             # Persistence goes through a .terminal profile plist. No per-profile
@@ -147,9 +186,16 @@ function Get-TerminalCapability {
             # would honour them in a profile; until the profile carries them,
             # saying so here would suppress the "can't show" notice and leave
             # the user comparing an unchanged font against the screenshot.
+            #
+            # TabTitle is not claimed either, for the reason the flag's own
+            # comment gives: Get-AppleTerminalProfileData emits name, type,
+            # ProfileCurrentVersion and twenty colour keys -- measured, 23 keys,
+            # no CustomTitle and no TitleDisplaysCustomTitle -- so no tab title
+            # is written anywhere. The title still changes on an apply, because
+            # the style's prompt sets it, exactly as it does on kitty or Ghostty
+            # where this flag has always been $false.
             $caps.OscPalette      = $true
             $caps.Persist         = $true
-            $caps.TabTitle        = $true
             $caps.BackgroundImage = $true
         }
         # Ghostty / kitty / Alacritty keep their settings in a config file this
@@ -609,6 +655,118 @@ function Set-ShellStyleState {
         $script:TStylesShellStagingError = $_.Exception.Message
         return 'failed'
     }
+}
+
+function Get-UnsupportedStyleField {
+    <#
+    .SYNOPSIS
+    The parts of a style this terminal cannot show, named for the user.
+
+    .DESCRIPTION
+    The reader the capability table never had. The notice was two hardcoded
+    questions -- background image and tab color -- so the four flags the table
+    keeps $false expressly to trigger it could not produce a word on screen:
+    Font, Opacity, CursorShape and Padding had no reader anywhere outside
+    terminals.ps1. The table's own comments assert the opposite in two places
+    ("saying so here would suppress the 'can't show' notice", at AppleTerminal's
+    Font/Opacity/CursorShape and at WezTerm's Opacity), which made the rationale
+    circular: the flags stayed off to trigger a notice that never mentioned them.
+
+    Measured on the bundled `forest` on Terminal.app before this existed: the
+    style declares font, opacity, cursorShape, tabColor and padding, the table
+    says no to all five, and the apply printed "Terminal.app can't show: tab
+    color." So a user comparing an unchanged Cascadia-Code-less window against
+    the screenshot was told about the one field they could not see anyway.
+
+    Driven off the capability record so a flag is load-bearing: flip one on next
+    to a new writer and the field stops being named, with nothing here to edit.
+
+    Two fields are deliberately NOT asked about:
+
+      colorScheme  -- the palette has its own, better notices upstream
+                      ('nocolors', the redirected-output note, and the
+                      per-slot unreadable-hex list).
+      tabTitle     -- the style's prompt.ps1/prompt.sh sets the title on EVERY
+                      terminal, so "can't show: tab title" would be false
+                      wherever the flag is $false. See the flag's comment.
+
+    Returns a [string[]] of human-readable field names, in a fixed order so the
+    same style on the same terminal always reads the same. Empty when the style
+    ships no theme.json: with nothing declared there is no claim to fall short
+    of, and asking would cost a background resolution (up to four serial
+    10-second HTTP attempts) for a style that declares no background.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowNull()]$Theme,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [Parameter(Mandatory)][string]$Kind
+    )
+
+    if (-not $Theme) { return @() }
+
+    $caps = Get-TerminalCapability -Kind $Kind
+    $unsupported = @()
+
+    $declares = {
+        param([string]$Name)
+        return ($Theme.PSObject.Properties.Match($Name).Count -gt 0)
+    }
+
+    # Capability first, deliberately -- and this is the ONLY background
+    # resolution on the unsupported path. Get-StyleBundledBackground can make up
+    # to four serial 10-second HTTP attempts against the gifs branch, so as the
+    # left operand it ran even where the answer could not matter. Ordered this
+    # way it is mutually exclusive with Publish-StyleBackgroundProfile's call,
+    # which needs $caps.BackgroundImage to be true.
+    #
+    # Asked of the resolved IMAGE rather than the theme key, because the key is
+    # a placeholder: every bundled theme.json carries "{{BACKGROUND_IMAGE}}"
+    # whether or not an image exists to substitute into it.
+    if (-not $caps.BackgroundImage -and (Get-StyleBundledBackground -StyleDir $StyleDir)) {
+        $unsupported += 'background image'
+    }
+    if ((& $declares 'font') -and -not $caps.Font) { $unsupported += 'font' }
+
+    # Opacity is the one field where "declared" is not the same as "asked for".
+    # Fifteen of the sixteen bundled styles set opacity 100 with useAcrylic
+    # false, which is a request for an ordinary opaque window -- exactly what a
+    # terminal that cannot do transparency already gives. Naming it there would
+    # be noise on every apply and would teach the user to ignore the line that
+    # carries the real drops.
+    if (-not $caps.Opacity) {
+        $wantsTransparency = $false
+        if (& $declares 'opacity') {
+            $parsed = 0.0
+            if ([double]::TryParse("$($Theme.opacity)", [System.Globalization.NumberStyles]::Float,
+                                   [cultureinfo]::InvariantCulture, [ref]$parsed)) {
+                if ($parsed -lt 100) { $wantsTransparency = $true }
+            }
+        }
+        if ((& $declares 'useAcrylic') -and $Theme.useAcrylic) { $wantsTransparency = $true }
+        if ($wantsTransparency) { $unsupported += 'opacity' }
+    }
+    if ((& $declares 'cursorShape') -and -not $caps.CursorShape) { $unsupported += 'cursor shape' }
+    if ((& $declares 'padding')     -and -not $caps.Padding)     { $unsupported += 'padding' }
+    if ((& $declares 'tabColor')    -and -not $caps.TabColor)    { $unsupported += 'tab color' }
+
+    return @($unsupported)
+}
+
+function Show-UnsupportedStyleField {
+    # The notice both apply doors print for the fields above. Shared for the
+    # reason Show-ShellStagingFailure is: `tstyles <name>` printed it and the
+    # picker's confirm path printed nothing at all, so `tstyles` + Enter on
+    # Terminal.app said not one word about any dropped field.
+    #
+    # Leading blank line, no trailing one: the callers own their own spacing.
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Field,
+        [Parameter(Mandatory)][string]$Kind
+    )
+    if (@($Field).Count -eq 0) { return }
+    Write-Host ""
+    Write-Host ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $Kind),
+                (@($Field) -join ', ')) -ForegroundColor DarkGray
 }
 
 function Show-ShellStagingFailure {
