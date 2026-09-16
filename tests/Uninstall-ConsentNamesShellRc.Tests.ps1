@@ -1,5 +1,12 @@
-# Pester 5 tests: the uninstall consent listing must name the shell rc files it
-# is about to change.
+# Pester 5 tests: the uninstall consent listing must name the files it is about
+# to change -- the shell rc files, and the $PROFILE of each engine.
+#
+# BOTH halves, because the listing was wrong in both and was fixed in two
+# instalments. The rc bullet came first (below). The $PROFILE bullet above it
+# was a literal -- "Strip the loader block from pwsh 7 and Windows PowerShell
+# 5.1 $PROFILE files", unconditional, on every platform -- so off Windows it
+# named an engine that cannot exist there, named no file at all, and this suite
+# pinned that exact string, certifying it green on the macOS and Ubuntu legs.
 #
 # THE DEFECT. `tstyles uninstall` prints a bulleted list of what it will do and
 # then asks "Continue? [y/N]". Step 2 of the command strips the loader block
@@ -141,13 +148,30 @@ Describe 'the uninstall consent listing names what it will change' {
             New-Item -ItemType Directory -Path $script:h -Force | Out-Null
             # Refuse, always. Nothing past the prompt may run on this machine.
             Mock Confirm-Action { $false }
+            # The $PROFILE half is resolved by RUNNING each engine, so an
+            # unpinned call here reaches the operator's own profile (read-only,
+            # but slow, and it would put their real path in the assertions).
+            # -ProfileTarget is the seam; this is the second lock on it.
+            Mock Get-PowerShellProfileTarget { @() }
+
+            # A $PROFILE of our own, in the sandbox, for the bullet that names
+            # the PowerShell side. Only ever listed -- consent is refused.
+            $script:fakeProfile = Join-Path $script:h 'Microsoft.PowerShell_profile.ps1'
+            [System.IO.File]::WriteAllText($script:fakeProfile,
+                "# ===== TerminalStyles BEGIN =====`nImport-Module TerminalStyles`n# ===== TerminalStyles END =====`n",
+                [System.Text.UTF8Encoding]::new($false))
+            $script:profileTarget = [pscustomobject]@{
+                ProfilePath = $script:fakeProfile
+                Label       = 'PowerShell 7'
+                Labels      = @('PowerShell 7')
+            }
         }
 
         It 'names the rc file carrying the loader, and cancels' {
             $rc = script:New-Rc $script:h '.zshrc' -WithBlock
             $before = [System.IO.File]::ReadAllBytes($rc)
 
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
 
             $out | Should -Match ([regex]::Escape($rc)) `
                 -Because 'the prompt must name the file it is about to edit'
@@ -159,22 +183,94 @@ Describe 'the uninstall consent listing names what it will change' {
 
         It 'names ~/.profile when that is where the loader went' {
             $rc = script:New-Rc $script:h '.profile' -WithBlock
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
             $out | Should -Match ([regex]::Escape($rc))
         }
 
         It 'says nothing about shell rc files when none carry a block' {
             script:New-Rc $script:h '.zshrc' | Out-Null
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h 6>&1 | Out-String
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
             $out | Should -Not -Match 'zsh/bash loader' `
                 -Because 'listing files it will not touch would be its own kind of wrong'
         }
 
-        It 'still names the PowerShell side' {
-            # The bullet that was already right must survive the new one.
+        It 'names the $PROFILE it is about to strip, by path and by engine' {
+            # The bullet that was already there, and was a LITERAL: "Strip the
+            # loader block from pwsh 7 and Windows PowerShell 5.1 $PROFILE
+            # files", unconditional, on every platform. The rc bullet directly
+            # below it prints the real paths; this one named two engines and no
+            # file at all, and named them from a list that is only true on
+            # Windows.
             script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
-            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h 6>&1 | Out-String
-            $out | Should -Match 'Windows PowerShell 5\.1'
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h `
+                       -ProfileTarget @($script:profileTarget) 6>&1 | Out-String
+
+            $out | Should -Match ([regex]::Escape($script:fakeProfile)) `
+                -Because 'the prompt must name the file it is about to edit'
+            $out | Should -Match 'PowerShell 7' `
+                -Because 'and say which engine loads out of it'
+            $out | Should -Match 'Cancelled'
+        }
+
+        It 'never names an engine this platform does not have' {
+            # Asserted against the platform's own probe rather than a literal:
+            # on Windows "Windows PowerShell 5.1" is a real answer, and on macOS
+            # and Linux it is a claim about a binary that cannot exist. The
+            # literal is what the old assertion pinned, so two of the four CI
+            # legs certified the wrong string green.
+            script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h `
+                       -ProfileTarget @($script:profileTarget) 6>&1 | Out-String
+
+            # Anchor first. Every assertion below is a Should -Not -Match, and
+            # the whole bullet is omitted when the target list is empty -- so
+            # without this line the test passes loudest at the moment the
+            # listing has stopped naming the file it is about to edit. That is
+            # not hypothetical: it is how the single-element unroll at
+            # update.ps1's $profileTargets reached CI green on three legs and
+            # red on one.
+            $out | Should -Match 'Strip the loader block from' `
+                -Because 'there is a target, so the bullet must be there to test'
+
+            $labels = @((Get-PowerShellEngineCandidate).Label)
+            foreach ($absent in @('PowerShell 7', 'PowerShell 7 (preview)', 'Windows PowerShell 5.1') |
+                                Where-Object { $labels -notcontains $_ }) {
+                $out | Should -Not -Match ([regex]::Escape($absent)) `
+                    -Because "$absent is not an engine this platform registers"
+            }
+        }
+
+        It 'says nothing about the PowerShell side when no $PROFILE carries a block' {
+            # Same rule as the rc bullet above, which is already pinned on it:
+            # an empty list means the bullet is omitted, not printed empty.
+            script:New-Rc $script:h '.zshrc' -WithBlock | Out-Null
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String
+            $out | Should -Not -Match 'Strip the loader block from' `
+                -Because 'there is no $PROFILE to strip it from'
+            $out | Should -Match 'zsh/bash loader' -Because 'the rc bullet is unaffected'
+        }
+
+        It '-DeleteData names the styles and the trash it empties' {
+            # Same rule as the rc files, on the other bullet. That parenthetical
+            # bounds itself -- "active style, cached GIFs, throttle stamp" -- so
+            # a reader is entitled to treat it as the whole list, and the two
+            # things in the data root that nothing can give back were missing
+            # from it. `tstyles restore` now presents the trash as a safety net
+            # for seven days; this is the one command that empties it early, and
+            # it was doing so without naming it.
+            $saved = $script:TStylesDataRoot
+            try {
+                $script:TStylesDataRoot = Join-Path $script:h 'data'
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -DeleteData 6>&1 | Out-String
+                $out | Should -Match 'DELETE the entire'
+                $out | Should -Match '(?i)styles you made'
+                $out | Should -Match '(?i)trash'
+                $out | Should -Match 'Cancelled' -Because 'consent was refused, so nothing ran'
+            } finally {
+                $script:TStylesDataRoot = $saved
+            }
         }
     }
 }

@@ -1407,22 +1407,20 @@ function Invoke-TerminalStyleTune {
 
     # Undo the live preview and put the terminal back the way it was found.
     #
-    # Get-OscResetPacket hands colour control to the TERMINAL's own defaults,
-    # which is right on Windows Terminal -- settings.json has just been restored
-    # and WT repaints from it. Off Windows Terminal there is no such file: the
-    # style being tuned was itself only escape sequences, so resetting drops the
-    # user to a stock palette instead of the style they opened the tuner on.
-    # Re-emit the unmodified base scheme there. Same fix, and the same reasoning,
-    # as the picker's Esc.
+    # Which packet that takes -- the opened style re-emitted, or the reset that
+    # hands colour control to the terminal's own defaults -- is the same question
+    # the picker's Esc asks, and Get-RevertOscPacket is the one place that
+    # answers it. This was a second inline copy of that rule, and both copies
+    # were pinned by nothing but a source-text match against the enclosing
+    # function: swapping the arms left the whole suite green.
+    #
+    # $openedScheme, not $baseScheme: on a tuned style those are different files,
+    # and the base is not what the user was looking at. That half IS this
+    # caller's decision, so it stays here.
     $restoreBaseLook = {
         if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
-        # $openedScheme, not $baseScheme: on a tuned style those are different
-        # files, and the base is not what the user was looking at.
-        if (-not $tuneUsesSettings -and $openedScheme) {
-            [Console]::Out.Write((Get-SchemeOscPacket -Scheme $openedScheme))
-        } else {
-            [Console]::Out.Write((Get-OscResetPacket))
-        }
+        Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$tuneUsesSettings `
+            -HadStartingStyle:($null -ne $openedScheme) -StartingScheme $openedScheme) | Out-Null
     }
     $showPendingUpdate = {
         if ($pendingUpdate) {

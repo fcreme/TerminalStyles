@@ -274,26 +274,19 @@ Describe 'the tuner warns about the collision that actually loses work' {
 }
 
 Describe 'cancelling the tuner puts the terminal back' {
-    InModuleScope TerminalStyles {
+    # Which packet a cancel emits -- the opened style, or the reset that hands
+    # colour control to the terminal's own defaults -- is Get-RevertOscPacket's
+    # question, and tests/Get-RevertOscPacket.Tests.ps1 compares the bytes.
+    #
+    # It used to be asked here, by matching the text of $restoreBaseLook for one
+    # helper name and against the other. Both arms sat inside the block being
+    # matched, so the assertion could not see which was which: swapping them --
+    # the very regression the comment above the block describes -- kept this
+    # Describe green. So did swapping the picker's. What stays here is the part
+    # the helper cannot see: that all three exit paths reach the restore, and
+    # that the WT half still writes settings.json back.
 
-        It 'restores the base style off Windows Terminal, not the terminal default' {
-            # Same bug the picker had. Get-OscResetPacket hands colour control to
-            # the TERMINAL's own defaults -- correct on Windows Terminal, where
-            # settings.json has just been restored and WT repaints from it, and
-            # wrong everywhere else, where the style being tuned was itself only
-            # escape sequences. Esc dropped the user to a stock palette instead
-            # of the style they opened the tuner on.
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match '\$restoreBaseLook = \{'
-            # ...and it restores the style the user OPENED, not the working base.
-            # Those differ for a tuned style: tuning 'eva-night' resolves its
-            # base 'eva' as the working base, so restoring $baseScheme repainted
-            # the terminal as eva and called it "Reverted." -- leaving the user
-            # on a style they had never chosen.
-            $block = [regex]::Match($src, '(?s)\$restoreBaseLook = \{.*?\n    \}').Value
-            $block | Should -Match 'Get-SchemeOscPacket -Scheme \$openedScheme'
-            $block | Should -Not -Match 'Get-SchemeOscPacket -Scheme \$baseScheme'
-        }
+    InModuleScope TerminalStyles {
 
         It 'routes every exit path through the same restore' {
             # Three of them: Esc in the key loop, an aborted save, and the
@@ -302,11 +295,12 @@ Describe 'cancelling the tuner puts the terminal back' {
             ([regex]::Matches($src, '& \$restoreBaseLook')).Count | Should -BeGreaterOrEqual 3
         }
 
-        It 'still hands control back to Windows Terminal there' {
-            # On WT the reset is right: the file is restored and WT repaints.
+        It 'still puts the settings file back on Windows Terminal' {
+            # The other half of the WT revert, and the half that is genuinely
+            # this caller's: the OSC reset only means "unstyled" there because
+            # the file WT repaints from has already been restored.
             $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
             $block = [regex]::Match($src, '(?s)\$restoreBaseLook = \{.*?\n    \}').Value
-            $block | Should -Match 'Get-OscResetPacket'
             $block | Should -Match 'Write-SettingsAtomic'
         }
 

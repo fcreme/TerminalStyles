@@ -269,6 +269,31 @@ Describe 'delete is wired into the command surface' {
         }
     }
 
+    It 'so are trash and restore, the two halves that read it back' {
+        # The trash was write-only: `tstyles delete` printed the folder it had
+        # just written and no command in the tool could name it afterwards.
+        # Measured on 0.8.27: the dispatcher's own table held neither word, and
+        # both `tstyles trash` and `tstyles restore` answered "Unknown command
+        # or style" followed by the whole help screen.
+        InModuleScope TerminalStyles {
+            $script:TStylesSubcommands | Should -Contain 'trash'
+            $script:TStylesSubcommands | Should -Contain 'restore'
+            # The consequence of being on that list, stated rather than
+            # discovered: a style can no longer be called either, because the
+            # dispatch arm would win over it.
+            Test-StyleNameValid -Name 'trash'   | Should -BeFalse
+            Test-StyleNameValid -Name 'restore' | Should -BeFalse
+        }
+    }
+
+    It 'routes trash and restore before it tries to match a style' {
+        $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
+        foreach ($sub in 'trash', 'restore') {
+            $src | Should -Match "\`$Arg -eq '$sub'"
+            $src.IndexOf("`$Arg -eq '$sub'") | Should -BeLessThan $src.IndexOf('$styleMatch = Get-AvailableStyles')
+        }
+    }
+
     It 'Invoke-TerminalStyle routes delete before it tries to match a style' {
         $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
         $src | Should -Match "\`$Arg -eq 'delete'"
@@ -873,6 +898,223 @@ Describe 'the prompt describes what will actually happen to a tuned child' {
 
             # And the plan, not the printer, is where that was decided.
             $plan.Children[0].KeepsAdjustments | Should -Be $Keeps
+        }
+    }
+}
+
+
+# The trash, read back.
+#
+# `tstyles delete` moves a style to .deleted/<name>-<timestamp> and says so, and
+# that scrollback line was the last time the tool ever mentioned it. Nothing
+# listed what was in there, nothing said how much of the window was left, and
+# nothing put one back -- while the next delete of ANY style erased everything
+# past seven days. Measured on 0.8.27 in a sandboxed data root: an entry aged to
+# thirty days sat on disk through `tstyles list` and `tstyles current` without a
+# word, `tstyles trash` and `tstyles restore` both answered "Unknown command or
+# style", and the folder went only when an unrelated `tstyles delete` swept it.
+#
+# Recovery was documented (`tstyles help delete` said to move the folder back)
+# and the store was bounded (every delete sweeps), so what was missing is
+# narrower than "no undo": the state was invisible, and the one route back was a
+# Move-Item the user had to compose from a path in scrollback.
+Describe 'the trash can be read back, and a style put back' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData   = $script:TStylesDataRoot
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            script:New-Style $script:root 'eva'  | Out-Null
+            script:New-Style $script:root 'mine' -Tuned | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n")
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+        }
+
+        # Ages are written into the folder NAME, which is where the deletion
+        # time lives -- a rename does not touch LastWriteTime, which is why
+        # Get-StyleTrashTimestamp reads the name.
+        function script:New-TrashAged([string]$Name, [int]$DaysAgo, [switch]$NoScheme) {
+            $stamp = (Get-Date).AddDays(-$DaysAgo).ToString('yyyyMMdd-HHmmss', [cultureinfo]::InvariantCulture)
+            $d = Join-Path (Get-StyleTrashRoot) "$Name-$stamp"
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            if (-not $NoScheme) {
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), '{"name":"' + $Name + '"}')
+            }
+            return $d
+        }
+
+        Context 'Get-StyleTrashEntry' {
+            It 'says what is in there, when it went, and how long it has left' {
+                script:New-TrashAged -Name 'fresh'  -DaysAgo 2  | Out-Null
+                script:New-TrashAged -Name 'stale'  -DaysAgo 30 | Out-Null
+
+                $rows = @(Get-StyleTrashEntry)
+                @($rows | ForEach-Object StyleName) | Should -Be @('fresh', 'stale') `
+                    -Because 'newest deletion first, which is the order restore resolves in'
+
+                $fresh = $rows | Where-Object StyleName -eq 'fresh'
+                $stale = $rows | Where-Object StyleName -eq 'stale'
+
+                $fresh.Expired  | Should -BeFalse
+                $fresh.DaysLeft | Should -Be 5 -Because '7 days minus the 2 it has served'
+                $stale.Expired  | Should -BeTrue
+                $stale.DaysLeft | Should -BeLessThan 0 `
+                    -Because 'the sign is what tells an entry with time left from one living on borrowed time'
+            }
+
+            It 'strips the stamp, and keeps digits the style name owns' {
+                script:New-TrashAged -Name 'solarized-2024' -DaysAgo 1 | Out-Null
+                $row = @(Get-StyleTrashEntry)[0]
+                $row.StyleName | Should -Be 'solarized-2024'
+                $row.Name      | Should -Match '^solarized-2024-\d{8}-\d{6}$'
+            }
+
+            It 'says whether the name is free to restore into' {
+                # 'mine' is a live style in this fixture; 'gone' is not.
+                script:New-TrashAged -Name 'mine' -DaysAgo 1 | Out-Null
+                script:New-TrashAged -Name 'gone' -DaysAgo 1 | Out-Null
+                $rows = @(Get-StyleTrashEntry)
+                ($rows | Where-Object StyleName -eq 'mine').NameFree | Should -BeFalse
+                ($rows | Where-Object StyleName -eq 'gone').NameFree | Should -BeTrue
+            }
+
+            It 'reads without erasing, and returns empty when nothing was ever deleted' {
+                @(Get-StyleTrashEntry).Count | Should -Be 0
+                $d = script:New-TrashAged -Name 'precious' -DaysAgo 99
+                Get-StyleTrashEntry | Out-Null
+                [System.IO.Directory]::Exists($d) | Should -BeTrue
+            }
+
+            It 'decides the window in ONE place: the sweep is a filter over it' {
+                # Two answers to "is this past the window" is the shape most of
+                # this file's defects take. The listing the user reads and the
+                # erasure the next delete performs must not each own a copy.
+                script:New-TrashAged -Name 'fresh' -DaysAgo 2  | Out-Null
+                script:New-TrashAged -Name 'stale' -DaysAgo 30 | Out-Null
+
+                $expired = @(Get-StyleTrashEntry | Where-Object Expired | ForEach-Object Name)
+                $swept   = @(Get-StyleTrashSweepTarget | ForEach-Object Name)
+                $swept | Should -Be $expired
+                $swept.Count | Should -Be 1 -Because 'otherwise this compares two empty lists'
+            }
+        }
+
+        Context 'tstyles trash' {
+            It 'names an expired entry as what the next delete erases' {
+                script:New-TrashAged -Name 'precious' -DaysAgo 30 | Out-Null
+                $out = Invoke-TerminalStyle -Arg 'trash' 6>&1 | Out-String
+
+                $out | Should -Match 'precious'
+                $out | Should -Match 'EXPIRED'
+                $out | Should -Match 'tstyles restore <name>' `
+                    -Because 'a listing you cannot act on is the state this command exists to end'
+            }
+
+            It 'erases nothing itself' {
+                $d = script:New-TrashAged -Name 'precious' -DaysAgo 30
+                Invoke-TerminalStyle -Arg 'trash' 6>&1 | Out-Null
+                [System.IO.Directory]::Exists($d) | Should -BeTrue `
+                    -Because 'the erasure keeps the one consent screen it has, which is the delete plan'
+            }
+
+            It 'says so when there is nothing in there' {
+                $out = Invoke-TerminalStyle -Arg 'trash' 6>&1 | Out-String
+                $out | Should -Match 'trash is empty'
+            }
+        }
+
+        Context 'tstyles restore' {
+            It 'puts the folder back under the plain name, stamp and all removed' {
+                $trashed = script:New-TrashAged -Name 'gone' -DaysAgo 2
+                $status = Invoke-TerminalStyleRestore -Name 'gone' 6>$null
+                $status | Should -Be 'restored'
+
+                Get-StyleDir -StyleName 'gone' | Should -Not -BeNullOrEmpty
+                (Get-StyleDir -StyleName 'gone') | Should -Be (Join-Path (Join-Path $script:root 'styles') 'gone')
+                [System.IO.Directory]::Exists($trashed) | Should -BeFalse
+
+                # The one thing that would silently produce a style nothing can
+                # look up: the stamped name landing under styles/.
+                @(Get-ChildItem -LiteralPath (Join-Path $script:root 'styles') -Directory |
+                    ForEach-Object Name | Where-Object { $_ -match '-\d{8}-\d{6}$' }) |
+                    Should -BeNullOrEmpty
+            }
+
+            It 'refuses an occupied name, moves nothing, and returns a status rather than a boolean' {
+                # 'mine' is live. The folder standing there is a style the user
+                # has since made; nothing consented to spending it.
+                $marker = Join-Path (Get-StyleDir -StyleName 'mine') 'marker.txt'
+                [System.IO.File]::WriteAllText($marker, 'the live one')
+                $trashed = script:New-TrashAged -Name 'mine' -DaysAgo 2
+
+                $status = Invoke-TerminalStyleRestore -Name 'mine' 6>$null
+
+                $status | Should -Be 'taken'
+                $status | Should -BeOfType [string] `
+                    -Because '"it refused" and "it failed" must not become the same answer'
+                [System.IO.File]::ReadAllText($marker) | Should -Be 'the live one'
+                [System.IO.Directory]::Exists($trashed) | Should -BeTrue `
+                    -Because 'a refusal that moved the folder anyway would be the worst of both'
+            }
+
+            It 'answers none for a name that is not in the trash' {
+                $status = Invoke-TerminalStyleRestore -Name 'nothing-here' 6>$null
+                $status | Should -Be 'none'
+            }
+
+            It 'lists the trash when given no name' {
+                script:New-TrashAged -Name 'gone' -DaysAgo 1 | Out-Null
+                $out = Invoke-TerminalStyleRestore -Name '' 6>&1 | Out-String
+                $out | Should -Match 'gone'
+                $out | Should -Match 'Deleted styles'
+            }
+
+            It 'takes the newest copy when a name was deleted twice' {
+                $old = script:New-TrashAged -Name 'twice' -DaysAgo 5
+                $new = script:New-TrashAged -Name 'twice' -DaysAgo 1
+                [System.IO.File]::WriteAllText((Join-Path $new 'which.txt'), 'newest')
+
+                Invoke-TerminalStyleRestore -Name 'twice' 6>&1 | Out-Null
+
+                $dest = Join-Path (Join-Path $script:root 'styles') 'twice'
+                [System.IO.File]::ReadAllText((Join-Path $dest 'which.txt')) | Should -Be 'newest'
+                [System.IO.Directory]::Exists($old) | Should -BeTrue `
+                    -Because 'the older copy is still in the trash, with its own window'
+            }
+
+            It 'says out loud when what it restored is not a style the tool can show' {
+                # A folder with no scheme.json restores to something Get-StyleDir
+                # cannot resolve. "Restored" and nothing else would be a claim
+                # `tstyles list` immediately contradicts.
+                script:New-TrashAged -Name 'husk' -DaysAgo 1 -NoScheme | Out-Null
+                $out = Invoke-TerminalStyleRestore -Name 'husk' 6>&1 | Out-String
+                $out | Should -Match 'Restored husk'
+                $out | Should -Match 'no scheme\.json'
+            }
+        }
+
+        Context 'the delete says how to undo itself' {
+            It 'names the restore command on the success line and on the plan' {
+                # The route back was documented in `tstyles help delete` and
+                # printed nowhere the user was actually standing.
+                $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String
+                $out | Should -Match 'tstyles restore mine' `
+                    -Because 'the undo belongs on the screen that performs the thing being undone'
+            }
+
+            It 'still tells the truth about what the delete erases' {
+                # The line that changed here is the one scoped to THIS style;
+                # the ERASE lines above it are a different claim and must survive.
+                script:New-TrashAged -Name 'precious' -DaysAgo 30 | Out-Null
+                $out = Show-StyleDeletePlan -Plan (Get-StyleDeletePlan -Name 'mine') 6>&1 | Out-String
+                $out | Should -Match '- ERASE precious-'
+                $out | Should -Match "Nothing of 'mine' is erased"
+            }
         }
     }
 }

@@ -53,8 +53,10 @@ Import-Module TerminalStyles -DisableNameChecking
 
 Add the `Import-Module` line to your `$PROFILE` so it loads on every
 new shell tab — or run `tstyles register` once and it does that for
-you (both pwsh 7 and Windows PowerShell 5.1 `$PROFILE` files, with a
-confirm prompt first). Then:
+you: the `$PROFILE` of every PowerShell engine it finds (pwsh 7 and
+Windows PowerShell 5.1 on Windows, `pwsh` and `pwsh-preview`
+elsewhere, written once where two of them share one file), with a
+confirm prompt that names each one first. Then:
 
 ```powershell
 tstyles
@@ -119,6 +121,8 @@ tstyles random                    # Pick a random style and apply it
 tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
 tstyles delete [name]             # Delete a style you made (bundled styles are refused)
+tstyles trash                     # List deleted styles, and how long each one has left
+tstyles restore [name]            # Put a deleted style back; never overwrites a live one
 tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to both $PROFILE files
 tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zshrc, ~/.bashrc, ~/.bash_profile
@@ -131,7 +135,22 @@ tstyles help [command]            # Show all commands, or details for one
 ```
 
 Tab completion works on the subcommand and style names:
-`tstyles u<TAB>` cycles `umbrella`, `uninstall`, `update`.
+`tstyles u<TAB>` cycles `umbrella`, `uninstall`, `update`. `tstyles delete
+<TAB>` offers only the styles you may delete, and `tstyles restore <TAB>`
+only the names sitting in the trash.
+
+### Deleting a style, and changing your mind
+
+`tstyles delete <name>` never erases: it **moves** the folder to
+`.deleted/<name>-<timestamp>` in your data dir and keeps it for **7
+days**. `tstyles trash` lists what is in there, when each one went and
+how many of its days are left; `tstyles restore <name>` moves the newest
+copy back under the plain name — the timestamp does not come with it.
+
+A restore refuses rather than overwriting: if you have since made a new
+style under that name, it says so and leaves the trashed copy where it
+is. Nothing in the trash is erased until the **next** `tstyles delete`,
+which lists every expired folder in red on the screen you confirm.
 
 ### Tuning a theme
 
@@ -384,7 +403,7 @@ the window you are sitting in immediately — and, because the choice is recorde
 every tab you open afterwards too.
 
 ```powershell
-brew install powershell                  # if you don't have pwsh yet
+brew install powershell                  # macOS; on Linux, your package manager or https://aka.ms/powershell
 pwsh
 Install-PSResource -Name TerminalStyles
 Import-Module TerminalStyles -DisableNameChecking
@@ -647,6 +666,12 @@ tstyles uninstall
 - **Bootstrap** → removes the install-managed files from
   `%LOCALAPPDATA%\TerminalStyles\` (script files, bundled styles) and
   strips the loader.
+
+The confirmation lists every file it is about to edit by name — each
+engine's `$PROFILE` and each shell rc file that actually carries a
+block. If it cannot strip one (a read-only profile, or a block
+hand-edited down to a stray `BEGIN`), it names that file at the end
+instead of closing on "TerminalStyles uninstalled."
 
 **Either path preserves your user state by default** — your active
 style (`current-style.ps1`), update-check throttle, and cached

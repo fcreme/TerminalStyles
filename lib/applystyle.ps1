@@ -827,9 +827,25 @@ function Reset-StyleNonWT {
     # the applied colors live entirely in the terminal's dynamic-color state.
     # OSC 104/110/111/112/117 hands that state back to the terminal's own
     # configured profile, which is exactly what "unstyled default" means here.
+    param(
+        # The seam its apply sibling has carried since 0.8.27, and for the same
+        # reason: the .NET statics cannot be mocked and every CI leg runs
+        # redirected, so the arm that only prints at a REAL console could
+        # otherwise be pinned by nothing but an AST assertion. Reset had no
+        # parameters at all, and printed one sentence for both outcomes.
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
+    )
+
     $kind = Get-TerminalKind
 
-    [void](Invoke-TerminalStyleOscReset -Kind $kind)
+    # Captured, not [void]'d. This returns $false when the packet reached no
+    # terminal -- a process-level redirect, a runspace, a hosted app -- and the
+    # success line was printed regardless, so "Reset <terminal> to its unstyled
+    # default." came out byte-identical whether the window had been repainted or
+    # nothing had been sent at all. Still a bool on purpose: Get-OscResetPacket
+    # is a constant and is never empty, so the `nocolors` answer its apply
+    # sibling has cannot arise here.
+    $repainted = Invoke-TerminalStyleOscReset -Kind $kind
     Clear-CurrentStyleRecord
     Clear-ShellStyleState
 
@@ -841,9 +857,23 @@ function Reset-StyleNonWT {
     }
 
     Write-Host ""
-    Write-Host "  Reset " -NoNewline
-    Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan -NoNewline
-    Write-Host " to its unstyled default."
+    if ($repainted) {
+        Write-Host "  Reset " -NoNewline
+        Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan -NoNewline
+        Write-Host " to its unstyled default."
+    } elseif ($OutputRedirected) {
+        # Say the narrow truth, the way the apply half does. What DID happen is
+        # everything except the repaint: the record is gone and the staged
+        # zsh/bash files are gone, so every future tab is unstyled. What did not
+        # is this session, because its output does not go to a terminal.
+        Write-Host "  This session's colors were not reset: its output is redirected," -ForegroundColor Yellow
+        Write-Host "  so there is no terminal to repaint." -ForegroundColor Yellow
+        Write-Host "  The style is cleared -- a new tab comes up unstyled." -ForegroundColor Yellow
+    } else {
+        Write-Host "  This terminal did not accept the color reset, so this session keeps the" -ForegroundColor Yellow
+        Write-Host "  colors it has. The style is cleared -- a new tab comes up unstyled." -ForegroundColor Yellow
+    }
+    # True on all three paths: the loader target is removed either way.
     Write-Host "  Open a new tab to restore your default prompt."
     Write-Host ""
 }
