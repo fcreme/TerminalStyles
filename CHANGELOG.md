@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.28] - 2026-09-16
+
 ### Fixed
 
 - **the README's one consolidated command list and the help topics could disagree, and now cannot.** `shell-init` and `shell-remove` dispatched and had help topics but appeared only 270 lines further down, in a section about zsh and bash -- so the block the README presents as the command reference was two commands short. The test parses the shipped `### Subcommands` fence and compares it with the live module both ways.
@@ -939,7 +941,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.27...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.28...HEAD
+[0.8.28]: https://github.com/fcreme/TerminalStyles/compare/v0.8.27...v0.8.28
 [0.8.27]: https://github.com/fcreme/TerminalStyles/compare/v0.8.26...v0.8.27
 [0.8.26]: https://github.com/fcreme/TerminalStyles/compare/v0.8.25...v0.8.26
 [0.8.25]: https://github.com/fcreme/TerminalStyles/compare/v0.8.24...v0.8.25
