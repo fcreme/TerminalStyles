@@ -63,6 +63,21 @@ Describe 'Background carryover between styles' {
                 }
                 return $dir
             }
+            # A style the way a USER writes one: it ships a background.gif, and
+            # its theme.json names only the keys that person cared about.
+            # README documents theme.json keys as optional, and lib/tune.ps1
+            # produces exactly this shape when a base theme.json is malformed.
+            function script:New-PartialStyle {
+                param([string]$Name, [Parameter(Mandatory)][string]$ThemeJson)
+                $dir = Join-Path $script:TStylesModuleRoot "styles\$Name"
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'),
+                    "{`"name`":`"$Name`"}", $script:enc)
+                [System.IO.File]::WriteAllText((Join-Path $dir 'theme.json'), $ThemeJson, $script:enc)
+                [System.IO.File]::WriteAllText((Join-Path $dir 'background.gif'), 'GIFDATA', $script:enc)
+                return $dir
+            }
+
             $script:themeBody = $themeBody
             $script:withBgDir = script:New-Style -Name 'withbg' -WithBackground
             $script:noBgDir   = script:New-Style -Name 'nobg'
@@ -255,6 +270,56 @@ Describe 'Background carryover between styles' {
                 }
             }
 
+            It "writes only its own background fields, not the previous style's" {
+                # THE APPLY HALF of the hoist above. 'remove' was lifted out of
+                # the theme-property loop because "the clear only fired for
+                # styles whose theme.json named the fields"; 'apply' was left
+                # inside it, so it wrote back only the keys the incoming
+                # theme.json happened to declare and every other background key
+                # kept the PREVIOUS style's value. Same asymmetry, other half of
+                # the same switch.
+                $mine = script:New-PartialStyle -Name 'mine' `
+                    -ThemeJson '{"colorScheme":"mine","backgroundImage":"{{BACKGROUND_IMAGE}}"}'
+
+                $afterWithBg = script:Merge -Settings (script:New-Settings) -StyleDir $script:withBgDir
+                (script:GetProfile $afterWithBg).backgroundImageOpacity | Should -Be 0.45 `
+                    -Because 'the previous style must really have left these behind'
+                (script:GetProfile $afterWithBg).backgroundImageAlignment | Should -Be 'center'
+
+                $after = script:Merge -Settings $afterWithBg -StyleDir $mine
+                $p = script:GetProfile $after
+                $p.colorScheme     | Should -Be 'mine'
+                $p.backgroundImage | Should -Match 'mine[\\/]background\.gif$' `
+                    -Because 'its own image is the one key it did declare'
+                foreach ($f in 'backgroundImageOpacity', 'backgroundImageStretchMode', 'backgroundImageAlignment') {
+                    $p.PSObject.Properties.Match($f).Count | Should -Be 0 `
+                        -Because "$f belonged to withbg, and mine never asked for it"
+                }
+            }
+
+            It "does not keep the previous style's image for a style that names no background key" {
+                # Worse than a stale opacity: $applyBg is true (the style ships a
+                # GIF), so $bgAction is 'apply' and the hoisted 'remove' clear is
+                # bypassed -- while the property loop writes nothing at all,
+                # because this theme.json mentions no background field. The new
+                # style's own background.gif was never written and the old
+                # style's image stayed on screen behind the new palette: the
+                # exact failure CHANGELOG 0.8.26 records as fixed, alive on the
+                # other branch.
+                $quiet = script:New-PartialStyle -Name 'quiet' `
+                    -ThemeJson '{"colorScheme":"quiet","tabTitle":"QUIET"}'
+
+                $afterWithBg = script:Merge -Settings (script:New-Settings) -StyleDir $script:withBgDir
+                (script:GetProfile $afterWithBg).backgroundImage | Should -Match 'withbg[\\/]background\.gif$'
+
+                $after = script:Merge -Settings $afterWithBg -StyleDir $quiet
+                $p = script:GetProfile $after
+                $p.colorScheme | Should -Be 'quiet'
+                $p.tabTitle    | Should -Be 'QUIET'
+                script:BgFieldCount $p | Should -Be 0 `
+                    -Because "a style that mentions no background field must not inherit the last one's"
+            }
+
             It 'still applies a bundled background when the style ships one' {
                 $out = script:Merge -Settings (script:New-Settings) -StyleDir $script:withBgDir
                 (script:GetProfile $out).backgroundImage | Should -Match 'withbg[\\/]background\.gif$'
@@ -350,6 +415,36 @@ Describe 'Background carryover between styles' {
                 $out = script:Merge -Settings $s -StyleDir $script:withBgDir
                 (script:GetProfile $out).backgroundImage  | Should -Match 'withbg[\\/]background\.gif$'
                 (script:GetDefaults $out).backgroundImage | Should -Be $script:managedBg
+            }
+
+            It "clears our image off defaults when an apply writes no image of its own" {
+                # The guard below ('leaves defaults alone when the new style
+                # writes its own image onto the profile') rests on the entry
+                # SHADOWING defaults. A style that ships a GIF but never names
+                # backgroundImage writes nothing onto the entry, so there is
+                # nothing to shadow with and the inherited copy is exactly what
+                # the user keeps looking at.
+                $quiet = script:New-PartialStyle -Name 'quiet' -ThemeJson '{"colorScheme":"quiet"}'
+                $s = script:New-Settings -Defaults @{
+                    colorScheme            = 'withbg'
+                    backgroundImage        = $script:managedBg
+                    backgroundImageOpacity = 0.45
+                }
+                $out = script:Merge -Settings $s -StyleDir $quiet
+                (script:GetProfile $out).colorScheme | Should -Be 'quiet'
+                script:BgFieldCount (script:GetDefaults $out) | Should -Be 0 `
+                    -Because 'what the profile SHOWS is what bleeds, wherever the key lives'
+                (script:GetDefaults $out).colorScheme | Should -Be 'withbg' `
+                    -Because 'this apply was not asked to restyle profiles.defaults'
+            }
+
+            It "leaves an image the USER put on defaults alone in that same case" {
+                # The guard that must survive the case above: only an image of
+                # ours may be cleared, whatever the incoming theme.json says.
+                $quiet = script:New-PartialStyle -Name 'quiet' -ThemeJson '{"colorScheme":"quiet"}'
+                $s = script:New-Settings -Defaults @{ backgroundImage = $script:usersBg }
+                $out = script:Merge -Settings $s -StyleDir $quiet
+                (script:GetDefaults $out).backgroundImage | Should -Be $script:usersBg
             }
 
             It 'still styles profiles.defaults itself when defaults IS the target' {

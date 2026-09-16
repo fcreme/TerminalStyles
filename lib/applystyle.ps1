@@ -30,7 +30,9 @@ function Show-StyleList {
         $swatch = ''
         try {
             $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            $swatch = Get-SchemeSwatch -Scheme $scheme
+            # Through the note-aware reader: a scheme this tool can read no
+            # colour out of prints a reason, not an empty column.
+            $swatch = Get-SchemeSwatchOrNote -Scheme $scheme
         } catch {
             $swatch = "$([char]27)[38;2;160;160;160m(unreadable scheme.json)$([char]27)[0m"
         }
@@ -78,7 +80,7 @@ function Show-CurrentStyle {
             $schemePath = if ($styleDir) { Join-Path $styleDir 'scheme.json' } else { $null }
             if ($schemePath -and (Test-Path -LiteralPath $schemePath)) {
                 $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                Write-Host ("{0,-16}  {1}" -f $current, (Get-SchemeSwatch -Scheme $scheme))
+                Write-Host ("{0,-16}  {1}" -f $current, (Get-SchemeSwatchOrNote -Scheme $scheme))
             } else {
                 Write-Host $current
             }

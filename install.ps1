@@ -424,13 +424,43 @@ function Get-EngineProfilePlan {
     return @($plan)
 }
 
-# --- Atomic UTF-8 (no BOM) text write: temp sibling + replace ---
+# --- The encoding a file the USER owns is read and written with ---
+function Get-ProfileFileEncoding {
+    # NOTE: a deliberate twin of terminals.ps1's Get-RcFileEncoding, for the
+    # reason Get-TStylesPlatform and Get-PowerShellEngineCandidate are already
+    # duplicated here: this file is fetched and piped to iex before the module
+    # exists, so it cannot dot-source the library. Keep the two in step.
+    #
+    # ISO-8859-1 (28591) maps every byte 0-255 to exactly one character and
+    # back. Register-LoaderInProfile reads the WHOLE $PROFILE and writes the
+    # WHOLE file back, so under UTF-8 a byte that is not valid UTF-8 -- a
+    # latin-1 comment, a stray byte from an old editor -- decoded to U+FFFD and
+    # was written back as EF BF BD: the user's own content, destroyed by an
+    # installer asked only to append three lines. lib/update.ps1 was fixed for
+    # exactly this in 0.8.24; the installer was left as the last writer in the
+    # repo that corrupts, and on a RE-register (every `iwr ... | iex` upgrade)
+    # it does so with no .bak taken, because the first-touch backup is skipped
+    # for a file that already carries a BEGIN marker.
+    #
+    # Limit, stated rather than pretended away: this does NOT save a $PROFILE
+    # carrying a UTF-8 BOM. [System.IO.File]::ReadAllText(path, enc) sniffs for
+    # a BOM and switches to UTF-8 whatever encoding it was handed, so a BOM'd
+    # profile with byte F3 still comes back EF BF BD. lib/update.ps1 has the
+    # identical hole, and both drop the BOM itself.
+    return [System.Text.Encoding]::GetEncoding(28591)
+}
+
+# --- Atomic text write: temp sibling + replace ---
 function Write-TextFileAtomic {
     param(
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][string]$Content
+        [Parameter(Mandatory)][string]$Content,
+        # Defaulted, not hardcoded: its one caller is Register-LoaderInProfile,
+        # which READ the same file through Get-ProfileFileEncoding -- writing it
+        # back through a different one is the round-trip that loses bytes.
+        [System.Text.Encoding]$Encoding = (Get-ProfileFileEncoding)
     )
-    $enc = [System.Text.UTF8Encoding]::new($false)
+    $enc = $Encoding
     $dir = Split-Path -Parent $Path
     $tmp = Join-Path $dir ('.' + (Split-Path -Leaf $Path) + '.tmp-' + ([guid]::NewGuid().Guid.Substring(0,8)))
     [System.IO.File]::WriteAllText($tmp, $Content, $enc)
@@ -464,9 +494,13 @@ function Register-LoaderInProfile {
         New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
     }
 
-    # UTF-8 explicit (WinPS 5.1's Get-Content -Raw defaults to ANSI codepage).
+    # Explicit encoding (WinPS 5.1's Get-Content -Raw defaults to the ANSI
+    # codepage), and it is ISO-8859-1 rather than UTF-8: this reads the whole
+    # file and Write-TextFileAtomic writes the whole file back, so the encoding
+    # has to round-trip every byte the user already had. See
+    # Get-ProfileFileEncoding.
     $existing = if (Test-Path -LiteralPath $ProfilePath) {
-        [System.IO.File]::ReadAllText($ProfilePath, [System.Text.UTF8Encoding]::new($false))
+        [System.IO.File]::ReadAllText($ProfilePath, (Get-ProfileFileEncoding))
     } else { '' }
     $originalContent = $existing
 
@@ -488,7 +522,12 @@ function Register-LoaderInProfile {
         foreach ($s in $styleDirs) {
             $sp = Join-Path $s.FullName 'profile.ps1'
             if (Test-Path -LiteralPath $sp) {
-                $styleContent = [System.IO.File]::ReadAllText($sp, [System.Text.UTF8Encoding]::new($false))
+                # The SAME decoding as $existing above, so the comparison is
+                # between two strings that were read the same way rather than
+                # two that were read differently. (Every bundled
+                # styles/*/profile.ps1 is pure ASCII today, so this changes no
+                # current answer -- it removes the way it could start lying.)
+                $styleContent = [System.IO.File]::ReadAllText($sp, (Get-ProfileFileEncoding))
                 if ($styleContent.TrimEnd() -eq $existing.TrimEnd()) {
                     $bak = "$ProfilePath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
                     Copy-Item -LiteralPath $ProfilePath -Destination $bak -Force

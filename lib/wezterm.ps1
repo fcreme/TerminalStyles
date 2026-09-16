@@ -88,7 +88,16 @@ function ConvertTo-WezTermLuaString {
     #>
     param([AllowEmptyString()][AllowNull()][string]$Value)
     if ($null -eq $Value) { return "''" }
-    $e = $Value -replace '\\', '\\\\'
+    # String.Replace, not -replace. The regex operator is wrong in BOTH operands
+    # at once here: a doubled backslash in the PATTERN means one backslash, but
+    # in .NET's REPLACEMENT string only `$` is special, so `-replace '\\','\\\\'`
+    # emitted FOUR backslashes per input one. Lua decodes `\\\\` as two, so the
+    # path handed to WezTerm was not the path passed in -- on Windows, where
+    # every path has separators, `C:\Users\me\bg.gif` became
+    # `C:\\Users\\me\\bg.gif`. Never a syntax error, which is why it survived:
+    # the value is silently wrong instead of loudly broken. scripts/demo.ps1's
+    # ConvertTo-ExpectLiteral already documents this exact hazard.
+    $e = $Value.Replace('\', '\\')
     $e = $e -replace "'", "\'"
     $e = $e -replace "`r", '\r' -replace "`n", '\n'
     "'$e'"

@@ -114,7 +114,13 @@ Describe 'the picker and the tuner both ask it' {
     # re-spacing or re-wrapping the call cannot turn it into a vacuous pass.
 
     BeforeDiscovery {
-        $script:revertCallers = @('Invoke-TerminalStyle', 'Invoke-TerminalStyleTune')
+        # The tuner's half moved INTO Restore-TuneBaseLook when that gained the
+        # run-at-most-once flag, so that is the function that now emits the
+        # tuner's revert -- Invoke-TerminalStyleTune reaches it through
+        # $restoreBaseLook, which the last It in this Describe pins. The rule
+        # being guarded is unchanged: whoever emits a revert asks
+        # Get-RevertOscPacket for the answer instead of re-deciding the fork.
+        $script:revertCallers = @('Invoke-TerminalStyle', 'Restore-TuneBaseLook')
     }
 
     It '<_> calls Get-RevertOscPacket' -ForEach $script:revertCallers {
@@ -148,13 +154,29 @@ Describe 'the picker and the tuner both ask it' {
         # tuning 'eva-night' resolves its base 'eva' as the working base, so
         # restoring $baseScheme repainted the terminal as eva and called it
         # "Reverted." -- leaving the user on a style they never chose.
-        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyleTune'
+        #
+        # Asked of BOTH hops now that the emit lives in Restore-TuneBaseLook:
+        # the tuner hands it -OpenedScheme $openedScheme, and it forwards that
+        # to Get-RevertOscPacket. Checking only one of the two would leave the
+        # other free to substitute the base again.
+        $tuner = script:Get-FunctionAst -Name 'Invoke-TerminalStyleTune'
+        $hand = @($tuner.FindAll({
+            param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Restore-TuneBaseLook'
+        }, $true))
+        @($hand).Count | Should -BeGreaterThan 0 `
+            -Because 'the tuner must route its revert through the one place that carries the flag'
+        $hand[0].Extent.Text | Should -Match '\$openedScheme'
+        $hand[0].Extent.Text | Should -Not -Match '\$baseScheme'
+
+        $fn = script:Get-FunctionAst -Name 'Restore-TuneBaseLook'
         $call = @($fn.FindAll({
             param($n)
             $n -is [System.Management.Automation.Language.CommandAst] -and
             $n.GetCommandName() -eq 'Get-RevertOscPacket'
         }, $true))[0]
-        $call.Extent.Text | Should -Match '\$openedScheme'
-        $call.Extent.Text | Should -Not -Match '\$baseScheme'
+        $call.Extent.Text | Should -Match '\$OpenedScheme'
+        $call.Extent.Text | Should -Not -Match '\$BaseScheme'
     }
 }

@@ -56,6 +56,19 @@ function Get-SchemeSwatch {
     param([Parameter(Mandatory)]$Scheme)
     # Primary picks first, then fallbacks in order of theme-distinguishing
     # power. The first 5 unique hex values from this list are rendered.
+    #
+    # The list must COVER every slot Get-SchemeOscPacket renders, or the swatch
+    # answers a different question from the apply. It carried ten names against
+    # the builder's twenty, so the ten below -- the non-bright half of the ANSI
+    # palette plus brightBlack/brightWhite -- were invisible to it: a style
+    # coloured only through them painted correctly, and `tstyles list` drew its
+    # name against an empty column. That is the second copy of the twenty names
+    # Get-SchemeUnreadableSlots' docstring refuses to keep, living here.
+    #
+    # Appended AFTER the original ten, not merged into them: the order decides
+    # which five cells a theme shows, and every bundled style already fills all
+    # five from the first ten (measured: 16 of 16), so their swatches are
+    # byte-identical to what they were.
     $candidates = @(
         $Scheme.background,
         $Scheme.foreground,
@@ -66,7 +79,17 @@ function Get-SchemeSwatch {
         $Scheme.brightPurple,
         $Scheme.brightYellow,
         $Scheme.brightGreen,
-        $Scheme.brightBlue
+        $Scheme.brightBlue,
+        $Scheme.black,
+        $Scheme.red,
+        $Scheme.green,
+        $Scheme.yellow,
+        $Scheme.blue,
+        $Scheme.purple,
+        $Scheme.cyan,
+        $Scheme.white,
+        $Scheme.brightBlack,
+        $Scheme.brightWhite
     )
     $seen = @{}
     $picks = @()
@@ -93,6 +116,33 @@ function Get-SchemeSwatch {
     }
     [void]$sb.Append([char]27).Append('[0m')
     return $sb.ToString()
+}
+
+function Get-SchemeSwatchOrNote {
+    <#
+    .SYNOPSIS
+    The swatch for a scheme -- or, when it renders no cell at all, a note saying
+    why the column is empty.
+
+    .DESCRIPTION
+    Get-SchemeSwatch returns a bare reset (four bytes, no cell) for a scheme
+    whose values are X11 colour words, `rgb()` calls or typos. Every reader
+    printed that beside the style's name, so `tstyles list`, `tstyles current`
+    and the picker showed a name and then whitespace -- while applying the very
+    same style says, in as many words, "this style defines no colors this tool
+    can read". One input, two answers: the status collapse 0.8.27 fixed on the
+    apply path, surviving in the listings.
+
+    Asked of the rendered swatch rather than of the scheme, so it cannot
+    disagree with what was actually drawn.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Scheme)
+
+    $swatch = Get-SchemeSwatch -Scheme $Scheme
+    # The cell Get-SchemeSwatch appends per colour. No cell, no colour.
+    if ($swatch -and $swatch.Contains("$([char]27)[48;2;")) { return $swatch }
+    return "$([char]27)[38;2;160;160;160m(no colors this tool can read)$([char]27)[0m"
 }
 
 function Convert-HueToRgb {

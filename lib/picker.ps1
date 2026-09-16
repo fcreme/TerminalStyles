@@ -102,7 +102,12 @@ function Get-PickerStyleSet {
             # Show-StyleList builds its own inside one: a file that parses is
             # not necessarily a scheme, and a row the picker cannot draw is as
             # fatal to the menu as a row it cannot parse.
-            if ($null -ne $scheme) { $swatch = Get-SchemeSwatch -Scheme $scheme }
+            # Note-aware, like the row `tstyles list` prints: a scheme that
+            # parses but carries no colour this tool can read is KEPT (it is not
+            # in $unreadable, and the picker will happily apply it), so drawing
+            # it as an empty column was the one row in the menu that said
+            # nothing about itself.
+            if ($null -ne $scheme) { $swatch = Get-SchemeSwatchOrNote -Scheme $scheme }
         } catch {
             $scheme = $null
         }

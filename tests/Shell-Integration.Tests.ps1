@@ -662,6 +662,60 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
                 -Because "shell-remove reports success, so nothing may still source the runtime (left in: $($left -join ', '))"
         }
 
+        # THE CLOSING HINT, for a login shell that is neither bash nor zsh.
+        #
+        # $loginShell answers 'bash' for every $env:SHELL it does not recognise,
+        # and the REGISTRATION is right to follow it: the block written into
+        # ~/.profile is POSIX (`if [ -r '...' ]; then . '...'; fi`) and a dash or
+        # ksh login shell reads that file -- shell/tstyles.sh's header describes
+        # exactly this user. The HINT reused the same answer and was wrong
+        # twice: it named ~/.bashrc, which dash never opens, with `source`,
+        # which dash does not have (measured on this machine:
+        # `echo 'source /dev/null' | /bin/dash` -> "source: not found", while
+        # /bin/ksh accepts the verb and still never reads ~/.bashrc).
+        It 'does not offer `source`, which a dash login shell does not have' {
+            $h   = script:New-Home @('.bashrc', '.profile')
+            $out = script:InitAs '/bin/dash' $h
+
+            $out | Should -Not -Match 'run:\s+source ' `
+                -Because 'dash answers "source: not found"'
+            $out | Should -Match 'run:\s+\. ' -Because '`.` is the POSIX form and works in every one of these shells'
+        }
+
+        It 'names a file a dash login shell actually reads, not ~/.bashrc' {
+            $h   = script:New-Home @('.bashrc', '.profile')
+            $out = script:InitAs '/bin/dash' $h
+
+            # The `~` prefix matters: the "added" lines above print absolute
+            # sandbox paths, so only the hint line can match a ~-shortened name.
+            # [\\/] rather than /, because this file runs on the Windows legs too.
+            $out | Should -Not -Match '~[\\/]\.bashrc' -Because 'login dash never opens it'
+            $out | Should -Match '~[\\/]\.profile' `
+                -Because 'that is the file the loader was registered in for this user'
+            script:RcText (Join-Path $h '.profile') | Should -Match 'TerminalStyles BEGIN' `
+                -Because 'the hint has to name a file that really carries the loader'
+        }
+
+        It 'says nothing was written when no file a dash login shell reads was' {
+            # No ~/.profile in this layout, so the bash rescue seeds a
+            # ~/.bash_profile and registers ~/.bashrc -- two files dash will
+            # never open. "Open a new tab to pick it up" would be false for this
+            # user, and naming either file would be worse.
+            $h   = script:New-Home @('.bashrc')
+            $out = script:InitAs '/bin/dash' $h
+
+            $out | Should -Not -Match 'Open a new tab, or run' `
+                -Because 'there is nothing this shell could source'
+            $out | Should -Match '(?i)nothing was written to a file dash reads'
+        }
+
+        It 'still says `source` for the two shells that have it' {
+            # The control. `.` would work for bash and zsh too, but the line the
+            # overwhelming majority of users read must not change.
+            script:InitAs '/bin/zsh'  (script:New-Home @('.zshrc'))  | Should -Match 'source ~[\\/]\.zshrc'
+            script:InitAs '/bin/bash' (script:New-Home @('.bashrc')) | Should -Match 'run:\s+source '
+        }
+
         It 'does not invent a ~/.zshrc for a bash login shell' {
             # The other direction of the same rule: "silently creating ~/.bashrc
             # on a machine that only uses zsh would be a surprise" is
