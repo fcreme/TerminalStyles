@@ -9,6 +9,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the uninstall consent screen stopped naming the `$PROFILE` it was about to edit on any machine with exactly ONE PowerShell engine, and only under Windows PowerShell 5.1.** The target list was built as ``= if (...) { @($ProfileTarget) } else { @(Get-PowerShellProfileTarget) }`` -- and a single-element array emitted from an `if` block is unrolled on its way out, so the variable held the bare `PSCustomObject`, not an array. `.Count` on that answers `1` under pwsh 7 and `$null` under Windows PowerShell 5.1, and `$null -gt 0` is `$false`, so the whole bullet was omitted. Two engines produced a real array and printed fine; one did not. The `@()` now wraps the whole `if` rather than each arm.
+
+  Measured: ``$x = if ($true) { @([pscustomobject]@{}) }`` gives `PSCustomObject`; the same expression with two elements gives `Object[]`; wrapping the `if` gives `Object[]` either way.
+
+  The test beside it was passing *because* of the bug. `never names an engine this platform does not have` is built entirely from `Should -Not -Match`, so an omitted bullet satisfied every one of its assertions -- it reported green loudest at the moment the listing had stopped naming the file it was about to edit. It now asserts the bullet is present before asserting what is absent. With the bullet forced off, the two tests fail together; before, one of them certified it.
+
+- **`tstyles uninstall` signed off with "TerminalStyles uninstalled." and "Open a new pwsh tab to confirm the loader is gone." while the loader was still in a `$PROFILE` it had just said it could not write.** 0.8.24 gave the `$PROFILE` strip the four-state contract the rc half has, so each file is now reported correctly as it is processed -- and then `Remove-PowerShellProfileLoader` returned a bare COUNT, so `malformed` and `failed` reached nobody. The sign-off has no other source of truth, so it printed the unconditional form. It is the collapse-a-status-into-a-boolean shape 0.8.26 fixed five instances of, one level up: not the status, the REPORT of it.
+
+  The consequence is worse here than on the rc side, and the text now says so. Step 1 has removed the module by then and the leftover block is an `Import-Module` of it, so every new tab opens on a red "no valid module file was found in any module directory" -- under two lines telling the user the loader is gone and to open a new tab to confirm it. Measured on a sandboxed `$HOME`, one read-only profile and one whose END marker had been deleted, with no rc file carrying a block so the `$PROFILE` half was the only thing that could speak:
+
+  ```
+    ! could not write <sbx>/ro-profile.ps1
+      The loader is still there. Check the file's permissions ...
+    ! <sbx>/broken-profile.ps1 has a TerminalStyles BEGIN marker with no matching END.
+  TerminalStyles uninstalled.                        <- before
+  Open a new pwsh tab to confirm the loader is gone.  <- before
+  ```
+
+  `Remove-PowerShellProfileLoader` now returns `Removed` + `Problems`, the same shape `Remove-ShellLoaderBlock` has returned for the rc files since it was fixed, the existing EXCEPT branch fires for either half, and the "open a new pwsh tab" line is printed only when the `$PROFILE` side really did come out clean.
+
+- **the uninstall consent screen named "pwsh 7 and Windows PowerShell 5.1 `$PROFILE` files" on every platform -- an engine macOS and Linux cannot have, and no file at all.** The bullet was a literal with no platform branch, directly above an rc bullet that has printed its real paths since the listing was fixed. Off Windows the pair is `pwsh` and `pwsh-preview`, so two of the four CI legs were consenting to a file that cannot exist -- and `tests/Uninstall-ConsentNamesShellRc.Tests.ps1` asserted `Should -Match 'Windows PowerShell 5\.1'`, pinning the wrong string green on both of them.
+
+  The listing now resolves `Get-PowerShellProfileTarget` ONCE, before the prompt, prints one `Label: path` row per file, and hands that same array to step 3 -- so the screen and the sweep cannot drift, and the ~500ms-per-engine discovery is paid once rather than twice. Omitted entirely when nothing carries a block, the rule the neighbouring rc bullet is already pinned on. The test now asserts against `(Get-PowerShellEngineCandidate).Label` for the running platform instead of a literal.
+
+- **`tstyles register` and `install.ps1` counted two engines where the machine has one `$PROFILE` file, wrote it twice, and told the user the install was "Also wired up for" the engine they were already sitting in.** Off Windows the engines probed for are `pwsh` and `pwsh-preview`, and on a Mac carrying the 7-preview build both report `~/.config/powershell/Microsoft.PowerShell_profile.ps1`. Uninstall was de-duplicated when its strip moved into `lib/update.ps1`; register kept its own open-coded discovery loop and the installer kept another. Measured with consent refused, on the real loop:
+
+  ```
+  Will register the TerminalStyles loader in:
+    PowerShell 7: <sbx>/.config/powershell/Microsoft.PowerShell_profile.ps1
+    PowerShell 7 (preview): <sbx>/.config/powershell/Microsoft.PowerShell_profile.ps1
+  ... | consequence: writes the loader block into 2 PowerShell profile file(s)
+  ```
+
+  "Resolve each engine's `$PROFILE`, keep one entry per distinct path, merge the labels" is now one function in the module (`Resolve-PowerShellProfileTarget`, with an `-IncludeMissing` switch because removal wants only files that exist and registration must be able to create one), and `install.ps1` -- fetched and piped to `iex` before the module exists, so it cannot dot-source it -- carries the one copy it has to, with a cross-file test running both over the same pair of stand-in engines.
+
+  The trap in fixing only the list: once a row names two engines, `Write-InstallPanel`'s `$_ -ne (Get-CurrentEngineLabel)` stops matching and the panel prints "Also wired up for PowerShell 7 / PowerShell 7 (preview)" -- the 0.8.21 defect by a third route. The subtraction is now membership in the row's label list, not string equality, and the "more than one engine" guard is gone with it: a row that does not name the current engine is worth mentioning even when it is the only one.
+
+- **`tstyles register -Force` wrote a fresh "backup" of your `$PROFILE` on every run, and on the one shape where its write is destructive it wrote none at all.** Both arguments to the first-touch rule were wrong, in opposite directions: `Save-FirstTouchBackup` was asked about the POST-STRIP content -- `-Force` had just removed our block from the string being examined -- and asked to recognise "already ours" by the bare `BEGIN` marker rather than by the BEGIN..END span the strip itself uses. So a profile that already carried the block looked pristine and was copied again on every run, against 0.8.18's "Re-running does not pile up backups"; four runs, one second apart, measured four `.bak-` files, of which only the oldest is the copy a user would want.
+
+  ```
+  fake-profile.ps1.bak-20260915-082435  containsBlock=False   <- the pristine one
+  fake-profile.ps1.bak-20260915-082436  containsBlock=True
+  fake-profile.ps1.bak-20260915-082437  containsBlock=True
+  fake-profile.ps1.bak-20260915-082438  containsBlock=True
+  ```
+
+  The other direction is the same line: a `$PROFILE` carrying an orphan `BEGIN` and no `END` matched the bare marker, so the rule skipped the copy -- while the strip's own tempered pattern did NOT match, so the file was rewritten anyway, a second complete block appended below a marker we cannot tell apart from ours. `Register-ShellLoader` calls that input `malformed` and refuses; this half now does too, and says which file and why. `install.ps1`'s half already asked with `$originalContent -notmatch $blockPattern`, which is the symmetry being restored.
 - **`tstyles delete` moved a style somewhere no command could name, and nothing put one back.** The delete prints the folder it has just written -- `.deleted/<name>-<timestamp>` -- and that scrollback line was the last time the tool ever mentioned it: nothing listed what was in there, nothing said how much of the seven days was left, and the only route back was a `Move-Item` the user had to compose from that path, documented in `tstyles help delete` ("a mistake is undone by moving it back"). The store is swept only as a side effect of the NEXT delete, so a user who deleted a style, stopped deleting and came back a month later had an expired folder no command would list and no command would clear. Measured in a sandboxed data root on 0.8.27: `tstyles trash` and `tstyles restore` both answered "Unknown command or style" and printed the whole help screen, and an entry aged to thirty days sat through `tstyles list` and `tstyles current` without a word until an unrelated `tstyles delete` erased it.
 
   `tstyles trash` now lists what is in there, when each one went and how many days it has left, with anything past the window in RED -- the colour `Show-StyleDeletePlan` already gives those same folders. It is read-only on purpose: the erasure keeps the one consent screen it has, which is the delete plan that names every expired folder before the question is asked. `tstyles restore <name>` moves the newest copy back under the plain name -- the stamp never reaches `styles/`, where it would be a directory no listing shows under the name the user is looking for -- and REFUSES rather than overwriting when the name is in use again, which is what makes it safe to run with no prompt. It returns a status (`restored` / `none` / `taken` / `noname` / `outside` / `failed`) rather than a boolean, for the reason `Unregister-ShellLoader` does.

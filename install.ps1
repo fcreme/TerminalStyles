@@ -203,9 +203,14 @@ function Write-InstallPanel {
     # Bordered "Ready" panel listing the count, the one command to run,
     # and all theme names wrapped to fit. ASCII corners (+) + sides (|)
     # + dashes (-) for cross-codepage rendering.
+    #
+    # -RegisteredProfile is one entry per $PROFILE FILE that was written, each
+    # carrying a .Labels list of every engine that loads out of it -- the shape
+    # Get-EngineProfilePlan returns. It used to be a flat list of engine labels,
+    # one per engine probed, which counted a shared $PROFILE twice.
     param(
         [Parameter(Mandatory)][string[]]$ThemeNames,
-        [Parameter(Mandatory)][string[]]$RegisteredEngines
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$RegisteredProfile
     )
     $width = 56   # interior width, between | chars (not counting them)
 
@@ -284,12 +289,25 @@ function Write-InstallPanel {
     # platform-aware: on macOS the pair is pwsh and pwsh-preview, both Core, so
     # "more than one" became true off Windows and the message told Mac users the
     # install was "Also wired up for Windows PowerShell 5.1".
-    if ($RegisteredEngines.Count -gt 1) {
-        $others = @($RegisteredEngines | Where-Object { $_ -ne (Get-CurrentEngineLabel) })
-        if ($others.Count -gt 0) {
-            Write-Host "  Also wired up for $($others -join ', ') -- available in any new tab there." -ForegroundColor DarkGray
-            Write-Host ''
-        }
+    #
+    # The subtraction is MEMBERSHIP, not string equality. Once a row can name
+    # more than one engine -- "PowerShell 7 / PowerShell 7 (preview)", the two
+    # names for one $PROFILE on a Mac carrying the preview build -- `-ne (the
+    # current label)` matches every row, and the panel goes back to telling the
+    # user to open a new tab for the engine they are already sitting in. That is
+    # the 0.8.21 defect arriving by a third route, so the test for it asks about
+    # a merged row rather than about two separate ones.
+    #
+    # And the "more than one" guard is gone: a row that does not name the current
+    # engine is worth mentioning even when it is the only one, and a row that
+    # does is not, however many there are.
+    $current = Get-CurrentEngineLabel
+    $others = @($RegisteredProfile |
+                Where-Object { @($_.Labels) -notcontains $current } |
+                ForEach-Object { $_.Label })
+    if ($others.Count -gt 0) {
+        Write-Host "  Also wired up for $($others -join ', ') -- available in any new tab there." -ForegroundColor DarkGray
+        Write-Host ''
     }
 }
 
@@ -343,6 +361,67 @@ function Get-ShellInfo {
         ProfilePath = $profilePath
         Policy      = $policy
     }
+}
+
+function Get-EngineProfilePlan {
+    <#
+    .SYNOPSIS
+    One registration target per DISTINCT $PROFILE, naming every engine that
+    reports it.
+
+    .DESCRIPTION
+    NOTE: mirrors Resolve-PowerShellProfileTarget in lib/update.ps1. This script
+    is the bootstrap -- it runs via `iwr | iex` BEFORE the module exists on disk,
+    so it cannot dot-source the library. Keep the two in step;
+    tests/Get-PowerShellEngineCandidate.Tests.ps1 runs both over the same pair of
+    stand-in engines and compares the answers, next to the parity test the other
+    duplicated helper already has.
+
+    Two engines can share one $PROFILE: off Windows the pair probed for is `pwsh`
+    and `pwsh-preview`, and on a Mac carrying the 7-preview build both answer
+    with ~/.config/powershell/Microsoft.PowerShell_profile.ps1. The loop here
+    used to register per ENGINE, so that one file was rewritten twice, "Registered
+    loader:" printed twice, and the Ready panel was handed two labels for one
+    file -- which made its "more than one engine" branch true and told the user
+    the install was "Also wired up for PowerShell 7" while they were sitting in
+    the pwsh that reported that very path.
+
+    Labels stays a list because the panel has to subtract ONE engine from it.
+    Ordinal off Windows, OrdinalIgnoreCase on it: Windows' two engines keep
+    separate profile directories, so nothing merges there.
+    #>
+    param([object[]]$Engine = (Get-PowerShellEngineCandidate))
+
+    $cmp = if ((Get-TStylesPlatform) -eq 'Windows') { [System.StringComparison]::OrdinalIgnoreCase }
+           else                                     { [System.StringComparison]::Ordinal }
+
+    $plan = @()
+    foreach ($e in $Engine) {
+        # One launch per engine, for the $PROFILE path and the execution policy
+        # together -- the policy is per ENGINE even where the profile is shared,
+        # so it is carried per engine here and asked about per engine below.
+        $info = Get-ShellInfo -Exe $e.Exe -Label $e.Label
+        if (-not $info) { continue }
+
+        $seen = $null
+        foreach ($p in $plan) {
+            if ([string]::Equals($p.ProfilePath, $info.ProfilePath, $cmp)) { $seen = $p; break }
+        }
+        $engineInfo = [pscustomobject]@{ Exe = $e.Exe; Label = $e.Label; Policy = $info.Policy }
+        if ($seen) {
+            $seen.Labels  = @($seen.Labels + $e.Label)
+            $seen.Label   = ($seen.Labels -join ' / ')
+            $seen.Engines = @($seen.Engines + $engineInfo)
+            continue
+        }
+        $plan += [pscustomobject]@{
+            ProfilePath = $info.ProfilePath
+            Label       = $e.Label
+            Labels      = @($e.Label)
+            Engines     = @($engineInfo)
+        }
+    }
+    return @($plan)
 }
 
 # --- Atomic UTF-8 (no BOM) text write: temp sibling + replace ---
@@ -921,17 +1000,26 @@ if (-not $TStylesInstallNoRun) {
     Write-InstallSha -InstallDir $installDir -Repo $repo -Branch $branch
 
     # --- Register loader in every detected shell ---
-    $shells = @(Get-PowerShellEngineCandidate)
+    #
+    # ONE write per distinct $PROFILE, not one per engine. Where two engines
+    # report the same file -- `pwsh` and `pwsh-preview` on a Mac carrying the
+    # preview build -- this wrote it twice and printed "Registered loader:"
+    # twice for one file.
+    $registered = @(Get-EngineProfilePlan)
 
-    $registered = @()
-    foreach ($s in $shells) {
-        $info = Get-ShellInfo -Exe $s.Exe -Label $s.Label
-        if (-not $info) { continue }
-        Register-LoaderInProfile -ProfilePath $info.ProfilePath -Label $s.Label -InstallDir $installDir `
+    foreach ($r in $registered) {
+        Register-LoaderInProfile -ProfilePath $r.ProfilePath -Label $r.Label -InstallDir $installDir `
             -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
-        Resolve-ExecutionPolicy -Exe $s.Exe -Label $s.Label -EffectivePolicy $info.Policy
-        Write-InstallStep "Registered loader: $($s.Label)" -Check
-        $registered += $s.Label
+        Write-InstallStep "Registered loader: $($r.Label)" -Check
+    }
+
+    # The execution policy is per ENGINE even where the $PROFILE is shared: it is
+    # what decides whether that engine will run the loader at all, so it is still
+    # asked once per engine.
+    foreach ($r in $registered) {
+        foreach ($e in @($r.Engines)) {
+            Resolve-ExecutionPolicy -Exe $e.Exe -Label $e.Label -EffectivePolicy $e.Policy
+        }
     }
 
     if (-not $registered) {
@@ -949,7 +1037,7 @@ if (-not $TStylesInstallNoRun) {
             ForEach-Object Name
     )
 
-    Write-InstallPanel -ThemeNames $themeNames -RegisteredEngines $registered
+    Write-InstallPanel -ThemeNames $themeNames -RegisteredProfile $registered
 
     # --- Same-tab handoff ---
     # Import the freshly-installed module into the GLOBAL scope (not the
