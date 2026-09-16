@@ -120,3 +120,63 @@ Describe 'help does not promise Windows Terminal behaviour to everyone else' {
         }
     }
 }
+
+Describe 'help names the PowerShell engines this platform really has' {
+    # THE DEFECT THIS EXISTS FOR. The `register` topic read, on every platform:
+    #
+    #   Adds the Import-Module loader to both PowerShell 7 and Windows
+    #   PowerShell 5.1 $PROFILE files (with a confirm prompt) so tstyles
+    #   loads on every new tab.
+    #
+    # Measured on macOS with the shipped functions: the topic named 'Windows
+    # PowerShell 5.1' while the engines register and uninstall actually probe
+    # there are pwsh [PowerShell 7] and pwsh-preview [PowerShell 7 (preview)].
+    # Windows PowerShell does not exist off Windows at all -- and "both" is
+    # wrong a second way even on Windows, because the discovery loop `continue`s
+    # past an engine that is not on PATH and register writes only to the ones it
+    # found.
+    #
+    # The runtime was already right (it prints each target's real $t.Label);
+    # only the sentence was a literal. So this asserts the sentence against the
+    # same table the command probes with, in BOTH directions -- every label this
+    # platform has is named, and no label from another platform's table is. A
+    # second hand-typed engine list, in the help or in a test, is how the first
+    # one went stale.
+    InModuleScope TerminalStyles {
+        It 'the register topic names exactly the engines register probes on <_>' -ForEach @('Windows', 'MacOS', 'Linux') {
+            $platform = $_
+            $detail = ((Get-TerminalStyleHelpData -Platform $platform |
+                        Where-Object { $_.Name -eq 'register' }).Detail -join ' ')
+            $detail | Should -Not -BeNullOrEmpty
+
+            # Projected with ForEach-Object: `.Label` on an empty array is one
+            # $null, and a list holding nothing has Count 1.
+            $labels = @(Get-PowerShellEngineCandidate -Platform $platform |
+                        ForEach-Object { $_.Label })
+            @($labels).Count | Should -BeGreaterThan 0 -Because 'an empty list would assert nothing'
+
+            foreach ($label in $labels) {
+                $detail | Should -Match ([regex]::Escape($label)) `
+                    -Because "register writes to $label on $platform, so the topic must name it"
+            }
+
+            $foreign = @(@('Windows', 'MacOS', 'Linux') |
+                         ForEach-Object { Get-PowerShellEngineCandidate -Platform $_ } |
+                         ForEach-Object { $_.Label } | Sort-Object -Unique |
+                         Where-Object { $_ -notin $labels })
+            @($foreign).Count | Should -BeGreaterThan 0 -Because 'the platforms differ, or this half asserts nothing'
+            foreach ($label in $foreign) {
+                $detail | Should -Not -Match ([regex]::Escape($label)) `
+                    -Because "there is no $label on $platform"
+            }
+        }
+
+        It 'the register topic does not promise it writes to every engine' {
+            # "both" was also wrong about what happens when only one is
+            # installed: the loop skips an engine it cannot find.
+            $detail = ((Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'register' }).Detail -join ' ')
+            $detail | Should -Match '(?i)(found on your PATH|on your PATH)'
+            $detail | Should -Match '(?i)skipped'
+        }
+    }
+}

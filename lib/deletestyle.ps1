@@ -84,6 +84,49 @@ function Get-InstalledStyleClaim {
     return $names
 }
 
+function Test-PathIsUnderRoot {
+    <#
+    .SYNOPSIS
+    Is $Path inside $Root -- at any depth?
+
+    .DESCRIPTION
+    The containment rule itself, in ONE place. It was written three times: as
+    the front half of Test-PathIsStyleDirChild (the proof in front of the
+    style delete), open-coded again inside Get-StyleOrigin's split-root branch
+    to decide whether a style resolved out of the user root, and a third time
+    in the tuner in front of the recursive delete of its scratch session. Two
+    implementations of one rule diverge -- the whole of CHANGELOG is that shape
+    -- and this one decides who owns a directory and whether it may be erased.
+    The three had already drifted: a path GetFullPath refuses left the other two
+    answering $false through their own catch, while this one's caller threw a
+    raw binding error before reaching any of that.
+
+    Both properties are load-bearing and both come from the separator:
+    GetFullPath normalises `<root>/../styles/eva` and `<root>/eva/..` before
+    anything is compared, and requiring `<root><sep>` rather than `<root>`
+    keeps a character-prefix SIBLING (`<root>X/eva`) out -- the same boundary
+    bug the prompt halves had against $HOME.
+
+    Returns $true/$false; never throws: it is a guard, and a guard that throws
+    on the input it exists to reject is not a guard. An empty or null path is
+    not inside anything.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Path,
+        [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Root
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Path)) { return $false }
+    if ([string]::IsNullOrWhiteSpace($Root)) { return $false }
+    try {
+        $sep  = [System.IO.Path]::DirectorySeparatorChar
+        $full = [System.IO.Path]::GetFullPath($Path).TrimEnd($sep)
+        $root = [System.IO.Path]::GetFullPath($Root).TrimEnd($sep)
+        return $full.StartsWith($root + $sep, [System.StringComparison]::Ordinal)
+    } catch { return $false }
+}
+
 function Get-StyleOrigin {
     <#
     .SYNOPSIS
@@ -134,14 +177,14 @@ function Get-StyleOrigin {
     $hasTune = Test-Path -LiteralPath (Join-Path $StyleDir 'tune.json')
 
     if (-not $RootsAreOne) {
+        # Through the shared guard, not a second copy of it. This branch used
+        # to open-code the same GetFullPath/TrimEnd/StartsWith computation that
+        # Test-PathIsStyleDirChild makes in front of the delete, minus the
+        # direct-child test -- two implementations of one containment rule,
+        # one deciding ownership and one deciding whether a directory may be
+        # moved to the trash.
         $userRoot = Join-Path $script:TStylesDataRoot 'styles'
-        $inUser = $false
-        try {
-            $sep  = [System.IO.Path]::DirectorySeparatorChar
-            $full = [System.IO.Path]::GetFullPath($StyleDir).TrimEnd($sep)
-            $root = [System.IO.Path]::GetFullPath($userRoot).TrimEnd($sep)
-            $inUser = $full.StartsWith($root + $sep, [System.StringComparison]::Ordinal)
-        } catch { }
+        $inUser = Test-PathIsUnderRoot -Path $StyleDir -Root $userRoot
 
         if (-not $inUser) { return 'bundled' }
 
@@ -248,17 +291,31 @@ function Test-PathIsStyleDirChild {
     the tuner's scratch-directory guard: `tstyles tune ../styles/eva` once
     deleted a real style because a composed path was assumed to be inside the
     directory it was composed from.
+
+    Returns $true/$false; never throws -- including for an empty or null path.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Path,
+        # Empty and null are ALLOWED so they can be ANSWERED. Without these two
+        # attributes the parameter binder threw
+        # "Cannot bind argument to parameter 'Path' because it is an empty
+        # string" before a line of the guard ran -- a raw binding error out of
+        # the containment proof that stands in front of a Move-Item and a
+        # recursive Remove-Item, where the only safe answer to "is '' a style
+        # directory?" is $false. The two sibling guards this one is modelled on
+        # (Test-StyleNameIsSingleSegment, Test-StyleNameValid) carry both
+        # attributes and both promise never to throw; this one promised nothing
+        # and was covered by no test at all.
+        [Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Path,
         [string]$Root = (Join-Path $script:TStylesDataRoot 'styles')
     )
+    # The containment half is Test-PathIsUnderRoot's, so the rule lives in one
+    # place; only the direct-child half is decided here.
+    if (-not (Test-PathIsUnderRoot -Path $Path -Root $Root)) { return $false }
     try {
         $sep  = [System.IO.Path]::DirectorySeparatorChar
         $full = [System.IO.Path]::GetFullPath($Path).TrimEnd($sep)
         $root = [System.IO.Path]::GetFullPath($Root).TrimEnd($sep)
-        if (-not $full.StartsWith($root + $sep, [System.StringComparison]::Ordinal)) { return $false }
         # A direct child, not something nested deeper.
         return ([System.IO.Path]::GetDirectoryName($full).TrimEnd($sep) -eq $root)
     } catch { return $false }

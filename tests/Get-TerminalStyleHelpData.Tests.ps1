@@ -35,7 +35,23 @@ Describe 'Get-TerminalStyleHelpData' {
             # The other half of the same symmetry: a topic for a command the
             # dispatcher no longer runs is help describing a command that does
             # not exist, which is the same defect pointing the other way.
-            $topics | Where-Object { $_ -notin $dispatched } | Should -BeNullOrEmpty `
+            #
+            # Topics that document a MODE rather than a token are exempt, and
+            # each one is named here rather than skipped as a class: `tstyles
+            # <style>` is dispatched by falling through every subcommand arm, so
+            # there is no word for the guard to find, and demanding one would
+            # have meant adding 'apply' to $script:TStylesSubcommands -- which is
+            # also the list Test-StyleNameValid rejects names against, so it
+            # would forbid a style called 'apply' for a command that does not
+            # dispatch. A blanket `where Dispatches -ne $false` would let the
+            # next entry exempt itself silently; this asserts the exact set.
+            $modes = @((Get-TerminalStyleHelpData) |
+                       Where-Object { $_.Dispatches -eq $false } |
+                       ForEach-Object { $_.Name })
+            ($modes -join ', ') | Should -Be 'apply' `
+                -Because 'exactly one topic documents a mode rather than a dispatched word'
+
+            $topics | Where-Object { $_ -notin ($dispatched + $modes) } | Should -BeNullOrEmpty `
                 -Because 'every help topic must name a subcommand that still dispatches'
         }
         It 'gives every entry a Name, Usage, and Summary' {
