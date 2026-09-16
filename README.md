@@ -254,6 +254,18 @@ color control back to the terminal's own profile, so there is nothing to back
 up and no `.bak` is written. Fields you set on the profile by hand are left
 alone.
 
+If you styled `profiles.defaults` (`tstyles eva -Target defaults`), a reset of
+one profile also has to deal with what that profile *inherits* — Windows
+Terminal resolves every profile against `profiles.defaults`, so stripping the
+entry alone hands the window straight back to the inherited copy. A background
+image on `profiles.defaults` that TerminalStyles put there is cleared with the
+profile, and the command says so, because that clears it for every profile
+inheriting it. An inherited **color scheme** is not: removing it would restyle
+every other profile on a command that named one. Reset says which scheme is
+still coming from `profiles.defaults` and how to clear it
+(`tstyles reset -Target defaults`) rather than reporting an unstyled default you
+would not see.
+
 ## Styles
 
 Sixteen themes ship out of the box. Click any name to jump to that style's
@@ -781,9 +793,13 @@ takes one PNG of the WT window, then restores your original theme.
   background image or a tab accent color. On Terminal.app the image is instead
   delivered through a generated `.terminal` profile, which means a new window
   (`tstyles <name> -NewWindow`); tab accent color has no equivalent anywhere but
-  Windows Terminal. An apply says which parts the current terminal cannot show
-  rather than dropping them silently. Hosts that render nothing (VS Code's
-  integrated terminal, conhost) stay plain by design.
+  Windows Terminal. Font, cursor shape and interior padding are the same story:
+  they live in a config file, and off Windows Terminal only WezTerm has one this
+  tool writes. Both doors — `tstyles <name>` and the picker — name every field
+  the style declares that this terminal cannot show, read off the same
+  capability table as the grid above, rather than dropping them silently. Hosts
+  that render nothing (VS Code's integrated terminal, conhost) stay plain by
+  design.
 - **The zsh/bash loader is a macOS/Linux feature.** `tstyles shell-init` on
   Windows writes the block into your rc files, but nothing there can read the
   applied style: `shell/tstyles.sh` has no MSYS/MinGW/Cygwin branch, so a Git

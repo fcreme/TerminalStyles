@@ -8,6 +8,14 @@
 # tab can re-emit it, and the staged zsh/bash runtime. Reset is the inverse and
 # has to undo whichever half ran.
 
+function Get-UnreadableSchemeSwatch {
+    # What stands in for the color swatch when a style's scheme.json cannot be
+    # read. One function because `tstyles list` and `tstyles current` both draw
+    # a swatch from the same three statements, and the same condition must not
+    # acquire a second phrasing in the second place that meets it.
+    return "$([char]27)[38;2;160;160;160m(unreadable scheme.json)$([char]27)[0m"
+}
+
 function Show-StyleList {
     # `tstyles list` -- print available styles, marking the active one.
     Show-UpdateNoticeIfAvailable
@@ -32,7 +40,7 @@ function Show-StyleList {
             $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
             $swatch = Get-SchemeSwatch -Scheme $scheme
         } catch {
-            $swatch = "$([char]27)[38;2;160;160;160m(unreadable scheme.json)$([char]27)[0m"
+            $swatch = Get-UnreadableSchemeSwatch
         }
         # Which styles are YOURS. Deliberately trailing text rather than a
         # column: the picker draws rows at the same width and its viewport
@@ -68,18 +76,45 @@ function Show-CurrentStyle {
     # see name + swatch (visual self-check); piped/redirected callers get
     # just the name on stdout, preserving scriptability for `tstyles current
     # | grep ...` etc.
+    param(
+        # A parameter for the reason Apply-StyleNonWT has the same one: the .NET
+        # static cannot be mocked, and every CI leg runs redirected -- so the
+        # swatch arm below, the only one that opens scheme.json, was never
+        # executed by any test on any leg. That is precisely where an unguarded
+        # ConvertFrom-Json sat throwing a raw .NET exception out of a read-only
+        # command, invisible to a suite that could only ever take the other
+        # branch.
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
+    )
     Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
     if ($current) {
-        if ([Console]::IsOutputRedirected) {
+        if ($OutputRedirected) {
             Write-Output $current
         } else {
             $styleDir = Get-StyleDir -StyleName $current
             $schemePath = if ($styleDir) { Join-Path $styleDir 'scheme.json' } else { $null }
+            $swatch = $null
             if ($schemePath -and (Test-Path -LiteralPath $schemePath)) {
-                $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                Write-Host ("{0,-16}  {1}" -f $current, (Get-SchemeSwatch -Scheme $scheme))
+                # The same guard Show-StyleList has twenty lines up, for the same
+                # three statements. Without it a malformed scheme.json threw a
+                # raw System.ArgumentException ("Conversion from JSON failed...")
+                # out of a read-only command -- and only at a real console, the
+                # branch that draws the swatch, so every redirected run (all of
+                # CI) took the Write-Output path and never touched the file.
+                # Two implementations of one rule, and this was the half that
+                # never learned it.
+                try {
+                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    $swatch = Get-SchemeSwatch -Scheme $scheme
+                } catch { $swatch = Get-UnreadableSchemeSwatch }
+            }
+            if ($swatch) {
+                Write-Host ("{0,-16}  {1}" -f $current, $swatch)
             } else {
+                # No scheme.json at all: the name still answers the question the
+                # command was asked, and there is nothing to say about a file
+                # that is not there.
                 Write-Host $current
             }
         }
@@ -308,6 +343,40 @@ end tell
     if ($hash) { Set-AppleTerminalImportRecord -Name $Name -Hash $hash }
 }
 
+function Show-MissingBackgroundForNewWindow {
+    # What `-NewWindow` says when there is no image to put in the window.
+    #
+    # Three sentences, because Get-StyleBackgroundAbsence gives three answers and
+    # they are not interchangeable: "this style has none" is a settled fact and
+    # ends the matter, "the download did not go through" is temporary and worth
+    # retrying, and "no marker" means the cache could not even be written, which
+    # is the user's disk rather than their network. Collapsing them into one
+    # blanket line would be the boolean this project has already been burned by
+    # -- see Unregister-ShellLoader's removed/none/malformed/failed.
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir
+    )
+    Write-Host ""
+    switch (Get-StyleBackgroundAbsence -StyleDir $StyleDir) {
+        'absent' {
+            Write-Host ("  '{0}' ships no background image, so no new window was opened --" -f $StyleName) -ForegroundColor DarkGray
+            Write-Host "  it would look exactly like this one." -ForegroundColor DarkGray
+        }
+        'unreachable' {
+            Write-Host ("  Could not download '{0}'s background image, so no new window was" -f $StyleName) -ForegroundColor Yellow
+            Write-Host "  opened. The colors and prompt were still applied. Once you are back" -ForegroundColor Yellow
+            Write-Host "  online, run it again:" -ForegroundColor Yellow
+            Write-Host ("    tstyles {0} -NewWindow" -f $StyleName) -ForegroundColor Cyan
+        }
+        default {
+            Write-Host ("  Could not resolve '{0}'s background image, so no new window was" -f $StyleName) -ForegroundColor Yellow
+            Write-Host ("  opened. Nothing was cached under {0}." -f
+                        (Get-StyleCacheDir -StyleName (Split-Path -Leaf $StyleDir))) -ForegroundColor Yellow
+        }
+    }
+}
+
 function Publish-StyleBackgroundProfile {
     <#
     .SYNOPSIS
@@ -327,6 +396,13 @@ function Publish-StyleBackgroundProfile {
     written either way and opened only when asked: silently spawning a window on
     every apply would be a worse surprise than not showing the image.
 
+    -NewWindow is the one argument here that names an ACTION rather than a
+    preference, so every path that does not open a window owes the user a
+    sentence. Two of them did not have one: no image to put in the window, and a
+    profile that could not be written. Both returned $null in silence on a
+    terminal whose BackgroundImage capability suppresses the apply's "can't show"
+    notice, so the command printed "Style applied" and nothing else at all.
+
     .OUTPUTS
     The profile path, or $null where there is nothing to write (any terminal but
     Terminal.app, or a style with no background).
@@ -344,10 +420,35 @@ function Publish-StyleBackgroundProfile {
     if (-not ($caps.BackgroundImage -and $Kind -eq 'AppleTerminal')) { return $null }
 
     $bundledBg = Get-StyleBundledBackground -StyleDir $StyleDir
-    if (-not $bundledBg) { return $null }
+    if (-not $bundledBg) {
+        # -NewWindow is an ACTION the user asked for, and this returned $null
+        # having performed none of it and said nothing. Nothing else covered for
+        # it: the "can't show: background image" notice is gated on
+        # -not $caps.BackgroundImage, and Terminal.app is the one terminal that
+        # claims BackgroundImage -- so on precisely this path the notice is
+        # suppressed by design. The apply's own lines still printed, which is why
+        # it read as a working command that opened no window.
+        #
+        # Without -NewWindow the silence is right: nothing was asked for, and a
+        # style with no image has nothing to announce.
+        if ($NewWindow) { Show-MissingBackgroundForNewWindow -StyleName $StyleName -StyleDir $StyleDir }
+        return $null
+    }
 
     $profilePath = New-AppleTerminalProfile -StyleName $StyleName -Scheme $Scheme -BackgroundImage $bundledBg
-    if (-not $profilePath) { return $null }
+    if (-not $profilePath) {
+        # The same promise, one line further down, and it was silent in the same
+        # way: the image resolved, the profile did not get written, and
+        # -NewWindow opened nothing without saying so. The hint path is right to
+        # stay quiet here -- a hint pointing at a profile that does not exist is
+        # worse than silence -- but an action that did not happen is not a hint.
+        if ($NewWindow) {
+            Write-Host ""
+            Write-Host ("  Could not write the Terminal.app profile that carries {0}'s background," -f $StyleName) -ForegroundColor Yellow
+            Write-Host "  so no new window was opened. The colors and prompt were still applied." -ForegroundColor Yellow
+        }
+        return $null
+    }
 
     # Say the OTHER half of the limit too. This notice exists so a plain result
     # is never a mystery, and it explained only where the image appears -- not
@@ -477,8 +578,12 @@ function Apply-StyleNonWT {
         [bool]$OutputRedirected = [Console]::IsOutputRedirected
     )
 
+    # The capability record is not read here any more: Get-UnsupportedStyleField
+    # below asks it about every declared field, and Publish-StyleBackgroundProfile
+    # asks it again for the one field it delivers. Keeping a third copy in a
+    # local was how the notice ended up deciding for itself which two fields
+    # mattered.
     $kind = Get-TerminalKind
-    $caps = Get-TerminalCapability -Kind $kind
 
     $schemePath = Join-Path $StyleDir 'scheme.json'
     if (-not (Test-Path -LiteralPath $schemePath)) {
@@ -580,7 +685,13 @@ function Apply-StyleNonWT {
 
     # Tell the user which parts of the style this terminal cannot show, once,
     # rather than letting them wonder why it doesn't match the screenshot.
-    $unsupported = @()
+    #
+    # Through the shared reader, which asks the capability record about every
+    # field the style declares. It used to ask two hardcoded questions here --
+    # background image and tab color -- so a Terminal.app apply of `forest`
+    # named tab color and stayed silent about the font, cursor shape and padding
+    # it had just dropped, all three of them $false in the table for the express
+    # purpose of being named here.
     $theme = $null
     $themePath = Join-Path $StyleDir 'theme.json'
     if (Test-Path -LiteralPath $themePath) {
@@ -588,24 +699,8 @@ function Apply-StyleNonWT {
             $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
         } catch { $theme = $null }
     }
-    if ($theme) {
-        # Capability first, deliberately. Get-StyleBundledBackground can make up
-        # to four serial 10-second HTTP attempts against the gifs branch, so as
-        # the LEFT operand it ran even where the answer could not matter -- and
-        # ran a second time below. Ordered this way the two calls below and here
-        # are mutually exclusive on $caps.BackgroundImage, so an apply resolves
-        # the background at most once.
-        if (-not $caps.BackgroundImage -and (Get-StyleBundledBackground -StyleDir $StyleDir)) {
-            $unsupported += 'background image'
-        }
-        if ($theme.PSObject.Properties.Match('tabColor').Count -gt 0 -and -not $caps.TabColor) {
-            $unsupported += 'tab color'
-        }
-    }
-    if ($unsupported.Count -gt 0) {
-        Write-Host ""
-        Write-Host ("  {0} can't show: {1}." -f (Get-TerminalDisplayName -Kind $kind), ($unsupported -join ', ')) -ForegroundColor DarkGray
-    }
+    Show-UnsupportedStyleField -Kind $kind -Field @(
+        Get-UnsupportedStyleField -Theme $theme -StyleDir $StyleDir -Kind $kind)
 
     Publish-StyleBackgroundProfile -StyleName $StyleName -StyleDir $StyleDir `
         -Scheme $scheme -Kind $kind -NewWindow:$NewWindow | Out-Null
@@ -878,6 +973,27 @@ function Reset-StyleNonWT {
     Write-Host ""
 }
 
+function Test-TerminalStylesSchemeName {
+    # Does this colorScheme value name a style this tool wrote?
+    #
+    # The ownership marker the reset is built on, in one place because it is now
+    # asked twice: once of the profile's own entry, and once of profiles.defaults
+    # (whose colorScheme the profile falls back to the moment the entry's is
+    # stripped). An apply always writes colorScheme and writes it last, so there
+    # is no way to be styled by this tool and not carry it.
+    #
+    # -KnownStyleName is one name the CALLER has already proved is ours, for the
+    # window where `tstyles delete` has moved the style out of styles/ and
+    # Get-AvailableStyles can no longer see it.
+    param(
+        [AllowNull()][AllowEmptyString()][string]$Name,
+        [AllowNull()][AllowEmptyString()][string]$KnownStyleName
+    )
+    if ([string]::IsNullOrEmpty($Name)) { return $false }
+    if ($KnownStyleName -and $Name -eq $KnownStyleName) { return $true }
+    return (@(Get-AvailableStyles | Where-Object { $_.Name -eq $Name }).Count -gt 0)
+}
+
 function Reset-StyleDirect {
     # `tstyles reset [-Target <name>]` -- revert a WT profile to its unstyled
     # default: strip the fields TerminalStyles writes, remove the now-orphan
@@ -975,11 +1091,7 @@ function Reset-StyleDirect {
     # not a style this tool wrote" four lines under "Deleted <name>." Resetting
     # BEFORE the move would leave the terminal unstyled if the move then
     # throws, so the caller carries its proof across instead.
-    $styledByUs = $false
-    if ($schemeName) {
-        $styledByUs = ($KnownStyleName -and $schemeName -eq $KnownStyleName) -or
-                      @(Get-AvailableStyles | Where-Object { $_.Name -eq $schemeName }).Count -gt 0
-    }
+    $styledByUs = Test-TerminalStylesSchemeName -Name $schemeName -KnownStyleName $KnownStyleName
     if (-not $styledByUs) {
         Write-Host ("  '{0}' carries no TerminalStyles style -- nothing was changed." -f $Target) -ForegroundColor Yellow
         if ($schemeName) {
@@ -1001,6 +1113,49 @@ function Reset-StyleDirect {
         if ($entry.PSObject.Properties.Match($field).Count) {
             $entry.PSObject.Properties.Remove($field)
             $strippedAny = $true
+        }
+    }
+
+    # ...and the background the profile INHERITS, when that one is ours too.
+    #
+    # This is the other half of the rule Merge-StyleIntoSettings learned in
+    # 0.8.26 and reset never did. Windows Terminal resolves every named profile
+    # against profiles.defaults, so "what the profile shows" is not the same
+    # question as "what its own entry spells out". `tstyles eva -Target defaults`
+    # then `tstyles rain` leaves our eva GIF on defaults and our rain GIF on the
+    # entry; stripping the entry alone hands the profile straight back to the
+    # inherited copy -- the same bleed one level up that the merge's own comment
+    # names -- and reset then printed "Reset 'PowerShell' to its unstyled
+    # default." in green with eva's GIF still on screen. Measured on 0.8.28:
+    # four backgroundImage* keys left on profiles.defaults, the effective
+    # background still <dataroot>/styles/eva/background.gif, and the green line
+    # printed.
+    #
+    # Guarded on the INHERITED value being ours, separately from anything on the
+    # entry: a background the USER set on defaults for every profile is theirs to
+    # keep, which is the guard tests/Background-Carryover.Tests.ps1 pins on the
+    # apply side and is mirrored here.
+    #
+    # Background fields only, deliberately. The merge confined its rule to the
+    # image for a reason -- clearing a key off defaults restyles every profile
+    # that inherits it -- and extending that to colorScheme is a bigger blast
+    # radius and a separate decision. What an inherited colorScheme gets instead
+    # is a sentence in the sign-off below, because the one thing reset may not do
+    # is leave the profile styled and call it plain.
+    $clearedDefaultsBg = $false
+    if (-not $resolvedTarget.IsDefaults) {
+        $inheritedEntry = (Resolve-WTProfileTarget -Settings $settings -TargetName 'defaults').Entry
+        $inheritedBg = if ($inheritedEntry -and
+                           $inheritedEntry.PSObject.Properties.Match('backgroundImage').Count -gt 0) {
+            [string]$inheritedEntry.backgroundImage
+        } else { $null }
+        if ($inheritedEntry -and (Test-ManagedBackgroundPath -Path $inheritedBg)) {
+            foreach ($bgField in $script:TStylesBgFields) {
+                if ($inheritedEntry.PSObject.Properties.Match($bgField).Count -gt 0) {
+                    $inheritedEntry.PSObject.Properties.Remove($bgField)
+                    $clearedDefaultsBg = $true
+                }
+            }
         }
     }
 
@@ -1031,7 +1186,7 @@ function Reset-StyleDirect {
     # and then rewrote settings.json anyway, which re-serializes the parsed
     # object and drops every JSONC comment in it. The most likely way a curious
     # user tries this command was also the one that cost them their comments.
-    if ($strippedAny) {
+    if ($strippedAny -or $clearedDefaultsBg) {
         Write-SettingsFile -Path $settingsPath -Settings $settings
     }
 
@@ -1046,11 +1201,49 @@ function Reset-StyleDirect {
         Remove-Item -LiteralPath $script:TStylesCurrent -Force
     }
 
+    # What profiles.defaults still puts on this profile, if anything. Asked
+    # AFTER the strip, because that is when the entry's own colorScheme is gone
+    # and the inherited one becomes the palette the window actually renders.
+    #
+    # "Reset '<name>' to its unstyled default." is a claim about what the user
+    # will see, and with a styled defaults block it was simply false: the entry
+    # was clean and the window was still eva. Either the line tells the truth or
+    # the command has to clear defaults as well -- and clearing a colorScheme off
+    # defaults restyles every profile inheriting it, which is not a thing to do
+    # without being asked.
+    $inheritedScheme = $null
+    if (-not $resolvedTarget.IsDefaults) {
+        $defaultsEntry = (Resolve-WTProfileTarget -Settings $settings -TargetName 'defaults').Entry
+        if ($defaultsEntry -and $defaultsEntry.PSObject.Properties.Match('colorScheme').Count) {
+            $candidate = [string]$defaultsEntry.colorScheme
+            if (Test-TerminalStylesSchemeName -Name $candidate -KnownStyleName $KnownStyleName) {
+                $inheritedScheme = $candidate
+            }
+        }
+    }
+
     Write-Host ""
     if ($strippedAny) {
-        Write-Host "  Reset '$Target' to its unstyled default." -ForegroundColor Green
+        if ($inheritedScheme) {
+            Write-Host ("  Stripped every TerminalStyles field from '{0}'." -f $Target) -ForegroundColor Green
+        } else {
+            Write-Host "  Reset '$Target' to its unstyled default." -ForegroundColor Green
+        }
     } else {
         Write-Host "  '$Target' had no TerminalStyles fields -- already plain." -ForegroundColor Gray
+    }
+    if ($clearedDefaultsBg) {
+        # Said out loud because it reaches further than the profile that was
+        # named: the image lived on profiles.defaults, so removing it changes
+        # every profile that was inheriting it.
+        Write-Host "  The background image it was showing lived on profiles.defaults, so that" -ForegroundColor DarkGray
+        Write-Host "  was cleared too -- every profile inheriting it loses the image." -ForegroundColor DarkGray
+    }
+    if ($inheritedScheme) {
+        Write-Host ("  profiles.defaults still sets colorScheme '{0}', which '{1}' inherits --" -f
+                    $inheritedScheme, $Target) -ForegroundColor Yellow
+        Write-Host "  so it keeps that palette. Clear it for every profile with:" -ForegroundColor Yellow
+        Write-Host "    tstyles reset -Target defaults" -ForegroundColor Cyan
     }
     Write-Host "  Open a new tab to restore your default prompt." -ForegroundColor DarkGray
     Write-Host ""
