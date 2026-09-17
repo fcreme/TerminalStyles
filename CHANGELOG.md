@@ -23,6 +23,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the picker's frame was budgeted at exactly the window height, so drawing it scrolled the buffer out from under its own cursor -- and every redraw after that painted in the wrong place.** The picker repaints by parking the cursor at a row it captured ONCE and overwriting in place, which holds only while the whole frame fits below that row. The row budget subtracted the chrome from `[Console]::WindowHeight` and stopped there, so at the limit the frame painted exactly `WindowHeight` rows and the newline ending its last line scrolled everything up by one. From then on the saved row pointed one line off, the header repeated down the screen, and short rows wore the tails of longer ones:
+
+  ```
+  Choose a style for WezTermto keep, Esc to cancel
+       eva                                        el
+  ```
+
+  It needs only a list long enough to fill the window -- the 16 bundled styles plus one of the user's own do it in any window of 26 rows or fewer, which is why it showed up on WezTerm first and not because of anything WezTerm does.
+
+  Three changes, because the accounting was not the only thing that could put the frame out of step with the screen. The budget is now one pure function, `Get-PickerFramePlan`, which holds a row back and which a test can drive -- the arithmetic used to sit inline in `$drawMenu` where nothing could reach it, and the picker no longer does any of its own sums. Every row the frame paints ends with an erase-to-end-of-line, so a row that gets SHORTER can no longer leave the previous frame's tail behind -- which is what a window resize does to every row at once. And when the frame cannot fit at all, in a window too short to hold even the chrome, the picker reclaims the screen and re-anchors instead of painting at an origin the scroll has already invalidated: a redraw that flickers is recoverable, one that smears is not.
+
+  Measured: with the held-back row removed, a 14-row window budgets a 14-row frame and the guard fails by name. Four existing tests pinned the arithmetic by matching the picker's source text and broke on a refactor that changed no behaviour -- the shape CLAUDE.md warns about -- so they now drive the function instead.
+
 - **applying the bundled `kitty` style on WezTerm replaced the user's entire configuration with WezTerm's defaults, because `backgroundImageStretchMode: "none"` was emitted as `width = 'Auto'` and `Auto` is not a `BackgroundSize`.** The variants are `Contain`, `Cover` and a dimension; `kitty` is the one bundled style that declares `none`, so this was one style in sixteen and nothing in the suite could see it -- the tests pin the shapes the docs define, and no CI machine has a wezterm to load the result. Measured on wezterm 20240203-110809-5046fc22: `error converting Lua table to Config (Config::from_dynamic: Error processing background.width (types: Config, BackgroundLayer) expected either 'Contain', 'Cover', a number, or a string of the form '123px' where 'px' is a unit and can be one of 'px', '%', 'pt' or 'cell', but got String)`, raised from `[C]: in metamethod 'newindex'` inside `apply_to_config` -- the wiring line's `pcall` covers the `require`, not the call, so the error reaches the user's config and takes it down with it.
 
   `none` now maps to `Contain`, the nearest thing WezTerm has: there is no natural-size variant, and `Contain` is the one option that neither stretches the aspect ratio nor crops, which is what asking for `none` is asking to avoid. The regression test is driven off the shipped `theme.json` files rather than a list of its own, so a style added with a new stretch mode is measured instead of assumed, and it fails by name (`kitty ships backgroundImageStretchMode 'none'`) rather than by a generic mismatch.

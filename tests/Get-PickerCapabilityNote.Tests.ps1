@@ -118,8 +118,14 @@ Describe 'the picker paints that note inside its frame, not above it' {
             $bumps = @($draw[0].FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.IfStatementAst] -and
                 $n.Clauses[0].Item1.Extent.Text -match '^\$capabilityNote$' -and
-                $n.Clauses[0].Item2.Extent.Text -match '\$chrome\+\+' }, $true))
-            @($bumps).Count | Should -Be 1 -Because 'the note costs a row, so the viewport has to know about it'
+                $n.Clauses[0].Item2.Extent.Text -match '\$notes\+\+' }, $true))
+            @($bumps).Count | Should -Be 1 -Because 'the note costs a row, so the budget has to know about it'
+
+            # And that a counted note really does cost a row, measured rather
+            # than matched: the count reaches the budget as -NoteCount.
+            $without = Get-PickerFramePlan -Total 17 -Selected 0 -WindowHeight 30
+            $with    = Get-PickerFramePlan -Total 17 -Selected 0 -WindowHeight 30 -NoteCount 1
+            ($with.ChromeRows - $without.ChromeRows) | Should -Be 1
         }
 
         It 'no longer prints it above the menu' {

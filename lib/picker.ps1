@@ -8,6 +8,61 @@
 # arithmetic that keeps the frame inside the window. Both exist in this shape
 # for that reason and no other.
 
+function Get-PickerFramePlan {
+    # The whole frame budget in one place: how many rows the chrome costs, how
+    # many styles fit, and how tall the frame will be.
+    #
+    # It exists because the caller used to do this arithmetic inline and got it
+    # off by one. Get-PickerViewport's contract is about $Available, and the
+    # picker computed $Available as `$wh - $chrome` -- at which point the frame
+    # paints exactly $wh rows and the newline ending the last one scrolls the
+    # buffer. The saved home row then no longer points at the top of the menu,
+    # which is the garbling this function's sibling docstring describes. Reported
+    # from a real WezTerm window with 17 styles: the header repeating down the
+    # screen, and short rows wearing the tails of longer ones --
+    #   "Choose a style for WezTermto keep, Esc to cancel"
+    #
+    # ChromeRows is what the frame spends on things that are not styles: the
+    # leading blank, the header, the two hint lines, the blank under them, the
+    # two always-present scroll indicators and the trailing blank -- plus one row
+    # per optional note. Both indicators are always emitted, blank when there is
+    # nothing to report, so the height is identical on every redraw.
+    #
+    # A non-positive WindowHeight means "I don't know", not "no room". It reads
+    # as 0 under a pty whose size was never set -- some CI runners, some SSH
+    # sessions before the first SIGWINCH -- and budgeting from that would
+    # collapse the menu to one row, far worse than the unbounded frame this
+    # exists to prevent; so it falls back to drawing everything.
+    #
+    # Returns @{ ChromeRows; Available; First; Count; More; FrameRows; Fits }.
+    # Pure, so the arithmetic is testable without a terminal.
+    param(
+        [Parameter(Mandatory)][int]$Total,
+        [Parameter(Mandatory)][int]$Selected,
+        [Parameter(Mandatory)][int]$WindowHeight,
+        [int]$NoteCount = 0
+    )
+
+    $chrome = 8 + [Math]::Max(0, $NoteCount)
+    # -1: reserve a row the frame will not paint, so ending the last line cannot
+    # scroll the buffer.
+    $available = if ($WindowHeight -gt 0) { $WindowHeight - $chrome - 1 } else { $Total }
+    $vp = Get-PickerViewport -Total $Total -Selected $Selected -Available $available
+    $rows = $chrome + $vp.Count
+    @{
+        ChromeRows = $chrome
+        Available  = $available
+        First      = $vp.First
+        Count      = $vp.Count
+        More       = $vp.More
+        FrameRows  = $rows
+        # False only when the window cannot hold the chrome at all -- the menu
+        # still draws (one row beats none), and the caller reclaims the screen
+        # rather than painting at an origin the scroll has invalidated.
+        Fits       = ($WindowHeight -le 0) -or ($rows -lt $WindowHeight)
+    }
+}
+
 function Get-PickerViewport {
     # Which slice of the style list to draw, so the menu always fits the window.
     #

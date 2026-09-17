@@ -1414,12 +1414,46 @@ function Invoke-TerminalStyle {
 
         $drawMenu = {
             param($idx)
+            # The whole row budget, from one pure function -- Get-PickerFramePlan
+            # documents what the chrome is made of and why a row is held back.
+            # It used to be computed inline here,
+            # and was off by one: the frame painted exactly WindowHeight rows and
+            # the newline ending the last one scrolled the buffer out from under
+            # $renderHomeY.
+            $notes = 0
+            if ($unreadableNote) { $notes++ }
+            if ($backupNote)     { $notes++ }
+            if ($capabilityNote) { $notes++ }
+            $wh = 0
+            try { $wh = [Console]::WindowHeight } catch { $wh = 0 }
+            $plan = Get-PickerFramePlan -Total $styles.Count -Selected $idx `
+                        -WindowHeight $wh -NoteCount $notes
+            $vp = @{ First = $plan.First; Count = $plan.Count; More = $plan.More }
+            # The origin is an ABSOLUTE row captured once, so anything that
+            # scrolls the buffer invalidates it for every later redraw. The -1
+            # below stops the frame causing that scroll itself, but a window too
+            # short to hold even the chrome still can, and so does a resize. When
+            # the frame cannot fit below the origin, reclaim the screen and start
+            # again from the top: a redraw that flickers is recoverable, one that
+            # paints at a stale origin smears until the picker exits.
+            if ($pickerState.ContainsKey('HomeY')) { $renderHomeY = $pickerState.HomeY }
+            if ($wh -gt 0 -and (-not $plan.Fits -or ($renderHomeY + $plan.FrameRows) -ge $wh)) {
+                Clear-Host
+                $renderHomeY = 0
+                $pickerState.HomeY = 0
+            }
             [Console]::SetCursorPosition(0, $renderHomeY)
-            Write-Host ""
-            Write-Host "  Choose a style for " -NoNewline
+            # Erase-to-end-of-line on every row the frame paints. The frame is
+            # overwritten in place rather than cleared, so without this a row
+            # that gets SHORTER leaves the previous frame's tail on screen --
+            # which is what a window resize does to every row at once, and what
+            # any drift in the origin does to all of them.
+            $el = "$([char]27)[K"
+            Write-Host $el
+            Write-Host "$el  Choose a style for " -NoNewline
             Write-Host $pickerTargetLabel -ForegroundColor Cyan
-            Write-Host "$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
-            Write-Host "$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
+            Write-Host "$el$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
+            Write-Host "$el$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
             # A style dropped by the parse above is reported HERE rather than
             # before the menu, because the picker Clear-Host's on the way in and
             # anything printed above the frame is wiped unread -- the same
@@ -1429,18 +1463,18 @@ function Invoke-TerminalStyle {
             # blank on every healthy install, and the frame only has to be the
             # same height on every REDRAW, which it is -- $unreadableNote cannot
             # change while the picker is up.
-            if ($unreadableNote) { Write-Host "$hintColor$unreadableNote$resetColor" }
+            if ($unreadableNote) { Write-Host "$el$hintColor$unreadableNote$resetColor" }
             # Same reasoning, same place: the rolling backup this picker takes
             # before its first preview can fail, and saying so where it happened
             # means saying it above the frame, where the Clear-Host wipes it.
             # Like $unreadableNote it is decided once, before the loop, so the
             # frame's height is still identical on every redraw.
-            if ($backupNote) { Write-Host "$hintColor$backupNote$resetColor" }
+            if ($backupNote) { Write-Host "$el$hintColor$backupNote$resetColor" }
             # Third note, same reason, and the one that was outside the frame
             # for longest: what this terminal cannot render. Also decided once,
             # before the loop, so the frame's height is identical every redraw.
-            if ($capabilityNote) { Write-Host "$hintColor$capabilityNote$resetColor" }
-            Write-Host ""
+            if ($capabilityNote) { Write-Host "$el$hintColor$capabilityNote$resetColor" }
+            Write-Host $el
             # Rows the frame spends on anything that is not a style: the leading
             # blank, the header line, the two hint lines, the two always-present
             # scroll indicators, the trailing blank, and one spare so the shell's
@@ -1448,32 +1482,15 @@ function Invoke-TerminalStyle {
             # line, the backup-failure line and the capability line, when there
             # are any. Every row the frame paints has to be bought here, or the
             # menu runs off the bottom of the window.
-            $chrome = 8
-            if ($unreadableNote) { $chrome++ }
-            if ($backupNote)     { $chrome++ }
-            if ($capabilityNote) { $chrome++ }
-            # A non-positive WindowHeight means "I don't know", not "no room".
-            # It reads as 0 under a pty whose size was never set -- some CI
-            # runners, some SSH sessions before the first SIGWINCH -- and
-            # subtracting the chrome from that would collapse the menu to a
-            # single row, which is far worse than the unbounded frame this
-            # viewport exists to prevent. Fall back to the old behaviour of
-            # drawing everything, which was fine for years.
-            $available = $styles.Count
-            try {
-                $wh = [Console]::WindowHeight
-                if ($wh -gt 0) { $available = $wh - $chrome }
-            } catch { }
-            $vp = Get-PickerViewport -Total $styles.Count -Selected $idx -Available $available
             # Both indicator rows are ALWAYS emitted, blank when there is
             # nothing to report. The frame is overwritten in place rather than
             # cleared, so its height has to be identical every redraw -- a row
             # that comes and goes would leave the taller frame's last line
             # stranded on screen.
             if ($vp.More -and $vp.First -gt 0) {
-                Write-Host "$hintColor     ... $($vp.First) more above$resetColor"
+                Write-Host "$el$hintColor     ... $($vp.First) more above$resetColor"
             } else {
-                Write-Host ""
+                Write-Host $el
             }
             for ($i = $vp.First; $i -lt ($vp.First + $vp.Count); $i++) {
                 $name = $styles[$i].Name
@@ -1485,7 +1502,7 @@ function Invoke-TerminalStyle {
                 $resolved = (-not $wantsBackgrounds) -or (Test-StyleResolved -StyleDir $styles[$i].FullName)
                 $color = if ($i -eq $idx) { 'Yellow' } else { 'Gray' }
                 $prefix = if ($i -eq $idx) { '   > ' } else { '     ' }
-                Write-Host ($prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
+                Write-Host ($el + $prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
                 if ($resolved) {
                     Write-Host $swatches[$i]
                 } else {
@@ -1494,11 +1511,11 @@ function Invoke-TerminalStyle {
             }
             $below = $styles.Count - ($vp.First + $vp.Count)
             if ($vp.More -and $below -gt 0) {
-                Write-Host "$hintColor     ... $below more below$resetColor"
+                Write-Host "$el$hintColor     ... $below more below$resetColor"
             } else {
-                Write-Host ""
+                Write-Host $el
             }
-            Write-Host ""
+            Write-Host $el
         }
 
         $applyTheme = {
