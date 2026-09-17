@@ -14,6 +14,19 @@ BeforeAll {
 
 Describe 'tstyles tune dispatch' {
     InModuleScope TerminalStyles {
+        BeforeEach {
+            # BOTH halves of the sandbox, or this test writes to the operator's
+            # own files. $script:TStylesCurrent is computed from the data root at
+            # MODULE LOAD (tstyles.ps1:239), so overriding the data root here does
+            # not move it; current-style.json/.osc and the staged shell runtime are
+            # computed from the data root at CALL time, so overriding
+            # TStylesCurrent alone does not move them. Setting one and not the
+            # other is how this file leaked for four months -- invisibly, because
+            # what it wrote happened to match what was already there.
+            $script:TStylesDataRoot = $TestDrive
+            $script:TStylesCurrent  = Join-Path $TestDrive 'current-style.ps1'
+        }
+
         It 'routes `tune <name>` to Invoke-TerminalStyleTune with the style name' {
             Mock Invoke-TerminalStyleTune {}
             Mock Show-UpdateNoticeIfAvailable {}
