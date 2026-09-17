@@ -488,7 +488,7 @@ unaffected.
 | | Colors | Cursor | Font | Opacity | Background image | Tab color |
 |---|---|---|---|---|---|---|
 | Windows Terminal | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
-| WezTerm | ✅ | color only | ✅ | — | ✅ animated | — |
+| WezTerm | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
 | Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
 | iTerm2 | ✅ | color only | — | — | — | — |
 | Ghostty / kitty / Alacritty | ✅ | color only | — | — | — | — |
@@ -532,6 +532,14 @@ Applying a style rewrites `~/.config/wezterm/terminalstyles.lua`, and because
 WezTerm watches every file it `require`s, the running window repaints on the
 spot — background animation included. No new window, no restart. `tstyles`
 prints the line above until it can see it in your config.
+
+The module carries the rest of the style too: the palette as a named color
+scheme, the font and its size, the interior padding, the cursor shape, the tab
+accent color, and — for a style that asks for transparency — the window
+opacity, with `macos_window_background_blur` added only on macOS, behind a
+`wezterm.target_triple` test, so the same file stays valid on Linux. The tab
+accent color is merged into `config.colors` key by key rather than assigned, so
+whatever you already set there survives.
 
 Applying a style reports which parts the current terminal cannot show, so a
 plainer result is never a mystery.
@@ -592,9 +600,10 @@ is never touched: only images TerminalStyles itself installed are cleared.
   - **Windows Terminal** — the full feature set, including background images
   - **Terminal.app** — colors, cursor color, and prompt in the current window,
     plus a background image in a new one (`tstyles <name> -NewWindow`)
-  - **WezTerm** — colors, cursor color, prompt, font, padding, and an
-    **animated** background image, live in the running window, after one line
-    of setup (see "Animated backgrounds on WezTerm")
+  - **WezTerm** — colors, cursor color and shape, prompt, font, padding,
+    window transparency (with the macOS blur for an acrylic style), the tab
+    accent color, and an **animated** background image, live in the running
+    window, after one line of setup (see "Animated backgrounds on WezTerm")
   - **iTerm2**, **Ghostty**, **kitty**, **Alacritty**, and anything else that
     speaks OSC 4/10/11/12 — colors, cursor color, and prompt. Run `tstyles`
     and it reports what your terminal can and cannot show.
@@ -831,10 +840,14 @@ takes one PNG of the WT window, then restores your original theme.
   colors are applied as OSC escape sequences, and no escape sequence carries a
   background image or a tab accent color. On Terminal.app the image is instead
   delivered through a generated `.terminal` profile, which means a new window
-  (`tstyles <name> -NewWindow`); tab accent color has no equivalent anywhere but
-  Windows Terminal. Font, cursor shape and interior padding are the same story:
-  they live in a config file, and off Windows Terminal only WezTerm has one this
-  tool writes. Both doors — `tstyles <name>` and the picker — name every field
+  (`tstyles <name> -NewWindow`). Tab accent color, font, cursor shape, window
+  transparency and interior padding are the same story: they live in a config
+  file, and off Windows Terminal the only config file this tool writes is
+  WezTerm's generated Lua module — which now carries all five, so a WezTerm
+  window gets everything the sixteen bundled styles declare except the tab
+  title (the style's prompt sets that anyway) and the experimental CRT effect,
+  which WezTerm has no equivalent for. Both doors — `tstyles <name>` and the
+  picker — name every field
   the style declares that this terminal cannot show, read off the same
   capability table as the grid above, rather than dropping them silently. Hosts
   that render nothing (VS Code's integrated terminal, conhost) stay plain by
