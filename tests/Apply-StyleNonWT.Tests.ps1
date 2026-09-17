@@ -691,15 +691,24 @@ Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
         }
 
         It 'names only what WezTerm really cannot do' {
-            # The record drives it: font and padding are written by
-            # Get-WezTermStyleLua, so they must not appear.
-            $line = @(script:Get-ApplyOutput -Kind 'WezTerm' -split "`n" |
+            # The record drives it, and for this style that list is now empty:
+            # Get-WezTermStyleLua writes config.font, window_padding,
+            # default_cursor_style and colors.tab_bar.active_tab, and the
+            # style's opacity 100 with no acrylic asks for nothing at all. A
+            # line here would name a field the same apply had just written.
+            $out = script:Get-ApplyOutput -Kind 'WezTerm'
+            $out | Should -Not -Match "can't show"
+
+            # The same style, one terminal along, still prints all four -- so
+            # the silence above is the capability record and not a notice that
+            # stopped working.
+            $line = @(script:Get-ApplyOutput -Kind 'Ghostty' -split "`n" |
                       Where-Object { $_ -match "can't show" })
             @($line).Count | Should -Be 1
             $line[0] | Should -Match 'cursor shape'
             $line[0] | Should -Match 'tab color'
-            $line[0] | Should -Not -Match 'font'
-            $line[0] | Should -Not -Match 'padding'
+            $line[0] | Should -Match 'font'
+            $line[0] | Should -Match 'padding'
         }
 
         It 'says nothing at all for a style that declares nothing' {

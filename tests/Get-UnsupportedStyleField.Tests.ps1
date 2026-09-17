@@ -10,7 +10,9 @@
 #
 #   "Claiming it would suppress the 'can't show' notice and leave the user
 #    comparing an unchanged window against a screenshot, which is the exact
-#    failure the capability table exists to prevent"        (WezTerm Opacity)
+#    failure the capability table exists to prevent"        (WezTerm Opacity,
+#                                                            before the writer
+#                                                            learned to deliver it)
 #
 # The notice did not read the capability record. It was two hardcoded questions
 # -- BackgroundImage and tabColor -- so no $false flag for Font, Opacity,
@@ -28,6 +30,12 @@
 #   Ghostty         7 unsupported                : apply names 2
 #   WezTerm         opacity, cursorShape, tabColor, tabTitle
 #                                                : apply names 1
+#
+# WezTerm's row is now empty on both sides: the Lua writer carries opacity,
+# cursorShape and tabColor as well, each proved against the real binary, so the
+# record says nothing is dropped and the notice prints nothing. The measurement
+# that keeps that honest is in tests/WezTerm-Writer.Tests.ps1, which pins a
+# generated option per claimed flag.
 #
 # and the delivery side agrees it is not a false alarm: New-AppleTerminalProfile
 # run for real produces 23 plist keys -- name, type, ProfileCurrentVersion and 20
@@ -109,14 +117,34 @@ Describe 'Get-UnsupportedStyleField' {
 
         It 'follows the capability record rather than a list of its own' {
             # WezTerm is the proof that the record drives this: same style, same
-            # question, and font and padding drop off the list purely because
-            # Get-WezTermStyleLua writes config.font and window_padding.
-            $f = script:Fields -Kind 'WezTerm'
-            $f | Should -Not -Contain 'font'
-            $f | Should -Not -Contain 'padding'
-            $f | Should -Not -Contain 'background image'
-            $f | Should -Contain 'cursor shape'
-            $f | Should -Contain 'tab color'
+            # question, and the list empties out purely because
+            # Get-WezTermStyleLua writes config.font, window_padding,
+            # default_cursor_style and colors.tab_bar.active_tab. Nothing here
+            # was edited when the last two arrived.
+            script:Fields -Kind 'WezTerm' | Should -BeNullOrEmpty
+
+            # The counterweight, and the reason this is not just a weaker
+            # assertion: the SAME style on a terminal with no config writer
+            # still names every one of them.
+            $g = script:Fields -Kind 'Ghostty'
+            $g | Should -Contain 'font'
+            $g | Should -Contain 'padding'
+            $g | Should -Contain 'cursor shape'
+            $g | Should -Contain 'tab color'
+        }
+
+        It 'stops naming opacity on WezTerm, which now writes it' {
+            # `kitty`'s shape: opacity 80 + acrylic, the one bundled style that
+            # asks for transparency. WezTerm gets window_background_opacity, the
+            # same fraction on the base background layer, and the darwin-guarded
+            # macos_window_background_blur -- so naming it would be the notice
+            # pointed the wrong way, telling the user a field was dropped in the
+            # same apply that wrote it.
+            $t = $script:theme.PSObject.Copy()
+            $t.opacity    = 80
+            $t.useAcrylic = $true
+            script:Fields -Kind 'WezTerm' -Theme $t | Should -BeNullOrEmpty
+            script:Fields -Kind 'AppleTerminal' -Theme $t | Should -Contain 'opacity'
         }
 
         It 'has nothing to say about Windows Terminal' {

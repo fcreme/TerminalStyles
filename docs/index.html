@@ -301,12 +301,14 @@ footer .sp{margin-left:auto}
         <tr><td>Windows Terminal</td><td class="yes">Yes</td><td class="yes">shape + color</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">animated</td><td class="yes">Yes</td></tr>
         <tr><td>Terminal.app</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="yes">still, new window</td><td class="no">&mdash;</td></tr>
         <tr><td>iTerm2</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td></tr>
-        <tr><td>Ghostty / WezTerm / kitty / Alacritty</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td></tr>
+        <tr><td>WezTerm</td><td class="yes">Yes</td><td class="yes">shape + color</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">animated</td><td class="yes">Yes</td></tr>
+        <tr><td>Ghostty / kitty / Alacritty</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td></tr>
         <tr><td>VS Code terminal</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td></tr>
       </tbody>
     </table></div>
     <p class="note">The dashes describe <em>this tool</em>, not the emulator. iTerm2 would honour a
-      Dynamic Profile and WezTerm draws animated backgrounds &mdash; nothing here writes either yet.
+      Dynamic Profile &mdash; nothing here writes one yet. WezTerm's row is full because this tool
+      generates a Lua module it loads, after one line you add to your own <code>wezterm.lua</code>.
       They're marked <span class="no">&mdash;</span> on purpose: a claimed capability no code delivers
       means a style reports success, paints nothing, and suppresses the notice that would have
       explained why. Applying a style tells you which parts your terminal can't show.</p>
