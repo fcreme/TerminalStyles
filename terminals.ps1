@@ -1605,9 +1605,32 @@ function Invoke-TerminalStylesShellInit {
     # The filter is on the statuses that mean "there is no loader in this file",
     # not on 'failed' alone: 'malformed' writes nothing either, and naming it
     # here sent the user to `source` a file that has no loader line in it.
+    #
+    # And $loginShell is not the whole answer either. It says 'bash' for every
+    # $env:SHELL it does not recognise -- deliberately, and the registration
+    # above is right to follow it: the loader block written into ~/.profile is
+    # POSIX (`if [ -r '...' ]; then . '...'; fi`) and a dash or ksh login shell
+    # reads that file. The HINT is what over-claimed. For a dash login shell it
+    # printed `source ~/.bashrc`: a file dash never opens, named with a builtin
+    # dash does not have ("source: not found"), so both halves of the one line
+    # the user is most likely to act on were wrong.
+    #
+    # Decided here, downstream of every write, so nothing about WHICH files get
+    # registered changes -- this is pure selection over what was already done.
+    $shellLeaf = if ($env:SHELL) { Split-Path -Leaf $env:SHELL } else { '' }
+    $posixSh   = [bool]($shellLeaf -and ($shellLeaf -notin @('bash', 'zsh')))
+
     $written  = @($touched | Where-Object { $_.Action -notin @('failed', 'malformed') })
-    $hintPath = (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written |
-                 Select-Object -First 1).Path
+    # No fallback in the POSIX-sh arm, on purpose: falling back to $written
+    # would name a bash rc again, which is the thing being fixed. ~/.profile is
+    # the only file this function writes that such a shell reads, so if it was
+    # not written there is nothing honest to point at.
+    $hintPath = if ($posixSh) {
+        (@($written | Where-Object { $_.Path -eq $dotProfile }) | Select-Object -First 1).Path
+    } else {
+        (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written |
+         Select-Object -First 1).Path
+    }
     # On Windows the sign-off also says what sourcing that file will not do.
     # The closing line is the last thing read and it is where "it worked" gets
     # inferred from, so printing the same one on the platform where the loader
@@ -1615,10 +1638,18 @@ function Invoke-TerminalStylesShellInit {
     # success line on a path that silently no-opped.
     if ($hintPath) {
         $shown = if ($hintPath.StartsWith($HomeDir)) { '~' + $hintPath.Substring($HomeDir.Length) } else { $hintPath }
-        Write-Host ("  Open a new tab, or run:  source {0}" -f $shown) -ForegroundColor DarkGray
+        # `.` is POSIX and works in bash and zsh too, but those two keep
+        # `source` so the line the overwhelming majority of users read is
+        # byte-identical to what it has always been.
+        $sourceVerb = if ($posixSh) { '.' } else { 'source' }
+        Write-Host ("  Open a new tab, or run:  {0} {1}" -f $sourceVerb, $shown) -ForegroundColor DarkGray
         if ($Platform -eq 'Windows') {
             Write-Host "  The tab will look the same either way -- see the note above." -ForegroundColor DarkGray
         }
+    } elseif ($posixSh) {
+        # The honest form of "open a new tab": for this shell a new tab picks up
+        # nothing, because nothing it reads was written.
+        Write-Host ("  Nothing was written to a file {0} reads -- the loader needs your ~/.profile." -f $shellLeaf) -ForegroundColor DarkGray
     } else {
         Write-Host "  Open a new tab to pick it up." -ForegroundColor DarkGray
     }

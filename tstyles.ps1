@@ -1345,12 +1345,14 @@ function Invoke-TerminalStyle {
             # down, for the per-keystroke path, and is still $null here --
             # indexing it threw "Cannot index into a null array" and took the
             # picker down before it drew a single row.
-            # | Out-Null like the other two call sites: Write-HostOscPacket
-            # returns $true/$false by contract ("the bytes actually reached a
-            # terminal"), and a bare statement emits that status into
-            # `tstyles`' own output stream -- measured as a literal `True` in
-            # the picker's byte stream and, worse, as a [bool] in what a
-            # completed non-WT picker session RETURNS.
+            #
+            # | Out-Null for the same reason as its three siblings ($onRetint,
+            # $restoreOriginalLook, and the tuner's $restoreBaseLook): this is a
+            # bare pipeline statement inside Invoke-TerminalStyle, so the bool
+            # Write-HostOscPacket returns is the exported command's own output.
+            # Unassigned, `tstyles` printed "True" on the line between the OSC
+            # palette and the picker's first Clear-Host; captured, `@(tstyles)`
+            # came back holding a [bool] nobody asked for.
             Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$idx]) | Out-Null
         }
         if ($canPreviewTitle -and $titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }

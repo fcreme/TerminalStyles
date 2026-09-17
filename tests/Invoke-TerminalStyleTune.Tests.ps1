@@ -296,12 +296,36 @@ Describe 'cancelling the tuner puts the terminal back' {
         }
 
         It 'still puts the settings file back on Windows Terminal' {
-            # The other half of the WT revert, and the half that is genuinely
-            # this caller's: the OSC reset only means "unstyled" there because
-            # the file WT repaints from has already been restored.
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $block = [regex]::Match($src, '(?s)\$restoreBaseLook = \{.*?\n    \}').Value
-            $block | Should -Match 'Write-SettingsAtomic'
+            # The other half of the WT revert: the OSC reset only means
+            # "unstyled" there because the file WT repaints from has already
+            # been restored.
+            #
+            # DRIVEN, not matched. The body moved out of $restoreBaseLook and
+            # into Restore-TuneBaseLook when it gained the run-at-most-once flag
+            # (see tests/Restore-TuneBaseLook.Tests.ps1), which is what makes it
+            # reachable from a test at all -- the key loop around it is not.
+            Mock Write-SettingsAtomic {}
+            Mock Write-HostOscPacket { $true }
+
+            Restore-TuneBaseLook -State @{ Reverted = $false } -UseSettingsFile `
+                -SettingsPath (Join-Path $TestDrive 'settings.json') -OriginalJson '{ "x": 1 }' `
+                -OpenedScheme $null | Out-Null
+
+            Should -Invoke Write-SettingsAtomic -Times 1 -Exactly `
+                -ParameterFilter { $Json -eq '{ "x": 1 }' } `
+                -Because 'the byte-exact original is what a cancel puts back'
+        }
+
+        It 'and hands it the snapshot the tuner took, not a re-read' {
+            # The caller's half, which the function cannot see: $originalJson is
+            # the byte-exact source text captured before the first preview.
+            $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
+            $call = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Restore-TuneBaseLook' }, $true))
+            @($call).Count | Should -Be 1
+            $call[0].Extent.Text | Should -Match '-OriginalJson \$originalJson'
+            $call[0].Extent.Text | Should -Match '-SettingsPath \$settingsPath'
         }
 
         It 'guards the finally against restoring before it exists' {

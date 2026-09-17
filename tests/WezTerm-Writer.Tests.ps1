@@ -174,6 +174,68 @@ Describe 'Get-WezTermStyleLua' {
                     Should -Be ($lua.ToCharArray() | Where-Object { $_ -eq ')' }).Count
             }
 
+            # THE BACKSLASH HALF, which the quote case above hid for as long as
+            # it existed. `$Value -replace '\\', '\\\\'` is wrong by a factor of
+            # two: a doubled backslash in the PATTERN means one backslash, but
+            # in .NET's REPLACEMENT string only `$` is special, so four
+            # backslashes stayed four. Lua decodes `\\\\` as two, so the path
+            # WezTerm opened was not the path that was passed in --
+            # `C:\Users\me\bg.gif` arrived as `C:\\Users\\me\\bg.gif`. It never
+            # produced a syntax error, which is why nothing noticed.
+            #
+            # Round-tripped rather than regexed: the property that matters is
+            # that the value survives, and a decoder makes the test say so in
+            # the same terms WezTerm does. No Lua runtime exists on the CI
+            # machines, so the decoder is the short-string rule by hand --
+            # `\\` is one backslash, `\'` is a quote.
+            BeforeAll {
+                function script:ConvertFrom-LuaShortString {
+                    param([Parameter(Mandatory)][string]$Literal)
+                    $Literal.StartsWith("'") -and $Literal.EndsWith("'") | Should -BeTrue `
+                        -Because 'the escaper must return a closed single-quoted literal'
+                    $body = $Literal.Substring(1, $Literal.Length - 2)
+                    $out = [System.Text.StringBuilder]::new()
+                    for ($i = 0; $i -lt $body.Length; $i++) {
+                        if ($body[$i] -ne '\') { [void]$out.Append($body[$i]); continue }
+                        $i++
+                        switch ($body[$i]) {
+                            'r'     { [void]$out.Append("`r") }
+                            'n'     { [void]$out.Append("`n") }
+                            default { [void]$out.Append($body[$i]) }   # \\ -> \ , \' -> '
+                        }
+                    }
+                    $out.ToString()
+                }
+            }
+
+            It 'round-trips a Windows path through the Lua literal' {
+                $path = 'C:\Users\me\bg.gif'
+                $lit  = ConvertTo-WezTermLuaString -Value $path
+                $lit | Should -Be "'C:\\Users\\me\\bg.gif'" -Because 'exactly two backslashes per input one'
+                script:ConvertFrom-LuaShortString -Literal $lit | Should -Be $path
+            }
+
+            It 'round-trips a value carrying both a backslash and a quote' {
+                # Pins the pass ORDER too: the backslash rule has to run first,
+                # or the backslash it adds for the quote gets doubled.
+                $raw = 'a' + [char]92 + [char]39 + 'b'          # a\'b
+                $lit = ConvertTo-WezTermLuaString -Value $raw
+                script:ConvertFrom-LuaShortString -Literal $lit | Should -Be $raw
+            }
+
+            It 'hands the generated module the path it was given' {
+                # The escaper and its only real caller, checked together: the
+                # background path is the one value that carries backslashes in
+                # practice (style names cannot -- Test-StyleNameIsSingleSegment
+                # rejects them -- and colours are hex-validated).
+                $path = 'C:\Users\me\AppData\Local\TerminalStyles\cache\eva\background.gif'
+                $lua  = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -BackgroundImage $path
+                $line = @($lua -split "`n" | Where-Object { $_ -match 'File = \{ path = ' })
+                @($line).Count | Should -Be 1 -Because 'the image layer must be emitted for this to mean anything'
+                $lit = ([regex]::Match($line[0], "path = ('.*')")).Groups[1].Value
+                script:ConvertFrom-LuaShortString -Literal $lit | Should -Be $path
+            }
+
             It 'escapes a quote in a style name instead of ending the string' {
                 # An unescaped quote is not a wrong colour, it is a syntax error.
                 $lua = Get-WezTermStyleLua -StyleName "it's" -Scheme $script:scheme

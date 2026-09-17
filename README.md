@@ -236,6 +236,28 @@ with `-NoProfile` kept as an alias). A `-KeepPrompt` apply is still reported by
 the installed prompt, which this flag deliberately leaves alone, so it falls back
 to the style record that every apply writes.
 
+### Which profile a style lands on (`-Target`)
+
+On Windows Terminal a style is written to one profile — by default the one the
+tab you are sitting in uses. `-Target` names a different one:
+
+```powershell
+tstyles eva -Target 'Ubuntu'   # style that profile instead of this tab's
+tstyles eva -Target defaults   # style profiles.defaults: everything inherits it
+```
+
+**`defaults` is a target name, not a placeholder.** It is Windows Terminal's
+`profiles.defaults` block, which every profile that does not set a field itself
+inherits — so a style applied there reaches all of them at once. That is also
+why it is the one target that can change a profile you did not name: applying a
+later style with no background image of its own clears the image from
+`defaults`, and every profile that was inheriting it loses that image too.
+The tool offers the name — it is first in the list a mistyped `-Target` prints,
+and first in the menu `apply.ps1` shows when you do not pass one — so it is
+documented here rather than only in that error message.
+
+`tstyles reset` takes the same `-Target`, including `defaults`.
+
 ### Resetting a profile
 
 To undo theming and return a profile to Windows Terminal's plain default:
@@ -243,6 +265,7 @@ To undo theming and return a profile to Windows Terminal's plain default:
 ```powershell
 tstyles reset                  # the active profile
 tstyles reset -Target 'Ubuntu' # a specific profile
+tstyles reset -Target defaults # the block every profile inherits from
 ```
 
 This strips the colors, cursor, font, opacity, and background a style added,

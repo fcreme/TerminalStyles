@@ -722,13 +722,31 @@ function Merge-StyleIntoSettings {
 
     $bgFields = $script:TStylesBgFields
 
-    # 'remove' is driven by what is already ON the profile, not by what the new
-    # style's theme.json happens to mention -- and a style that ships no
-    # background has no reason to mention background fields at all. Running this
-    # inside the property loop below meant the clear only fired for styles whose
-    # theme.json named the fields, so switching to one that omitted them left the
-    # PREVIOUS style's image showing through the new palette.
-    if ($bgAction -eq 'remove') {
+    # Which background fields the INCOMING theme.json will actually put back.
+    # theme.json keys are optional and hand-authorable -- README documents the
+    # file that way and Get-AvailableStyles admits a folder without one -- so
+    # this is a question about the style in front of us, never a constant.
+    $themeBgNames = @($theme.PSObject.Properties |
+                      Where-Object { $_.Name -in $bgFields } |
+                      ForEach-Object { $_.Name })
+    # An image of ours ends up on the entry -- shadowing profiles.defaults --
+    # only when the merge is applying one AND this theme.json names the key
+    # that carries it.
+    $entryWillShadow = ($bgAction -eq 'apply') -and ($themeBgNames -contains 'backgroundImage')
+
+    # The clear is driven by what is already ON the profile, not by what the new
+    # style's theme.json happens to mention -- for BOTH non-skip actions.
+    # Running it inside the property loop below meant it only fired for styles
+    # whose theme.json named the fields, so switching to one that omitted them
+    # left the PREVIOUS style's image showing through the new palette. 'remove'
+    # was hoisted out for that reason; 'apply' was left inside, which is the
+    # same asymmetry on the other half of the same switch: a hand-authored
+    # theme.json naming only colorScheme and backgroundImage inherited the last
+    # style's opacity, stretch mode and alignment, and one naming no background
+    # key at all kept the last style's IMAGE outright while its own
+    # background.gif was never written. Cleared here, rewritten below by
+    # whatever the incoming theme declares.
+    if ($bgAction -ne 'skip') {
         foreach ($bgField in $bgFields) {
             if ($entry.PSObject.Properties.Match($bgField).Count -gt 0) {
                 $entry.PSObject.Properties.Remove($bgField)
@@ -740,11 +758,14 @@ function Merge-StyleIntoSettings {
         # level up. Guarded on the INHERITED value being ours, separately from
         # the decision above -- the entry can carry one of ours over a
         # background the user chose for every profile, and that one is theirs
-        # to keep. Only 'remove' reaches here: an 'apply' writes the new
-        # style's image onto the entry, where it shadows defaults, so nothing
-        # of the old style is visible on this profile and clearing defaults
-        # would silently restyle every other profile too.
-        if ($inheritedEntry -and (Test-ManagedBackgroundPath -Path $inheritedBg)) {
+        # to keep. Guarded a second time on nothing of ours landing on the
+        # entry: where an apply writes the new style's image there it shadows
+        # defaults, so no old image is visible on this profile and clearing
+        # defaults would silently restyle every OTHER profile too. Where it
+        # does not -- an apply whose theme.json never names backgroundImage --
+        # the inherited copy is exactly what the user keeps looking at, which
+        # is the bleed this block exists to stop.
+        if ($inheritedEntry -and (Test-ManagedBackgroundPath -Path $inheritedBg) -and (-not $entryWillShadow)) {
             foreach ($bgField in $bgFields) {
                 if ($inheritedEntry.PSObject.Properties.Match($bgField).Count -gt 0) {
                     $inheritedEntry.PSObject.Properties.Remove($bgField)
@@ -760,6 +781,9 @@ function Merge-StyleIntoSettings {
         if ($name -in $bgFields) {
             # skip: leave the user's own background alone.
             # remove: already stripped above; re-adding it here would undo that.
+            # apply: the whole set was stripped above too, so what this loop
+            #        writes is exactly what THIS style declares -- no field of
+            #        the previously applied style survives underneath it.
             if ($bgAction -ne 'apply') { continue }
             if ($name -eq 'backgroundImage' -and $value -eq '{{BACKGROUND_IMAGE}}') {
                 $value = $effectiveBg
