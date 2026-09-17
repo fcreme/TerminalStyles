@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.29] - 2026-09-17
+
 ### Added
 
 - **WezTerm received eight of the thirteen fields a style's `theme.json` declares; the cursor shape, the window opacity and the tab accent color were dropped on the way through, and the apply then printed "WezTerm can't show: cursor shape, tab color" about a terminal that can show both.** `Get-WezTermStyleLua` writes all three now, and each capability flag was turned on beside the line that delivers it -- `Get-TerminalCapability` is a promise about what TerminalStyles writes, not about what WezTerm could do. Every option below was proved accepted by wezterm 20240203-110809-5046fc22 with `wezterm.config_builder()`, which rejects an unknown field AND an invalid enum value; a probe written as a bare `local config = {}` validates nothing and proves nothing.
@@ -1096,7 +1098,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.28...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.29...HEAD
+[0.8.29]: https://github.com/fcreme/TerminalStyles/compare/v0.8.28...v0.8.29
 [0.8.28]: https://github.com/fcreme/TerminalStyles/compare/v0.8.27...v0.8.28
 [0.8.27]: https://github.com/fcreme/TerminalStyles/compare/v0.8.26...v0.8.27
 [0.8.26]: https://github.com/fcreme/TerminalStyles/compare/v0.8.25...v0.8.26
