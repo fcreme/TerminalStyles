@@ -9,6 +9,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the guard that compares install.ps1's duplicated functions against the module's copies pairs them BY NAME, so deliberately renaming one half silently dropped it out of the comparison.** `install.ps1` carries its own copy of several module functions because the bootstrap is fetched and piped to `iex` before the module exists, and `Bootstrap-ModuleSync.Tests.ps1` is the only thing keeping the two copies in step -- `tstyles update` re-runs `install.ps1` INSIDE the module's scope, so a drifted copy replaces the module's version for the rest of that session. When the installer's encoding helper was renamed to `Get-ProfileFileEncoding` to make its twinning with `terminals.ps1`'s `Get-RcFileEncoding` visible, the pair stopped matching and the file compared it against nothing -- which is the exact failure its own header describes having fixed once already.
+
+  A one-entry twin map now carries the rename, and the comparison moved from the whole declaration to the function BODY, because the `function <Name>` tokens are the one part of a renamed twin that is supposed to differ. Measured: with the twin paired, changing the module copy's codepage from 28591 to 1252 fails the comparison by name; before the fix that edit was invisible.
+
+  Both halves of the map are load-bearing and neither can rot quietly: the file computes its function lists twice, once in `BeforeDiscovery` (which generates the per-function tests) and once in `BeforeAll` (which runs them), and those are different scopes. Drop the entry from the run-pass copy and `still duplicates the ones it is supposed to` fails; drop it from the discovery copy and the twin's test is never generated, which the same assertion catches.
+
 <<<<<<< HEAD
 - **the guard that makes the picker name what the terminal cannot show pinned the call count to ONE, which is how the non-Windows-Terminal branch came to have none.** The picker's confirm has two mutually exclusive doors -- Windows Terminal and everything else -- and each owes the user that line. An assertion of `Should -Be 1` is satisfied by the WT branch alone, so the guard read green while every other terminal this tool supports was told nothing about the font, cursor shape or padding it had just dropped.
 

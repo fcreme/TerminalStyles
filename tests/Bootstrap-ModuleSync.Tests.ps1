@@ -33,6 +33,19 @@
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
+# A twin that was deliberately RENAMED still has to be compared. install.ps1's
+# Get-ProfileFileEncoding is terminals.ps1's Get-RcFileEncoding: the distinct
+# name is on purpose -- it stops a reader taking the two for one shared
+# function -- but pairing by name alone would drop it out of $SharedFns and
+# leave it compared against nothing, which is the failure this file's own
+# header describes.
+#
+# At FILE scope deliberately. The pairing is needed in BeforeDiscovery (the
+# -ForEach that generates the per-function tests) and again in BeforeAll (the
+# body that runs them), which are different scopes; a copy in each is a second
+# implementation of the rule this file exists to enforce.
+$script:RenamedTwins = @{ 'Get-ProfileFileEncoding' = 'Get-RcFileEncoding' }
+
 BeforeDiscovery {
     $repoRoot = Split-Path $PSScriptRoot -Parent
 
@@ -47,7 +60,11 @@ BeforeDiscovery {
     $installFns = script:Get-FunctionNames (Join-Path $repoRoot 'install.ps1')
     $moduleFns  = @(script:Get-FunctionNames (Join-Path $repoRoot 'tstyles.ps1')) +
                   @(script:Get-FunctionNames (Join-Path $repoRoot 'terminals.ps1'))
-    $script:SharedFns = @($installFns | Where-Object { $moduleFns -contains $_ } | Sort-Object -Unique)
+    $script:SharedFns = @(
+        @($installFns | Where-Object { $moduleFns -contains $_ }) +
+        @($script:RenamedTwins.Keys | Where-Object {
+            $installFns -contains $_ -and $moduleFns -contains $script:RenamedTwins[$_] })
+    ) | Sort-Object -Unique
 }
 
 BeforeAll {
@@ -73,7 +90,19 @@ BeforeAll {
     $mNames = @(foreach ($f in $script:ModuleFiles) {
         & $nameOf ([System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null))
     })
-    $script:SharedFns = @($iNames | Where-Object { $mNames -contains $_ } | Sort-Object -Unique)
+    # The same map as the file-scope one above, and for the same reason the
+    # function lists either side of it are enumerated twice: BeforeDiscovery and
+    # BeforeAll are different scopes and a file-scope variable does not reach
+    # this one. Neither copy can silently rot -- drop the entry here and
+    # 'still duplicates the ones it is supposed to' fails; drop it above and the
+    # per-function test for the twin is never generated, which the same
+    # assertion catches.
+    $script:RenamedTwins = @{ 'Get-ProfileFileEncoding' = 'Get-RcFileEncoding' }
+    $script:SharedFns = @(
+        @($iNames | Where-Object { $mNames -contains $_ }) +
+        @($script:RenamedTwins.Keys | Where-Object {
+            $iNames -contains $_ -and $mNames -contains $script:RenamedTwins[$_] })
+    ) | Sort-Object -Unique
 
     # Code only: tokens inside the function's extent, minus comments and layout.
     # A regex that stripped '#' to end-of-line would also gut any hex colour or
@@ -86,8 +115,13 @@ BeforeAll {
             $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
             $n.Name -eq $Name }, $true))
         if (-not $fn) { return $null }
-        $start = $fn[0].Extent.StartOffset
-        $end   = $fn[0].Extent.EndOffset
+        # The BODY, not the whole declaration: the `function <Name>` tokens are
+        # the one part of a deliberately-renamed twin that is SUPPOSED to
+        # differ, and comparing them would make the twin permanently red while
+        # saying nothing about whether the code drifted. Everything a caller can
+        # observe -- param block, attributes, statements -- is inside the body.
+        $start = $fn[0].Body.Extent.StartOffset
+        $end   = $fn[0].Body.Extent.EndOffset
         (($tokens | Where-Object {
             $_.Extent.StartOffset -ge $start -and $_.Extent.EndOffset -le $end -and
             $_.Kind -ne 'Comment' -and $_.Kind -ne 'NewLine' -and $_.Kind -ne 'EndOfInput'
@@ -102,7 +136,7 @@ Describe 'install.ps1 duplicates the module faithfully' {
         # the exact failure mode this suite has been cleaning up all week.
         @($script:SharedFns).Count | Should -BeGreaterOrEqual 3
         foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate',
-                       'Get-RcFileEncoding', 'Test-PathIsSymlink',
+                       'Get-ProfileFileEncoding', 'Test-PathIsSymlink',
                        'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers') {
             $script:SharedFns | Should -Contain $n -Because (
                 "$n is duplicated into install.ps1 and this file is what compares the two copies")
@@ -113,8 +147,11 @@ Describe 'install.ps1 duplicates the module faithfully' {
         $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1') -Name $_
         $b = $null
         $from = $null
+        # The module-side name, which is the same one unless this is a twin
+        # whose two halves were deliberately given different names.
+        $moduleName = if ($script:RenamedTwins.ContainsKey($_)) { $script:RenamedTwins[$_] } else { $_ }
         foreach ($f in $script:ModuleFiles) {
-            $b = script:Get-FunctionCode -Path $f -Name $_
+            $b = script:Get-FunctionCode -Path $f -Name $moduleName
             if ($b) { $from = (Split-Path -Leaf $f); break }
         }
         $a | Should -Not -BeNullOrEmpty
