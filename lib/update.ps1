@@ -483,20 +483,30 @@ function Get-UninstallPlan {
             # Never let a manifest line escape the data root, however it got there.
             $items = @($items | Where-Object { $_ -notmatch '(^|[\\/])\.\.([\\/]|$)' -and
                                                $_ -notmatch '^([a-zA-Z]:|[\\/])' })
-            # A style the install shipped, that the user has since tuned in
-            # place, is no longer only the install's to remove. Saving a tune
-            # with "[1] Overwrite" writes it under a BUNDLED name -- which is
-            # the option's purpose -- and that name is exactly what the manifest
+            # A style the install shipped, that the user has since made theirs,
+            # is no longer only the install's to remove. Saving a tune with
+            # "[1] Overwrite" writes it under a BUNDLED name -- which is the
+            # option's purpose -- and that name is exactly what the manifest
             # always contains, so uninstall deleted the tuned style one line
             # after printing "PRESERVE user state ... pass -DeleteData to wipe".
             # A Save-As tune under a fresh name survived, which made the loss
-            # silent and inconsistent. tune.json marks it as the user's.
+            # silent and inconsistent.
+            #
+            # Through Test-StyleDirectoryIsUsers rather than a second tune.json
+            # test, because tune.json was only half the rule: README documents
+            # dropping a folder named after a bundled theme to override it, and
+            # a hand-drop carries no tune.json. Measured before the fix, on a
+            # bootstrap fixture: styles/eva (hand-dropped, no tune.json) in the
+            # delete list True, styles/sober (tuned) False. The installer's
+            # fingerprint record is what tells the two apart.
+            $recorded = Get-InstalledStyleHash -DataDir $DataDir
             $items = @($items | Where-Object {
                 if ($_ -notmatch '^styles[\\/][^\\/]+[\\/]?$') { return $true }
-                -not (Test-Path -LiteralPath (Join-Path (Join-Path $DataDir $_) 'tune.json'))
+                -not (Test-StyleDirectoryIsUsers -StyleDir (Join-Path $DataDir $_) -Recorded $recorded)
             })
             if ($items.Count -gt 0) {
-                return @{ Items = @($items + $script:TStylesStagedRuntimeFiles + '.installed-files')
+                return @{ Items = @($items + $script:TStylesStagedRuntimeFiles +
+                                    '.installed-files' + '.installed-styles')
                           Source = 'manifest' }
             }
         } catch { }

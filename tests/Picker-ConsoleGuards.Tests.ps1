@@ -123,5 +123,68 @@ Describe 'the picker refuses a session with no real console' {
             { Invoke-TerminalStyle } | Should -Not -Throw
             Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'needs an interactive terminal' }
         }
+
+        It 'does not burn the day''s update check on a run that shows nothing' {
+            # Test-UpdateAvailable stamps .last-update-check on every attempt,
+            # success or failure, and that stamp is the 24-hour throttle that
+            # list / current / random / apply all share. Taken at the top of the
+            # command it ran ABOVE this guard, so a `tstyles` with stdin
+            # redirected -- a pipe, a CI step, an agent shell -- paid the HTTP
+            # attempt, spent the day's check and then printed the
+            # interactive-terminal notice, having shown nobody anything.
+            # Measured: httpAttempts=1, stampAfter=True, and the next
+            # `tstyles list` that day printed no notice at all.
+            #
+            # The tuner defers its check past both console guards for exactly
+            # this reason; CHANGELOG 531 claims it does so "on every exit path,
+            # exactly as the picker already does". This is the test that makes
+            # that sentence true.
+            if (-not ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected)) {
+                Set-ItResult -Skipped -Because 'this test run has a real console attached'
+                return
+            }
+
+            $script:TStylesModuleRoot = $TestDrive
+            $script:TStylesDataRoot   = $TestDrive
+            $styleDir = Join-Path $TestDrive 'styles/fakeStyle'
+            New-Item -ItemType Directory -Path $styleDir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $styleDir 'scheme.json'),
+                '{"name":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+
+            Mock Get-TerminalKind          { 'AppleTerminal' }
+            Mock Find-WTSettingsPath       { $null }
+            Mock Invoke-FontFirstRunPrompt {}
+            Mock Write-Host                {}
+            Mock Clear-Host                { throw 'the picker must not clear the screen before bailing out' }
+            Mock Test-UpdateAvailable      { $null }
+
+            Invoke-TerminalStyle
+
+            Should -Not -Invoke Test-UpdateAvailable `
+                -Because 'a run that returns at the console guard has nobody to show a notice to'
+        }
+
+        It '...and the tuner, the half that was already right, still does not either' {
+            # Pins the sibling so the pair cannot drift back apart.
+            if (-not ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected)) {
+                Set-ItResult -Skipped -Because 'this test run has a real console attached'
+                return
+            }
+            $script:TStylesModuleRoot = $TestDrive
+            $script:TStylesDataRoot   = $TestDrive
+            $styleDir = Join-Path $TestDrive 'styles/fakeStyle'
+            New-Item -ItemType Directory -Path $styleDir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $styleDir 'scheme.json'),
+                '{"name":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+
+            Mock Get-TerminalKind     { 'AppleTerminal' }
+            Mock Find-WTSettingsPath  { $null }
+            Mock Write-Host           {}
+            Mock Test-UpdateAvailable { $null }
+
+            Invoke-TerminalStyleTune -StyleName 'fakeStyle'
+
+            Should -Not -Invoke Test-UpdateAvailable
+        }
     }
 }

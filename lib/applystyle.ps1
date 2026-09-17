@@ -25,6 +25,10 @@ function Show-StyleList {
     # Show-FontList uses for its installed-font set.
     $claim = Get-InstalledStyleClaim
     $rootsAreOne = Test-StylesRootsAreOne
+    # The style fingerprints the install recorded, for the same reason and in
+    # the same breath: Get-StyleOrigin reads them to tell a bundled style the
+    # user has edited from the one the install placed.
+    $styleHash = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
     $anyYours = $false
     Write-Host ""
     Write-Host "Available styles:" -ForegroundColor Cyan
@@ -54,7 +58,8 @@ function Show-StyleList {
         # bundled set. Degrades to no badge on any failure, like the swatch above.
         $badge = ''
         try {
-            switch (Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim -RootsAreOne $rootsAreOne) {
+            switch (Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim `
+                        -RootsAreOne $rootsAreOne -StyleHash $styleHash) {
                 'yours'  { $badge = "  $([char]27)[38;2;160;160;160myours$([char]27)[0m"; $anyYours = $true }
                 'shadow' { $badge = "  $([char]27)[38;2;160;160;160myours (shadows bundled)$([char]27)[0m"; $anyYours = $true }
             }
@@ -724,7 +729,15 @@ function Apply-StyleNonWT {
     #
     # The shell's copy is the one to keep: it is the one that actually changes
     # the prompt the user is looking at.
-    if (-not $global:TStylesNoAutoLoad -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+    #
+    # Asked through Test-ShouldLiveReloadPrompt rather than inline, because the
+    # picker's confirm asks the same question and the two answers diverged: this
+    # half honoured the flag and the picker's did not, so the defect this
+    # comment describes stayed live on the other door for several releases.
+    # Off Windows Terminal this session IS PowerShell, so -IsPwshTarget is $true.
+    if (Test-ShouldLiveReloadPrompt -IsPwshTarget $true `
+            -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent) `
+            -AutoLoadSuppressed ([bool]$global:TStylesNoAutoLoad)) {
         . $script:TStylesCurrent
     }
 }

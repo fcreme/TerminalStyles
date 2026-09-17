@@ -207,6 +207,116 @@ Describe 'Get-StyleBundledBackground records WHY it found nothing' {
     }
 }
 
+Describe 'Test-StyleResolved reads the marker rather than counting it' {
+    # The second implementation of "do we know this style's background state?".
+    # Test-BackgroundProbeSuppressed owns the expiry rule -- one hour for
+    # 'unreachable', thirty days for 'absent', and a content-free marker (every
+    # release up to 0.8.5 wrote one) expired by definition. Test-StyleResolved
+    # did a bare Test-Path on the same file, so the two answers disagreed for
+    # exactly the styles that still needed work.
+    #
+    # Measured before the fix, driving both shipped functions over one cache dir:
+    #   fresh unreachable (10 min)  resolved=True   HTTP attempts=0
+    #   EXPIRED unreachable (2 h)   resolved=True   HTTP attempts=4
+    #   fresh absent (3 d)          resolved=True   HTTP attempts=0
+    #   EXPIRED absent (31 d)       resolved=True   HTTP attempts=4
+    #
+    # What that cost, on Windows Terminal (the picker gates all of this on
+    # $wantsBackgrounds): one picker run on a flaky network writes a fresh
+    # 'unreachable' marker for every style; an hour later -- online again, the
+    # GOOD case -- every row claimed "ready", the prefetch job whose entire
+    # purpose is to move the download off the input thread was never started
+    # because $missingPaths came back empty, and the synchronous resolver ran
+    # instead from inside $applyTheme (per arrow key) and $onIdle (~20x a
+    # second): four serial Invoke-WebRequest at -TimeoutSec 10 each.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ('res-' + [guid]::NewGuid().Guid.Substring(0, 8))
+            $script:enc = [System.Text.UTF8Encoding]::new($false)
+            $script:styleDir = Join-Path $script:TStylesDataRoot 'styles/resfake'
+            New-Item -ItemType Directory -Path $script:styleDir -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'scheme.json'),
+                '{"name":"resfake"}', $script:enc)
+            $script:cache = Get-StyleCacheDir -StyleName 'resfake'
+            New-Item -ItemType Directory -Path $script:cache -Force | Out-Null
+        }
+        function script:WriteMarker {
+            param([string]$Kind, [timespan]$Age)
+            [System.IO.File]::WriteAllText((Join-Path $script:cache '.no-background'),
+                ([pscustomobject]@{
+                    schemaVersion = 1
+                    kind          = $Kind
+                    at            = ([datetime]::UtcNow - $Age).ToString('o')
+                } | ConvertTo-Json -Compress), $script:enc)
+        }
+
+        It 'is resolved while an "unreachable" marker is still in date' {
+            WriteMarker -Kind 'unreachable' -Age ([timespan]::FromMinutes(10))
+            Test-StyleResolved -StyleDir $script:styleDir | Should -BeTrue
+        }
+
+        It 'is NOT resolved once an "unreachable" marker has expired' {
+            WriteMarker -Kind 'unreachable' -Age ([timespan]::FromHours(2))
+            Test-StyleResolved -StyleDir $script:styleDir |
+                Should -BeFalse -Because 'an expired marker is not a known background state'
+        }
+
+        It 'is NOT resolved once an "absent" marker has expired' {
+            WriteMarker -Kind 'absent' -Age ([timespan]::FromDays(31))
+            Test-StyleResolved -StyleDir $script:styleDir | Should -BeFalse
+        }
+
+        It 'is still resolved while an "absent" marker is in date' {
+            WriteMarker -Kind 'absent' -Age ([timespan]::FromDays(3))
+            Test-StyleResolved -StyleDir $script:styleDir | Should -BeTrue
+        }
+
+        It 'is NOT resolved by the legacy content-free marker' {
+            # Written by every release up to 0.8.5, and treated as expired by
+            # Test-BackgroundProbeSuppressed on purpose. The Test-Path reader
+            # called it resolved, so those styles were never re-probed off the
+            # keystroke path either.
+            New-Item -ItemType File -Path (Join-Path $script:cache '.no-background') -Force | Out-Null
+            Test-StyleResolved -StyleDir $script:styleDir | Should -BeFalse
+        }
+
+        It 'agrees with the function that owns the expiry rule' {
+            # The coupling assertion. The two halves disagreeing is the defect;
+            # this is what stops them drifting apart again.
+            foreach ($case in @(
+                    @{ Kind = 'unreachable'; Age = [timespan]::FromMinutes(10) },
+                    @{ Kind = 'unreachable'; Age = [timespan]::FromHours(2) },
+                    @{ Kind = 'absent';      Age = [timespan]::FromDays(3) },
+                    @{ Kind = 'absent';      Age = [timespan]::FromDays(31) })) {
+                WriteMarker -Kind $case.Kind -Age $case.Age
+                $text = [System.IO.File]::ReadAllText((Join-Path $script:cache '.no-background'), $script:enc)
+                Test-StyleResolved -StyleDir $script:styleDir |
+                    Should -Be (Test-BackgroundProbeSuppressed -MarkerText $text) `
+                    -Because "$($case.Kind) aged $($case.Age) must read the same to both"
+            }
+        }
+
+        It 'and an expired marker is exactly what sends the resolver back to the network' {
+            # The other end of the same disagreement: while Test-StyleResolved
+            # said "known", Get-StyleBundledBackground was making four serial
+            # 10-second attempts for the very same style.
+            WriteMarker -Kind 'unreachable' -Age ([timespan]::FromHours(2))
+            Mock Invoke-WebRequest { throw 'offline' }
+            Mock Test-HttpNotFound { $false }
+
+            Test-StyleResolved -StyleDir $script:styleDir | Should -BeFalse
+            Get-StyleBundledBackground -StyleDir $script:styleDir | Should -BeNullOrEmpty
+            Should -Invoke Invoke-WebRequest -Times 4 -Exactly -Scope It
+        }
+
+        It 'a real cached image still resolves without reading any marker' {
+            [System.IO.File]::WriteAllText((Join-Path $script:cache 'background.gif'), 'GIF', $script:enc)
+            WriteMarker -Kind 'unreachable' -Age ([timespan]::FromHours(2))
+            Test-StyleResolved -StyleDir $script:styleDir | Should -BeTrue
+        }
+    }
+}
+
 Describe 'tstyles uninstall -DeleteData is reachable' {
 
     It 'is accepted by the exported command' {

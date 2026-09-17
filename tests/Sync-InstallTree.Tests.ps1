@@ -148,11 +148,99 @@ Describe 'Sync-InstallTree' {
         # folder named after a bundled theme to override it, so on a bootstrap
         # install a user's override and the shipped theme are the same path --
         # deleting the tree would take the user's work with it.
+        #
+        # scheme.json going to 'NEW' here is the NO-RECORD case, and is correct:
+        # this fixture has never been synced, so nothing has ever recorded what
+        # the install placed and an edited style is indistinguishable from a
+        # stale one. The recorded case is the Context below.
         Set-Content -LiteralPath (Join-Path $script:installDir 'styles/eva/my-extra-note.txt') `
             -Value 'MINE' -NoNewline
         Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
         script:Content 'styles/eva/my-extra-note.txt' | Should -Be 'MINE'
         script:Content 'styles/eva/scheme.json'       | Should -Be 'NEW'
+    }
+
+    Context 'a style the user has changed under a bundled name' {
+        # README.md: "If you drop in a folder with the same name as a bundled
+        # theme (e.g. eva/), your version wins -- useful for tweaking a bundled
+        # theme's prompt or palette without forking the repo", two lines under
+        # "folders here **survive updates**".
+        #
+        # On the bootstrap layout the install dir IS the data root, so the
+        # shipped eva/ landed straight on top of the user's. The only exemption
+        # was tune.json, which Save-TunedStyle writes and a hand-drop never has.
+        # Measured before the fix, driving the shipped Sync-InstallTree:
+        #   styles/eva/scheme.json  MY-OVERRIDE-SCHEME -> SHIPPED-SCHEME
+        #   styles/eva/prompt.sh    MY-OVERRIDE-PROMPT -> SHIPPED-PROMPT
+        #   backups anywhere under the install dir: 0
+        #
+        # The evidence that was missing is what the install PLACED, which it now
+        # records as a content fingerprint per style. The first sync below is
+        # what writes that record; the edit and the second sync are the update.
+        BeforeEach {
+            Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
+            script:Content 'styles/eva/scheme.json' | Should -Be 'NEW' -Because 'the baseline sync must have landed'
+            Test-Path -LiteralPath (Join-Path $script:installDir '.installed-styles') |
+                Should -BeTrue -Because 'the record is what the next update reads; without it this Context measures nothing'
+        }
+
+        It 'keeps the user version README says wins' {
+            Set-Content -LiteralPath (Join-Path $script:installDir 'styles/eva/scheme.json') `
+                -Value 'MY-OVERRIDE-SCHEME' -NoNewline
+            Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
+            script:Content 'styles/eva/scheme.json' | Should -Be 'MY-OVERRIDE-SCHEME'
+        }
+
+        It 'keeps it when a file was ADDED rather than edited' {
+            # The other shape of a hand-drop: a style that ships no prompt.sh,
+            # given one. Nothing the install placed has changed, so a per-file
+            # comparison would have missed it -- and the next release moving
+            # scheme.json is what makes the difference visible, since a copy
+            # that lands 'NEWER' over 'NEW' is the overwrite this guards.
+            Set-Content -LiteralPath (Join-Path $script:installDir 'styles/eva/prompt.sh') `
+                -Value 'MY-OVERRIDE-PROMPT' -NoNewline
+            Set-Content -LiteralPath (Join-Path $script:extracted 'styles/eva/scheme.json') `
+                -Value 'NEWER' -NoNewline
+            Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
+            script:Content 'styles/eva/prompt.sh'   | Should -Be 'MY-OVERRIDE-PROMPT'
+            script:Content 'styles/eva/scheme.json' | Should -Be 'NEW' `
+                -Because 'the whole directory is the user''s once they have added to it'
+        }
+
+        It 'says which styles it kept' {
+            # Every user-facing message is a claim, and so is silence: the
+            # overwrite was invisible, and so would a refusal to overwrite be.
+            Set-Content -LiteralPath (Join-Path $script:installDir 'styles/eva/scheme.json') `
+                -Value 'MY-OVERRIDE-SCHEME' -NoNewline
+            $out = (Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir 6>&1 | Out-String)
+            $out | Should -Match 'Kept your own copy of' -Because 'the user has to be able to see the override take effect'
+            $out | Should -Match 'eva'
+        }
+
+        It 'still updates a bundled style the user has not touched' {
+            # The half that must NOT regress: refusing on "cannot say" would
+            # freeze every bundled style at whatever the user happens to have.
+            Set-Content -LiteralPath (Join-Path $script:extracted 'styles/eva/scheme.json') `
+                -Value 'NEWER' -NoNewline
+            Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
+            script:Content 'styles/eva/scheme.json' | Should -Be 'NEWER'
+        }
+
+        It 'hands the style back once the user removes their changes' {
+            # The record is a comparison, not a latch: restoring the shipped
+            # bytes makes the style the install's again, so updates resume.
+            Set-Content -LiteralPath (Join-Path $script:installDir 'styles/eva/scheme.json') `
+                -Value 'MY-OVERRIDE-SCHEME' -NoNewline
+            Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
+            script:Content 'styles/eva/scheme.json' | Should -Be 'MY-OVERRIDE-SCHEME'
+
+            Set-Content -LiteralPath (Join-Path $script:installDir 'styles/eva/scheme.json') `
+                -Value 'NEW' -NoNewline
+            Set-Content -LiteralPath (Join-Path $script:extracted 'styles/eva/scheme.json') `
+                -Value 'NEWER' -NoNewline
+            Sync-InstallTree -ExtractedRoot $script:extracted -InstallDir $script:installDir
+            script:Content 'styles/eva/scheme.json' | Should -Be 'NEWER'
+        }
     }
 
     Context 'a downloaded file cannot be copied' {

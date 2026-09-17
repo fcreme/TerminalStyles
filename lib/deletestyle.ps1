@@ -152,15 +152,17 @@ function Get-StyleOrigin {
       ONE root (bootstrap)
         the directory says nothing, so ask the install manifest, which lists what
         it placed. A style it does not claim is yours. A style it does claim is
-        bundled -- UNLESS it carries tune.json, which is how Get-UninstallPlan
-        already decides a shipped style has become the user's (an Overwrite save
-        writes a tuned style under a bundled name).
+        bundled -- UNLESS Test-StyleDirectoryIsUsers says the user has made it
+        theirs, which is how Get-UninstallPlan and install.ps1's styles merge
+        already decide the same question (an Overwrite save writes a tuned style
+        under a bundled name; a hand-dropped override writes no marker at all
+        and is caught by the install's content record instead).
         With no usable manifest there is no evidence either way, and the answer
         is 'unknown': never claim ownership the tool cannot prove, and never
         delete on a guess.
 
-    -Claim and -RootsAreOne are seams: tests drive them directly, and
-    Show-StyleList reads the manifest once for the whole listing rather than
+    -Claim, -RootsAreOne and -StyleHash are seams: tests drive them directly,
+    and Show-StyleList reads the manifest once for the whole listing rather than
     once per row.
     #>
     [CmdletBinding()]
@@ -168,13 +170,23 @@ function Get-StyleOrigin {
         [Parameter(Mandatory)][string]$Name,
         [Parameter(Mandatory)][string]$StyleDir,
         $Claim = '__unset__',
-        $RootsAreOne = $null
+        $RootsAreOne = $null,
+        $StyleHash = '__unset__'
     )
 
     if ($Claim -is [string] -and $Claim -eq '__unset__') { $Claim = Get-InstalledStyleClaim }
     if ($null -eq $RootsAreOne) { $RootsAreOne = Test-StylesRootsAreOne }
+    if ($StyleHash -is [string] -and $StyleHash -eq '__unset__') {
+        $StyleHash = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
+    }
 
-    $hasTune = Test-Path -LiteralPath (Join-Path $StyleDir 'tune.json')
+    # The third reader of one rule. It used to be a bare tune.json test here, a
+    # second one in Get-UninstallPlan and a third in install.ps1's styles merge
+    # -- all three agreeing about the tuner's Overwrite save and all three
+    # silent about the hand-dropped override README documents, which is why
+    # `tstyles list` badged it 'bundled' and `tstyles delete` refused it while
+    # `tstyles update` quietly reverted it.
+    $isUsers = Test-StyleDirectoryIsUsers -StyleDir $StyleDir -Recorded $StyleHash
 
     if (-not $RootsAreOne) {
         # Through the shared guard, not a second copy of it. This branch used
@@ -202,13 +214,14 @@ function Get-StyleOrigin {
         # state behind, so it is reachable without ever installing twice on
         # purpose.
         #
-        # A tuned copy is still the user's: an Overwrite save writes tune.json
-        # under a bundled name, and 'shadow' already says "yours, shadowing
-        # bundled". Only an UNtuned style the installer admits placing is
-        # reclassified. With no manifest $Claim is $null, not an empty list, so
-        # an ordinary PSGallery install -- where the data root holds only what
-        # the user made -- keeps deciding by path exactly as before.
-        if (-not $hasTune -and $null -ne $Claim -and ($Claim -contains $Name)) {
+        # A copy the user has made theirs is still theirs: an Overwrite save
+        # writes tune.json under a bundled name, a hand-dropped override changes
+        # the shipped content, and 'shadow' already says "yours, shadowing
+        # bundled". Only a style the installer admits placing AND still
+        # recognises is reclassified. With no manifest $Claim is $null, not an
+        # empty list, so an ordinary PSGallery install -- where the data root
+        # holds only what the user made -- keeps deciding by path as before.
+        if (-not $isUsers -and $null -ne $Claim -and ($Claim -contains $Name)) {
             return 'bundled'
         }
 
@@ -218,7 +231,7 @@ function Get-StyleOrigin {
     }
 
     # One root: the path cannot distinguish anything.
-    if ($hasTune) { return 'yours' }
+    if ($isUsers) { return 'yours' }
     if ($null -eq $Claim) { return 'unknown' }
     if ($Claim -contains $Name) { return 'bundled' }
     return 'yours'
@@ -367,9 +380,11 @@ function Get-StyleDeletePlan {
     if ($plan.Origin -eq 'shadow') {
         $plan.RevealDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $Name
     } elseif ($RootsAreOne -and ($Claim -ne $null) -and ($Claim -contains $Name)) {
-        # One root, manifest claims the name, but tune.json made it the user's:
-        # removing it leaves nothing behind, and `tstyles update` will restore
-        # the shipped copy under that name.
+        # One root, manifest claims the name, but the user has made it theirs
+        # -- a tuner Overwrite save, or the hand-dropped override README
+        # documents. There is only ONE directory of that name on this layout, so
+        # removing it leaves nothing behind; `tstyles update` restores the
+        # shipped copy under that name.
         $plan.RevealDir = $null
     }
 
@@ -884,8 +899,9 @@ function Show-DeletableStyleList {
     param()
     $claim = Get-InstalledStyleClaim
     $one   = Test-StylesRootsAreOne
+    $hash  = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
     $yours = @(foreach ($s in (Get-AvailableStyles)) {
-        $o = Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim -RootsAreOne $one
+        $o = Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim -RootsAreOne $one -StyleHash $hash
         if ($o -eq 'yours' -or $o -eq 'shadow') { [pscustomobject]@{ Name = $s.Name; Origin = $o } }
     })
 

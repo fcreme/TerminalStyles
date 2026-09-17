@@ -470,6 +470,116 @@ function Get-StyleDir {
     return $null
 }
 
+function Get-StyleContentHash {
+    <#
+    .SYNOPSIS
+    A content fingerprint for one style directory, or $null when it cannot be read.
+
+    .DESCRIPTION
+    "Whose style is this?" had no answer on the bootstrap layout, where the
+    install directory IS the data root and a folder the user hand-dropped under
+    a bundled name sits at the same path as the shipped one. Only tune.json
+    transferred ownership -- and tune.json is written by Save-TunedStyle alone,
+    never by the hand-drop README.md documents ("If you drop in a folder with
+    the same name as a bundled theme, your version wins"). So `tstyles update`
+    copied the shipped style straight over it with no backup, and `tstyles
+    uninstall` listed it for deletion one line after printing "PRESERVE user
+    state".
+
+    The missing evidence is what the install PLACED. This hashes a style
+    directory -- every file under it, by sorted relative path, name and bytes --
+    so the installer can record what it laid down and a later run can tell
+    "still ours" from "the user has changed this".
+
+    $null, never a hash, for a directory that is missing or unreadable: "cannot
+    say" must not be able to masquerade as "unchanged".
+    #>
+    param([Parameter(Mandatory)][string]$StyleDir)
+    if (-not (Test-Path -LiteralPath $StyleDir)) { return $null }
+    try {
+        $root = [System.IO.Path]::GetFullPath($StyleDir).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+        $rel = @()
+        foreach ($f in @(Get-ChildItem -LiteralPath $StyleDir -File -Recurse -Force -ErrorAction Stop)) {
+            if (-not $f.FullName.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+            $rel += ($f.FullName.Substring($root.Length).TrimStart('/', '\') -replace '\\', '/')
+        }
+        $rel = @($rel | Sort-Object -CaseSensitive)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            foreach ($r in $rel) {
+                $head = [System.Text.Encoding]::UTF8.GetBytes($r + "`n")
+                [void]$sha.TransformBlock($head, 0, $head.Length, $null, 0)
+                $bytes = [System.IO.File]::ReadAllBytes((Join-Path $root ($r -replace '/', [System.IO.Path]::DirectorySeparatorChar)))
+                if ($bytes.Length -gt 0) { [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $null, 0) }
+            }
+            [void]$sha.TransformFinalBlock((New-Object byte[] 0), 0, 0)
+            return ([System.BitConverter]::ToString($sha.Hash) -replace '-', '').ToLowerInvariant()
+        } finally { $sha.Dispose() }
+    } catch { return $null }
+}
+
+function Get-InstalledStyleHash {
+    <#
+    .SYNOPSIS
+    The fingerprint the install recorded for each style it placed, or $null.
+
+    .DESCRIPTION
+    Reads `.installed-styles`, written beside `.installed-files` by
+    Write-InstallManifest: one `<sha256>  <name>` line per style the release
+    shipped. $null -- not an empty table -- when the file is absent or
+    unreadable, for the same reason Get-InstalledStyleClaim returns $null: "the
+    install cannot say" and "the install placed nothing" are opposite answers,
+    and only one of them is allowed to reclassify a style as the user's.
+    #>
+    param([Parameter(Mandatory)][string]$DataDir)
+    $path = Join-Path $DataDir '.installed-styles'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $lines = [System.IO.File]::ReadAllLines($path, [System.Text.UTF8Encoding]::new($false))
+    } catch { return $null }
+    $map = @{}
+    foreach ($l in $lines) {
+        if ("$l".Trim() -match '^([0-9a-f]{64})\s+(\S.*)$') { $map[$Matches[2].Trim()] = $Matches[1] }
+    }
+    if ($map.Count -eq 0) { return $null }
+    return $map
+}
+
+function Test-StyleDirectoryIsUsers {
+    <#
+    .SYNOPSIS
+    Has this style directory stopped being the install's?
+
+    .DESCRIPTION
+    ONE function, read by all three places that used to decide it separately and
+    agreed only about the tuner: install.ps1's styles merge (`tstyles update`),
+    Get-UninstallPlan (`tstyles uninstall`) and Get-StyleOrigin (`tstyles list`
+    / `tstyles delete`). All three asked "does it carry tune.json?", which is
+    true of a tuner Overwrite save and false of the hand-dropped override
+    README.md documents.
+
+    Two ways to be the user's:
+      * tune.json -- a tuner save under a bundled name, as before.
+      * the content no longer matches what the install recorded placing.
+
+    A style the install never claimed answers $false here: that is not "the
+    install's", it is "this rule has nothing to say", and the caller's own
+    evidence (the manifest, the roots) decides. Same for a directory whose hash
+    cannot be computed -- the answer there is today's behaviour, not a guess.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$StyleDir,
+        $Recorded = $null
+    )
+    if (Test-Path -LiteralPath (Join-Path $StyleDir 'tune.json')) { return $true }
+    if (-not ($Recorded -is [hashtable])) { return $false }
+    $name = Split-Path -Leaf $StyleDir
+    if (-not $Recorded.ContainsKey($name)) { return $false }
+    $current = Get-StyleContentHash -StyleDir $StyleDir
+    if (-not $current) { return $false }
+    return ($current -ne $Recorded[$name])
+}
+
 function Get-AvailableStyles {
     # Returns DirectoryInfo for every styles/<name>/ that Get-StyleDir resolves,
     # merged from two locations:
@@ -539,7 +649,8 @@ function Get-CurrentStyleName {
 function Test-StyleResolved {
     # A style is "resolved" if we know its background state -- either a
     # bundled background.<ext> exists under $StyleDir (module root), or a
-    # cached background.<ext>/.no-background exists under $DataRoot\cache\<name>\.
+    # cached background.<ext> exists under $DataRoot\cache\<name>\, or a
+    # .no-background marker there is STILL IN DATE.
     param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
     foreach ($ext in 'gif','png','jpg','jpeg') {
         if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
@@ -549,7 +660,38 @@ function Test-StyleResolved {
     foreach ($ext in 'gif','png','jpg','jpeg') {
         if (Test-Path -LiteralPath (Join-Path $cacheDir "background.$ext")) { return $true }
     }
-    if (Test-Path -LiteralPath (Join-Path $cacheDir '.no-background')) { return $true }
+
+    # The marker is READ, not merely counted, and the expiry rule is
+    # Test-BackgroundProbeSuppressed's -- the one function that owns it. This
+    # used to be a bare Test-Path, which is a second implementation of "do we
+    # know this style's background state?" that disagreed with the first for
+    # exactly the styles that still need work: a 'unreachable' marker is good
+    # for one hour and an 'absent' one for thirty days, and a content-free
+    # marker (written by releases up to 0.8.5) is expired by definition.
+    #
+    # What the disagreement cost, all of it Windows-Terminal-only because
+    # $wantsBackgrounds gates the picker's use of this: one picker run on a
+    # flaky network writes a fresh 'unreachable' marker for every style. An hour
+    # later -- online again, the good case -- this said True for all of them, so
+    # $missingPaths came back EMPTY and the background prefetch job, whose whole
+    # job is to move that work off the input thread, was never started. Every
+    # row still claimed "ready" and showed its swatch, and the synchronous
+    # resolver ran instead: four serial Invoke-WebRequest at -TimeoutSec 10,
+    # from inside $applyTheme (per arrow key) and from $onIdle (~20x a second,
+    # with no key pressed at all). Measured: expired marker -> Test-StyleResolved
+    # True while Get-StyleBundledBackground made 4 HTTP attempts, 1127 ms for
+    # three styles against a 250 ms stand-in for the real 10-second timeout.
+    #
+    # The read degrades exactly as Get-StyleBundledBackground's does -- a locked
+    # or unreadable marker reads as empty text, which is expired, which re-probes.
+    $markerPath = Join-Path $cacheDir '.no-background'
+    if (Test-Path -LiteralPath $markerPath) {
+        $markerText = ''
+        try {
+            $markerText = [System.IO.File]::ReadAllText($markerPath, [System.Text.UTF8Encoding]::new($false))
+        } catch { $markerText = '' }
+        if (Test-BackgroundProbeSuppressed -MarkerText $markerText) { return $true }
+    }
 
     # Tuned styles inherit resolution from their base. -NoInherit suppresses
     # this (used on the recursive base call) so a cyclic tune.json (A->B->A)
@@ -692,13 +834,6 @@ function Invoke-TerminalStyle {
     # One-time opt-in font prompt (fires only in interactive sessions, never for
     # subcommands — they all `return` above before reaching this point).
     Invoke-FontFirstRunPrompt
-
-    # Update-notice path runs on every passive invocation, but the PICKER is a
-    # special case: it Clear-Host's before drawing its menu, so a notice printed
-    # here was wiped a few lines later and never read -- while still costing the
-    # HTTP check that produced it. Hold the result and print it after the picker
-    # gives the screen back, below.
-    $pendingUpdate = Test-UpdateAvailable
 
     # Windows Terminal previews a style by writing settings.json and letting WT
     # reload; every other terminal previews purely through the OSC packet the
@@ -903,12 +1038,34 @@ function Invoke-TerminalStyle {
     $pickerTargetLabel = if ($useSettingsFile) { "'$Target'" }
                          else { Get-TerminalDisplayName -Kind $termKind }
 
-    if (-not (Test-StyledHost -Kind $termKind)) {
-        Write-Host "Note: this host doesn't render colors; you'll get the prompt but not the palette." -ForegroundColor Yellow
-    } elseif (-not $useSettingsFile) {
-        $caps = Get-TerminalCapability -Kind $termKind
-        if (-not $caps.BackgroundImage) {
-            Write-Host ("Note: {0} renders the palette but not background images." -f (Get-TerminalDisplayName -Kind $termKind)) -ForegroundColor DarkGray
+    # What this terminal cannot show. Decided here, PAINTED INSIDE THE FRAME
+    # below -- it used to be two Write-Hosts right at this line, and the
+    # picker's own Clear-Host (pwsh emits ESC[3J ESC[H ESC[2J, and ESC[3J erases
+    # the scrollback) took both of them a few hundred bytes later. Constant for
+    # the life of the picker, like $unreadableNote and $backupNote, so the
+    # in-place redraw keeps a fixed height.
+    $capabilityNote = Get-PickerCapabilityNote -Kind $termKind -UseSettingsFile $useSettingsFile
+
+    # The update check, taken HERE rather than at the top of the command.
+    #
+    # It stamps .last-update-check on every attempt, and that stamp is the
+    # 24-hour throttle list / current / random / apply all share -- so taken
+    # above the redirected-console guard and above the early returns, a
+    # `tstyles` with stdin redirected (a pipe, a CI step, an agent shell) paid
+    # the HTTP attempt, burned the day's check and then printed the
+    # interactive-terminal guard, having shown nobody anything. Measured:
+    # httpAttempts=1, stampAfter=True, and the very next `tstyles list` in the
+    # same day printed no notice at all. The tuner defers its check past both
+    # console guards for exactly this reason.
+    #
+    # Held rather than printed because the picker Clear-Host's before drawing
+    # its menu; $showPendingUpdate below is what prints it, on BOTH exits.
+    $pendingUpdate = Test-UpdateAvailable
+    $showPendingUpdate = {
+        if ($pendingUpdate) {
+            Write-Host ("  Update available ({0} -> {1}). Run: tstyles update" -f
+                        $pendingUpdate.Installed, $pendingUpdate.Remote) -ForegroundColor Yellow
+            Write-Host ""
         }
     }
 
@@ -1149,6 +1306,16 @@ function Invoke-TerminalStyle {
 
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
+    # May the preview move the title at all? Asked ONCE, of the same snapshot
+    # the restore in the finally is gated on, and through the same rule -- see
+    # Test-ShouldPreviewWindowTitle. On Terminal.app and iTerm2 the getter
+    # answers '' (the title belongs to the terminal, not the host), so the
+    # picker was writing a title it had already decided it could never put back:
+    # cancelling printed "Reverted." with the rejected style's tab title still
+    # on the window, for the life of that tab. It bites hardest through the
+    # zsh/bash shim, where no style profile has ever run in this process, so the
+    # snapshot is empty every single time.
+    $canPreviewTitle = Test-ShouldPreviewWindowTitle -SnapshotTitle $originalTitle
     try {
         # Apply first preview before showing the menu. The merge is skipped
         # entirely off Windows Terminal: there is no $originalJson to merge into,
@@ -1188,7 +1355,7 @@ function Invoke-TerminalStyle {
             # came back holding a [bool] nobody asked for.
             Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $schemes[$idx]) | Out-Null
         }
-        if ($titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
+        if ($canPreviewTitle -and $titles.ContainsKey($idx)) { $Host.UI.RawUI.WindowTitle = $titles[$idx] }
 
         # Truecolor mid-gray for the picker's secondary text. PowerShell's
         # "DarkGray" maps to each scheme's brightBlack slot, which on
@@ -1269,15 +1436,22 @@ function Invoke-TerminalStyle {
             # Like $unreadableNote it is decided once, before the loop, so the
             # frame's height is still identical on every redraw.
             if ($backupNote) { Write-Host "$hintColor$backupNote$resetColor" }
+            # Third note, same reason, and the one that was outside the frame
+            # for longest: what this terminal cannot render. Also decided once,
+            # before the loop, so the frame's height is identical every redraw.
+            if ($capabilityNote) { Write-Host "$hintColor$capabilityNote$resetColor" }
             Write-Host ""
             # Rows the frame spends on anything that is not a style: the leading
             # blank, the header line, the two hint lines, the two always-present
             # scroll indicators, the trailing blank, and one spare so the shell's
             # own prompt has somewhere to land -- plus the unreadable-styles
-            # line and the backup-failure line, when there are any.
+            # line, the backup-failure line and the capability line, when there
+            # are any. Every row the frame paints has to be bought here, or the
+            # menu runs off the bottom of the window.
             $chrome = 8
             if ($unreadableNote) { $chrome++ }
             if ($backupNote)     { $chrome++ }
+            if ($capabilityNote) { $chrome++ }
             # A non-positive WindowHeight means "I don't know", not "no room".
             # It reads as 0 under a pty whose size was never set -- some CI
             # runners, some SSH sessions before the first SIGWINCH -- and
@@ -1332,7 +1506,7 @@ function Invoke-TerminalStyle {
             # Off Windows Terminal the OSC retint in $onRetint already did the
             # whole preview -- there is no deferred settings.json write to make.
             if (-not $useSettingsFile) {
-                if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
+                if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
                 return
             }
             $resolved = Test-StyleResolved -StyleDir $styles[$i].FullName
@@ -1354,7 +1528,7 @@ function Invoke-TerminalStyle {
                     & $restoreOriginalSettings
                 }
             }
-            if ($titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
+            if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
         }
 
         # Per-keystroke instant retint (OSC color packet). The deferred
@@ -1437,6 +1611,14 @@ function Invoke-TerminalStyle {
         if ($result.Outcome -eq 'cancelled') {
             Clear-Host
             Write-Host "Reverted." -ForegroundColor Yellow
+            # On THIS exit too. The check above was paid and its 24-hour stamp
+            # written whichever key ends the picker, so printing the notice only
+            # on confirm meant an Esc silently spent the day's check -- and
+            # every later list / current / random / apply that day found the
+            # throttle already stamped and said nothing. The tuner prints on all
+            # three of its exit paths for the same reason.
+            Write-Host ""
+            & $showPendingUpdate
             return
         }
 
@@ -1617,20 +1799,47 @@ function Invoke-TerminalStyle {
                             $selectedStyle.Name, $confirmPayload.Missing) -ForegroundColor DarkGray
                 Write-Host ""
             }
+        } else {
+            # The same line `tstyles <name>` prints, from the same function, so
+            # the two doors say the same thing about the same apply. The picker
+            # said nothing at all: on iTerm2 `tstyles eva` named tab color and
+            # the background image while choosing eva in the picker named
+            # neither, and the frame's capability note is about the terminal,
+            # not about the style that was just confirmed.
+            #
+            # Through Get-UnsupportedStyleField, the same reader the WT branch
+            # above and Apply-StyleNonWT use. The narrower note this branch was
+            # written against asked two hardcoded questions -- background image
+            # and tab color -- so it stayed silent about the font, cursor shape
+            # and padding that are $false in the table for the express purpose
+            # of being named here.
+            $confirmTheme = $null
+            $confirmThemePath = Join-Path $selectedStyle.FullName 'theme.json'
+            if (Test-Path -LiteralPath $confirmThemePath) {
+                try {
+                    $confirmTheme = [System.IO.File]::ReadAllText($confirmThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                } catch { $confirmTheme = $null }
+            }
+            Show-UnsupportedStyleField -Kind $termKind -Field @(
+                Get-UnsupportedStyleField -Theme $confirmTheme -StyleDir $selectedStyle.FullName -Kind $termKind)
         }
-        if ($pendingUpdate) {
-            Write-Host ("  Update available ({0} -> {1}). Run: tstyles update" -f
-                        $pendingUpdate.Installed, $pendingUpdate.Remote) -ForegroundColor Yellow
-            Write-Host ""
-        }
+        & $showPendingUpdate
 
         # Live-reload: dot-source the newly active profile so the title,
         # prompt, banner, and PSReadLine colors update in THIS session
         # without requiring the user to open a new tab. Each theme's
         # profile.ps1 uses `function global:prompt` so the binding escapes
         # this function's scope.
+        # ...unless $global:TStylesNoAutoLoad says this is the one-shot pwsh the
+        # zsh/bash shim runs, in which case dot-sourcing reloads nothing and
+        # prints the style's banner into a process that is about to exit -- and
+        # the wrapper then re-sources the staged prompt.sh and prints it again.
+        # Apply-StyleNonWT has honoured that flag since 0.8.x; this door asked a
+        # gate that could not see it, so the picker printed two banners where
+        # `tstyles <name>` printed one. Same gate now, same answer.
         if (Test-ShouldLiveReloadPrompt -IsPwshTarget $isPwshTarget `
-                -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent)) {
+                -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent) `
+                -AutoLoadSuppressed ([bool]$global:TStylesNoAutoLoad)) {
             . $script:TStylesCurrent
         }
     } finally {
@@ -1695,8 +1904,9 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName SubA
     if ($sub -ne 'delete') { return }
     $claim = Get-InstalledStyleClaim
     $one   = Test-StylesRootsAreOne
+    $hash  = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
     @(Get-AvailableStyles | Where-Object {
-        (Get-StyleOrigin -Name $_.Name -StyleDir $_.FullName -Claim $claim -RootsAreOne $one) -in @('yours', 'shadow')
+        (Get-StyleOrigin -Name $_.Name -StyleDir $_.FullName -Claim $claim -RootsAreOne $one -StyleHash $hash) -in @('yours', 'shadow')
     } | ForEach-Object Name | Where-Object { $_ -like "$wordToComplete*" } | Sort-Object) |
         ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
 }

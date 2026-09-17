@@ -769,6 +769,22 @@ If you drop in a folder with the same name as a bundled theme (e.g.
 `eva/`), your version wins — useful for tweaking a bundled theme's
 prompt or palette without forking the repo.
 
+That holds across updates too, including the bootstrap layout where the
+install tree and this folder are the *same* directory. Each install
+records a fingerprint of every style it places, so a bundled style you
+have edited — or added a file to — is left alone by the next `tstyles
+update` (it prints the names it kept) and by `tstyles uninstall`, which
+also stops listing it for deletion. `tstyles list` calls it **yours** and
+`tstyles delete` will remove it, the same as a style you wrote from
+scratch. Put the shipped files back exactly and the style becomes the
+install's again, so updates resume.
+
+One bound, stated because it is a one-time hole and not a rule: the
+fingerprint is written *by* an install. A folder you dropped in before
+the first install that records one is overwritten once by that update —
+the alternative, refusing to update any style the tool cannot vouch for,
+would freeze bundled themes at whatever version you happen to have.
+
 To contribute your theme back to the bundled catalog, see
 [CONTRIBUTING.md](CONTRIBUTING.md) — short version: code-only folder
 under `styles/<name>/` on `main`, background image (if any) flat-named

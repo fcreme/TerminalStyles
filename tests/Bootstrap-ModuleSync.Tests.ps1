@@ -7,6 +7,12 @@
 # Get-PowerShellEngineCandidate. All three say "duplicated ... keep in sync" and
 # nothing checked that they were.
 #
+# The module side is BOTH tstyles.ps1 and terminals.ps1. It was tstyles.ps1
+# alone, and that is why the fourth duplicate went unchecked for a release:
+# Get-RcFileEncoding lives in terminals.ps1, so the installer's copy of the one
+# rule that keeps a user's non-UTF-8 $PROFILE byte intact was compared against
+# nothing at all.
+#
 # The reason it matters is not just tidiness. `tstyles update` on a bootstrap
 # install runs `Invoke-Expression $installerScript` (lib/update.ps1) -- INSIDE
 # the module's scope. So install.ps1's copies do not merely sit beside the
@@ -27,6 +33,19 @@
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
+# A twin that was deliberately RENAMED still has to be compared. install.ps1's
+# Get-ProfileFileEncoding is terminals.ps1's Get-RcFileEncoding: the distinct
+# name is on purpose -- it stops a reader taking the two for one shared
+# function -- but pairing by name alone would drop it out of $SharedFns and
+# leave it compared against nothing, which is the failure this file's own
+# header describes.
+#
+# At FILE scope deliberately. The pairing is needed in BeforeDiscovery (the
+# -ForEach that generates the per-function tests) and again in BeforeAll (the
+# body that runs them), which are different scopes; a copy in each is a second
+# implementation of the rule this file exists to enforce.
+$script:RenamedTwins = @{ 'Get-ProfileFileEncoding' = 'Get-RcFileEncoding' }
+
 BeforeDiscovery {
     $repoRoot = Split-Path $PSScriptRoot -Parent
 
@@ -39,8 +58,13 @@ BeforeDiscovery {
     }
 
     $installFns = script:Get-FunctionNames (Join-Path $repoRoot 'install.ps1')
-    $moduleFns  = script:Get-FunctionNames (Join-Path $repoRoot 'tstyles.ps1')
-    $script:SharedFns = @($installFns | Where-Object { $moduleFns -contains $_ } | Sort-Object -Unique)
+    $moduleFns  = @(script:Get-FunctionNames (Join-Path $repoRoot 'tstyles.ps1')) +
+                  @(script:Get-FunctionNames (Join-Path $repoRoot 'terminals.ps1'))
+    $script:SharedFns = @(
+        @($installFns | Where-Object { $moduleFns -contains $_ }) +
+        @($script:RenamedTwins.Keys | Where-Object {
+            $installFns -contains $_ -and $moduleFns -contains $script:RenamedTwins[$_] })
+    ) | Sort-Object -Unique
 }
 
 BeforeAll {
@@ -53,14 +77,32 @@ BeforeAll {
     # after the same trap was fixed in Lib-Loading.Tests.ps1.
     $installAst = [System.Management.Automation.Language.Parser]::ParseFile(
         (Join-Path $script:repoRoot 'install.ps1'), [ref]$null, [ref]$null)
-    $moduleAst = [System.Management.Automation.Language.Parser]::ParseFile(
-        (Join-Path $script:repoRoot 'tstyles.ps1'), [ref]$null, [ref]$null)
+    # Both module files, for the reason in the header: a duplicate whose
+    # original lives in terminals.ps1 was compared against nothing.
+    $script:ModuleFiles = @(
+        (Join-Path $script:repoRoot 'tstyles.ps1'),
+        (Join-Path $script:repoRoot 'terminals.ps1')
+    )
     $nameOf = { param($a) @($a.FindAll({ param($n)
         $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true) |
         ForEach-Object { $_.Name }) }
     $iNames = & $nameOf $installAst
-    $mNames = & $nameOf $moduleAst
-    $script:SharedFns = @($iNames | Where-Object { $mNames -contains $_ } | Sort-Object -Unique)
+    $mNames = @(foreach ($f in $script:ModuleFiles) {
+        & $nameOf ([System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null))
+    })
+    # The same map as the file-scope one above, and for the same reason the
+    # function lists either side of it are enumerated twice: BeforeDiscovery and
+    # BeforeAll are different scopes and a file-scope variable does not reach
+    # this one. Neither copy can silently rot -- drop the entry here and
+    # 'still duplicates the ones it is supposed to' fails; drop it above and the
+    # per-function test for the twin is never generated, which the same
+    # assertion catches.
+    $script:RenamedTwins = @{ 'Get-ProfileFileEncoding' = 'Get-RcFileEncoding' }
+    $script:SharedFns = @(
+        @($iNames | Where-Object { $mNames -contains $_ }) +
+        @($script:RenamedTwins.Keys | Where-Object {
+            $iNames -contains $_ -and $mNames -contains $script:RenamedTwins[$_] })
+    ) | Sort-Object -Unique
 
     # Code only: tokens inside the function's extent, minus comments and layout.
     # A regex that stripped '#' to end-of-line would also gut any hex colour or
@@ -73,8 +115,13 @@ BeforeAll {
             $n -is [System.Management.Automation.Language.FunctionDefinitionAst] -and
             $n.Name -eq $Name }, $true))
         if (-not $fn) { return $null }
-        $start = $fn[0].Extent.StartOffset
-        $end   = $fn[0].Extent.EndOffset
+        # The BODY, not the whole declaration: the `function <Name>` tokens are
+        # the one part of a deliberately-renamed twin that is SUPPOSED to
+        # differ, and comparing them would make the twin permanently red while
+        # saying nothing about whether the code drifted. Everything a caller can
+        # observe -- param block, attributes, statements -- is inside the body.
+        $start = $fn[0].Body.Extent.StartOffset
+        $end   = $fn[0].Body.Extent.EndOffset
         (($tokens | Where-Object {
             $_.Extent.StartOffset -ge $start -and $_.Extent.EndOffset -le $end -and
             $_.Kind -ne 'Comment' -and $_.Kind -ne 'NewLine' -and $_.Kind -ne 'EndOfInput'
@@ -84,22 +131,33 @@ BeforeAll {
 
 Describe 'install.ps1 duplicates the module faithfully' {
 
-    It 'still duplicates the three it is supposed to' {
+    It 'still duplicates the ones it is supposed to' {
         # If this drops to zero the rest of the file silently tests nothing --
         # the exact failure mode this suite has been cleaning up all week.
         @($script:SharedFns).Count | Should -BeGreaterOrEqual 3
-        foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate') {
-            $script:SharedFns | Should -Contain $n
+        foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate',
+                       'Get-ProfileFileEncoding', 'Test-PathIsSymlink',
+                       'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers') {
+            $script:SharedFns | Should -Contain $n -Because (
+                "$n is duplicated into install.ps1 and this file is what compares the two copies")
         }
     }
 
-    It '<_> is identical in install.ps1 and tstyles.ps1' -ForEach $script:SharedFns {
-        $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1')  -Name $_
-        $b = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'tstyles.ps1') -Name $_
+    It '<_> is identical in install.ps1 and the module' -ForEach $script:SharedFns {
+        $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1') -Name $_
+        $b = $null
+        $from = $null
+        # The module-side name, which is the same one unless this is a twin
+        # whose two halves were deliberately given different names.
+        $moduleName = if ($script:RenamedTwins.ContainsKey($_)) { $script:RenamedTwins[$_] } else { $_ }
+        foreach ($f in $script:ModuleFiles) {
+            $b = script:Get-FunctionCode -Path $f -Name $moduleName
+            if ($b) { $from = (Split-Path -Leaf $f); break }
+        }
         $a | Should -Not -BeNullOrEmpty
-        $b | Should -Not -BeNullOrEmpty
+        $b | Should -Not -BeNullOrEmpty -Because 'the module half has to be found, or this compares nothing'
         $a | Should -Be $b -Because @"
-$_ is duplicated in install.ps1 and must match tstyles.ps1 exactly.
+$_ is duplicated in install.ps1 and must match the module's copy ($from) exactly.
 `tstyles update` Invoke-Expressions install.ps1 INSIDE the module's scope, so a
 drifted copy replaces the module's version for the rest of that session.
 "@

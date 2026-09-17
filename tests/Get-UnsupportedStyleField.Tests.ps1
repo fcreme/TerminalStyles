@@ -241,7 +241,12 @@ Describe 'both apply doors name what the terminal cannot show' {
             $calls = @($fn.FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.CommandAst] -and
                 $n.GetCommandName() -eq 'Show-UnsupportedStyleField' }, $true))
-            @($calls).Count | Should -Be 1 `
+            # Not pinned to ONE: the picker's confirm has two mutually
+            # exclusive branches, Windows Terminal and everything else, and
+            # each owes the user this line. Pinning the count to one is how
+            # the non-WT branch came to have none -- the guard read green
+            # while half the terminals this tool supports were told nothing.
+            @($calls).Count | Should -BeGreaterThan 0 `
                 -Because 'the picker must say what tstyles <name> says'
         }
 
@@ -260,8 +265,14 @@ Describe 'both apply doors name what the terminal cannot show' {
                 $n.Value -eq '  Style applied: ' }, $true))
 
             @($applied).Count | Should -Be 1 -Because 'the anchor must be unambiguous'
-            @($show).Count    | Should -Be 1
-            $show[0].Extent.StartOffset | Should -BeGreaterThan $applied[0].Extent.StartOffset
+            @($show).Count    | Should -BeGreaterThan 0
+            # EVERY call, not just the first: one branch below the Clear-Host
+            # and one above it would pass a [0]-only check while showing half
+            # the users nothing.
+            foreach ($c in $show) {
+                $c.Extent.StartOffset | Should -BeGreaterThan $applied[0].Extent.StartOffset `
+                    -Because "a notice at offset $($c.Extent.StartOffset) is wiped by the Clear-Host"
+            }
         }
     }
 }

@@ -155,7 +155,13 @@ function Get-TerminalStyleHelpData {
                        "If your style shadows a bundled one of the same name, deleting yours",
                        "does not remove the name -- it reveals the bundled style again. The",
                        "confirmation says which of the two will happen, and names any style",
-                       "tuned from this one that loses its adjustments.")
+                       "tuned from this one that loses its adjustments.",
+                       "",
+                       "A bundled style you have edited in place -- tuned with Overwrite, or",
+                       "replaced by dropping a folder of the same name into your styles dir --",
+                       "counts as yours and can be deleted. Where there is only one styles",
+                       "dir (a bootstrap install) the name goes with it until the next",
+                       "'tstyles update' puts the shipped copy back.")
             Keys = @(); Examples = @('tstyles delete', 'tstyles delete my-theme')
         }
         [pscustomobject]@{

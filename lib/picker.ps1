@@ -351,11 +351,97 @@ function Test-ShouldLiveReloadPrompt {
     # unconditionally at the end of the direct-apply path; this is the picker
     # catching up to it. The WT check was left over from before there was any
     # non-WT path for it to be wrong about.
+    #
+    # ...and no when $global:TStylesNoAutoLoad is set, which is the "I am not an
+    # interactive pwsh session" signal the generated tstyles-cli.ps1 sets
+    # (terminals.ps1). From zsh or bash, `tstyles` runs that shim in a one-shot
+    # pwsh that exits immediately: dot-sourcing the style's profile.ps1 there
+    # reloads nothing and prints the style's whole ASCII banner, and the shell
+    # wrapper then re-sources the staged prompt.sh and prints it a SECOND time.
+    # Apply-StyleNonWT was fixed for that; the picker's confirm asked this gate
+    # instead, which had no way to know the shim was running -- so choosing a
+    # style in the picker from bash printed two NERV banners where `tstyles eva`
+    # printed one (measured on a pty: 2 vs 1), and confirming the style already
+    # staged printed one spuriously. Both doors now ask here, so the two cannot
+    # drift apart again.
     param(
         [Parameter(Mandatory)][bool]$IsPwshTarget,
-        [Parameter(Mandatory)][bool]$ProfilePresent
+        [Parameter(Mandatory)][bool]$ProfilePresent,
+        [Parameter(Mandatory)][bool]$AutoLoadSuppressed
     )
-    return $IsPwshTarget -and $ProfilePresent
+    return $IsPwshTarget -and $ProfilePresent -and (-not $AutoLoadSuppressed)
+}
+
+function Test-ShouldPreviewWindowTitle {
+    <#
+    .SYNOPSIS
+    May a preview move the window title at all?
+
+    .DESCRIPTION
+    The mirror of Test-ShouldRestoreWindowTitle, and it exists because the two
+    halves have to agree: the picker WRITES $Host.UI.RawUI.WindowTitle on its
+    first preview and on every arrow key, and restores it on cancel only when
+    the snapshot it took is a title worth putting back. On Terminal.app and
+    iTerm2 the getter answers '' -- the title is the terminal's to know, not the
+    host's -- so the picker was changing a thing it had already decided it could
+    not change back. "Reverted." then printed under the rejected style's tab
+    title, which survived for the life of the tab: all 16 styles set the title
+    once at load, never from `prompt`, so nothing repaints it.
+
+    Measured under the zsh/bash shim, which is where it always bites -- the shim
+    sets $TStylesNoAutoLoad, so no style profile has ever run in that process
+    and the snapshot is always empty: four OSC 0 title writes during a cancelled
+    session and no restoring one after it.
+
+    The answer is deliberately the same as the restore gate's rather than
+    "restore ''": assigning an empty title blanks whatever the window was
+    showing, which is the worse end state (see Test-ShouldRestoreWindowTitle).
+    A confirmed apply still sets the title, through the style's own profile.ps1
+    and prompt.sh, which is where that job belongs.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$SnapshotTitle)
+
+    return (Test-ShouldRestoreWindowTitle -Title $SnapshotTitle)
+}
+
+function Get-PickerCapabilityNote {
+    <#
+    .SYNOPSIS
+    The one line the picker owes the user about what this terminal cannot show,
+    or $null.
+
+    .DESCRIPTION
+    The picker printed this ABOVE its menu, and its own Clear-Host then wiped
+    it: pwsh emits Clear-Host as ESC[3J ESC[H ESC[2J, and ESC[3J erases the
+    SCROLLBACK, so the line was not merely scrolled off, it was unrecoverable.
+    Measured on a pty: the note at byte 283, the first ESC[3J 410 bytes later,
+    in one uninterrupted output burst with no input wait, and the string never
+    appears again in the capture.
+
+    tstyles.ps1 had already learned this three times -- $unreadableNote,
+    $backupNote and the update notice each carry a comment saying anything
+    printed above the menu is wiped unread. This is the note that was left
+    outside the frame. Returning it as a value rather than printing it is what
+    lets the frame paint it, and lets a test assert it without a console.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Kind,
+        [Parameter(Mandatory)][bool]$UseSettingsFile
+    )
+
+    if (-not (Test-StyledHost -Kind $Kind)) {
+        return "  Note: this host doesn't render colors; you'll get the prompt but not the palette."
+    }
+    # Windows Terminal previews through settings.json, which carries the
+    # background image, so the question does not arise there.
+    if ($UseSettingsFile) { return $null }
+    if (-not (Get-TerminalCapability -Kind $Kind).BackgroundImage) {
+        return ("  Note: {0} renders the palette but not background images." -f
+                (Get-TerminalDisplayName -Kind $Kind))
+    }
+    return $null
 }
 
 function Test-ShouldPromptFonts {

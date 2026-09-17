@@ -450,6 +450,92 @@ function Get-ProfileFileEncoding {
     return [System.Text.Encoding]::GetEncoding(28591)
 }
 
+function Get-StyleContentHash {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. The bootstrap cannot
+    # dot-source the library, and this is half of the evidence that decides
+    # whether the styles merge below is about to overwrite the user's own work.
+    param([Parameter(Mandatory)][string]$StyleDir)
+    if (-not (Test-Path -LiteralPath $StyleDir)) { return $null }
+    try {
+        $root = [System.IO.Path]::GetFullPath($StyleDir).TrimEnd([System.IO.Path]::DirectorySeparatorChar)
+        $rel = @()
+        foreach ($f in @(Get-ChildItem -LiteralPath $StyleDir -File -Recurse -Force -ErrorAction Stop)) {
+            if (-not $f.FullName.StartsWith($root, [System.StringComparison]::OrdinalIgnoreCase)) { return $null }
+            $rel += ($f.FullName.Substring($root.Length).TrimStart('/', '\') -replace '\\', '/')
+        }
+        $rel = @($rel | Sort-Object -CaseSensitive)
+        $sha = [System.Security.Cryptography.SHA256]::Create()
+        try {
+            foreach ($r in $rel) {
+                $head = [System.Text.Encoding]::UTF8.GetBytes($r + "`n")
+                [void]$sha.TransformBlock($head, 0, $head.Length, $null, 0)
+                $bytes = [System.IO.File]::ReadAllBytes((Join-Path $root ($r -replace '/', [System.IO.Path]::DirectorySeparatorChar)))
+                if ($bytes.Length -gt 0) { [void]$sha.TransformBlock($bytes, 0, $bytes.Length, $null, 0) }
+            }
+            [void]$sha.TransformFinalBlock((New-Object byte[] 0), 0, 0)
+            return ([System.BitConverter]::ToString($sha.Hash) -replace '-', '').ToLowerInvariant()
+        } finally { $sha.Dispose() }
+    } catch { return $null }
+}
+
+function Get-InstalledStyleHash {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. Reads the record the
+    # PREVIOUS install left; $null means "no record", which is not "unchanged".
+    param([Parameter(Mandatory)][string]$DataDir)
+    $path = Join-Path $DataDir '.installed-styles'
+    if (-not (Test-Path -LiteralPath $path)) { return $null }
+    try {
+        $lines = [System.IO.File]::ReadAllLines($path, [System.Text.UTF8Encoding]::new($false))
+    } catch { return $null }
+    $map = @{}
+    foreach ($l in $lines) {
+        if ("$l".Trim() -match '^([0-9a-f]{64})\s+(\S.*)$') { $map[$Matches[2].Trim()] = $Matches[1] }
+    }
+    if ($map.Count -eq 0) { return $null }
+    return $map
+}
+
+function Test-StyleDirectoryIsUsers {
+    # NOTE: duplicated from tstyles.ps1 -- keep in sync. The one rule three
+    # commands used to answer separately: `tstyles update` (here), `tstyles
+    # uninstall` (Get-UninstallPlan) and `tstyles list` / `delete`
+    # (Get-StyleOrigin). All three asked only about tune.json, which the
+    # documented hand-dropped override does not have.
+    param(
+        [Parameter(Mandatory)][string]$StyleDir,
+        $Recorded = $null
+    )
+    if (Test-Path -LiteralPath (Join-Path $StyleDir 'tune.json')) { return $true }
+    if (-not ($Recorded -is [hashtable])) { return $false }
+    $name = Split-Path -Leaf $StyleDir
+    if (-not $Recorded.ContainsKey($name)) { return $false }
+    $current = Get-StyleContentHash -StyleDir $StyleDir
+    if (-not $current) { return $false }
+    return ($current -ne $Recorded[$name])
+}
+
+function Test-PathIsSymlink {
+    # NOTE: duplicated from terminals.ps1 -- keep in sync.
+    #
+    # A $PROFILE is very often a symlink into a dotfiles repo (stow, chezmoi,
+    # nix home-manager). [System.IO.File]::Replace operates on the LINK, so the
+    # atomic swap below replaced it with a regular file and orphaned the repo
+    # copy. -Force on Get-Item is load-bearing: without it a dotfile on Unix
+    # comes back as nothing and every path this is asked about reads as "not a
+    # link". SymbolicLink only -- PowerShell reports LinkType 'HardLink' for an
+    # ordinary file with a second name, and that is the file, not a pointer to
+    # it. Anything unreadable answers $false -- no worse than before.
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        if (-not (Test-Path -LiteralPath $Path)) { return $false }
+        $item = Get-Item -LiteralPath $Path -Force -ErrorAction Stop
+        if ($item.PSObject.Properties.Match('LinkType').Count -gt 0 -and
+            $item.LinkType -eq 'SymbolicLink') { return $true }
+        return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq
+                [System.IO.FileAttributes]::ReparsePoint)
+    } catch { return $false }
+}
+
 # --- Atomic text write: temp sibling + replace ---
 function Write-TextFileAtomic {
     param(
@@ -461,6 +547,25 @@ function Write-TextFileAtomic {
         [System.Text.Encoding]$Encoding = (Get-ProfileFileEncoding)
     )
     $enc = $Encoding
+
+    # A symlinked destination is written THROUGH, never replaced. Replace()
+    # swaps the link itself for a regular file: the user's bytes survive, but
+    # the dotfiles repo stops governing the file, and the next `chezmoi apply` /
+    # `home-manager switch` / `stow -R` either conflicts on an unexpected
+    # regular file or overwrites it, taking our loader with it. It also only
+    # needs write permission on the containing DIRECTORY, so the installer
+    # succeeded at detaching a profile pointing into a read-only nix store --
+    # the exact case lib/update.ps1 refuses with "a read-only profile, one
+    # managed by nix or chezmoi". Every other writer of a user-owned file in
+    # this repo (terminals.ps1's rc half, lib/update.ps1's $PROFILE half) is a
+    # plain WriteAllText and has always written through; this was the outlier.
+    # The cost is that this one write is not atomic, which is the same trade
+    # those two already make.
+    if (Test-PathIsSymlink -Path $Path) {
+        [System.IO.File]::WriteAllText($Path, $Content, $enc)
+        return
+    }
+
     $dir = Split-Path -Parent $Path
     $tmp = Join-Path $dir ('.' + (Split-Path -Leaf $Path) + '.tmp-' + ([guid]::NewGuid().Guid.Substring(0,8)))
     [System.IO.File]::WriteAllText($tmp, $Content, $enc)
@@ -471,10 +576,33 @@ function Write-TextFileAtomic {
             [System.IO.File]::Move($tmp, $Path)
         }
     } catch {
-        # Fallback: best-effort direct write (non-atomic). Surface once.
-        Write-Host "  Note: atomic write unavailable on this volume; writing directly." -ForegroundColor DarkGray
-        [System.IO.File]::WriteAllText($Path, $Content, $enc)
-        Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        # Fallback: best-effort direct write (non-atomic).
+        #
+        # The cleanup is in a finally, not a trailing statement. Two different
+        # failures land here and only one of them is about the volume: when the
+        # DESTINATION is unwritable -- a read-only $PROFILE, a cloud-synced
+        # placeholder -- the direct write throws too, the exception escaped past
+        # the cleanup line, and `.<profile>.tmp-<guid>` was left beside the
+        # user's $PROFILE with a fresh GUID per attempt, so re-running the
+        # installer piled them up. lib/wtsettings.ps1's Write-SettingsAtomic is
+        # the same shape and was fixed for exactly this; the installer is
+        # fetched and piped to iex, so it cannot share that copy.
+        #
+        # And the note moved BELOW the write it describes: printed first, it
+        # blamed the volume for what is usually a permission problem, and the
+        # next line then died with a raw .NET error. A claim we cannot keep is
+        # not made, and the failure carries the diagnosis lib/update.ps1 prints
+        # for the same file.
+        try {
+            [System.IO.File]::WriteAllText($Path, $Content, $enc)
+            Write-Host "  Note: atomic write unavailable on this volume; wrote directly instead." -ForegroundColor DarkGray
+        } catch {
+            throw ("Could not write $Path -- $($_.Exception.Message) Check the file's " +
+                   "permissions (a read-only profile, one managed by nix or chezmoi, or a " +
+                   "cloud-synced placeholder).")
+        } finally {
+            Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue
+        }
     }
 }
 
@@ -557,7 +685,7 @@ function Register-LoaderInProfile {
     }
 
     $final = ($existing.TrimEnd() + "`r`n`r`n" + $LoaderBody + "`r`n").TrimStart()
-    Write-TextFileAtomic -Path $ProfilePath -Content $final
+    Write-TextFileAtomic -Path $ProfilePath -Content $final -Encoding (Get-ProfileFileEncoding)
 }
 
 # --- Validate a downloaded archive before extracting ---
@@ -704,18 +832,46 @@ function Sync-InstallTree {
     # recover it either, because Resolve-TuneSeed hits its self-reference guard
     # on such a style and comes up neutral. A style carrying tune.json is the
     # user's, so leave it exactly where it is.
+    #
+    # tune.json alone was HALF the rule. README.md documents the other half --
+    # "If you drop in a folder with the same name as a bundled theme (e.g.
+    # eva/), your version wins" -- and a hand-drop has no tune.json, because
+    # nothing but Save-TunedStyle writes one. On the bootstrap layout the
+    # install directory IS the data root, so the shipped eva/ landed straight on
+    # top of the user's: scheme.json, theme.json, prompt.sh and profile.ps1 back
+    # to stock, no backup taken, nothing printed. Measured on a fixture whose
+    # styles/eva/scheme.json read MY-OVERRIDE-SCHEME before `tstyles update` and
+    # SHIPPED-SCHEME after, with 0 backups anywhere under the install dir.
+    #
+    # Test-StyleDirectoryIsUsers answers both halves, from the record the LAST
+    # install left -- read here, BEFORE Write-InstallManifest replaces it below.
+    # With no record (a first install, or an install made before this file
+    # started writing one) it cannot tell an edited style from a stale one, and
+    # the copy goes ahead: refusing on "cannot say" would freeze a bundled style
+    # at whatever version the user happens to have, permanently and silently,
+    # which is the worse failure. README.md bounds the promise in those terms.
     $srcStyles = Join-Path $ExtractedRoot 'styles'
     if (Test-Path -LiteralPath $srcStyles) {
+        $recorded  = Get-InstalledStyleHash -DataDir $InstallDir
         $dstStyles = Join-Path $InstallDir 'styles'
         if (-not (Test-Path -LiteralPath $dstStyles)) {
             New-Item -ItemType Directory -Path $dstStyles -Force | Out-Null
         }
+        $keptStyles = @()
         foreach ($item in Get-ChildItem -LiteralPath $srcStyles -Force) {
             if ($item.PSIsContainer -and
-                (Test-Path -LiteralPath (Join-Path (Join-Path $dstStyles $item.Name) 'tune.json'))) {
+                (Test-StyleDirectoryIsUsers -StyleDir (Join-Path $dstStyles $item.Name) -Recorded $recorded)) {
+                $keptStyles += $item.Name
                 continue
             }
             Copy-Item -LiteralPath $item.FullName -Destination $dstStyles -Recurse -Force
+        }
+        # Said out loud, because "your version wins" is only reassuring if the
+        # user can see it happen -- and because the same silence is what made
+        # the overwrite above so hard to notice.
+        if ($keptStyles.Count -gt 0) {
+            Write-Host ("  Kept your own copy of: {0} (not replaced by this update)." -f
+                        (($keptStyles | Sort-Object) -join ', ')) -ForegroundColor Gray
         }
     }
 
@@ -751,10 +907,21 @@ function Write-InstallManifest {
     )
 
     $owned = [System.Collections.Generic.List[string]]::new()
+    $fingerprints = [System.Collections.Generic.List[string]]::new()
     foreach ($entry in Get-ChildItem -LiteralPath $ExtractedRoot -Force) {
         if ($entry.PSIsContainer -and $entry.Name -eq 'styles') {
             foreach ($style in Get-ChildItem -LiteralPath $entry.FullName -Force) {
                 $owned.Add("styles/$($style.Name)")
+                # The fingerprint of what this release SHIPS, not of what is on
+                # disk: a style skipped by the merge above (tuned, or edited by
+                # the user) must keep reading as changed on the next update too,
+                # and recording the disk copy would hand it straight back to the
+                # installer. Names are one path segment (Get-StyleDir refuses
+                # anything else), so a space-separated record parses cleanly.
+                if ($style.PSIsContainer) {
+                    $h = Get-StyleContentHash -StyleDir $style.FullName
+                    if ($h) { $fingerprints.Add("$h  $($style.Name)") }
+                }
             }
             continue
         }
@@ -764,6 +931,20 @@ function Write-InstallManifest {
     [System.IO.File]::WriteAllText(
         (Join-Path $InstallDir '.installed-files'),
         (($owned | Sort-Object) -join "`n") + "`n",
+        [System.Text.UTF8Encoding]::new($false))
+
+    # The second half of "what does the install own?": which of those styles is
+    # still byte-for-byte the one it placed. Without it, a folder the user
+    # dropped under a bundled name is indistinguishable from the shipped one to
+    # every reader -- so the update reverted it and the uninstall deleted it,
+    # both in silence.
+    #
+    # Written from the EXTRACTED tree, not from disk: a style the merge above
+    # skipped must go on reading as changed next time, and recording what is
+    # actually sitting there would hand it straight back to the installer.
+    [System.IO.File]::WriteAllText(
+        (Join-Path $InstallDir '.installed-styles'),
+        (($fingerprints | Sort-Object) -join "`n") + "`n",
         [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -1044,12 +1225,44 @@ if (-not $TStylesInstallNoRun) {
     # report the same file -- `pwsh` and `pwsh-preview` on a Mac carrying the
     # preview build -- this wrote it twice and printed "Registered loader:"
     # twice for one file.
-    $registered = @(Get-EngineProfilePlan)
+    $planned = @(Get-EngineProfilePlan)
 
-    foreach ($r in $registered) {
-        Register-LoaderInProfile -ProfilePath $r.ProfilePath -Label $r.Label -InstallDir $installDir `
-            -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
+    # A $PROFILE that cannot be written does not end the install. The files are
+    # already on disk by this point, so throwing here left the user
+    # installed-but-unloaded behind a raw .NET "Access to the path ... is
+    # denied" -- the same reason the no-engine notice below is a notice and not
+    # a throw. A read-only profile, one managed by nix or chezmoi, or a
+    # cloud-synced placeholder is exactly what lib/update.ps1 catches and
+    # explains for the same file; this half died instead.
+    #
+    # And $registered carries only the ones that really landed, because
+    # Write-InstallPanel prints it as the list of profiles TerminalStyles will
+    # now load from.
+    $registered = @()
+    $failedProfiles = @()
+    foreach ($r in $planned) {
+        try {
+            Register-LoaderInProfile -ProfilePath $r.ProfilePath -Label $r.Label -InstallDir $installDir `
+                -LoaderBegin $loaderBegin -LoaderEnd $loaderEnd -LoaderBody $loaderBody
+        } catch {
+            $failedProfiles += $r
+            Write-Host "  ! could not register the loader in $($r.ProfilePath)" -ForegroundColor Red
+            Write-Host "    $($_.Exception.Message)" -ForegroundColor Red
+            continue
+        }
+        $registered += $r
         Write-InstallStep "Registered loader: $($r.Label)" -Check
+    }
+
+    if ($failedProfiles.Count -gt 0) {
+        Write-Host ""
+        Write-Host "  TerminalStyles is installed, but will NOT auto-load in:" -ForegroundColor Yellow
+        foreach ($f in $failedProfiles) {
+            Write-Host ("    {0}  ({1})" -f $f.Label, $f.ProfilePath) -ForegroundColor Yellow
+        }
+        Write-Host "  Fix the permissions and re-run the installer, or add this line yourself:" -ForegroundColor Yellow
+        Write-Host "    $loaderImport" -ForegroundColor Cyan
+        Write-Host ""
     }
 
     # The execution policy is per ENGINE even where the $PROFILE is shared: it is
@@ -1061,10 +1274,15 @@ if (-not $TStylesInstallNoRun) {
         }
     }
 
-    if (-not $registered) {
+    if (-not $planned) {
         # Not a throw: the files are already installed by this point, so failing
         # here left the user installed-but-unloaded with a stack trace. Tell them
         # the one line that fixes it instead.
+        #
+        # Asked of $planned, not $registered: "no PowerShell engine found on
+        # PATH" is a specific claim, and an engine WAS found when every write to
+        # its $PROFILE failed. That case is reported above, by name and with the
+        # error, so this notice must not also fire and blame PATH for it.
         Write-NoEngineNotice -InstallDir $installDir -LoaderImport $loaderImport
     }
 

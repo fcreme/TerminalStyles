@@ -92,5 +92,40 @@ Describe 'Write-SettingsAtomic' {
             [System.IO.File]::ReadAllText($f, $enc)    | Should -Be '{"v":"NEW"}'
             [System.IO.File]::ReadAllText($link, $enc) | Should -Be '{"v":"OLD"}'
         }
+
+        It 'writes THROUGH a symlinked settings.json instead of replacing the link' {
+            # The other half of a symmetry fixed in install.ps1's
+            # Write-TextFileAtomic, which has the identical Replace shape.
+            # Keeping settings.json in a dotfiles repo and linking it into
+            # LocalState is the ordinary arrangement on Windows; File.Replace
+            # operates on the LINK, so every apply, every picker arrow key,
+            # every tuner keystroke and every font write swapped it for a
+            # regular file and silently detached the repo copy. Nothing is lost
+            # on either side, which is exactly why nobody notices until the next
+            # `chezmoi apply` overwrites it.
+            $enc   = [System.Text.UTF8Encoding]::new($false)
+            $store = Join-Path $TestDrive ('store-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $store | Out-Null
+            $real  = Join-Path $store 'settings.json'
+            [System.IO.File]::WriteAllText($real, '{"v":"REPO"}', $enc)
+            $linkDir = Join-Path $TestDrive ('ls-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $linkDir | Out-Null
+            $link = Join-Path $linkDir 'settings.json'
+            try { New-Item -ItemType SymbolicLink -Path $link -Target $real -ErrorAction Stop | Out-Null }
+            catch {
+                # Run-time, not -Skip:, which is evaluated at discovery and
+                # could never see this.
+                Set-ItResult -Skipped -Because 'this platform or account cannot create symlinks'
+                return
+            }
+
+            Write-SettingsAtomic -Path $link -Json '{"v":"NEW"}'
+
+            # -Force: without it Get-Item answers nothing for a path like this
+            # on Unix and both sides of the comparison come back $null.
+            (Get-Item -LiteralPath $link -Force).LinkType | Should -Be 'SymbolicLink'
+            [System.IO.File]::ReadAllText($real, $enc) | Should -Be '{"v":"NEW"}' `
+                -Because 'the dotfiles copy is the file the link points at'
+        }
     }
 }

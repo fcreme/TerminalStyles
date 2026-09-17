@@ -846,6 +846,19 @@ function Write-SettingsAtomic {
     } catch { $hadBom = $false }
 
     $enc = [System.Text.UTF8Encoding]::new($hadBom)
+
+    # A symlinked settings.json is written THROUGH, never replaced -- the same
+    # rule install.ps1's Write-TextFileAtomic now applies to a symlinked
+    # $PROFILE, and for the same reason. Keeping settings.json in a dotfiles
+    # repo and linking it into LocalState is the ordinary arrangement on
+    # Windows; [System.IO.File]::Replace below would swap that link for a
+    # regular file on every apply, preview, tuner keystroke and font write,
+    # silently detaching the repo copy. See Test-PathIsSymlink.
+    if (Test-PathIsSymlink -Path $Path) {
+        [System.IO.File]::WriteAllText($Path, $Json, $enc)
+        return
+    }
+
     $tmp = "$Path.tstmp"
     [System.IO.File]::WriteAllText($tmp, $Json, $enc)
     try {
