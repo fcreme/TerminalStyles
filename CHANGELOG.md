@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **three test files had been writing to the operator's own `~/Library/Application Support/TerminalStyles` since May, and the guard that watches for exactly that reported green the whole time.** `Apply-StyleDirect-Backup`, `Reset-StyleDirect` and `Invoke-TerminalStyle-TuneDispatch` each sandboxed ONE half of the state and missed the other: `$script:TStylesCurrent` is computed from the data root at MODULE LOAD, so overriding `$script:TStylesDataRoot` does not move it, while `current-style.json`, `current-style.osc` and the staged shell runtime are computed from the data root at CALL time, so overriding `TStylesCurrent` does not move them. One file set the first, two set the second, none set both.
+
+  `Zz-RealStateUntouched` compares a baseline against the end of the run and could not see it, because what the tests wrote was byte-identical to what was already there -- the machine's active style had been written by the same code. It surfaced the moment the operator's real `current-style.*` was written by a NEWER module than the one that had produced the baseline files, at which point the same tests started overwriting real content with different bytes:
+
+  ```
+  CHANGED  .../current-prompt.sh      [485 bytes]  -> [1780 bytes]
+  CHANGED  .../current-style.json     [100 bytes]  -> [97 bytes]
+  CHANGED  .../current-style.ps1      [1296 bytes] -> [2632 bytes]
+  ```
+
+  A guard whose subject is 'did anything change' is blind to a write that changes nothing, and that is not a property anyone should rely on: the same three tests would have clobbered a hand-edited `current-style.ps1` on any machine where the active style differed. All three now set both halves, and the note in each says why one is not enough.
+
 - **the guard that compares install.ps1's duplicated functions against the module's copies pairs them BY NAME, so deliberately renaming one half silently dropped it out of the comparison.** `install.ps1` carries its own copy of several module functions because the bootstrap is fetched and piped to `iex` before the module exists, and `Bootstrap-ModuleSync.Tests.ps1` is the only thing keeping the two copies in step -- `tstyles update` re-runs `install.ps1` INSIDE the module's scope, so a drifted copy replaces the module's version for the rest of that session. When the installer's encoding helper was renamed to `Get-ProfileFileEncoding` to make its twinning with `terminals.ps1`'s `Get-RcFileEncoding` visible, the pair stopped matching and the file compared it against nothing -- which is the exact failure its own header describes having fixed once already.
 
   A one-entry twin map now carries the rename, and the comparison moved from the whole declaration to the function BODY, because the `function <Name>` tokens are the one part of a renamed twin that is supposed to differ. Measured: with the twin paired, changing the module copy's codepage from 28591 to 1252 fails the comparison by name; before the fix that edit was invisible.
