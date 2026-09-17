@@ -232,21 +232,44 @@ function Get-TerminalCapability {
             # and, because required files are on its config reload watch list,
             # rewriting it also restyles a RUNNING window.
             #
-            # Opacity is deliberately NOT claimed even though WezTerm has
-            # window_background_opacity. Once a `background` layer list exists
-            # WezTerm skips the pane's solid rect, and the code paths that
-            # multiply by that setting are guarded off -- so its effect
-            # alongside the layers this writer emits is not something this
-            # project has verified. Claiming it would suppress the "can't show"
-            # notice and leave the user comparing an unchanged window against a
-            # screenshot, which is the exact failure the capability table exists
-            # to prevent. CursorShape, TabTitle and TabColor are not written at
-            # all.
+            # Opacity, CursorShape and TabColor are claimed as of the round that
+            # added them to Get-WezTermStyleLua, each next to the line that
+            # writes it and each proved accepted by wezterm
+            # 20240203-110809-5046fc22 with config_builder validation on:
+            #
+            #   Opacity      window_background_opacity, from theme.json's 0-100
+            #                opacity, plus the same fraction on the base colour
+            #                background layer -- with a layer list that is the
+            #                alpha WezTerm actually multiplies by, so the window
+            #                setting alone would have left the one bundled style
+            #                that asks for transparency painting an opaque
+            #                layer over a transparent window. useAcrylic adds
+            #                macos_window_background_blur, guarded behind
+            #                wezterm.target_triple:find('darwin') because the
+            #                file is also read on Linux and an unknown field
+            #                there costs the whole config.
+            #   CursorShape  default_cursor_style, mapping all six Windows
+            #                Terminal shapes and emitting nothing for a value it
+            #                does not recognise (an invalid enum is a config
+            #                error, which is the user's whole appearance).
+            #   TabColor     colors.tab_bar.active_tab.bg_color / .fg_color,
+            #                merged field by field into whatever the user's own
+            #                config.colors already holds.
+            #
+            # TabTitle stays $false: nothing writes a tab title into this module
+            # -- the title a user sees change on an apply is the style's own
+            # prompt, which needs no capability, exactly as on Terminal.app and
+            # kitty. The theme's experimental.retroTerminalEffect has no WezTerm
+            # analogue and no capability flag either; it is dropped in silence,
+            # as it is on every terminal but Windows Terminal.
             $caps.OscPalette      = $true
             $caps.Persist         = $true
             $caps.Font            = $true
             $caps.Padding         = $true
             $caps.BackgroundImage = $true
+            $caps.Opacity         = $true
+            $caps.CursorShape     = $true
+            $caps.TabColor        = $true
         }
         'Kitty' {
             $caps.OscPalette = $true
@@ -667,10 +690,11 @@ function Get-UnsupportedStyleField {
     questions -- background image and tab color -- so the four flags the table
     keeps $false expressly to trigger it could not produce a word on screen:
     Font, Opacity, CursorShape and Padding had no reader anywhere outside
-    terminals.ps1. The table's own comments assert the opposite in two places
-    ("saying so here would suppress the 'can't show' notice", at AppleTerminal's
-    Font/Opacity/CursorShape and at WezTerm's Opacity), which made the rationale
-    circular: the flags stayed off to trigger a notice that never mentioned them.
+    terminals.ps1. The table's own comments assert the opposite -- "saying so
+    here would suppress the 'can't show' notice", at AppleTerminal's
+    Font/Opacity/CursorShape, and the same argument at WezTerm's Opacity before
+    the writer learned to deliver it -- which made the rationale circular: the
+    flags stayed off to trigger a notice that never mentioned them.
 
     Measured on the bundled `forest` on Terminal.app before this existed: the
     style declares font, opacity, cursorShape, tabColor and padding, the table

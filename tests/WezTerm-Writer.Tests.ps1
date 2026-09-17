@@ -12,6 +12,23 @@
 # rather than its docs, the test says so, because those are the ones a future
 # reader will most want to re-check.
 #
+# The option names and enum values this file pins were probed against a real
+# wezterm 20240203-110809-5046fc22 on a developer machine, with validation on:
+#
+#   cat > /tmp/p.lua <<'EOF'
+#   local wezterm = require 'wezterm'
+#   local config = wezterm.config_builder()
+#   config.<option> = <value>
+#   return config
+#   EOF
+#   wezterm --config-file /tmp/p.lua ls-fonts 2>&1 >/dev/null
+#
+# config_builder() rejects an unknown field AND an invalid enum value, so empty
+# output is the measurement. (A bare `local config = {}` does NOT validate, and
+# a probe written that way proves nothing.) All sixteen bundled styles were
+# rendered through this writer and loaded that way. None of it can run in CI,
+# where there is no wezterm, which is why the values are pinned here instead.
+#
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
@@ -36,7 +53,18 @@ Describe 'Get-WezTermStyleLua' {
                 brightYellow = '#f4d87a'; brightBlue = '#a8c5e8'; brightPurple = '#ff85b8'
                 brightCyan = '#d4ddf0'; brightWhite = '#ffffff'
             }
+            # The bundled `eva` theme.json field for field -- the shape fifteen
+            # of the sixteen shipped styles have, so a test that changes one
+            # field is asking about one field rather than about a fixture no
+            # style resembles.
             $script:theme = [pscustomobject]@{
+                colorScheme                        = 'eva'
+                tabTitle                           = 'EVA // NERV'
+                tabColor                           = '#ff3d5a'
+                cursorShape                        = 'filledBox'
+                useAcrylic                         = $false
+                opacity                            = 100
+                'experimental.retroTerminalEffect' = $false
                 font = [pscustomobject]@{ face = 'Cascadia Code'; size = 11; weight = 'semi-bold' }
                 padding = '12'
                 backgroundImageOpacity = 0.4
@@ -147,10 +175,285 @@ Describe 'Get-WezTermStyleLua' {
                 $lua | Should -Match 'window_padding = \{ left = 12, right = 12, top = 12, bottom = 12 \}'
             }
 
-            It 'does not claim opacity, which the capability table also refuses' {
+        }
+
+        Context 'theme.json cursorShape -> default_cursor_style' {
+            It 'maps <Shape> to <Style>' -ForEach @(
+                @{ Shape = 'bar';              Style = 'SteadyBar' }
+                @{ Shape = 'filledBox';        Style = 'SteadyBlock' }
+                @{ Shape = 'emptyBox';         Style = 'SteadyBlock' }
+                @{ Shape = 'underscore';       Style = 'SteadyUnderline' }
+                @{ Shape = 'doubleUnderscore'; Style = 'SteadyUnderline' }
+                @{ Shape = 'vintage';          Style = 'SteadyUnderline' }
+            ) {
+                # All six of Windows Terminal's shapes, not the three the
+                # bundled styles use: a user style may declare any of them.
+                # emptyBox and doubleUnderscore have no WezTerm counterpart at
+                # all -- there is no hollow cursor and no double rule -- so they
+                # take the nearest shape, which is a decision this test pins
+                # rather than an equivalence it claims.
+                $t = $script:theme.PSObject.Copy()
+                $t.cursorShape = $Shape
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Match "config\.default_cursor_style = '$Style'"
+            }
+
+            It 'emits nothing at all for a shape it does not recognise' {
+                # An unknown value is not a plain cursor. Measured on wezterm
+                # 20240203-110809-5046fc22:
+                #   error converting Lua table to Config (... Error processing
+                #   Config::default_cursor_style: `EmptyBox` is not a valid
+                #   DefaultCursorStyle variant ...)
+                # and a config error drops WezTerm to its DEFAULT config: the
+                # user's whole terminal appearance, for one word in a theme.json
+                # this project has never seen.
+                $t = $script:theme.PSObject.Copy()
+                $t.cursorShape = 'lozenge'
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Not -Match 'default_cursor_style'
+            }
+
+            It 'never emits a name outside the six this wezterm accepts' {
+                # Probed one by one: all six below load with no output, and
+                # 'EmptyBox' -- the plausible-looking name that is NOT a variant
+                # -- is rejected, so the enum really is discriminated rather
+                # than passed through.
+                $accepted = @('SteadyBlock', 'BlinkingBlock', 'SteadyUnderline',
+                              'BlinkingUnderline', 'SteadyBar', 'BlinkingBar')
+                $domain = @('bar', 'vintage', 'filledBox', 'emptyBox', 'underscore',
+                            'doubleUnderscore', '', $null, 'EmptyBox ', 'nonsense')
+                $emitted = @($domain | ForEach-Object { Get-WezTermCursorStyle $_ } |
+                             Where-Object { $_ })
+                # Projected with ForEach-Object, not $x.Prop: member access on
+                # an empty array yields one $null and would make this pass on a
+                # mapper that returned nothing at all.
+                $emitted.Count | Should -Be 6 -Because 'the six Windows Terminal shapes must all map'
+                foreach ($v in $emitted) { $accepted | Should -Contain $v }
+            }
+        }
+
+        Context 'theme.json opacity and useAcrylic -> window transparency' {
+            It 'converts Windows Terminal''s 0-100 to WezTerm''s 0.0-1.0' {
+                $t = $script:theme.PSObject.Copy()
+                $t.opacity = 80
+                $lua = Get-WezTermStyleLua -StyleName 'kitty' -Scheme $script:scheme -Theme $t
+                $lua | Should -Match 'config\.window_background_opacity = 0\.8'
+            }
+
+            It 'writes that fraction invariantly on a comma-decimal culture' {
+                # "0,8" is a Lua syntax error, and a syntax error here is the
+                # user's whole config -- the same trap as the background layer's
+                # opacity above.
+                $saved = [System.Threading.Thread]::CurrentThread.CurrentCulture
+                try {
+                    [System.Threading.Thread]::CurrentThread.CurrentCulture = [cultureinfo]::GetCultureInfo('de-DE')
+                    $t = $script:theme.PSObject.Copy()
+                    $t.opacity = 80
+                    $lua = Get-WezTermStyleLua -StyleName 'kitty' -Scheme $script:scheme -Theme $t
+                    $lua | Should -Match 'window_background_opacity = 0\.8'
+                    $lua | Should -Not -Match 'window_background_opacity = 0,8'
+                } finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
+            }
+
+            It 'says nothing for opacity 100, which is already the default' {
+                # Fifteen of the sixteen bundled styles. 1.0 IS
+                # window_background_opacity's default, so emitting it would
+                # state a default into a file merged with the user's own config.
                 $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $script:theme
-                $lua | Should -Not -Match 'window_background_opacity' `
-                    -Because 'Get-TerminalCapability does not claim Opacity for WezTerm'
+                $lua | Should -Not -Match 'window_background_opacity'
+            }
+
+            It 'says nothing for an opacity that is not a number' {
+                $t = $script:theme.PSObject.Copy()
+                $t.opacity = 'mostly'
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Not -Match 'window_background_opacity'
+            }
+
+            It 'carries the same fraction onto the base colour layer' {
+                # THE HALF THAT ACTUALLY PAINTS. wezterm's render path, read at
+                # 20240203-110809-5046fc22:
+                #   paint.rs      -- with a `background` list it calls
+                #                    render_backgrounds() and SKIPS the branch
+                #                    that does .mul_alpha(window_background_opacity)
+                #   background.rs -- render_background() uses
+                #                    bg_color.mul_alpha(layer.def.opacity)
+                # so for every bundled style (they all ship a GIF) the layer's
+                # own opacity is the alpha that reaches the screen. Without this
+                # line `kitty` would paint a fully opaque colour layer over a
+                # correctly transparent window and the user would see nothing.
+                $t = $script:theme.PSObject.Copy()
+                $t.opacity = 80
+                $lua = Get-WezTermStyleLua -StyleName 'kitty' -Scheme $script:scheme `
+                    -Theme $t -BackgroundImage '/abs/kitty/background.gif'
+
+                $lines = $lua -split "`n"
+                $colorAt = -1; $fileAt = -1
+                for ($i = 0; $i -lt $lines.Count; $i++) {
+                    if ($colorAt -lt 0 -and $lines[$i] -match 'source = \{ Color =') { $colorAt = $i }
+                    if ($fileAt  -lt 0 -and $lines[$i] -match 'source = \{ File =')  { $fileAt  = $i }
+                }
+                $colorAt | Should -BeGreaterThan -1 -Because 'the base colour layer must exist'
+                $fileAt  | Should -BeGreaterThan $colorAt -Because 'the image layer follows it'
+                @($lines[$colorAt..$fileAt] | Where-Object { $_.Trim() -eq 'opacity = 0.8,' }).Count |
+                    Should -Be 1 -Because 'the style''s opacity belongs on the layer that is drawn'
+            }
+
+            It 'leaves the base colour layer alone for an opaque style' {
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme `
+                    -Theme $script:theme -BackgroundImage '/abs/eva/background.gif'
+                $lines = $lua -split "`n"
+                $colorAt = -1; $fileAt = -1
+                for ($i = 0; $i -lt $lines.Count; $i++) {
+                    if ($colorAt -lt 0 -and $lines[$i] -match 'source = \{ Color =') { $colorAt = $i }
+                    if ($fileAt  -lt 0 -and $lines[$i] -match 'source = \{ File =')  { $fileAt  = $i }
+                }
+                $fileAt | Should -BeGreaterThan $colorAt
+                @($lines[$colorAt..$fileAt] | Where-Object { $_ -match 'opacity' }).Count |
+                    Should -Be 0 -Because 'opacity 100 asks for nothing anywhere'
+            }
+
+            It 'guards the macOS blur behind the platform, not the file' {
+                # useAcrylic is the blur. macos_window_background_blur is
+                # macOS-only, and this file is written on Linux too, where
+                # config_builder REJECTS a field it does not know -- costing the
+                # user the whole config for a setting that could never have done
+                # anything there. So the assignment must sit INSIDE the
+                # target_triple test, not merely somewhere in the file.
+                $t = $script:theme.PSObject.Copy()
+                $t.opacity    = 80
+                $t.useAcrylic = $true
+                $lua = Get-WezTermStyleLua -StyleName 'kitty' -Scheme $script:scheme -Theme $t
+
+                $lua | Should -Match 'config\.macos_window_background_blur = 20'
+                [regex]::IsMatch($lua,
+                    "if wezterm\.target_triple:find\('darwin'\) then\s*\r?\n\s*config\.macos_window_background_blur = 20\s*\r?\n\s*end") |
+                    Should -BeTrue -Because 'an unguarded macos_* field is a config error on Linux'
+            }
+
+            It 'emits no blur for a style that does not ask for acrylic' {
+                $t = $script:theme.PSObject.Copy()
+                $t.opacity = 80
+                $lua = Get-WezTermStyleLua -StyleName 'sober' -Scheme $script:scheme -Theme $t
+                $lua | Should -Not -Match 'macos_window_background_blur'
+            }
+
+            It 'emits no blur where the window stays opaque' {
+                # Acrylic on an opaque window blurs nothing: wezterm's macOS
+                # window is setOpaque_(YES) whenever window_background_opacity
+                # is >= 1.0 (window/src/os/macos/window.rs,
+                # update_window_shadow), which is exactly what opacity 100 gives
+                # -- and what Windows Terminal shows for the same theme.json.
+                $t = $script:theme.PSObject.Copy()
+                $t.useAcrylic = $true
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Not -Match 'macos_window_background_blur'
+            }
+        }
+
+        Context 'theme.json tabColor -> the tab bar' {
+            It 'paints the active tab with the style''s accent' {
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $script:theme
+                $lua | Should -Match "config\.colors\.tab_bar\.active_tab\.bg_color = '#ff3d5a'"
+            }
+
+            It 'MERGES into config.colors rather than replacing it' {
+                # The trap. config.colors is the table the user is most likely
+                # to have written themselves, and it is also where a
+                # color_scheme's per-key overrides live -- so `config.colors = {`
+                # would delete settings this module never asked about, in a file
+                # the user cannot see being generated.
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $script:theme
+                $lua | Should -Match 'config\.colors = config\.colors or \{\}'
+                $lua | Should -Match 'config\.colors\.tab_bar = config\.colors\.tab_bar or \{\}'
+                $lua | Should -Match 'config\.colors\.tab_bar\.active_tab = config\.colors\.tab_bar\.active_tab or \{\}'
+                $lua | Should -Not -Match 'config\.colors = \{' `
+                    -Because 'a wholesale assignment is what destroys the user''s own colors'
+            }
+
+            It 'leaves the inactive tabs to WezTerm' {
+                # This config is global, not per-profile, so colouring inactive
+                # tabs too would paint the whole bar the accent colour and erase
+                # the active/inactive distinction. Windows Terminal's tabColor
+                # tints the tab of the profile in front.
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $script:theme
+                $lua | Should -Not -Match 'inactive_tab'
+            }
+
+            It 'picks tab text that can be read on <Accent>' -ForEach @(
+                @{ Accent = '#ffb3c6'; Text = '#000000' }   # kitty's light pink
+                @{ Accent = '#ff3d5a'; Text = '#000000' }   # eva's red: still light enough
+                @{ Accent = '#2a2535'; Text = '#ffffff' }   # a dark accent
+            ) {
+                # Windows Terminal picks the tab's text colour from the accent's
+                # luminance; WezTerm keeps its default light grey unless told,
+                # which is unreadable on the light accents some styles ship.
+                $t = $script:theme.PSObject.Copy()
+                $t.tabColor = $Accent
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Match "config\.colors\.tab_bar\.active_tab\.fg_color = '$Text'"
+            }
+
+            It 'says nothing about the tab bar for a colour WezTerm would reject' {
+                # #RRGGBBAA is not three channels; SrgbaTuple::from_str rejects
+                # it, and a rejected colour is a config error.
+                $t = $script:theme.PSObject.Copy()
+                $t.tabColor = '#ff3d5aff'
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Not -Match 'tab_bar'
+            }
+
+            It 'says nothing about the tab bar for a style that declares no tabColor' {
+                $bare = [pscustomobject]@{ padding = '12' }
+                $lua = Get-WezTermStyleLua -StyleName 'plain' -Scheme $script:scheme -Theme $bare
+                $lua | Should -Not -Match 'tab_bar'
+            }
+        }
+
+        Context 'backgroundImageStretchMode -> BackgroundSize' {
+            It 'only ever emits a size this wezterm parses' {
+                # BackgroundSize is Contain, Cover, or a dimension. `none` used
+                # to map to 'Auto', which is not a variant, and the style that
+                # declares `none` is the bundled `kitty` -- so applying it wrote
+                # a module that took the user's whole WezTerm config down:
+                #   error converting Lua table to Config (... Error processing
+                #   background.width (types: Config, BackgroundLayer) expected
+                #   either 'Contain', 'Cover', a number, or a string of the form
+                #   '123px' ... but got String)
+                $grammar = '^(Contain|Cover|\d+(\.\d+)?(px|%|pt|cell)?)$'
+                foreach ($mode in 'uniform', 'uniformToFill', 'fill', 'none', '', 'wibble') {
+                    Get-WezTermBackgroundSize $mode | Should -Match $grammar `
+                        -Because "'$mode' must map to a BackgroundSize wezterm accepts"
+                }
+            }
+
+            It 'is asking about every bundled style, not an empty list' {
+                # The -ForEach below is expanded at DISCOVERY; if it ever
+                # expanded to nothing the case would vanish and this file would
+                # still report green, which is the failure mode this project
+                # keeps finding in its own suite.
+                $dirs = @(Get-ChildItem -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'styles') -Directory)
+                $themed = @($dirs | Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName 'theme.json') })
+                $themed.Count | Should -BeGreaterThan 0
+                $themed.Count | Should -Be $dirs.Count -Because 'every bundled style ships a theme.json'
+            }
+
+            It 'keeps every bundled style inside that grammar' -ForEach @(
+                @(Get-ChildItem -LiteralPath (Join-Path (Split-Path $PSScriptRoot -Parent) 'styles') -Directory |
+                    ForEach-Object {
+                        $p = Join-Path $_.FullName 'theme.json'
+                        if (Test-Path -LiteralPath $p) {
+                            @{ Style = $_.Name
+                               Mode  = [string]((Get-Content -LiteralPath $p -Raw | ConvertFrom-Json).backgroundImageStretchMode) }
+                        }
+                    })
+            ) {
+                # Driven off the shipped theme.json files rather than a list
+                # here, so a style added with a new stretch mode is measured
+                # instead of assumed. <Style> asks for <Mode>.
+                Get-WezTermBackgroundSize $Mode |
+                    Should -Match '^(Contain|Cover|\d+(\.\d+)?(px|%|pt|cell)?)$' `
+                    -Because "$Style ships backgroundImageStretchMode '$Mode'"
             }
         }
 
@@ -362,6 +665,23 @@ Describe 'both apply paths reach both publishers' {
 
 Describe 'the WezTerm capability table matches what the writer emits' {
     InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:capScheme = [pscustomobject]@{
+                background = '#0a0006'; foreground = '#ffe8e8'; cursorColor = '#ff3d5a'
+            }
+            # A style that asks for EVERY field the notice can name, so both
+            # directions below are actually exercised.
+            $script:capTheme = [pscustomobject]@{
+                tabTitle    = 'EVA // NERV'
+                tabColor    = '#ff3d5a'
+                cursorShape = 'filledBox'
+                useAcrylic  = $true
+                opacity     = 80
+                font        = [pscustomobject]@{ face = 'Cascadia Code'; size = 11 }
+                padding     = '12'
+            }
+        }
+
         It 'claims exactly what Get-WezTermStyleLua writes' {
             $caps = Get-TerminalCapability -Kind 'WezTerm'
             $caps.OscPalette      | Should -BeTrue
@@ -369,17 +689,35 @@ Describe 'the WezTerm capability table matches what the writer emits' {
             $caps.Font            | Should -BeTrue
             $caps.Padding         | Should -BeTrue
             $caps.Persist         | Should -BeTrue
+            $caps.Opacity         | Should -BeTrue -Because 'window_background_opacity plus the layer alpha'
+            $caps.CursorShape     | Should -BeTrue -Because 'default_cursor_style'
+            $caps.TabColor        | Should -BeTrue -Because 'colors.tab_bar.active_tab'
         }
 
-        It 'claims nothing the writer does not deliver' {
-            # The rule the capability table exists for: a claimed capability that
-            # no code delivers makes a style report success, paint nothing, and
-            # suppress the notice that would have explained why.
-            $caps = Get-TerminalCapability -Kind 'WezTerm'
-            $caps.Opacity     | Should -BeFalse
-            $caps.CursorShape | Should -BeFalse
-            $caps.TabTitle    | Should -BeFalse
-            $caps.TabColor    | Should -BeFalse
+        It 'claims <Flag> only if the generated module really carries it' -ForEach @(
+            @{ Flag = 'Font';            Option = 'config\.font = ' }
+            @{ Flag = 'Padding';         Option = 'config\.window_padding' }
+            @{ Flag = 'Opacity';         Option = 'config\.window_background_opacity' }
+            @{ Flag = 'CursorShape';     Option = 'config\.default_cursor_style' }
+            @{ Flag = 'TabColor';        Option = 'config\.colors\.tab_bar\.active_tab' }
+            @{ Flag = 'BackgroundImage'; Option = 'config\.background' }
+            @{ Flag = 'TabTitle';        Option = 'tab_title|set_title' }
+        ) {
+            # Both directions, against the writer's OUTPUT rather than its
+            # source text. A flag turned on with no line behind it makes a style
+            # report success, paint nothing, and suppress the notice that would
+            # have explained why; a flag left off next to a line that DOES run
+            # makes the apply print "WezTerm can't show: X" about something it
+            # has just done. TabTitle is the second case's control: nothing
+            # writes one, and the title still changes because the style's own
+            # prompt sets it.
+            $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:capScheme `
+                -Theme $script:capTheme -BackgroundImage '/abs/eva/background.gif'
+            if ((Get-TerminalCapability -Kind 'WezTerm')[$Flag]) {
+                $lua | Should -Match $Option -Because "WezTerm claims $Flag"
+            } else {
+                $lua | Should -Not -Match $Option -Because "WezTerm does not claim $Flag"
+            }
         }
     }
 }

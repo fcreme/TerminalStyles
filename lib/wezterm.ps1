@@ -141,16 +141,150 @@ function Get-WezTermFontWeight {
 
 function Get-WezTermBackgroundSize {
     # backgroundImageStretchMode -> BackgroundSize. Cover is WezTerm's default
-    # and the closest thing to uniformToFill, which is what every bundled style
-    # asks for.
+    # (impl Default for BackgroundSize) and the closest thing to uniformToFill,
+    # which is what most bundled styles ask for.
+    #
+    # Every value here must be one BackgroundSize accepts, because a value it
+    # does not accept is not a differently-scaled image -- it is the user's
+    # whole config replaced by the default one. `none` used to map to 'Auto',
+    # which is not a variant, and `kitty` is the bundled style that declares
+    # it. Measured on wezterm 20240203-110809-5046fc22:
+    #
+    #   error converting Lua table to Config (Config::from_dynamic: Error
+    #   processing background.width (types: Config, BackgroundLayer) expected
+    #   either 'Contain', 'Cover', a number, or a string of the form '123px'
+    #   where 'px' is a unit and can be one of 'px', '%', 'pt' or 'cell', but
+    #   got String)
+    #
+    # WezTerm has no natural-size variant, so `none` -- Windows Terminal's
+    # "draw it at its own size" -- has no exact counterpart. Contain is the
+    # nearest: it is the one option that neither stretches the aspect ratio nor
+    # crops the image, which is what asking for `none` is asking to avoid.
     param([AllowNull()][string]$Mode)
     switch (($Mode -as [string]).ToLowerInvariant()) {
         'uniform'        { 'Contain' }
         'uniformtofill'  { 'Cover' }
         'fill'           { '100%' }
-        'none'           { 'Auto' }
+        'none'           { 'Contain' }   # nearest: no 'Auto' in BackgroundSize
         default          { 'Cover' }
     }
+}
+
+function Get-WezTermCursorStyle {
+    <#
+    .SYNOPSIS
+    theme.json cursorShape -> WezTerm's DefaultCursorStyle, or $null.
+
+    .DESCRIPTION
+    The WHOLE Windows Terminal domain is mapped, not just the three shapes the
+    bundled styles happen to use (vintage, filledBox, bar): a user style may
+    declare any of the six, and the cost of an unrecognised one reaching the
+    file is not a plain cursor. Measured against wezterm
+    20240203-110809-5046fc22, with config_builder validation on:
+
+      config.default_cursor_style = 'EmptyBox'
+      -> error converting Lua table to Config (Config::from_dynamic: Error
+         processing Config::default_cursor_style: `EmptyBox` is not a valid
+         DefaultCursorStyle variant. ...)
+
+    and a config error is the user's WHOLE appearance, not just the style. So
+    anything unrecognised returns $null and the caller emits no line at all --
+    WezTerm's own default cursor is a correct answer; an invalid enum is not.
+
+    WezTerm has three shapes (Block / Underline / Bar), each Steady or
+    Blinking, so two of Windows Terminal's six have no exact counterpart and
+    are mapped to the nearest shape rather than to an invented one:
+
+      emptyBox         -> SteadyBlock      WezTerm draws no hollow cursor. The
+                                           box is the shape; the fill is the
+                                           part that cannot be carried.
+      doubleUnderscore -> SteadyUnderline  One rule where the style asked for
+                                           two; WezTerm has no double variant.
+
+    vintage is the classic console cursor -- a short block at the BOTTOM of the
+    cell (Windows Terminal draws it as the ▃ glyph), which the underline
+    approximates and a full block would overstate, so it maps to
+    SteadyUnderline rather than SteadyBlock.
+
+    Steady, never Blinking, throughout: theme.json carries no blink field, so
+    choosing a Blinking variant would deliver a request no style ever made.
+    #>
+    param([AllowNull()][string]$Shape)
+
+    if ([string]::IsNullOrWhiteSpace($Shape)) { return $null }
+    switch ($Shape.ToLowerInvariant()) {
+        'bar'              { 'SteadyBar' }
+        'filledbox'        { 'SteadyBlock' }
+        'emptybox'         { 'SteadyBlock' }        # nearest: no hollow cursor
+        'underscore'       { 'SteadyUnderline' }
+        'doubleunderscore' { 'SteadyUnderline' }    # nearest: no double rule
+        'vintage'          { 'SteadyUnderline' }
+        default            { $null }
+    }
+}
+
+function Get-WezTermWindowOpacity {
+    <#
+    .SYNOPSIS
+    theme.json opacity (Windows Terminal's 0-100) -> WezTerm's 0.0-1.0, or
+    $null when the style is not asking for transparency at all.
+
+    .DESCRIPTION
+    $null for 100 deliberately. 1.0 IS window_background_opacity's default, so
+    emitting it states a default rather than a decision -- and this file is
+    merged into a config the user owns, where every line we write is a line
+    that can contradict one of theirs. Fifteen of the sixteen bundled styles
+    are opacity 100 + useAcrylic false, an ordinary opaque window, which is
+    what WezTerm already gives.
+
+    Parsed with InvariantCulture on purpose: the value arrives from JSON, where
+    the decimal separator is always a dot, and the session's culture may not
+    agree -- the same rule the timestamps in this project are pinned by.
+
+    A malformed or negative value is $null rather than clamped: "80abc" is not
+    a request for anything, and guessing at one writes a number into the user's
+    terminal that no file of theirs contains.
+    #>
+    param([AllowNull()]$Opacity)
+
+    if ($null -eq $Opacity) { return $null }
+    $parsed = 0.0
+    if (-not [double]::TryParse("$Opacity", [System.Globalization.NumberStyles]::Float,
+                                [cultureinfo]::InvariantCulture, [ref]$parsed)) { return $null }
+    if ($parsed -lt 0 -or $parsed -ge 100) { return $null }
+    # Rounded so 83 does not arrive as 0.8300000000000001 in a file people read.
+    [math]::Round($parsed / 100.0, 4)
+}
+
+function Get-WezTermTabForeground {
+    <#
+    .SYNOPSIS
+    Readable tab text for a tab painted $Background, or $null if it cannot be
+    computed.
+
+    .DESCRIPTION
+    Windows Terminal picks the tab's text colour itself from the tabColor's
+    luminance; WezTerm does not -- colors.tab_bar.active_tab.fg_color keeps its
+    default (a light grey) unless something sets it, which is unreadable on the
+    light accents several bundled styles ship ('kitty' is #ffb3c6). So the
+    same choice Windows Terminal makes is made here: WCAG relative luminance,
+    then whichever of black and white contrasts further from it.
+
+    $null for a colour ConvertTo-NormalHex cannot reduce to #rrggbb -- WezTerm
+    also accepts #rrrgggbbb and #rrrrggggbbbb, which no consumer in this
+    project can decode. The caller then emits bg_color alone and leaves
+    WezTerm's own fg_color in place, which is a worse tab and a valid config.
+    #>
+    param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Background)
+
+    $hex = ConvertTo-NormalHex $Background
+    if (-not $hex) { return $null }
+    $chan = foreach ($i in 1, 3, 5) {
+        $v = [Convert]::ToInt32($hex.Substring($i, 2), 16) / 255
+        if ($v -le 0.03928) { $v / 12.92 } else { [math]::Pow((($v + 0.055) / 1.055), 2.4) }
+    }
+    $l = 0.2126 * $chan[0] + 0.7152 * $chan[1] + 0.0722 * $chan[2]
+    if ((($l + 0.05) / 0.05) -ge (1.05 / ($l + 0.05))) { '#000000' } else { '#ffffff' }
 }
 
 function Get-WezTermStyleLua {
@@ -224,8 +358,7 @@ function Get-WezTermStyleLua {
     [void]$sb.AppendLine("  }")
     [void]$sb.AppendLine("  config.color_scheme = $(& $q $schemeName)")
 
-    # theme.json -> font and padding. Opacity is deliberately absent; see the
-    # capability table for why it is not claimed.
+    # theme.json -> font and padding.
     if ($Theme -and $Theme.font -and $Theme.font.face) {
         $w = Get-WezTermFontWeight $Theme.font.weight
         [void]$sb.AppendLine("")
@@ -240,6 +373,101 @@ function Get-WezTermStyleLua {
         $padNum = 0
         if ([int]::TryParse($pad, [ref]$padNum)) {
             [void]$sb.AppendLine("  config.window_padding = { left = $padNum, right = $padNum, top = $padNum, bottom = $padNum }")
+        }
+    }
+
+    # theme.json cursorShape -> default_cursor_style. Nothing at all for a
+    # shape this project does not recognise: see Get-WezTermCursorStyle for the
+    # measured error an invalid enum produces, and what it costs the user.
+    $cursor = $null
+    if ($Theme) { $cursor = Get-WezTermCursorStyle $Theme.cursorShape }
+    if ($cursor) {
+        [void]$sb.AppendLine("  config.default_cursor_style = $(& $q $cursor)")
+    }
+
+    # theme.json opacity + useAcrylic -> window transparency.
+    #
+    # Both halves are needed, and they act in DIFFERENT places -- read together
+    # from wezterm 20240203-110809-5046fc22's own source:
+    #
+    #   window/src/os/macos/window.rs, update_window_shadow():
+    #     let is_opaque = if self.config.window_background_opacity >= 1.0 { YES }
+    #                     else { NO };
+    #     self.window.setOpaque_(is_opaque);
+    #
+    # so nothing shows through the window at all until this setting drops below
+    # 1.0 -- a translucent background LAYER on its own cannot make the window
+    # itself transparent. And:
+    #
+    #   wezterm-gui/src/termwindow/render/paint.rs
+    #     match (self.window_background.is_empty(), ...) {
+    #       (false, ...) => { ... self.render_backgrounds(bg_color, top) ... }
+    #       ...
+    #     }
+    #     if paint_terminal_background { ... .mul_alpha(self.config.window_background_opacity) }
+    #
+    #   wezterm-gui/src/termwindow/background.rs, render_background():
+    #     let color = bg_color.mul_alpha(layer.def.opacity);
+    #
+    # so once a `background` LAYER LIST exists -- which is every bundled style,
+    # they all ship a GIF -- the alpha that reaches the screen is the LAYER's
+    # opacity and window_background_opacity is not multiplied in at all. The two
+    # branches are mutually exclusive, so carrying the same fraction onto the
+    # base colour layer below is not a double application: exactly one of them
+    # is the factor, whichever path WezTerm takes.
+    #
+    # WezTerm converts its own legacy single-image setting the same way --
+    # config/src/background.rs, BackgroundLayer::with_legacy():
+    #     opacity: cfg.window_background_opacity,
+    # the window setting becomes the LAYER's opacity there too.
+    #
+    # Emitting only window_background_opacity would therefore leave `kitty` --
+    # the one bundled style that asks for transparency, and the one that also
+    # ships a background -- painting a fully opaque colour layer over a
+    # correctly transparent window, which is the capability lie this project
+    # keeps a table to prevent.
+    $winOpacity = $null
+    if ($Theme) { $winOpacity = Get-WezTermWindowOpacity $Theme.opacity }
+    if ($null -ne $winOpacity) {
+        $o = ([double]$winOpacity).ToString([cultureinfo]::InvariantCulture)
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("  config.window_background_opacity = $o")
+        if ($Theme.useAcrylic) {
+            # useAcrylic is the blur, and macos_window_background_blur is
+            # macOS-only. GUARDED rather than emitted unconditionally: this
+            # file is written on Linux too, wezterm's config_builder REJECTS a
+            # field it does not know, and a rejected field is the user's whole
+            # config replaced by the default one. wezterm.target_triple is the
+            # value WezTerm itself resolves the platform with -- measured here
+            # as 'aarch64-apple-darwin'.
+            [void]$sb.AppendLine("  if wezterm.target_triple:find('darwin') then")
+            [void]$sb.AppendLine("    config.macos_window_background_blur = 20")
+            [void]$sb.AppendLine("  end")
+        }
+    }
+
+    # theme.json tabColor -> the active tab's colours.
+    #
+    # MERGED field by field, never assigned wholesale. config.colors is the
+    # table the user is most likely to have written themselves, and it is also
+    # where a color_scheme's per-key overrides live, so `config.colors = { ... }`
+    # would delete settings this module never asked about. Each `or {}` below
+    # creates a level only when the user has none.
+    #
+    # active_tab alone, not inactive_tab: this config is global to WezTerm
+    # rather than per-profile, so colouring both would paint the whole tab bar
+    # the accent colour and erase the active/inactive distinction. Windows
+    # Terminal's tabColor tints the tab of the profile in front, which is the
+    # active one.
+    if ($Theme -and (Test-WezTermHexColor $Theme.tabColor)) {
+        [void]$sb.AppendLine("")
+        [void]$sb.AppendLine("  config.colors = config.colors or {}")
+        [void]$sb.AppendLine("  config.colors.tab_bar = config.colors.tab_bar or {}")
+        [void]$sb.AppendLine("  config.colors.tab_bar.active_tab = config.colors.tab_bar.active_tab or {}")
+        [void]$sb.AppendLine("  config.colors.tab_bar.active_tab.bg_color = $(& $q $Theme.tabColor)")
+        $tabFg = Get-WezTermTabForeground $Theme.tabColor
+        if ($tabFg) {
+            [void]$sb.AppendLine("  config.colors.tab_bar.active_tab.fg_color = $(& $q $tabFg)")
         }
     }
 
@@ -258,7 +486,17 @@ function Get-WezTermStyleLua {
         if (Test-WezTermHexColor $Scheme.background) {
             [void]$sb.AppendLine("    {")
             [void]$sb.AppendLine("      source = { Color = $(& $q $Scheme.background) },")
+            # '100%', never the BackgroundSize used for the image: a Color
+            # source with Cover or Contain is a config error --
+            # "Cover is not implemented for background color. Use e.g.
+            # width = '100%' instead" (config/src/background.rs).
             [void]$sb.AppendLine("      width = '100%', height = '100%',")
+            if ($null -ne $winOpacity) {
+                # The style's opacity, on the layer, because with a layer list
+                # this is the alpha that reaches the screen -- see the long
+                # note at config.window_background_opacity above.
+                [void]$sb.AppendLine("      opacity = $(([double]$winOpacity).ToString([cultureinfo]::InvariantCulture)),")
+            }
             [void]$sb.AppendLine("    },")
         }
         # An ABSOLUTE path: File.path is a plain String handed to fs::read, with
