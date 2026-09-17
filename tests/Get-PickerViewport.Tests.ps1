@@ -121,27 +121,39 @@ Describe 'the picker frame keeps a constant height' {
             $draw = [regex]::Match($src, '(?s)\$drawMenu = \{.*?\n        \}').Value
             $draw | Should -Match 'more above'
             $draw | Should -Match 'more below'
-            # Each indicator has an else-branch that writes a blank line.
-            ([regex]::Matches($draw, '\} else \{\s*\n\s*Write-Host ""')).Count |
+            # Each indicator has an else-branch that writes a blank row. The row
+            # is written as $el -- an erase-to-end-of-line -- rather than "",
+            # because the frame is overwritten in place and a blank "" would
+            # leave the previous frame's longer line sitting under it.
+            ([regex]::Matches($draw, '\} else \{\s*\n\s*Write-Host \$el')).Count |
                 Should -BeGreaterOrEqual 2
         }
 
-        It 'asks the viewport how much room it has' {
+        It 'asks one function for its whole row budget' {
+            # This used to pin the arithmetic inline in $drawMenu, and the
+            # arithmetic was off by one -- the frame was budgeted at exactly
+            # WindowHeight rows, so ending its last line scrolled the buffer out
+            # from under an origin the picker had captured once. The budget now
+            # lives in Get-PickerFramePlan, which a test can drive; what is
+            # structural here is only that the picker does not do its own sums.
             $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
-            $src | Should -Match 'Get-PickerViewport -Total \$styles\.Count'
-            $src | Should -Match 'WindowHeight'
+            $src | Should -Match 'Get-PickerFramePlan'
+            ([regex]::Matches($src, 'Get-PickerViewport')).Count | Should -Be 0 `
+                -Because 'a second copy of the budget is how the first one came to be wrong'
         }
 
         It 'falls back to the full list when the window height is unavailable' {
             # [Console]::WindowHeight throws with no console attached, and --
             # verified under a pty whose size was never set -- returns 0 rather
-            # than throwing in other cases. Subtracting the chrome from 0 would
-            # collapse the menu to one row, which is worse than the unbounded
-            # frame the viewport exists to prevent. Both cases must fall back to
-            # drawing everything.
-            $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
-            $src | Should -Match '\$available = \$styles\.Count'
-            $src | Should -Match 'if \(\$wh -gt 0\)'
+            # than throwing in other cases. Budgeting from 0 would collapse the
+            # menu to one row, which is worse than the unbounded frame the
+            # viewport exists to prevent. Measured through the real function
+            # rather than matched in the source.
+            foreach ($wh in 0, -1) {
+                $plan = Get-PickerFramePlan -Total 17 -Selected 3 -WindowHeight $wh
+                $plan.Count | Should -Be 17
+                $plan.Fits  | Should -BeTrue
+            }
         }
 
         It 'treats a zero window height as unknown, not as no room' {

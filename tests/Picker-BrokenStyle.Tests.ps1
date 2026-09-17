@@ -313,7 +313,9 @@ Describe 'the picker itself' {
             # of them rather than over the one that existed when this was
             # written. The backup-failure row joined it in 0.8.28.
             $body = $draw[0].Right.Extent.Text
-            $body | Should -Match '\$chrome'
+            # The budget moved into Get-PickerFramePlan; what the picker still
+            # owes it is the COUNT of conditional rows it is about to paint.
+            $body | Should -Match '\$notes'
             foreach ($note in '$unreadableNote', '$backupNote') {
                 ([regex]::Matches($body, [regex]::Escape("if ($note)"))).Count |
                     Should -BeGreaterOrEqual 2 `

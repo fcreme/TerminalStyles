@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **the picker's frame was budgeted at exactly the window height, so drawing it scrolled the buffer out from under its own cursor -- and every redraw after that painted in the wrong place.** The picker repaints by parking the cursor at a row it captured ONCE and overwriting in place, which holds only while the whole frame fits below that row. The row budget subtracted the chrome from `[Console]::WindowHeight` and stopped there, so at the limit the frame painted exactly `WindowHeight` rows and the newline ending its last line scrolled everything up by one. From then on the saved row pointed one line off, the header repeated down the screen, and short rows wore the tails of longer ones:
+
+  ```
+  Choose a style for WezTermto keep, Esc to cancel
+       eva                                        el
+  ```
+
+  It needs only a list long enough to fill the window -- the 16 bundled styles plus one of the user's own do it in any window of 26 rows or fewer, which is why it showed up on WezTerm first and not because of anything WezTerm does.
+
+  Three changes, because the accounting was not the only thing that could put the frame out of step with the screen. The budget is now one pure function, `Get-PickerFramePlan`, which holds a row back and which a test can drive -- the arithmetic used to sit inline in `$drawMenu` where nothing could reach it, and the picker no longer does any of its own sums. Every row the frame paints ends with an erase-to-end-of-line, so a row that gets SHORTER can no longer leave the previous frame's tail behind -- which is what a window resize does to every row at once. And when the frame cannot fit at all, in a window too short to hold even the chrome, the picker reclaims the screen and re-anchors instead of painting at an origin the scroll has already invalidated: a redraw that flickers is recoverable, one that smears is not.
+
+  Measured: with the held-back row removed, a 14-row window budgets a 14-row frame and the guard fails by name. Four existing tests pinned the arithmetic by matching the picker's source text and broke on a refactor that changed no behaviour -- the shape CLAUDE.md warns about -- so they now drive the function instead.
+
 - **three test files had been writing to the operator's own `~/Library/Application Support/TerminalStyles` since May, and the guard that watches for exactly that reported green the whole time.** `Apply-StyleDirect-Backup`, `Reset-StyleDirect` and `Invoke-TerminalStyle-TuneDispatch` each sandboxed ONE half of the state and missed the other: `$script:TStylesCurrent` is computed from the data root at MODULE LOAD, so overriding `$script:TStylesDataRoot` does not move it, while `current-style.json`, `current-style.osc` and the staged shell runtime are computed from the data root at CALL time, so overriding `TStylesCurrent` does not move them. One file set the first, two set the second, none set both.
 
   `Zz-RealStateUntouched` compares a baseline against the end of the run and could not see it, because what the tests wrote was byte-identical to what was already there -- the machine's active style had been written by the same code. It surfaced the moment the operator's real `current-style.*` was written by a NEWER module than the one that had produced the baseline files, at which point the same tests started overwriting real content with different bytes:
