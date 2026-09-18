@@ -573,7 +573,7 @@ function Get-TunedBaseBackground {
     # $null if not tuned / base missing / base has no background. Strictly one
     # hop: the base is resolved with -NoInherit, so cyclic tune.json (A->B->A)
     # cannot recurse.
-    param([Parameter(Mandatory)][string]$StyleDir)
+    param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoFetch)
     $tuneFile = Join-Path $StyleDir 'tune.json'
     if (-not (Test-Path -LiteralPath $tuneFile)) { return $null }
     try {
@@ -583,7 +583,7 @@ function Get-TunedBaseBackground {
     $baseDir = Get-StyleDir -StyleName $tune.base
     # Compared the way the host filesystem compares -- see Test-SameStyleDirectory.
     if (-not $baseDir -or (Test-SameStyleDirectory -A $baseDir -B $StyleDir)) { return $null }
-    return Get-StyleBundledBackground -StyleDir $baseDir -NoInherit
+    return Get-StyleBundledBackground -StyleDir $baseDir -NoInherit -NoFetch:$NoFetch
 }
 
 function Resolve-TuneSeed {

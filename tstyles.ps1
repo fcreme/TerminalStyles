@@ -935,7 +935,7 @@ function Invoke-TerminalStyle {
     # scriptblock's own child scope and never be seen out here. The finally
     # block needs to know whether the revert already happened, and the revert
     # needs to know whether there is anything to revert.
-    $pickerState = @{ Reverted = $false; SettingsWritten = $false }
+    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false }
 
     # Single choke point for every settings.json write in the picker. Off
     # Windows Terminal this is a no-op, so the loop below reads the same in
@@ -963,6 +963,74 @@ function Invoke-TerminalStyle {
     # the same claim this whole path was fixed for. (The bytes themselves do
     # survive a restore now -- Write-SettingsAtomic keeps the BOM the live file
     # had, which it used to drop on every write.)
+    # WezTerm's live preview.
+    #
+    # WezTerm adds the files it `require`s to its config reload watch list, so
+    # rewriting the generated module restyles a RUNNING window -- which makes it
+    # the one terminal off Windows where arrowing through the picker can show the
+    # whole style, not just the palette the OSC retint carries. Colours, font,
+    # padding, cursor shape, opacity and the animated background all arrive.
+    #
+    # Two rules this path must not break, both paid for already:
+    #
+    #   * It runs on the picker's own input thread, so it must never resolve a
+    #     background over the network -- four serial attempts at -TimeoutSec 10
+    #     would freeze the menu mid-keystroke. -NoFetch is a switch rather than a
+    #     Test-StyleResolved gate on purpose: a gate holds only while two
+    #     predicates agree about an expired marker.
+    #   * Esc must put back exactly what was there, INCLUDING the case where
+    #     there was nothing -- a first-ever picker run on a machine with no
+    #     module must not leave one behind. $originalWezLua is $null for that,
+    #     which is why the restore branches on the flag rather than on the bytes.
+    #
+    # It is quiet by design: Publish-StyleWezTermConfig prints the not-wired
+    # notice and resolves backgrounds, which is right once on confirm and wrong
+    # sixty times a minute.
+    $wezPreviewable = ($termKind -eq 'WezTerm') -and (Test-WezTermStyleWired)
+    $originalWezLua = $null
+    if ($wezPreviewable) {
+        $wezModulePath = Get-WezTermModulePath
+        if (Test-Path -LiteralPath $wezModulePath) {
+            try { $originalWezLua = [System.IO.File]::ReadAllBytes($wezModulePath) } catch { $wezPreviewable = $false }
+        }
+    }
+
+    $previewWezTerm = {
+        param([int]$i)
+        if (-not $wezPreviewable) { return }
+        try {
+            $sd = $styles[$i].FullName
+            $theme = $null
+            $tp = Join-Path $sd 'theme.json'
+            if (Test-Path -LiteralPath $tp) {
+                try {
+                    $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                } catch { $theme = $null }
+            }
+            $bg = Get-StyleBundledBackground -StyleDir $sd -NoFetch
+            $status = Write-WezTermStyleModule -StyleName $styles[$i].Name -Scheme $schemes[$i] `
+                          -Theme $theme -BackgroundImage $bg
+            if ($status -ne 'failed') { $pickerState.WezWritten = $true }
+        } catch {
+            # A preview that cannot be written is not worth taking the picker
+            # down for; the OSC retint has already carried the colours.
+            $wezPreviewable = $false
+        }
+    }
+
+    $restoreWezTerm = {
+        if (-not $pickerState.WezWritten) { return }
+        try {
+            $path = Get-WezTermModulePath
+            if ($null -ne $originalWezLua) {
+                [System.IO.File]::WriteAllBytes($path, $originalWezLua)
+            } elseif (Test-Path -LiteralPath $path) {
+                Remove-Item -LiteralPath $path -Force
+            }
+            $pickerState.WezWritten = $false
+        } catch { }
+    }
+
     $restoreOriginalSettings = {
         if ($pickerState.SettingsWritten) {
             & $writeSettings $originalJson
@@ -1523,6 +1591,10 @@ function Invoke-TerminalStyle {
             # Off Windows Terminal the OSC retint in $onRetint already did the
             # whole preview -- there is no deferred settings.json write to make.
             if (-not $useSettingsFile) {
+                # The OSC retint carried the palette; on WezTerm everything else
+                # the style has -- background, font, padding, cursor, opacity --
+                # lives in the generated module, so previewing means rewriting it.
+                & $previewWezTerm $i
                 if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
                 return
             }
@@ -1573,6 +1645,7 @@ function Invoke-TerminalStyle {
         # stream guard that function exists to enforce.
         $restoreOriginalLook = {
             & $restoreOriginalSettings
+            & $restoreWezTerm
             Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$useSettingsFile `
                 -HadStartingStyle:$hadCurrentStyle -StartingScheme $schemes[$startIdx]) | Out-Null
             $pickerState.Reverted = $true

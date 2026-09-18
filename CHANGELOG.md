@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **the picker previews the whole style on WezTerm, not just its palette.** WezTerm adds the files it `require`s to its config reload watch list, so rewriting the generated module restyles a RUNNING window -- which makes it the one terminal off Windows where arrowing through the list can show the background, font, padding, cursor shape and opacity, and not only the colours the OSC retint carries. Off Windows Terminal that branch of the preview used to retint and return.
+
+  Two properties hold it up, and neither is visible from the picker. It runs on the input thread, so it resolves a background with a new `-NoFetch` switch that stops at the cache and answers `$null` rather than reaching the network: the fetching tier makes four serial attempts at `-TimeoutSec 10`, which on a keystroke path is the menu freezing mid-arrow. A switch rather than a `Test-StyleResolved` gate deliberately -- a gate holds only while two predicates agree about an expired marker, which is a second implementation of one rule, and the marker rule has already drifted once. It is threaded through the tuned-style inheritance hop too, or a child would fetch its base's background on the thread just protected.
+
+  And Esc restores byte-exactly, including the case where there was nothing: a first-ever picker run on a machine with no module must not leave one behind, so the restore branches on whether the picker wrote rather than on what the bytes are -- the same gate the `settings.json` half uses, and for the same reason, since restoring over an untouched file bumps the mtime and WezTerm is watching.
+
+  Measured: 20 previews in 62 ms (3.1 ms each) with **0 network calls**, against 4 calls for the same resolution without the switch.
+
+
 ## [0.8.29] - 2026-09-17
 
 ### Added

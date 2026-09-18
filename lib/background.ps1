@@ -148,7 +148,21 @@ function Get-StyleBundledBackground {
     #
     # The negative-cache marker (.no-background) lives in the cache dir, never
     # in the bundled dir, so we can write it on PSGallery installs.
-    param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
+    #
+    # -NoFetch stops at tier 2: answer from disk, or answer $null, but never
+    # reach for the network. It exists for callers on an interactive thread --
+    # the picker previews a style on every arrow key, and tier 3 can spend four
+    # serial attempts at -TimeoutSec 10 before it concludes anything. Gating such
+    # a caller on Test-StyleResolved instead would hold only while that predicate
+    # and this function agree about an expired marker: a second implementation of
+    # one rule, which is the drift this repo keeps paying for. A switch cannot
+    # drift. It is threaded through the inheritance hop too, or a tuned style
+    # would fetch its base's background on the thread we just protected.
+    param(
+        [Parameter(Mandatory)][string]$StyleDir,
+        [switch]$NoInherit,
+        [switch]$NoFetch
+    )
 
     # 1. Bundled (under module root)
     $bundled = Get-BackgroundFileIn -Directory $StyleDir
@@ -165,7 +179,7 @@ function Get-StyleBundledBackground {
     # normal path is unaffected. -NoInherit suppresses this (used when
     # resolving a base, so inheritance is strictly one hop -- no cycles).
     if (-not $NoInherit) {
-        $inherited = Get-TunedBaseBackground -StyleDir $StyleDir
+        $inherited = Get-TunedBaseBackground -StyleDir $StyleDir -NoFetch:$NoFetch
         if ($inherited) { return $inherited }
     }
 
@@ -179,6 +193,7 @@ function Get-StyleBundledBackground {
     }
 
     # 3. Lazy-fetch into cache
+    if ($NoFetch) { return $null }
     if (-not (Test-Path -LiteralPath $cacheDir)) {
         New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null
     }
