@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.30] - 2026-09-18
+
 ### Added
 
 - **the picker previews the whole style on WezTerm, not just its palette.** WezTerm adds the files it `require`s to its config reload watch list, so rewriting the generated module restyles a RUNNING window -- which makes it the one terminal off Windows where arrowing through the list can show the background, font, padding, cursor shape and opacity, and not only the colours the OSC retint carries. Off Windows Terminal that branch of the preview used to retint and return.
@@ -1109,7 +1111,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.29...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.30...HEAD
+[0.8.30]: https://github.com/fcreme/TerminalStyles/compare/v0.8.29...v0.8.30
 [0.8.29]: https://github.com/fcreme/TerminalStyles/compare/v0.8.28...v0.8.29
 [0.8.28]: https://github.com/fcreme/TerminalStyles/compare/v0.8.27...v0.8.28
 [0.8.27]: https://github.com/fcreme/TerminalStyles/compare/v0.8.26...v0.8.27
