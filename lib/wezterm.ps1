@@ -139,6 +139,42 @@ function Get-WezTermFontWeight {
     }
 }
 
+function Get-WezTermBackgroundAlignment {
+    <#
+    .SYNOPSIS
+    backgroundImageAlignment -> WezTerm's horizontal_align / vertical_align pair.
+
+    .DESCRIPTION
+    Windows Terminal expresses alignment as ONE value that carries both axes
+    ("bottomRight"); WezTerm takes two. Every value below is one the real binary
+    accepts, measured with config_builder, which validates these enums:
+
+        horizontal_align = 'Left' | 'Center' | 'Right'
+        vertical_align   = 'Top'  | 'Middle' | 'Bottom'
+
+    Case matters -- 'left' is rejected -- and a rejected value is not a
+    differently-placed image, it is the user's whole config replaced by the
+    default one, which is why nothing here is passed through from the theme.
+
+    An unrecognised value falls back to centre rather than emitting it: Windows
+    Terminal's own default is center, and guessing is what would make the frame
+    jump for a style that simply spelled something wrong.
+    #>
+    param([AllowNull()][string]$Alignment)
+
+    switch ("$Alignment".Trim().ToLowerInvariant()) {
+        'left'        { return @{ H = 'Left';   V = 'Middle' } }
+        'right'       { return @{ H = 'Right';  V = 'Middle' } }
+        'top'         { return @{ H = 'Center'; V = 'Top'    } }
+        'bottom'      { return @{ H = 'Center'; V = 'Bottom' } }
+        'topleft'     { return @{ H = 'Left';   V = 'Top'    } }
+        'topright'    { return @{ H = 'Right';  V = 'Top'    } }
+        'bottomleft'  { return @{ H = 'Left';   V = 'Bottom' } }
+        'bottomright' { return @{ H = 'Right';  V = 'Bottom' } }
+        default       { return @{ H = 'Center'; V = 'Middle' } }
+    }
+}
+
 function Get-WezTermBackgroundSize {
     # backgroundImageStretchMode -> BackgroundSize. Cover is WezTerm's default
     # (impl Default for BackgroundSize) and the closest thing to uniformToFill,
@@ -505,7 +541,12 @@ function Get-WezTermStyleLua {
         [void]$sb.AppendLine("    {")
         [void]$sb.AppendLine("      source = { File = { path = $(& $q $BackgroundImage) } },")
         [void]$sb.AppendLine("      width = $(& $q $size), height = $(& $q $size),")
-        [void]$sb.AppendLine("      horizontal_align = 'Center', vertical_align = 'Middle',")
+        # From the style, not hardcoded. This was 'Center'/'Middle' for every
+        # style, so a composition built around where its image sits was silently
+        # re-centred: tombraider's own README says "right-aligned image so text
+        # sits on the left half", and it was being centred under the text.
+        $al = Get-WezTermBackgroundAlignment ($Theme.backgroundImageAlignment)
+        [void]$sb.AppendLine("      horizontal_align = $(& $q $al.H), vertical_align = $(& $q $al.V),")
         # NoRepeat on both axes, always. WezTerm TILES a background layer by
         # default, and Contain deliberately leaves space -- it fits the image
         # inside the pane without cropping, so a wide window has bare strips at
