@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.34] - 2026-09-19
+
 ### Fixed
 
 - **PSGallery 0.8.32 and 0.8.33 shipped a shell runtime zsh cannot parse, and `tstyles` stopped existing for anyone who installed them.**
@@ -1225,7 +1227,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.33...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.34...HEAD
+[0.8.34]: https://github.com/fcreme/TerminalStyles/compare/v0.8.33...v0.8.34
 [0.8.33]: https://github.com/fcreme/TerminalStyles/compare/v0.8.32...v0.8.33
 [0.8.32]: https://github.com/fcreme/TerminalStyles/compare/v0.8.31...v0.8.32
 [0.8.31]: https://github.com/fcreme/TerminalStyles/compare/v0.8.30...v0.8.31
