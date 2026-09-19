@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.30'
+    ModuleVersion     = '0.8.31'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.30: the picker previews the WHOLE style on WezTerm, not just its palette. WezTerm adds the files it requires to its config reload watch list, so rewriting the generated module restyles a running window -- which makes it the one terminal off Windows where arrowing through the list shows the background, font, padding, cursor shape and opacity as you move, instead of only the colours the escape-sequence retint carries. Two things hold that up. The preview runs on the thread reading your keystrokes, so it resolves backgrounds through a new -NoFetch switch that stops at the cache rather than making four serial ten-second attempts at the network mid-arrow; it is a switch rather than a gate on an existing predicate because a gate holds only while two implementations agree about an expired marker, and that rule has drifted once already. And Esc restores the module byte-exactly, including restoring it to ABSENT -- a first-ever picker run on a machine that had no module must not leave one behind. Measured at 3.1 ms per preview with zero network calls.'
+            ReleaseNotes = 'v0.8.31: a background image was tiled across a wide WezTerm window instead of being drawn once. WezTerm repeats a background layer by default, and the Contain size deliberately leaves room -- it fits the image inside the pane without cropping -- so a wide window had bare strips at the sides and WezTerm filled them with copies. Reported on tombraider, whose uniform stretch mode maps to Contain. Repeating is now off on both axes for every style, unconditionally: these styles are authored against Windows Terminal, and none of its four backgroundImageStretchMode values tile -- none draws one copy at natural size, fill stretches one, uniform and uniformToFill scale one -- so a style asking for any of them is asking for exactly one image. Verified against the real wezterm binary, with all sixteen bundled styles regenerated and loaded with config validation on.'
         }
     }
 }

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.31] - 2026-09-19
+
 ### Fixed
 
 - **a background image was TILED across a wide WezTerm window instead of drawn once.** WezTerm repeats a background layer by default, and `Contain` deliberately leaves room -- it fits the image inside the pane without cropping, so a wide window has bare strips either side and WezTerm fills them with copies. Reported on `tombraider`, whose `uniform` stretch mode maps to `Contain`: the image duplicated once the terminal got wide enough.
@@ -1120,7 +1122,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.30...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.31...HEAD
+[0.8.31]: https://github.com/fcreme/TerminalStyles/compare/v0.8.30...v0.8.31
 [0.8.30]: https://github.com/fcreme/TerminalStyles/compare/v0.8.29...v0.8.30
 [0.8.29]: https://github.com/fcreme/TerminalStyles/compare/v0.8.28...v0.8.29
 [0.8.28]: https://github.com/fcreme/TerminalStyles/compare/v0.8.27...v0.8.28
