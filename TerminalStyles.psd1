@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.31'
+    ModuleVersion     = '0.8.32'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.31: a background image was tiled across a wide WezTerm window instead of being drawn once. WezTerm repeats a background layer by default, and the Contain size deliberately leaves room -- it fits the image inside the pane without cropping -- so a wide window had bare strips at the sides and WezTerm filled them with copies. Reported on tombraider, whose uniform stretch mode maps to Contain. Repeating is now off on both axes for every style, unconditionally: these styles are authored against Windows Terminal, and none of its four backgroundImageStretchMode values tile -- none draws one copy at natural size, fill stretches one, uniform and uniformToFill scale one -- so a style asking for any of them is asking for exactly one image. Verified against the real wezterm binary, with all sixteen bundled styles regenerated and loaded with config validation on.'
+            ReleaseNotes = 'v0.8.32: two WezTerm compositions restored, and a steadier picker. A style's background image was always CENTRED whatever the style asked for -- backgroundImageAlignment was read by nothing, so tombraider and marquee (right), golden-forest (topLeft) and kitty (bottomRight) all had their composition undone; tombraider's own README describes the right-aligned image that puts text on the left half, and it was being drawn under the text instead. Windows Terminal carries both axes in one value and WezTerm takes two, so the map splits it, case-exactly, because a rejected enum does not misplace the image -- it replaces the user's whole config with the default one. The picker also stopped reflowing the terminal while you arrow through the list: font size and padding are pinned for the whole preview session to whatever style is applied, and the chosen style's own arrive on confirm. WezTerm relays out the terminal for either, so the three styles that differ (gitbash, rain, sober) made the list stutter on exactly those rows. And the halo style was removed at the author's request, leaving fifteen bundled styles.'
         }
     }
 }

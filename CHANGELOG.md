@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.32] - 2026-09-19
+
 ### Fixed
 
 - **a style's background image was always centred, whatever the style asked for.** `backgroundImageAlignment` was read by nothing: the writer emitted `horizontal_align = 'Center', vertical_align = 'Middle'` as a literal for all of them. Four bundled styles declare otherwise -- `tombraider` and `marquee` are `right`, `golden-forest` is `topLeft`, `kitty` is `bottomRight` -- and tombraider's own README says "right-aligned image so text sits on the left half", which is precisely the composition that was being undone.
@@ -1147,7 +1149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.31...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.32...HEAD
+[0.8.32]: https://github.com/fcreme/TerminalStyles/compare/v0.8.31...v0.8.32
 [0.8.31]: https://github.com/fcreme/TerminalStyles/compare/v0.8.30...v0.8.31
 [0.8.30]: https://github.com/fcreme/TerminalStyles/compare/v0.8.29...v0.8.30
 [0.8.29]: https://github.com/fcreme/TerminalStyles/compare/v0.8.28...v0.8.29
