@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.33] - 2026-09-19
+
 ### Fixed
 
 - **`tstyles update` said "Update complete" whether it had updated anything or not.** `Update-PSResource` is a no-op when the newest version is already installed, and reports nothing either way, so running the command on the latest version announced success for work it had not done -- and told you to reload a module that had not changed. The Bootstrap arm of the SAME command already distinguished the two ("Already up to date (abc1234)"), so one command answered "did anything happen?" two different ways depending on how you installed it.
@@ -1184,7 +1186,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.32...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.33...HEAD
+[0.8.33]: https://github.com/fcreme/TerminalStyles/compare/v0.8.32...v0.8.33
 [0.8.32]: https://github.com/fcreme/TerminalStyles/compare/v0.8.31...v0.8.32
 [0.8.31]: https://github.com/fcreme/TerminalStyles/compare/v0.8.30...v0.8.31
 [0.8.30]: https://github.com/fcreme/TerminalStyles/compare/v0.8.29...v0.8.30

@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.32'
+    ModuleVersion     = '0.8.33'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.32: two WezTerm compositions restored, and a steadier picker. A style''s background image was always CENTRED whatever the style asked for -- backgroundImageAlignment was read by nothing, so tombraider and marquee (right), golden-forest (topLeft) and kitty (bottomRight) all had their composition undone; tombraider''s own README describes the right-aligned image that puts text on the left half, and it was being drawn under the text instead. Windows Terminal carries both axes in one value and WezTerm takes two, so the map splits it, case-exactly, because a rejected enum does not misplace the image -- it replaces the user''s whole config with the default one. The picker also stopped reflowing the terminal while you arrow through the list: font size and padding are pinned for the whole preview session to whatever style is applied, and the chosen style''s own arrive on confirm. WezTerm relays out the terminal for either, so the three styles that differ (gitbash, rain, sober) made the list stutter on exactly those rows. And the halo style was removed at the author''s request, leaving fifteen bundled styles.'
+            ReleaseNotes = 'v0.8.33: the picker now tells you what a style IS. It listed fifteen names and five colour blocks, while the thing that actually distinguishes them -- that eva is an Evangelion body-scan and sober is minimalist monochrome -- lived only in each style''s README and on the docs site, neither of which you are reading when you choose. Every style carries its own meta.json now, and the picker shows the description and quote for the highlighted row, plus a * marking the style that is actually applied so it stays visible once the cursor moves away. Two commands also stopped saying things that were not true. tstyles update printed ''Update complete'' whether it had updated anything or not -- Update-PSResource is a no-op when you are already current and reports nothing either way -- so it now names the version you came from and went to, shows what is new, or says plainly that nothing needed doing. And tstyles font told WezTerm users to choose a font in WezTerm''s own settings, where the next style apply overrides it; it now names the two routes that actually stick.'
         }
     }
 }
