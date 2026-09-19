@@ -958,7 +958,23 @@ Describe 'the installer banner' {
     It 'prints a banner at all' {
         # A capture that came back empty would make every assertion below pass
         # while measuring nothing.
-        $script:banner | Should -Match 'tstyles'
+        #
+        # Not matched on the literal 'tstyles' any more: the wordmark DRAWS the
+        # name in slab lettering, so the word itself does not appear in the
+        # output. What still has to be true is that something substantial was
+        # printed -- several lines of it -- and the tagline check below is what
+        # pins the wording.
+        $script:banner | Should -Not -BeNullOrEmpty
+        @($script:banner -split "`n" | Where-Object { $_.Trim() }).Count |
+            Should -BeGreaterOrEqual 5 -Because 'a wordmark plus a tagline is more than a line or two'
+    }
+
+    It 'fits the 80-column floor the rest of the project assumes' {
+        # Art that wraps is worse than no art: the first thing a new user sees
+        # would arrive broken across lines.
+        foreach ($line in ($script:banner -split "`n")) {
+            $line.TrimEnd().Length | Should -BeLessOrEqual 78 -Because "'$($line.TrimEnd())' has to fit"
+        }
     }
 
     It 'does not name one terminal' {
