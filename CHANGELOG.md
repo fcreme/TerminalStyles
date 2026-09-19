@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles update` said "Update complete" whether it had updated anything or not.** `Update-PSResource` is a no-op when the newest version is already installed, and reports nothing either way, so running the command on the latest version announced success for work it had not done -- and told you to reload a module that had not changed. The Bootstrap arm of the SAME command already distinguished the two ("Already up to date (abc1234)"), so one command answered "did anything happen?" two different ways depending on how you installed it.
+
+  It now reads the installed version either side of the call and says which of three things occurred. `Already the latest (0.8.32). Nothing to do.` when the version did not move. `Updated 0.8.30 -> 0.8.32`, the opening of that version's release notes, and the reload line when it did. And when the version cannot be read on one side or the other, it says exactly that rather than picking the cheerful branch -- `unknown` is a real answer, and a downgrade is reported as unknown too, since "Updated 0.8.32 -> 0.8.30" would be false.
+
+  The release note is trimmed at a sentence boundary, because these run to a thousand characters -- they are the PSGallery listing, written for a web page, and printing one in full buries the line that matters and scrolls the reload instruction off the top. Two traps on the way there, both caught by tests that now pin them: a bare `[.!?]` splits `v0.8.32` into three sentences and opened the summary with "v0. 8. 32:", and gluing regex matches together drops whatever the engine skipped, which turned the same string into "32: two WezTerm compositions restored". Slicing the original string at a terminator index does neither.
+
+
 ### Added
 
 - **the picker says what a style IS, and which one you already have.** It listed fifteen names and five colour blocks; the thing that actually distinguishes a style -- that eva is an Evangelion body-scan and sober is minimalist monochrome -- existed only in each style's README and in the docs site, neither of which you are reading at the moment you choose. Each style now carries its own `meta.json` with a one-line description and, where it has one, its quote; the picker shows both for the highlighted row.
