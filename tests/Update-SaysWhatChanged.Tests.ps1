@@ -97,6 +97,26 @@ Describe 'Get-ReleaseNoteSummary' {
 
 Describe 'tstyles update reports what really happened' {
     InModuleScope TerminalStyles {
+        BeforeAll {
+            # Windows PowerShell 5.1 ships no PSResourceGet, so Update-PSResource
+            # does not exist there -- and Pester cannot mock a command that is
+            # absent, which failed this whole block with CommandNotFoundException
+            # on that leg while passing on the other three.
+            #
+            # Skipping it there would leave the arm untested on the engine this
+            # project is most often surprised by, and the arm IS reachable on
+            # 5.1: PSResourceGet can be installed alongside, and
+            # Get-TerminalStylesInstallKind would then choose it. So a stub is
+            # defined in the module's own scope for Mock to attach to. It is
+            # never invoked for real -- every It below mocks it, and the
+            # install-kind check that reaches it is mocked too.
+            if (-not (Get-Command Update-PSResource -ErrorAction SilentlyContinue)) {
+                Set-Item function:script:Update-PSResource {
+                    param([string]$Name, [switch]$TrustRepository)
+                }
+            }
+        }
+
         BeforeEach {
             Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
             Mock Update-PSResource { }
