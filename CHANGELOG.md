@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **the welcome's keypress now appears only when nothing after it will hold the screen.** Two real questions follow it on a first run -- the WezTerm offer and the font prompt -- and each of them blocks, so the "Press Enter to look" in front of them was ceremony standing between someone and the first style they have ever seen.
+
+  It is not dropped outright, because "nothing follows" is the COMMON case for people already using this: they answered the font prompt in an earlier version, so its marker is present and it will not fire, and the welcome is the only new thing on their screen. Without the keypress their banner would flash past the picker's `Clear-Host` unread -- and would have spent its one showing doing it.
+
+  So it asks the two gates rather than assuming. Both directions are pinned: a build that always pauses fails `because the font prompt right after it holds the screen`, and one that never pauses fails `because nothing else will hold the screen before the Clear-Host`.
+
+
 ### Added
 
 - **a one-time offer to install WezTerm, on the first `tstyles` where it would actually help.** Every bundled style ships an animated background, and off Windows exactly one terminal renders it as one -- Terminal.app shows a still first frame, and the rest show no image at all. That is a real gap between what a style IS and what the reader can see of it, and it is worth one question.
