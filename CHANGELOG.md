@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **a style's background image was always centred, whatever the style asked for.** `backgroundImageAlignment` was read by nothing: the writer emitted `horizontal_align = 'Center', vertical_align = 'Middle'` as a literal for all of them. Four bundled styles declare otherwise -- `tombraider` and `marquee` are `right`, `golden-forest` is `topLeft`, `kitty` is `bottomRight` -- and tombraider's own README says "right-aligned image so text sits on the left half", which is precisely the composition that was being undone.
+
+  Windows Terminal expresses alignment as ONE value carrying both axes (`bottomRight`); WezTerm takes two, so the map turns each into an `horizontal_align`/`vertical_align` pair. Nothing is passed through from the theme: the enums are case-exact (`'left'` is rejected where `'Left'` is accepted) and a rejected value is not a differently-placed image, it is the user's whole config replaced by the default one. An unrecognised value centres, which is Windows Terminal's own default, rather than guessing.
+
+  Measured against the real binary: all 15 bundled styles regenerated and loaded with validation on, each carrying its declared alignment -- `golden-forest` Left/Top, `kitty` Right/Bottom, `tombraider` and `marquee` Right/Middle, the rest Center/Middle. The test pairs that with an assertion that at least one style is NOT centred, since a check over an all-centre set would pass just as well against the hardcoded value it replaced.
 ### Changed
 
 - **the picker no longer reflows the terminal while you arrow through the list.** Colours and the background swap in place, but `font_size` and `window_padding` do not -- WezTerm reflows the whole terminal for either, so the text jumped on every row and the list was hard to read while moving through it. Only three of the bundled styles differ in weight or padding (`gitbash`, `rain`, `sober`), which is just enough to make the list feel like it stutters on those rows and nowhere else.

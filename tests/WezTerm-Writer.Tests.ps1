@@ -790,3 +790,66 @@ Describe 'the background is drawn once, never tiled' {
         }
     }
 }
+
+Describe 'the background sits where the style puts it' {
+    InModuleScope TerminalStyles {
+        BeforeAll { $script:scheme = [pscustomobject]@{ background = '#101010'; foreground = '#f0f0f0' } }
+
+        It 'maps every Windows Terminal alignment onto both WezTerm axes' {
+            # Windows Terminal says it in one value that carries both axes;
+            # WezTerm takes two. This was hardcoded to Center/Middle for every
+            # style, so a composition built around where its image sits was
+            # silently re-centred -- tombraider's own README says "right-aligned
+            # image so text sits on the left half".
+            $expected = @{
+                'left'        = @('Left',   'Middle'); 'right'       = @('Right',  'Middle')
+                'top'         = @('Center', 'Top');    'bottom'      = @('Center', 'Bottom')
+                'topLeft'     = @('Left',   'Top');    'topRight'    = @('Right',  'Top')
+                'bottomLeft'  = @('Left',   'Bottom'); 'bottomRight' = @('Right',  'Bottom')
+                'center'      = @('Center', 'Middle')
+            }
+            foreach ($k in $expected.Keys) {
+                $a = Get-WezTermBackgroundAlignment $k
+                $a.H | Should -Be $expected[$k][0] -Because "'$k' is horizontally $($expected[$k][0])"
+                $a.V | Should -Be $expected[$k][1] -Because "'$k' is vertically $($expected[$k][1])"
+            }
+        }
+
+        It 'emits only values the real binary accepts, and is case-exact' {
+            # 'left' is rejected where 'Left' is accepted, and a rejected value
+            # is not a differently-placed image -- it is the user's whole config
+            # replaced by the default one. Nothing is passed through from the
+            # theme; an unrecognised value centres rather than guessing, which is
+            # Windows Terminal's own default.
+            $hOk = @('Left', 'Center', 'Right'); $vOk = @('Top', 'Middle', 'Bottom')
+            foreach ($k in 'left','right','top','bottom','topLeft','topRight','bottomLeft',
+                           'bottomRight','center','TOPLEFT','  right  ','nonsense','',$null) {
+                $a = Get-WezTermBackgroundAlignment $k
+                $a.H | Should -BeIn $hOk -Because "'$k' must not reach the config as an invalid variant"
+                $a.V | Should -BeIn $vOk -Because "'$k' must not reach the config as an invalid variant"
+            }
+            (Get-WezTermBackgroundAlignment 'nonsense').H | Should -Be 'Center'
+            (Get-WezTermBackgroundAlignment $null).V      | Should -Be 'Middle'
+        }
+
+        It 'carries each bundled style its own declared alignment' {
+            $repoRoot = Split-Path $PSScriptRoot -Parent
+            $checked = 0; $nonCentre = 0
+            foreach ($d in Get-ChildItem (Join-Path $repoRoot 'styles') -Directory) {
+                $tp = Join-Path $d.FullName 'theme.json'
+                if (-not (Test-Path -LiteralPath $tp)) { continue }
+                $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                if ($theme.PSObject.Properties.Match('backgroundImage').Count -eq 0) { continue }
+                $want = Get-WezTermBackgroundAlignment ($theme.backgroundImageAlignment)
+                $lua = Get-WezTermStyleLua -StyleName $d.Name -Scheme $script:scheme `
+                           -Theme $theme -BackgroundImage '/tmp/bg.gif'
+                $lua | Should -Match "horizontal_align = '$($want.H)'" -Because "$($d.Name) declares $($theme.backgroundImageAlignment)"
+                $lua | Should -Match "vertical_align = '$($want.V)'"   -Because "$($d.Name) declares $($theme.backgroundImageAlignment)"
+                if ($want.H -ne 'Center' -or $want.V -ne 'Middle') { $nonCentre++ }
+                $checked++
+            }
+            $checked   | Should -BeGreaterThan 10 -Because 'a loop that never ran would pass silently'
+            $nonCentre | Should -BeGreaterThan 0  -Because 'if every style centred, this would pass against the hardcoded value it replaced'
+        }
+    }
+}
