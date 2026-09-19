@@ -128,3 +128,96 @@ Describe 'the picker wires that preview in' {
         }
     }
 }
+
+Describe 'previewing a style does not move the layout' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            # Three real bundled styles that genuinely differ: sober is normal
+            # weight with padding 16, eva is semi-bold with 12, gitbash is
+            # normal with 10. Every style declares Cascadia Code at size 11, so
+            # weight and padding are the whole of what a reader sees as "this
+            # theme's text is a different size".
+            $repoRoot = Split-Path $PSScriptRoot -Parent
+            $script:load = {
+                param($n)
+                @{ Scheme = [System.IO.File]::ReadAllText((Join-Path $repoRoot "styles/$n/scheme.json"),
+                       [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                   Theme  = [System.IO.File]::ReadAllText((Join-Path $repoRoot "styles/$n/theme.json"),
+                       [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json }
+            }
+            $script:sober = & $script:load 'sober'
+            $script:eva   = & $script:load 'eva'
+            $script:git   = & $script:load 'gitbash'
+            $script:layoutOf = {
+                param($lua)
+                @{ Font    = (($lua -split "`n") | Where-Object { $_ -match 'config\.font =' })        -join ''
+                   Size    = (($lua -split "`n") | Where-Object { $_ -match 'config\.font_size' })     -join ''
+                   Padding = (($lua -split "`n") | Where-Object { $_ -match 'config\.window_padding' })-join '' }
+            }
+        }
+
+        It 'keeps font, size and padding identical across every previewed style' {
+            # WezTerm reflows the terminal for a font_size or window_padding
+            # change, so previewing them makes the text jump on every arrow key.
+            # Pinned to whatever is applied, the frame holds still and only the
+            # colours move.
+            $pinned = $script:sober.Theme
+            $seen = @()
+            foreach ($st in @($script:sober, $script:eva, $script:git)) {
+                $lua = Get-WezTermStyleLua -StyleName 'probe' -Scheme $st.Scheme -Theme $st.Theme `
+                           -BackgroundImage $null -LayoutTheme $pinned
+                $seen += ,(& $script:layoutOf $lua)
+            }
+            @($seen).Count | Should -Be 3 -Because 'a loop that never ran would pass silently'
+            foreach ($k in 'Font', 'Size', 'Padding') {
+                @($seen | ForEach-Object { $_[$k] } | Sort-Object -Unique).Count |
+                    Should -Be 1 -Because "$k must not change while arrowing through the list"
+            }
+        }
+
+        It 'still swaps the colours it is previewing' {
+            # The counterpart, or "nothing moves" would be satisfied by a
+            # preview that did nothing at all.
+            $names = @()
+            foreach ($st in @($script:sober, $script:eva, $script:git)) {
+                $lua = Get-WezTermStyleLua -StyleName $st.Theme.colorScheme -Scheme $st.Scheme `
+                           -Theme $st.Theme -BackgroundImage $null -LayoutTheme $script:sober.Theme
+                $names += (($lua -split "`n") | Where-Object { $_ -match 'config\.color_scheme' }) -join ''
+            }
+            @($names | Sort-Object -Unique).Count | Should -Be 3 `
+                -Because 'the palette is the thing a preview is for'
+        }
+
+        It 'gives the confirmed style its own layout back' {
+            # Unbound means "this style's own", which is the normal apply. The
+            # pin is a preview concern and must not leak into it.
+            $a = & $script:layoutOf (Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:eva.Scheme `
+                     -Theme $script:eva.Theme -BackgroundImage $null)
+            $b = & $script:layoutOf (Get-WezTermStyleLua -StyleName 'sober' -Scheme $script:sober.Scheme `
+                     -Theme $script:sober.Theme -BackgroundImage $null)
+            $a.Padding | Should -Not -Be $b.Padding -Because 'eva pads 12 and sober pads 16'
+            $a.Font    | Should -Not -Be $b.Font    -Because 'eva is semi-bold and sober is normal'
+        }
+
+        It 'omits layout entirely when nothing is applied to pin to' {
+            # A first run, or an active style since deleted. $null is a real
+            # answer here -- the user's own wezterm.lua settings hold, which are
+            # as stable as anything else we could have picked.
+            $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:eva.Scheme -Theme $script:eva.Theme `
+                       -BackgroundImage $null -LayoutTheme $null
+            $lua | Should -Not -Match 'config\.font'
+            $lua | Should -Not -Match 'config\.window_padding'
+            $lua | Should -Match 'config\.color_scheme' -Because 'the style is still previewed'
+        }
+
+        It 'the picker pins it, and binds $null rather than leaving it unbound' {
+            # Unbound would mean "this style's own layout", which is the bug
+            # this fixes. Structural because the picker body needs a console.
+            $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
+            $src | Should -Match '-LayoutTheme \$wezLayoutTheme' `
+                -Because 'the preview has to pass the pin'
+            $src | Should -Match '\$wezLayoutTheme = \$null' `
+                -Because 'no applied style must reach the writer as an explicit $null'
+        }
+    }
+}

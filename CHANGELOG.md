@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **the picker no longer reflows the terminal while you arrow through the list.** Colours and the background swap in place, but `font_size` and `window_padding` do not -- WezTerm reflows the whole terminal for either, so the text jumped on every row and the list was hard to read while moving through it. Only three of the bundled styles differ in weight or padding (`gitbash`, `rain`, `sober`), which is just enough to make the list feel like it stutters on those rows and nowhere else.
+
+  Layout is now pinned for the whole preview session to whatever style is already applied, and the chosen style's real font and padding arrive on confirm. Every bundled style declares Cascadia Code at size 11, so weight and padding are the whole of what a reader perceives as "this theme's text is a different size".
+
+  `-LayoutTheme` has three states and only two are values, so it is forwarded by what the caller BOUND rather than by value: unbound means "this style's own layout", which is the normal apply, and an explicit `$null` means "write no layout at all" -- what a preview wants on a machine with nothing applied, where the user's own `wezterm.lua` settings then hold and are as stable as anything we could pick. Passing it unconditionally would have turned unbound into `$null` and silently dropped font and padding from every apply, which is the splat trap in CLAUDE.md pointed at a parameter whose `$null` is meaningful.
+
+  Measured: previewing sober, eva and gitbash while sober is applied emits one font line, one size and one padding across all three, with three different `color_scheme` names. Confirming each gives back padding 16, 12 and 10 and weight Regular, DemiBold, Regular.
+
+
 ### Removed
 
 - **the `halo` style.** Removed at the author's request, with everything that named it: the style folder, its screenshot, its row in the README gallery, its section below, and both of its entries in the docs site's data (the image map and the style record). The bundled set is now 15.

@@ -995,6 +995,36 @@ function Invoke-TerminalStyle {
         }
     }
 
+    # Layout is PINNED for the whole preview session, to whatever is applied now.
+    #
+    # Colours and the background swap in place, but font_size and window_padding
+    # do not: WezTerm reflows the terminal for either, so previewing them makes
+    # the text jump on every arrow key and the list unreadable while moving
+    # through it. Only three of the bundled styles differ in weight or padding,
+    # which is exactly enough to make the list feel like it is stuttering on
+    # those rows and nowhere else.
+    #
+    # $null when nothing is applied -- a first run, or a style that has since
+    # been deleted -- and $null means "write no layout at all", so the user's own
+    # wezterm.lua settings hold. Either way the frame is still for the whole
+    # session, and the chosen style's real font and padding arrive on confirm.
+    $wezLayoutTheme = $null
+    if ($wezPreviewable) {
+        try {
+            $activeName = Get-CurrentStyleName
+            if ($activeName) {
+                $activeDir = Get-StyleDir -StyleName $activeName
+                if ($activeDir) {
+                    $activeTheme = Join-Path $activeDir 'theme.json'
+                    if (Test-Path -LiteralPath $activeTheme) {
+                        $wezLayoutTheme = [System.IO.File]::ReadAllText(
+                            $activeTheme, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    }
+                }
+            }
+        } catch { $wezLayoutTheme = $null }
+    }
+
     $previewWezTerm = {
         param([int]$i)
         if (-not $wezPreviewable) { return }
@@ -1008,8 +1038,11 @@ function Invoke-TerminalStyle {
                 } catch { $theme = $null }
             }
             $bg = Get-StyleBundledBackground -StyleDir $sd -NoFetch
+            # -LayoutTheme is bound explicitly, $null included: this is a
+            # preview, and "no layout" is a real answer here rather than the
+            # absence of one.
             $status = Write-WezTermStyleModule -StyleName $styles[$i].Name -Scheme $schemes[$i] `
-                          -Theme $theme -BackgroundImage $bg
+                          -Theme $theme -BackgroundImage $bg -LayoutTheme $wezLayoutTheme
             if ($status -ne 'failed') { $pickerState.WezWritten = $true }
         } catch {
             # A preview that cannot be written is not worth taking the picker

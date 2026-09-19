@@ -309,8 +309,25 @@ function Get-WezTermStyleLua {
         [Parameter(Mandatory)][string]$StyleName,
         [Parameter(Mandatory)]$Scheme,
         $Theme,
-        [AllowNull()][string]$BackgroundImage
+        [AllowNull()][string]$BackgroundImage,
+        # Where font and padding come from, when that is not this style.
+        #
+        # The picker rewrites this module on every arrow key so the highlighted
+        # style can be seen. Colours and the background swap in place, but
+        # font_size and window_padding do not: WezTerm reflows the whole
+        # terminal for either, so the text jumps on every row and the list is
+        # unreadable while moving through it. Pinning layout to the style that
+        # was already applied keeps the frame still, and the real style -- font
+        # and padding included -- lands on confirm.
+        #
+        # $null means "omit layout entirely", which is what a preview on a
+        # machine with no applied style wants: the user's own wezterm.lua
+        # settings apply, and they are as stable as anything else we could pick.
+        # Unbound means "this style's own", the normal apply.
+        $LayoutTheme
     )
+
+    if (-not $PSBoundParameters.ContainsKey('LayoutTheme')) { $LayoutTheme = $Theme }
 
     $schemeName = "TerminalStyles $StyleName"
     $q = { param($v) ConvertTo-WezTermLuaString $v }
@@ -358,18 +375,19 @@ function Get-WezTermStyleLua {
     [void]$sb.AppendLine("  }")
     [void]$sb.AppendLine("  config.color_scheme = $(& $q $schemeName)")
 
-    # theme.json -> font and padding.
-    if ($Theme -and $Theme.font -and $Theme.font.face) {
-        $w = Get-WezTermFontWeight $Theme.font.weight
+    # theme.json -> font and padding. From $LayoutTheme, which is this style
+    # unless a caller pinned it; see the parameter for why the picker does.
+    if ($LayoutTheme -and $LayoutTheme.font -and $LayoutTheme.font.face) {
+        $w = Get-WezTermFontWeight $LayoutTheme.font.weight
         [void]$sb.AppendLine("")
-        [void]$sb.AppendLine("  config.font = wezterm.font($(& $q $Theme.font.face), { weight = $(& $q $w) })")
-        if ($Theme.font.size) {
-            $size = [double]$Theme.font.size
+        [void]$sb.AppendLine("  config.font = wezterm.font($(& $q $LayoutTheme.font.face), { weight = $(& $q $w) })")
+        if ($LayoutTheme.font.size) {
+            $size = [double]$LayoutTheme.font.size
             [void]$sb.AppendLine("  config.font_size = $($size.ToString([cultureinfo]::InvariantCulture))")
         }
     }
-    if ($Theme -and $Theme.padding) {
-        $pad = ($Theme.padding -split ',')[0].Trim()
+    if ($LayoutTheme -and $LayoutTheme.padding) {
+        $pad = ($LayoutTheme.padding -split ',')[0].Trim()
         $padNum = 0
         if ([int]::TryParse($pad, [ref]$padNum)) {
             [void]$sb.AppendLine("  config.window_padding = { left = $padNum, right = $padNum, top = $padNum, bottom = $padNum }")
@@ -552,7 +570,10 @@ function Write-WezTermStyleModule {
         [Parameter(Mandatory)]$Scheme,
         $Theme,
         [AllowNull()][string]$BackgroundImage,
-        [string]$HomeDir
+        [string]$HomeDir,
+        # Forwarded by what the caller BOUND, so "unbound" still means "this
+        # style's own layout" and an explicit $null still means "omit it".
+        $LayoutTheme
     )
 
     $splat = @{}
@@ -565,8 +586,15 @@ function Write-WezTermStyleModule {
         $BackgroundImage = $null
     }
 
+    # Forwarded by what was BOUND, not by value: $LayoutTheme has three states
+    # and only two of them are values. Passing it unconditionally would turn
+    # "unbound" into an explicit $null and silently drop font and padding from
+    # every normal apply -- the splat trap in CLAUDE.md, pointed at a parameter
+    # whose $null is meaningful.
+    $layoutSplat = @{}
+    if ($PSBoundParameters.ContainsKey('LayoutTheme')) { $layoutSplat.LayoutTheme = $LayoutTheme }
     $lua = Get-WezTermStyleLua -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
-                               -BackgroundImage $BackgroundImage
+                               -BackgroundImage $BackgroundImage @layoutSplat
     try {
         $dir = Split-Path -Parent $path
         if (-not (Test-Path -LiteralPath $dir)) {
