@@ -8,6 +8,43 @@
 # arithmetic that keeps the frame inside the window. Both exist in this shape
 # for that reason and no other.
 
+function Get-StyleMeta {
+    <#
+    .SYNOPSIS
+    A style's one-line description and its quote, from its own meta.json.
+
+    .DESCRIPTION
+    Lives IN the style, not in a catalog, and that is the point. A central list
+    of descriptions is a second list of styles, and this project has already
+    paid for one: docs/index.html carries a hand-written description per style,
+    and when `halo` was removed its entry had to be found and deleted by hand.
+    A file inside the folder cannot drift from the folder.
+
+    It is also why the descriptions here are SHORT. The long-form prose belongs
+    in the style's README, which is written for a reader with a whole screen;
+    this one has to fit a picker row on a narrow terminal, so it is capped and
+    a test holds the cap.
+
+    Returns @{ Description = <string>; Quote = <string> }, both empty when the
+    style ships no meta.json -- which a hand-dropped user style will not, and
+    which must degrade to the name alone rather than to an error.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$StyleDir)
+
+    $empty = @{ Description = ''; Quote = '' }
+    $path = Join-Path $StyleDir 'meta.json'
+    if (-not (Test-Path -LiteralPath $path)) { return $empty }
+    try {
+        $m = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } catch { return $empty }
+    if (-not $m) { return $empty }
+    @{
+        Description = "$($m.description)".Trim()
+        Quote       = "$($m.quote)".Trim()
+    }
+}
+
 function Get-PickerFramePlan {
     # The whole frame budget in one place: how many rows the chrome costs, how
     # many styles fit, and how tall the frame will be.
@@ -43,7 +80,13 @@ function Get-PickerFramePlan {
         [int]$NoteCount = 0
     )
 
-    $chrome = 8 + [Math]::Max(0, $NoteCount)
+    # 10, not 8: the two rows under the list that describe the highlighted
+    # style -- its one-liner and its quote. BOTH are always painted, blank when
+    # the style has no meta.json or no quote, for the same reason the scroll
+    # indicators are: the frame is overwritten in place, so a row that comes and
+    # goes strands the taller frame's last line on screen. A style with no quote
+    # must cost exactly what a style with one costs.
+    $chrome = 10 + [Math]::Max(0, $NoteCount)
     # -1: reserve a row the frame will not paint, so ending the last line cannot
     # scroll the buffer.
     $available = if ($WindowHeight -gt 0) { $WindowHeight - $chrome - 1 } else { $Total }

@@ -1602,8 +1602,14 @@ function Invoke-TerminalStyle {
                 # that is deliberately never done.
                 $resolved = (-not $wantsBackgrounds) -or (Test-StyleResolved -StyleDir $styles[$i].FullName)
                 $color = if ($i -eq $idx) { 'Yellow' } else { 'Gray' }
+                # Two different facts, two different marks. '>' is where the
+                # cursor is; '*' is the style that is actually applied, the same
+                # mark `tstyles list` uses. They start on the same row and part
+                # company the moment you press Down -- at which point the picker
+                # used to stop telling you what Esc would return you to.
                 $prefix = if ($i -eq $idx) { '   > ' } else { '     ' }
-                Write-Host ($el + $prefix + ('{0,-16}  ' -f $name)) -ForegroundColor $color -NoNewline
+                $active = if ($i -eq $currentIdx) { '*' } else { ' ' }
+                Write-Host ($el + $prefix + ('{0,-16} {1} ' -f $name, $active)) -ForegroundColor $color -NoNewline
                 if ($resolved) {
                     Write-Host $swatches[$i]
                 } else {
@@ -1616,7 +1622,30 @@ function Invoke-TerminalStyle {
             } else {
                 Write-Host $el
             }
-            Write-Host $el
+            # What the highlighted style actually IS. Both rows are painted on
+            # every redraw, blank when there is nothing to say, because the frame
+            # is overwritten in place and its height has to be identical every
+            # time -- see the chrome budget in Get-PickerFramePlan.
+            #
+            # TRUNCATED, never wrapped, for the same reason: a description that
+            # wrapped to two lines on a narrow window would make the frame taller
+            # for some styles than others.
+            $meta = Get-StyleMeta -StyleDir $styles[$idx].FullName
+            $room = 76
+            # -4: two columns of indent and two spare. Text that reaches the
+            # final column can wrap, which would add a row and change the frame
+            # height -- the thing the truncation exists to prevent.
+            try { $w = [Console]::WindowWidth; if ($w -gt 20) { $room = $w - 4 } } catch { }
+            $fit = {
+                param([string]$t)
+                if (-not $t) { return '' }
+                if ($t.Length -le $room) { return $t }
+                if ($room -le 1) { return '' }
+                $t.Substring(0, $room - 1) + [char]0x2026
+            }
+            Write-Host ("$el$hintColor  " + (& $fit $meta.Description) + $resetColor)
+            $q = if ($meta.Quote) { '"' + (& $fit $meta.Quote) + '"' } else { '' }
+            Write-Host ("$el$hintColor  " + $q + $resetColor)
         }
 
         $applyTheme = {

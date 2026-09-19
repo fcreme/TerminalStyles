@@ -31,6 +31,7 @@ cinematic dark themes.
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
   fetched into your cache on first use, so `main` stays binary-free.
   GIF doesn't bleed through.
+- **meta.json** — the one-line description and quote `tstyles` shows when you pick it.
 
 ## Notes
 
