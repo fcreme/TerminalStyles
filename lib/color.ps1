@@ -275,6 +275,87 @@ function Get-SchemeOscPacket {
     return $sb.ToString()
 }
 
+function Get-RelativeLuminance {
+    # WCAG relative luminance of a hex colour, 0 (black) to 1 (white).
+    # Pure, and the basis of Get-ContrastRatio below.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Hex)
+
+    $h = ConvertTo-NormalHex $Hex
+    if (-not $h) { return $null }
+    $h = $h.TrimStart('#')
+    $chan = @(0, 2, 4) | ForEach-Object {
+        $c = [Convert]::ToInt32($h.Substring($_, 2), 16) / 255.0
+        if ($c -le 0.03928) { $c / 12.92 } else { [Math]::Pow(($c + 0.055) / 1.055, 2.4) }
+    }
+    (0.2126 * $chan[0]) + (0.7152 * $chan[1]) + (0.0722 * $chan[2])
+}
+
+function Get-ContrastRatio {
+    # WCAG contrast between two hex colours: 1 (identical) to 21 (black/white).
+    # 4.5 is the threshold for body text, and the number this project cares
+    # about -- the picker's hint lines are body text sitting on whatever
+    # background the style being previewed just painted.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$A, [Parameter(Mandatory)][string]$B)
+
+    $la = Get-RelativeLuminance $A
+    $lb = Get-RelativeLuminance $B
+    if ($null -eq $la -or $null -eq $lb) { return $null }
+    $hi = [Math]::Max($la, $lb); $lo = [Math]::Min($la, $lb)
+    ($hi + 0.05) / ($lo + 0.05)
+}
+
+function Get-SchemeHintColor {
+    <#
+    .SYNOPSIS
+    A dimmed colour for secondary text that is still readable on THIS scheme's
+    background.
+
+    .DESCRIPTION
+    The picker's hints and the style description were a fixed grey, #a0a0a0 --
+    chosen once, against a dark background, and then asked to sit on whatever
+    background the previewed style paints. Measured across the bundled styles:
+    it fails WCAG outright on gitbash (2.61 against the 4.5 body-text
+    threshold, because gitbash is the one light theme) and is marginal on six
+    more. The picker previews by repainting the terminal, so this is not a
+    theoretical mismatch -- the text goes faint the moment you arrow onto
+    gitbash.
+
+    Derived from the style's OWN foreground rather than picked from a table:
+    the hint should read as part of the palette, and a scheme that has thought
+    about its foreground has already solved "readable on my background".
+    Blended toward the background to sit BEHIND the style names -- it is
+    secondary text and should look it -- and the blend stops at the last step
+    that still clears the threshold.
+
+    Falls back to the foreground itself when no blend clears it (a scheme whose
+    own foreground is marginal) and to $null when the colours cannot be read at
+    all, which the caller answers with its old fixed grey.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Scheme, [double]$MinRatio = 4.5)
+
+    $fg = ConvertTo-NormalHex $Scheme.foreground
+    $bg = ConvertTo-NormalHex $Scheme.background
+    if (-not $fg -or -not $bg) { return $null }
+
+    $parse = { param($h) $h = $h.TrimStart('#')
+               @(0, 2, 4) | ForEach-Object { [Convert]::ToInt32($h.Substring($_, 2), 16) } }
+    $f = & $parse $fg
+    $b = & $parse $bg
+
+    # Dimmest first, so the result is the most muted one that still reads.
+    $best = $fg
+    foreach ($w in 0.65, 0.55, 0.45, 0.35, 0.25, 0.15) {
+        $mix = 0..2 | ForEach-Object { [int][Math]::Round($f[$_] + (($b[$_] - $f[$_]) * $w)) }
+        $hex = '#{0:x2}{1:x2}{2:x2}' -f $mix[0], $mix[1], $mix[2]
+        $r = Get-ContrastRatio -A $hex -B $bg
+        if ($null -ne $r -and $r -ge $MinRatio) { return $hex }
+    }
+    $best
+}
+
 function Get-SchemeUnreadableSlots {
     <#
     .SYNOPSIS

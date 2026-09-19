@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the picker's hints and style descriptions were a fixed grey, on a background that changes under them.** `#a0a0a0` was chosen once against a dark terminal and then asked to sit on whatever the previewed style paints -- and the picker previews by REPAINTING the terminal, so the mismatch arrives on the first arrow key. Measured against the 4.5 WCAG body-text threshold: it fails outright on `gitbash` at **2.61**, the one light theme, and is marginal on six more (`rain` 5.07, `snowday` 5.97, `garden-rain` 6.34, `kitty` 6.80, `neon-rain` 6.82, `forest` 6.90).
+
+  The hint colour is now derived from the highlighted style's OWN foreground and recomputed on every redraw. From the palette rather than a lookup table, because a scheme that has thought about its foreground has already solved "readable on my background" -- and blended toward the background so it still reads as secondary text, stopping at the last step that clears the threshold. Every bundled style now lands between 4.60 and 5.99, `gitbash` included at 5.41.
+
+  It degrades rather than guessing: a scheme whose colours cannot be parsed keeps the old fixed grey, which is no worse than what every style got before, and a scheme whose own foreground is already marginal gets that foreground rather than something dimmer and worse.
+
+
 ## [0.8.34] - 2026-09-19
 
 ### Fixed
