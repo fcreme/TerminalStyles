@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **PSGallery 0.8.32 and 0.8.33 shipped a shell runtime zsh cannot parse, and `tstyles` stopped existing for anyone who installed them.**
+
+  ```
+  tstyles.sh:37: command not found: ^M
+  tstyles.sh:41: parse error near `in^M'
+  zsh: command not found: tstyles
+  ```
+
+  A carriage return is not whitespace to a shell. It becomes part of the token, so `case $x in` reads as `in^M` and the file dies at the first line it parses -- taking the `tstyles` function with it, since the runtime is SOURCED on every interactive shell.
+
+  The repo was never wrong. `publish.yml` runs on `windows-latest`, where `actions/checkout` converts LF to CRLF on the way in, so the package built there carried CRLF into every `.sh` it staged. Measured on the machine that hit it: every module version installed from the repo had zero carriage returns, and both installed from the gallery had 386.
+
+  Three layers, because one was clearly not enough. `.gitattributes` pins `eol=lf` on every extension a shell reads, so a Windows checkout cannot convert them in the first place. `tests/Shell-Files-Are-LF.Tests.ps1` reads the BYTES of every tracked `.sh` and `.js` -- `Get-Content` strips the terminators that are the whole subject -- and is most meaningful on the two Windows legs, where without the attributes it fails while passing everywhere else, which is exactly the shape of the bug. And `scripts/publish.ps1` refuses to publish a staged tree carrying one, because neither of the first two looks at the package, which is what actually ships.
+
+  Each layer is checked for vacuity as well as correctness: the test counts the files it found, and the publish gate refuses a stage with fewer than ten `.sh` files, since a check that examined almost nothing would have passed just as quietly as the bug did.
+
+
 ### Added
 
 - **the first interactive `tstyles` opens with the wordmark.** Once, on a real console, with a keypress before the picker takes the screen.

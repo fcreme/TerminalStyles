@@ -1,0 +1,24 @@
+# Line endings.
+#
+# The shell runtime and every style's prompt.sh are SOURCED by zsh and bash. A
+# carriage return is not whitespace to them -- it becomes part of the token, so
+# `case $x in` reads as `in^M` and the file dies at the first line it parses:
+#
+#   tstyles.sh:37: command not found: ^M
+#   tstyles.sh:41: parse error near `in^M'
+#
+# That shipped. publish.yml runs on windows-latest, where actions/checkout
+# converts LF to CRLF on the way in, so the package built there carried CRLF
+# into every .sh it staged -- and PSGallery 0.8.32 and 0.8.33 broke `tstyles`
+# for every zsh and bash user who installed them. The repo was never wrong; the
+# checkout was.
+#
+# eol=lf on the files a shell reads, so a Windows checkout cannot convert them.
+*.sh  text eol=lf
+*.js  text eol=lf
+
+# The scheme and theme files are read by ConvertFrom-Json, which does not care,
+# but the picker's byte-exact settings.json restore does -- and a test compares
+# rendered prompt output between the zsh and PowerShell halves of a style, which
+# only agree if both are read the same way on every platform.
+*.json text eol=lf
