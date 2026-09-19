@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles font` told WezTerm users to choose their font in WezTerm's own settings, where the next style apply overrides it.** The command asked one question -- "can I write this terminal's font?" -- and told every no that the terminal takes its font from its own settings. True for Terminal.app, iTerm2, Ghostty, kitty and Alacritty, and false for WezTerm since 0.8.29, where the generated Lua module sets `config.font` from the applied style. So the advice did not merely under-explain, it sent the user somewhere their choice would not stick.
+
+  Measured: with `config.font = wezterm.font('JetBrains Mono')` set in a real `wezterm.lua` ahead of the require, `wezterm ls-fonts` reports the style's Cascadia Code as the primary and demotes JetBrains Mono to a fallback.
+
+  There are THREE owners of a terminal's font, not two, and `Get-FontOwner` now says which: `command` (Windows Terminal, where `tstyles font` writes it), `style` (WezTerm, where the apply does) and `terminal` (everything else). One predicate, because the list footer and the post-install line each answered it separately and that is how the contradiction survived. Only WezTerm's wording changes; every other terminal's stays exactly as it was, because it was already true there.
+
+  The advice it gives instead is measured too, both routes: `tstyles tune` writes `font` into the style it saves, which the WezTerm writer emits -- and `config.font` set AFTER the terminalstyles require line wins, with the style's colours and background untouched.
+
+  Two existing tests pinned the old wording rather than the property and broke on the rewrite: one required the literal `theme.json`, the other rejected the bare word `apply` -- which the new footer uses as a noun, "overridden on the next apply", the opposite of promising one. Both now assert what they were guarding: that a route is named, and that the "Install + apply" promise is absent.
+
+
 ## [0.8.32] - 2026-09-19
 
 ### Fixed
