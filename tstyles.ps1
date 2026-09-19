@@ -837,6 +837,12 @@ function Invoke-TerminalStyle {
     # place output survives to be read.
     Invoke-WelcomeFirstRun
 
+    # One-time offer of the one terminal that animates what these styles ship.
+    # After the welcome, because it only makes sense once you know what the tool
+    # is for; before the font prompt, because it is about seeing the styles at
+    # all rather than about polish.
+    Invoke-WezTermOfferFirstRun
+
     # One-time opt-in font prompt (fires only in interactive sessions, never for
     # subcommands — they all `return` above before reaching this point).
     Invoke-FontFirstRunPrompt
