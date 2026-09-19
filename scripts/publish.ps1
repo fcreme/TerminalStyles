@@ -169,6 +169,38 @@ try {
 }
 Write-Host "  Smoke test: staged module imports and every shipped function resolves." -ForegroundColor DarkGray
 
+# --- Line endings in the STAGED tree, which is what actually ships ---
+#
+# The last line of defence, and the one that was missing. .gitattributes stops
+# a Windows checkout converting these files, and tests/Shell-Files-Are-LF pins
+# the repo -- but neither looks at the package. publish.yml runs on
+# windows-latest, and PSGallery 0.8.32 and 0.8.33 went out with CRLF in every
+# .sh, which broke `tstyles` for every zsh and bash user who installed them:
+#
+#   tstyles.sh:37: command not found: ^M
+#   tstyles.sh:41: parse error near `in^M'
+#
+# Checked HERE because this is the last point at which the bytes are still ours,
+# and checked on the staged copy rather than the source because the staging is
+# where a conversion would happen.
+$crlfOffenders = @(
+    Get-ChildItem -LiteralPath $stageRoot -Recurse -File |
+    Where-Object { $_.Extension -in '.sh', '.js' } |
+    Where-Object { [System.IO.File]::ReadAllBytes($_.FullName) -contains 13 } |
+    ForEach-Object { $_.FullName.Substring($stageRoot.Length).TrimStart('/', '\') }
+)
+if ($crlfOffenders.Count -gt 0) {
+    throw ("Staged shell files carry a carriage return, which zsh and bash read as part of " +
+           "the token: " + ($crlfOffenders -join ', ') + ". Nothing was published.")
+}
+$shCount = @(Get-ChildItem -LiteralPath $stageRoot -Recurse -File |
+             Where-Object { $_.Extension -eq '.sh' }).Count
+if ($shCount -lt 10) {
+    throw ("Only $shCount .sh files staged -- the runtime plus one prompt.sh per style is more " +
+           "than ten, so the check above was looking at almost nothing. Nothing was published.")
+}
+Write-Host "  Line endings: $shCount shell files staged, none carrying a carriage return." -ForegroundColor DarkGray
+
 Write-Host ''
 Write-Host "Staged TerminalStyles $($manifest.Version) at:" -ForegroundColor Cyan
 Write-Host "  $stageRoot" -ForegroundColor Gray
