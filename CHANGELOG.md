@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.36] - 2026-09-20
+
 ### Changed
 
 - **the welcome's keypress now appears only when nothing after it will hold the screen.** Two real questions follow it on a first run -- the WezTerm offer and the font prompt -- and each of them blocks, so the "Press Enter to look" in front of them was ceremony standing between someone and the first style they have ever seen.
@@ -1271,7 +1273,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.35...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.36...HEAD
+[0.8.36]: https://github.com/fcreme/TerminalStyles/compare/v0.8.35...v0.8.36
 [0.8.35]: https://github.com/fcreme/TerminalStyles/compare/v0.8.34...v0.8.35
 [0.8.34]: https://github.com/fcreme/TerminalStyles/compare/v0.8.33...v0.8.34
 [0.8.33]: https://github.com/fcreme/TerminalStyles/compare/v0.8.32...v0.8.33

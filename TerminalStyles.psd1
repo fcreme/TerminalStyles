@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.35'
+    ModuleVersion     = '0.8.36'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.35: the hints, badges and descriptions this tool prints are now readable on every style, instead of on the dark ones it happened to be developed against. Ten places printed the same hardcoded grey -- the picker''s hints and style descriptions, tstyles list''s parentheticals and its ''yours'' badges, the tuner''s hints while it previews live, and the notes that stand in for an unreadable swatch -- and every one of them renders against whatever background the applied style painted. On gitbash, the one light theme, that grey sits at 2.61 against the 4.5 contrast threshold for body text, and the picker previews by repainting the terminal, so the text went faint the moment you arrowed onto it. The colour is now taken from the highlighted style''s own foreground and blended toward its background, so it still reads as secondary text; every bundled style lands between 4.60 and 5.99. Anything that cannot be read -- a scheme.json that will not parse, no active style at all -- keeps the old grey, which is what everything had before.'
+            ReleaseNotes = 'v0.8.36: the first run now offers, once, to install WezTerm. Every bundled style ships an animated background and off Windows exactly one terminal renders it as one -- Terminal.app shows a still first frame and the rest show no image at all -- so there is a real gap between what a style IS and what you can see of it. The offer defaults to no, names the exact command before running it, and is recorded whether you accept or refuse, because an offer that comes back every run is a nag rather than an offer. It never appears to someone already running WezTerm, or where it is already installed, or without Homebrew to install it with, or in a session whose output is redirected. The welcome''s keypress is now conditional on the same reasoning: two real questions follow it on a first run and each holds the screen, so the Press Enter in front of them was ceremony -- but for anyone already using this the font prompt has been answered in an earlier version and nothing follows, so the keypress stays exactly where it is still doing work.'
         }
     }
 }
