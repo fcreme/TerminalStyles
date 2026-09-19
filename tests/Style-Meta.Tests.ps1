@@ -135,9 +135,15 @@ Describe 'the docs site stays in step with the styles that exist' {
         $script:repoRoot = Split-Path $PSScriptRoot -Parent
         $html = [System.IO.File]::ReadAllText((Join-Path $script:repoRoot 'docs/index.html'),
                     [System.Text.UTF8Encoding]::new($false))
-        $m = [regex]::Match($html, '(?m)^const STYLES = (\[.*?\]);$')
+        # \r? before the anchor: a Windows checkout ends these lines ');\r\n',
+        # and .NET's multiline $ matches just before the \n -- with the \r
+        # still between it and the ';', so ');$' matches nothing at all. The
+        # assertion below exists because that failure is silent: a regex that
+        # matches nothing yields an empty set, and an empty set passes every
+        # "is not in the other list" check underneath it.
+        $m = [regex]::Match($html, '(?m)^const STYLES = (\[.*?\]);\r?$')
         $script:siteStyles = if ($m.Success) { @(($m.Groups[1].Value | ConvertFrom-Json) | ForEach-Object { $_.n }) } else { @() }
-        $i = [regex]::Match($html, '(?m)^const IMG = (\{.*?\});$')
+        $i = [regex]::Match($html, '(?m)^const IMG = (\{.*?\});\r?$')
         $script:siteImg = if ($i.Success) { @(($i.Groups[1].Value | ConvertFrom-Json).PSObject.Properties.Name) } else { @() }
         $script:onDisk = @(Get-ChildItem (Join-Path $script:repoRoot 'styles') -Directory | ForEach-Object { $_.Name })
     }
