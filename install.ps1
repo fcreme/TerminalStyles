@@ -163,7 +163,7 @@ $loaderEnd
 # WinPS 5.1's CP437 default.
 
 function Write-InstallBanner {
-    # Cyan rule + wordmark + tagline + cyan rule.
+    # The wordmark, then the tagline.
     #
     # Not "Windows Terminal themes for pwsh". This installer runs on macOS and
     # Linux, where there is no Windows Terminal at all, and the module styles
@@ -173,12 +173,25 @@ function Write-InstallBanner {
     # own, which `tstyles help` has printed since 0.8.21; the two are pinned
     # together by a test because install.ps1 cannot dot-source lib/help.ps1 and
     # a second literal of one sentence is how these drift.
-    $rule = '-' * 52
+    #
+    # Single-quoted on purpose: the art is full of backslashes and pipes, and in
+    # a double-quoted PowerShell string a backtick would escape the next
+    # character. There is no backtick or $ in it today, and single quotes mean
+    # there never can be one by accident.
+    #
+    # 62 columns at its widest, which fits the 80-column floor this project
+    # assumes everywhere else, with room for the two-space indent.
+    $art = @(
+        '   _       _         _'
+        '  | |_ ___| |_ _   _| | ___  ___'
+        '  | __/ __| __| | | | |/ _ \/ __|'
+        '  | |_\__ \ |_| |_| | |  __/\__ \'
+        '   \__|___/\__|\__, |_|\___||___/'
+        '                |___/'
+    )
     Write-Host ''
-    Write-Host "  $rule" -ForegroundColor Cyan
-    Write-Host '   tstyles' -ForegroundColor White -NoNewline
-    Write-Host '  --  themed styles for your terminal' -ForegroundColor DarkGray
-    Write-Host "  $rule" -ForegroundColor Cyan
+    foreach ($line in $art) { Write-Host $line -ForegroundColor Cyan }
+    Write-Host '        themed styles for your terminal' -ForegroundColor DarkGray
     Write-Host ''
 }
 

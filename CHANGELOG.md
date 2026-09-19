@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **the installer opens with a wordmark instead of a rule and a line of text.** It is the first thing anyone sees of this project, and it looked like a log line. The tagline underneath is unchanged and still the module's own, pinned to `tstyles help` by the test that exists because `install.ps1` is standalone and cannot dot-source `lib/help.ps1`.
+
+  Two things the art had to not break. It is single-quoted, because the lettering is full of backslashes and pipes and a backtick in a double-quoted PowerShell string escapes the next character -- there is none in it today, and single quotes mean one cannot arrive by accident. And it is 62 columns at its widest, under the 80-column floor assumed everywhere else; a new test holds every banner line to 78 so art that wraps cannot ship, since the first thing a user sees arriving broken across lines is worse than no art at all.
+
+  The guard that checked the banner "prints at all" matched the literal `tstyles`, which slab lettering DRAWS without containing -- so it now asserts that several lines were printed, and the tagline assertion below it keeps pinning the wording.
+
+
 ## [0.8.33] - 2026-09-19
 
 ### Fixed
