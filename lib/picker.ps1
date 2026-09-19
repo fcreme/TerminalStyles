@@ -623,6 +623,125 @@ function Invoke-WelcomeFirstRun {
     } catch { }
 }
 
+function Test-ShouldOfferWezTerm {
+    <#
+    .SYNOPSIS
+    Pure gate for the one-time WezTerm offer. Every condition has to hold.
+
+    .DESCRIPTION
+    Installing a GUI application is a far larger intervention than anything else
+    this tool does, so the bar is correspondingly high. Each of these rules out
+    a case where the offer would be noise or a nuisance:
+
+      MarkerPresent   -- asked once, ever. Same rule as the font prompt.
+      Interactive     -- a question printed into a redirect is asked of nobody,
+                         and would burn the one asking. That is not theoretical:
+                         the font prompt lost its single offer exactly that way.
+      Platform MacOS  -- the install route below is a Homebrew cask.
+      Kind not WezTerm-- offering it to someone already running it is absurd.
+      AlreadyInstalled-- likewise, and it is cheap to check.
+      BrewPresent     -- with no brew there is nothing to offer; saying "install
+                         Homebrew first" turns a courtesy into a chore.
+    #>
+    param(
+        [Parameter(Mandatory)][bool]$MarkerPresent,
+        [Parameter(Mandatory)][bool]$Interactive,
+        [Parameter(Mandatory)][string]$Platform,
+        [Parameter(Mandatory)][string]$Kind,
+        [Parameter(Mandatory)][bool]$AlreadyInstalled,
+        [Parameter(Mandatory)][bool]$BrewPresent
+    )
+    return (-not $MarkerPresent) -and $Interactive -and ($Platform -eq 'MacOS') -and
+           ($Kind -ne 'WezTerm') -and (-not $AlreadyInstalled) -and $BrewPresent
+}
+
+function Test-WezTermInstalled {
+    # On PATH or in /Applications. Either is enough to mean "do not offer".
+    [CmdletBinding()]
+    param()
+    if (Get-Command wezterm -ErrorAction SilentlyContinue) { return $true }
+    return (Test-Path -LiteralPath '/Applications/WezTerm.app')
+}
+
+function Install-WezTermViaBrew {
+    # The external call, on its own, so the failure path around it can be
+    # driven. Pester cannot mock `& brew` -- an external binary is not a
+    # command it can intercept -- so a test that tried would pass while
+    # exercising nothing, which is exactly what the first version of it did.
+    [CmdletBinding()]
+    param()
+    & brew install --cask wezterm 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }
+}
+
+function Invoke-WezTermOfferFirstRun {
+    <#
+    .SYNOPSIS
+    Offer, once, to install WezTerm -- the only terminal off Windows that
+    animates a background GIF.
+
+    .DESCRIPTION
+    Every bundled style ships an animated GIF, and off Windows exactly one
+    terminal renders it as one: Terminal.app can show a still first frame and
+    nothing more, and the rest show no image at all. That is a real gap between
+    what a style is and what the reader can see of it, and it is worth one
+    question.
+
+    ONE question. It defaults to no, it names the exact command it will run
+    before running it, and a refusal is recorded the same as a yes -- the offer
+    is not repeated on the next run, because an offer that keeps coming back is
+    not an offer.
+
+    A failure here is reported and swallowed. The user asked to style their
+    terminal; whether Homebrew succeeded is not a reason to stop doing that.
+    #>
+    $marker = Join-Path $script:TStylesDataRoot '.wezterm-offered'
+    $kind   = Get-TerminalKind
+    if (-not (Test-ShouldOfferWezTerm `
+                -MarkerPresent    (Test-Path -LiteralPath $marker) `
+                -Interactive      (Test-InteractiveConsole) `
+                -Platform         (Get-TStylesPlatform) `
+                -Kind             $kind `
+                -AlreadyInstalled (Test-WezTermInstalled) `
+                -BrewPresent      ([bool](Get-Command brew -ErrorAction SilentlyContinue)))) {
+        return
+    }
+
+    $hint = Get-HintEscape
+    $rst  = "$([char]27)[0m"
+    Write-Host ""
+    Write-Host ("  Every style here ships an animated background. {0} shows a still frame at best." -f
+                (Get-TerminalDisplayName -Kind $kind)) -ForegroundColor Gray
+    Write-Host "  WezTerm is the only terminal off Windows that animates it." -ForegroundColor Gray
+    Write-Host "$hint  Installs with: brew install --cask wezterm$rst"
+    $ans = Read-Host "  Install WezTerm now? [y/N]"
+
+    # Written whatever the answer: a no is an answer, and asking again next time
+    # would make it a nag rather than an offer.
+    try {
+        [System.IO.File]::WriteAllText($marker, '', [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+
+    if ("$ans" -notmatch '^(?i)y') {
+        Write-Host "$hint  Skipped. Install it later with: brew install --cask wezterm$rst"
+        return
+    }
+
+    Write-Host "  Running brew install --cask wezterm..." -ForegroundColor Cyan
+    try {
+        Install-WezTermViaBrew
+        if (Test-WezTermInstalled) {
+            Write-Host "  WezTerm installed. Open it, then run tstyles there to see the backgrounds." -ForegroundColor Green
+        } else {
+            # brew can exit 0 having done nothing useful. Checking beats trusting.
+            Write-Host "  brew finished but WezTerm is not on this machine. Install it by hand:" -ForegroundColor Yellow
+            Write-Host "    brew install --cask wezterm" -ForegroundColor Cyan
+        }
+    } catch {
+        Write-Host "  Could not install WezTerm: $_" -ForegroundColor Yellow
+        Write-Host "    brew install --cask wezterm" -ForegroundColor Cyan
+    }
+}
+
 function Test-ShouldPromptFonts {
     # Pure gate: only prompt on an interactive session that hasn't been prompted.
     param(

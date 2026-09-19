@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **a one-time offer to install WezTerm, on the first `tstyles` where it would actually help.** Every bundled style ships an animated background, and off Windows exactly one terminal renders it as one -- Terminal.app shows a still first frame, and the rest show no image at all. That is a real gap between what a style IS and what the reader can see of it, and it is worth one question.
+
+  ```
+  Every style here ships an animated background. Terminal.app shows a still frame at best.
+  WezTerm is the only terminal off Windows that animates it.
+  Installs with: brew install --cask wezterm
+  Install WezTerm now? [y/N]
+  ```
+
+  Installing a GUI application is the largest thing this tool offers to do, so every condition is separately gated and separately tested: once ever, only on an interactive console, only on macOS (the route is a Homebrew cask), never to someone already running WezTerm, never when it is already installed, and never without brew -- because answering "install Homebrew first" turns a courtesy into a chore. It defaults to NO, and names the exact command before running it.
+
+  A refusal is recorded the same as a yes. An offer that comes back every run is not an offer, and a test fails if the marker stops being written on the no path.
+
+  The install itself is one extractable call, because `& brew` is an external binary Pester cannot intercept -- the first version of the "does not take the picker down when the install fails" test mocked something the code never called and passed while exercising nothing. And brew exiting clean is not taken as success: the application is checked for afterwards, and if it is not there the user gets the command to run by hand rather than a green line and no terminal.
+
+
 ## [0.8.35] - 2026-09-19
 
 ### Fixed
