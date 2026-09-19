@@ -506,6 +506,20 @@ function Get-WezTermStyleLua {
         [void]$sb.AppendLine("      source = { File = { path = $(& $q $BackgroundImage) } },")
         [void]$sb.AppendLine("      width = $(& $q $size), height = $(& $q $size),")
         [void]$sb.AppendLine("      horizontal_align = 'Center', vertical_align = 'Middle',")
+        # NoRepeat on both axes, always. WezTerm TILES a background layer by
+        # default, and Contain deliberately leaves space -- it fits the image
+        # inside the pane without cropping, so a wide window has bare strips at
+        # the sides and WezTerm fills them with copies. Reported on `tombraider`
+        # (uniform -> Contain) as the image duplicating once the terminal got
+        # wide enough.
+        #
+        # Not a judgement call: Windows Terminal is what these styles are
+        # authored against, and NONE of its four backgroundImageStretchMode
+        # values tile. `none` draws one copy at natural size, `fill` stretches
+        # one, `uniform` and `uniformToFill` scale one. A style asking for any of
+        # them is asking for exactly one image, so repeating it is this writer
+        # inventing a look the style never described.
+        [void]$sb.AppendLine("      repeat_x = 'NoRepeat', repeat_y = 'NoRepeat',")
         [void]$sb.AppendLine("      opacity = $($bgOpacity.ToString([cultureinfo]::InvariantCulture)),")
         [void]$sb.AppendLine("    },")
         [void]$sb.AppendLine("  }")

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **a background image was TILED across a wide WezTerm window instead of drawn once.** WezTerm repeats a background layer by default, and `Contain` deliberately leaves room -- it fits the image inside the pane without cropping, so a wide window has bare strips either side and WezTerm fills them with copies. Reported on `tombraider`, whose `uniform` stretch mode maps to `Contain`: the image duplicated once the terminal got wide enough.
+
+  Not a judgement call about what looks better. These styles are authored against Windows Terminal, and **none of its four `backgroundImageStretchMode` values tile** -- `none` draws one copy at natural size, `fill` stretches one, `uniform` and `uniformToFill` scale one. A style asking for any of them is asking for exactly one image, so repeating it was this writer inventing a look no style described. `repeat_x`/`repeat_y` are now `NoRepeat` unconditionally, since tiling is a separate axis from sizing and could never have fallen out of the size mapping.
+
+  Measured against the real binary: `repeat_x = 'NoRepeat'` accepted, `'Never'` rejected (`is not a valid BackgroundRepeat`), and all 16 bundled styles regenerated and loaded clean with validation on. The regression test asserts over the whole stretch-mode domain rather than the one reported -- `Cover` crops to fill and so hides the symptom today, but nothing stops a style being re-authored to `uniform`.
+
+
 ## [0.8.30] - 2026-09-18
 
 ### Added

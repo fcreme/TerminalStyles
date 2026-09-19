@@ -721,3 +721,72 @@ Describe 'the WezTerm capability table matches what the writer emits' {
         }
     }
 }
+
+Describe 'the background is drawn once, never tiled' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:scheme = [pscustomobject]@{ background = '#101010'; foreground = '#f0f0f0' }
+        }
+
+        It 'says NoRepeat on both axes for every stretch mode' {
+            # WezTerm TILES a background layer by default. Contain deliberately
+            # leaves space -- it fits the image inside the pane without cropping
+            # -- so a wide window has bare strips at the sides, and WezTerm fills
+            # them with copies. Reported on `tombraider` (uniform -> Contain) as
+            # the image duplicating once the terminal got wide enough.
+            #
+            # Asserted over the whole stretch-mode domain, not just the one that
+            # was reported: Cover crops to fill and so hides the symptom today,
+            # but nothing stops a style from being re-authored to `uniform`.
+            foreach ($mode in 'none', 'fill', 'uniform', 'uniformToFill', $null) {
+                $theme = [pscustomobject]@{
+                    backgroundImage            = '{{BACKGROUND_IMAGE}}'
+                    backgroundImageStretchMode = $mode
+                }
+                $lua = Get-WezTermStyleLua -StyleName 'probe' -Scheme $script:scheme `
+                           -Theme $theme -BackgroundImage '/tmp/bg.gif'
+                $lua | Should -Match "repeat_x = 'NoRepeat'" -Because "stretch mode '$mode' must draw one image"
+                $lua | Should -Match "repeat_y = 'NoRepeat'" -Because "stretch mode '$mode' must draw one image"
+            }
+        }
+
+        It 'matches Windows Terminal, which has no tiling mode at all' {
+            # The styles are authored against Windows Terminal, and none of its
+            # four backgroundImageStretchMode values tile: `none` draws one copy
+            # at natural size, `fill` stretches one, `uniform` and `uniformToFill`
+            # scale one. Repeating is this writer inventing a look no style asked
+            # for, which is why it is unconditional rather than a mapped value.
+            # Each maps to a size that draws ONE image -- Contain fits it,
+            # Cover crops it, 100% stretches it. None of the three repeats, and
+            # WezTerm has no size that implies repeating either: tiling is a
+            # separate axis, which is exactly why it had to be turned off
+            # explicitly rather than falling out of the size mapping.
+            $expected = @{
+                'none'          = 'Contain'   # draw at natural size: nearest without cropping or distorting
+                'fill'          = '100%'      # stretch to the pane
+                'uniform'       = 'Contain'   # scale to fit
+                'uniformToFill' = 'Cover'     # scale to fill, cropping
+            }
+            foreach ($mode in $expected.Keys) {
+                Get-WezTermBackgroundSize -Mode $mode | Should -Be $expected[$mode] `
+                    -Because "'$mode' draws exactly one image, scaled this way"
+            }
+        }
+
+        It 'every bundled style that ships a background says it' {
+            $repoRoot = Split-Path $PSScriptRoot -Parent
+            $checked = 0
+            foreach ($d in Get-ChildItem (Join-Path $repoRoot 'styles') -Directory) {
+                $tp = Join-Path $d.FullName 'theme.json'
+                if (-not (Test-Path -LiteralPath $tp)) { continue }
+                $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                if ($theme.PSObject.Properties.Match('backgroundImage').Count -eq 0) { continue }
+                $lua = Get-WezTermStyleLua -StyleName $d.Name -Scheme $script:scheme `
+                           -Theme $theme -BackgroundImage '/tmp/bg.gif'
+                $lua | Should -Match "repeat_x = 'NoRepeat'" -Because "$($d.Name) ships a background"
+                $checked++
+            }
+            $checked | Should -BeGreaterThan 10 -Because 'a loop that never ran would pass silently'
+        }
+    }
+}
