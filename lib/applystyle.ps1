@@ -13,10 +13,16 @@ function Get-UnreadableSchemeSwatch {
     # read. One function because `tstyles list` and `tstyles current` both draw
     # a swatch from the same three statements, and the same condition must not
     # acquire a second phrasing in the second place that meets it.
-    return "$([char]27)[38;2;160;160;160m(unreadable scheme.json)$([char]27)[0m"
+    return "$(Get-HintEscape)(unreadable scheme.json)$([char]27)[0m"
 }
 
 function Show-StyleList {
+    # Resolved ONCE per listing, from the style the reader is actually looking
+    # at. Every parenthetical and badge below was a fixed grey, which on the one
+    # light theme renders at 2.61 against the 4.5 WCAG threshold -- see
+    # Get-HintEscape.
+    $hintEsc = Get-HintEscape
+
     # `tstyles list` -- print available styles, marking the active one.
     Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
@@ -60,20 +66,20 @@ function Show-StyleList {
         try {
             switch (Get-StyleOrigin -Name $s.Name -StyleDir $s.FullName -Claim $claim `
                         -RootsAreOne $rootsAreOne -StyleHash $styleHash) {
-                'yours'  { $badge = "  $([char]27)[38;2;160;160;160myours$([char]27)[0m"; $anyYours = $true }
-                'shadow' { $badge = "  $([char]27)[38;2;160;160;160myours (shadows bundled)$([char]27)[0m"; $anyYours = $true }
+                'yours'  { $badge = "  $hintEsc" + "yours$([char]27)[0m"; $anyYours = $true }
+                'shadow' { $badge = "  $hintEsc" + "yours (shadows bundled)$([char]27)[0m"; $anyYours = $true }
             }
         } catch { }
         Write-Host ("  {0} {1,-16}  {2}{3}" -f $marker, $s.Name, $swatch, $badge)
     }
     Write-Host ""
     if ($current) {
-        Write-Host "$([char]27)[38;2;160;160;160m  (* = currently active)$([char]27)[0m"
+        Write-Host "$hintEsc  (* = currently active)$([char]27)[0m"
     } else {
-        Write-Host "$([char]27)[38;2;160;160;160m  (no bundled style currently active)$([char]27)[0m"
+        Write-Host "$hintEsc  (no bundled style currently active)$([char]27)[0m"
     }
     if ($anyYours) {
-        Write-Host "$([char]27)[38;2;160;160;160m  (yours = you made it; delete one with: tstyles delete <name>)$([char]27)[0m"
+        Write-Host "$hintEsc  (yours = you made it; delete one with: tstyles delete <name>)$([char]27)[0m"
     }
     Write-Host ""
 }
@@ -127,7 +133,7 @@ function Show-CurrentStyle {
             }
         }
     } else {
-        Write-Host "$([char]27)[38;2;160;160;160m(no bundled style currently active)$([char]27)[0m"
+        Write-Host "$(Get-HintEscape)(no bundled style currently active)$([char]27)[0m"
     }
 }
 

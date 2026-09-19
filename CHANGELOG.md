@@ -15,6 +15,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   It degrades rather than guessing: a scheme whose colours cannot be parsed keeps the old fixed grey, which is no worse than what every style got before, and a scheme whose own foreground is already marginal gets that foreground rather than something dimmer and worse.
 
+- **and so was every other hint in the project -- the picker was one of ten sites.** `tstyles list`'s parentheticals and `yours` badges, the tuner's hints while it previews live, and the notes that stand in for an unreadable swatch all printed the same literal grey, all against whatever background the reader actually has. On `gitbash` every one of them was at 2.61.
+
+  They now go through one function. Worth recording what does NOT need it: `-ForegroundColor Yellow` and its siblings name a PALETTE SLOT, and the applied style repaints those slots, so they adapt on their own. Only a hardcoded truecolor triple is frozen against a background that moves, which is why ten of these accumulated without anyone noticing -- until a light theme was applied.
+
+  A test now fails if the literal reappears anywhere but the two fallbacks, naming the file, because that is how ten of them got there.
+
 
 ## [0.8.34] - 2026-09-19
 

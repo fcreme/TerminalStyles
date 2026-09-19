@@ -118,3 +118,74 @@ Describe 'the picker uses it, and falls back when it cannot' {
         }
     }
 }
+
+Describe 'every hint in the project adapts, not just the picker' {
+    InModuleScope TerminalStyles {
+
+        It 'tstyles list resolves its hints from the ACTIVE style' {
+            # The picker was one of TEN sites printing the same fixed grey. The
+            # listing is the one a reader meets most often, and it renders
+            # against whatever style they already have applied -- so on gitbash
+            # every parenthetical and badge in it was at 2.61.
+            Mock Get-CurrentStyleName { 'gitbash' }
+
+            # PowerShell 7 strips ANSI from Write-Host once the stream is
+            # redirected -- $PSStyle.OutputRendering defaults to Host. Captured
+            # without this the output has ZERO escapes in it, and every
+            # assertion below passes over an empty set. Restored afterwards so
+            # the setting does not leak into the rest of the run.
+            $prevRender = $null
+            if ($PSStyle) { $prevRender = $PSStyle.OutputRendering; $PSStyle.OutputRendering = 'Ansi' }
+            try { $out = Show-StyleList 6>&1 | Out-String }
+            finally { if ($PSStyle) { $PSStyle.OutputRendering = $prevRender } }
+
+            $out | Should -Match "$([char]27)\[" -Because 'the capture has to keep the escapes to measure them'
+
+            $gb = [System.IO.File]::ReadAllText(
+                (Join-Path (Split-Path $PSScriptRoot -Parent) 'styles/gitbash/scheme.json'),
+                [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+
+            $escapes = @([regex]::Matches($out, "$([char]27)\[38;2;(\d+);(\d+);(\d+)m") |
+                         ForEach-Object { $_ } | Sort-Object { $_.Value } -Unique)
+            @($escapes).Count | Should -BeGreaterThan 0 -Because 'the listing does print hints'
+
+            foreach ($m in $escapes) {
+                $hex = '#{0:x2}{1:x2}{2:x2}' -f [int]$m.Groups[1].Value, [int]$m.Groups[2].Value, [int]$m.Groups[3].Value
+                (Get-ContrastRatio -A $hex -B $gb.background) | Should -BeGreaterOrEqual 4.5 `
+                    -Because "$hex is printed by tstyles list onto gitbash's background"
+            }
+        }
+
+        It 'falls back to the old grey when there is no active style to read' {
+            # Not a failure state: a fresh install has no active style, and the
+            # grey is exactly what every site used before.
+            Mock Get-CurrentStyleName { $null }
+            Get-HintEscape | Should -Be "$([char]27)[38;2;160;160;160m"
+        }
+
+        It 'leaves no hardcoded grey behind in the shipped code' {
+            # The literal is allowed in exactly two places: the fallback inside
+            # Get-HintEscape, and the picker's own fallback constant. Anywhere
+            # else is a site that did not get converted, which is how ten of
+            # them accumulated in the first place.
+            $repoRoot = Split-Path $PSScriptRoot -Parent
+            $files = @(Get-ChildItem (Join-Path $repoRoot 'lib') -Filter '*.ps1') +
+                     @(Get-Item (Join-Path $repoRoot 'tstyles.ps1'))
+            $hits = @()
+            foreach ($f in $files) {
+                $text = [System.IO.File]::ReadAllText($f.FullName, [System.Text.UTF8Encoding]::new($false))
+                foreach ($line in ($text -split "`n")) {
+                    # The CONSTRUCTION, not the digits: the docstring in
+                    # Get-HintEscape names the literal in prose, and a scan that
+                    # counted prose would have to be loosened every time someone
+                    # explained the bug.
+                    if ($line -match '\[char\]27\)\[38;2;160;160;160m') {
+                        $hits += "$($f.Name): $($line.Trim())"
+                    }
+                }
+            }
+            @($hits).Count | Should -BeLessOrEqual 2 -Because (
+                "only the two fallbacks may hold the literal; found: " + ($hits -join ' | '))
+        }
+    }
+}
