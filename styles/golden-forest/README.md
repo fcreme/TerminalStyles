@@ -16,6 +16,7 @@ and grounded.
   golden-forest palette so the previous theme's colors do not bleed through
   after a live `tstyles` switch.
 - **prompt.sh** — the same, for zsh and bash.
+- **meta.json** — the one-line description and quote `tstyles` shows when you pick it.
 
 This style keeps no custom prompt *shape* — it deliberately restores the stock
 one — but it does replace whatever prompt was active, so `tstyles golden-forest

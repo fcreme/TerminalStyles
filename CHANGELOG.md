@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **the picker says what a style IS, and which one you already have.** It listed fifteen names and five colour blocks; the thing that actually distinguishes a style -- that eva is an Evangelion body-scan and sober is minimalist monochrome -- existed only in each style's README and in the docs site, neither of which you are reading at the moment you choose. Each style now carries its own `meta.json` with a one-line description and, where it has one, its quote; the picker shows both for the highlighted row.
+
+  It lives IN the style rather than in a catalog, and that is the point. A central list of descriptions is a second list of styles, and this project has already paid for one: `docs/index.html` carries a hand-written description per style, and when `halo` was removed its entry had to be found and deleted by hand. A file inside the folder cannot drift from the folder.
+
+  Both rows are painted on every redraw, blank when a style has no quote, and the description is TRUNCATED rather than wrapped. Same reason in both cases: the frame is overwritten in place, so a row that comes and goes -- or a line that wraps on a narrow window -- makes the frame a different height for some styles than others, and strands the taller frame's last line on screen. The chrome budget moved from 8 rows to 10 to buy them.
+
+- **the picker marks the style that is actually applied, separately from the cursor.** `>` is where you are; `*` is what is live -- the same mark `tstyles list` uses. They start on the same row and part company the moment you press Down, at which point the picker used to stop telling you what Esc would return you to.
+
+- a guard that the docs site lists exactly the styles that exist, in both of its keyed collections. It would have caught the `halo` entry left behind after that style was removed: `Expected $null or empty, because a style the site still advertises is one a reader cannot install, but got 'halo'`. The prose is deliberately not asserted equal -- the site has room for a longer sentence than a picker row, and requiring one wording for both would be inventing a rule to make a test pass.
+
+
 ### Fixed
 
 - **`tstyles font` told WezTerm users to choose their font in WezTerm's own settings, where the next style apply overrides it.** The command asked one question -- "can I write this terminal's font?" -- and told every no that the terminal takes its font from its own settings. True for Terminal.app, iTerm2, Ghostty, kitty and Alacritty, and false for WezTerm since 0.8.29, where the generated Lua module sets `config.font` from the applied style. So the advice did not merely under-explain, it sent the user somewhere their choice would not stick.

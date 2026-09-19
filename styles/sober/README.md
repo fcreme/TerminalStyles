@@ -21,6 +21,7 @@ shell startup is silent. The opposite of umbrella.
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
   fetched into your cache on first use, so `main` stays binary-free.
   scheme background), so the WT background reads as plain black.
+- **meta.json** — the one-line description and quote `tstyles` shows when you pick it.
 
 ## Preview
 

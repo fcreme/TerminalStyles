@@ -22,6 +22,7 @@ directly from Asuka / Unit-02 stills.
   Not in this folder: background images live flat-named on the
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
   fetched into your cache on first use, so `main` stays binary-free.
+- **meta.json** — the one-line description and quote `tstyles` shows when you pick it.
 
 ## Best paired with
 

@@ -31,22 +31,37 @@ Describe 'the picker frame never fills the window' {
     InModuleScope TerminalStyles {
 
         It 'holds a row back for every window height, style count and note count' {
-            $checked = 0
+            $checked = 0; $fitted = 0
             foreach ($total in 1, 5, 16, 17, 40, 120) {
                 foreach ($notes in 0, 1, 2, 3) {
                     foreach ($wh in 14..60) {
                         $plan = Get-PickerFramePlan -Total $total -Selected ([int]($total / 2)) `
                                     -WindowHeight $wh -NoteCount $notes
-                        $plan.FrameRows | Should -BeLessThan $wh -Because (
-                            "a frame of $($plan.FrameRows) rows in a $wh-row window scrolls the " +
-                            "buffer, and the picker's origin is a row it captured once " +
-                            "(total=$total notes=$notes)")
-                        $plan.Fits | Should -BeTrue
+                        # The invariant is two-sided, not "always fits": a
+                        # window too short for the chrome alone scrolls whatever
+                        # we do, and the honest answer there is Fits = false so
+                        # the caller reclaims the screen instead of painting at
+                        # an origin the scroll invalidated. What must never
+                        # happen is a frame that fills the window while claiming
+                        # to fit.
+                        if ($plan.Fits) {
+                            $plan.FrameRows | Should -BeLessThan $wh -Because (
+                                "a frame of $($plan.FrameRows) rows in a $wh-row window scrolls " +
+                                "the buffer, and the picker's origin is a row it captured once " +
+                                "(total=$total notes=$notes)")
+                            $fitted++
+                        } else {
+                            $plan.FrameRows | Should -BeGreaterOrEqual $wh -Because (
+                                "Fits is false only when the frame genuinely cannot fit " +
+                                "(total=$total notes=$notes wh=$wh)")
+                        }
                         $checked++
                     }
                 }
             }
             $checked | Should -BeGreaterThan 500 -Because 'a loop that never ran would pass silently'
+            $fitted  | Should -BeGreaterThan 400 -Because (
+                'if almost nothing fitted, the branch above would be passing vacuously')
         }
 
         It 'reports Fits false rather than lying when the chrome alone will not fit' {
@@ -71,14 +86,18 @@ Describe 'the picker frame never fills the window' {
 
         It 'counts the chrome the frame really paints' {
             # Leading blank, header, two hints, the blank under them, two
-            # always-present scroll indicators, trailing blank -- and one row per
-            # optional note. If $drawMenu gains or loses a row, this is the number
-            # that has to move with it.
+            # always-present scroll indicators, the description row, the quote
+            # row, trailing blank -- and one row per optional note. If $drawMenu
+            # gains or loses a row, this is the number that has to move with it.
+            #
+            # 10 since the description block: both of its rows are painted every
+            # redraw, blank when the style has no meta.json or no quote, because
+            # a row that comes and goes strands the taller frame's last line.
             (Get-PickerFramePlan -Total 5 -Selected 0 -WindowHeight 40).ChromeRows |
-                Should -Be 8
+                Should -Be 10
             foreach ($n in 1, 2, 3) {
                 (Get-PickerFramePlan -Total 5 -Selected 0 -WindowHeight 40 -NoteCount $n).ChromeRows |
-                    Should -Be (8 + $n)
+                    Should -Be (10 + $n)
             }
         }
 

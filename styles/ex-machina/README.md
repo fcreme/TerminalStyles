@@ -25,6 +25,7 @@ sessions. Pale cyan default text on near-black, vintage cursor.
   [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) and are
   fetched into your cache on first use, so `main` stays binary-free.
   applied when you select this style in `tstyles`.
+- **meta.json** — the one-line description and quote `tstyles` shows when you pick it.
 
 ## Best paired with
 
