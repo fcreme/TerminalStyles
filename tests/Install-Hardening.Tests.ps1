@@ -969,6 +969,25 @@ Describe 'the installer banner' {
             Should -BeGreaterOrEqual 5 -Because 'a wordmark plus a tagline is more than a line or two'
     }
 
+    It 'prints the same wordmark the module does' {
+        # install.ps1 is fetched and piped to iex before the module exists, so
+        # it cannot read the art from lib/picker.ps1 -- the lettering is a
+        # deliberate second copy, and this is the only place the two meet. Same
+        # reasoning as the tagline assertion below it, which exists for the same
+        # reason and has already caught one drift.
+        #
+        # Compared line for line after trimming trailing space only: leading
+        # space is the art.
+        $moduleArt = & (Get-Module TerminalStyles) { Get-TStylesWordmark }
+        @($moduleArt).Count | Should -BeGreaterThan 3 -Because 'an empty list would match anything'
+
+        $bannerLines = @($script:banner -split "`n" | ForEach-Object { $_.TrimEnd("`r") })
+        foreach ($line in $moduleArt) {
+            ($bannerLines -contains $line.TrimEnd()) | Should -BeTrue `
+                -Because "the installer must print the module's own lettering, not a drifted copy of it: '$line'"
+        }
+    }
+
     It 'fits the 80-column floor the rest of the project assumes' {
         # Art that wraps is worse than no art: the first thing a new user sees
         # would arrive broken across lines.

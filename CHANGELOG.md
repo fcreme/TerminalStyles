@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **the first interactive `tstyles` opens with the wordmark.** Once, on a real console, with a keypress before the picker takes the screen.
+
+  The keypress is not decoration. The picker calls `Clear-Host` on the way in and anything printed above the frame is wiped unread, so a banner that merely printed would flash past and would have spent its one-time marker doing it -- which is not hypothetical: the font prompt beside it lost its single offer exactly that way, into a redirect, and the write-up sits above that function. It cannot lean on that prompt to hold the screen either, since that one only blocks when it has something to ask.
+
+  Same two gates as the font prompt, for the same reasons: once ever, and only where someone can see it. A one-time banner printed into a redirect is spent on nobody, so the marker is not written in a non-interactive session -- the showing is still owed to the first real console. The marker is also written LAST and its failure swallowed: seeing the welcome twice is a smaller cost than failing to open the picker.
+
+  The lettering is a deliberate second copy of `install.ps1`'s, because that file is fetched and piped to `iex` before this module exists and cannot read anything from here. A test compares the two line for line, the same way the tagline beneath them has been pinned since 0.8.21 -- and it bites: changing a single glyph in the installer's copy fails by naming the drifted line.
+
+
 ### Changed
 
 - **the installer opens with a wordmark instead of a rule and a line of text.** It is the first thing anyone sees of this project, and it looked like a log line. The tagline underneath is unchanged and still the module's own, pinned to `tstyles help` by the test that exists because `install.ps1` is standalone and cannot dot-source `lib/help.ps1`.
