@@ -142,7 +142,7 @@ function Get-SchemeSwatchOrNote {
     $swatch = Get-SchemeSwatch -Scheme $Scheme
     # The cell Get-SchemeSwatch appends per colour. No cell, no colour.
     if ($swatch -and $swatch.Contains("$([char]27)[48;2;")) { return $swatch }
-    return "$([char]27)[38;2;160;160;160m(no colors this tool can read)$([char]27)[0m"
+    return "$(Get-HintEscape)(no colors this tool can read)$([char]27)[0m"
 }
 
 function Convert-HueToRgb {
@@ -273,6 +273,140 @@ function Get-SchemeOscPacket {
         if ($color) { [void]$sb.Append("$E]4;${p};${color}$BEL") }
     }
     return $sb.ToString()
+}
+
+function Get-RelativeLuminance {
+    # WCAG relative luminance of a hex colour, 0 (black) to 1 (white).
+    # Pure, and the basis of Get-ContrastRatio below.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Hex)
+
+    $h = ConvertTo-NormalHex $Hex
+    if (-not $h) { return $null }
+    $h = $h.TrimStart('#')
+    $chan = @(0, 2, 4) | ForEach-Object {
+        $c = [Convert]::ToInt32($h.Substring($_, 2), 16) / 255.0
+        if ($c -le 0.03928) { $c / 12.92 } else { [Math]::Pow(($c + 0.055) / 1.055, 2.4) }
+    }
+    (0.2126 * $chan[0]) + (0.7152 * $chan[1]) + (0.0722 * $chan[2])
+}
+
+function Get-ContrastRatio {
+    # WCAG contrast between two hex colours: 1 (identical) to 21 (black/white).
+    # 4.5 is the threshold for body text, and the number this project cares
+    # about -- the picker's hint lines are body text sitting on whatever
+    # background the style being previewed just painted.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$A, [Parameter(Mandatory)][string]$B)
+
+    $la = Get-RelativeLuminance $A
+    $lb = Get-RelativeLuminance $B
+    if ($null -eq $la -or $null -eq $lb) { return $null }
+    $hi = [Math]::Max($la, $lb); $lo = [Math]::Min($la, $lb)
+    ($hi + 0.05) / ($lo + 0.05)
+}
+
+function Get-SchemeHintColor {
+    <#
+    .SYNOPSIS
+    A dimmed colour for secondary text that is still readable on THIS scheme's
+    background.
+
+    .DESCRIPTION
+    The picker's hints and the style description were a fixed grey, #a0a0a0 --
+    chosen once, against a dark background, and then asked to sit on whatever
+    background the previewed style paints. Measured across the bundled styles:
+    it fails WCAG outright on gitbash (2.61 against the 4.5 body-text
+    threshold, because gitbash is the one light theme) and is marginal on six
+    more. The picker previews by repainting the terminal, so this is not a
+    theoretical mismatch -- the text goes faint the moment you arrow onto
+    gitbash.
+
+    Derived from the style's OWN foreground rather than picked from a table:
+    the hint should read as part of the palette, and a scheme that has thought
+    about its foreground has already solved "readable on my background".
+    Blended toward the background to sit BEHIND the style names -- it is
+    secondary text and should look it -- and the blend stops at the last step
+    that still clears the threshold.
+
+    Falls back to the foreground itself when no blend clears it (a scheme whose
+    own foreground is marginal) and to $null when the colours cannot be read at
+    all, which the caller answers with its old fixed grey.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Scheme, [double]$MinRatio = 4.5)
+
+    $fg = ConvertTo-NormalHex $Scheme.foreground
+    $bg = ConvertTo-NormalHex $Scheme.background
+    if (-not $fg -or -not $bg) { return $null }
+
+    $parse = { param($h) $h = $h.TrimStart('#')
+               @(0, 2, 4) | ForEach-Object { [Convert]::ToInt32($h.Substring($_, 2), 16) } }
+    $f = & $parse $fg
+    $b = & $parse $bg
+
+    # Dimmest first, so the result is the most muted one that still reads.
+    $best = $fg
+    foreach ($w in 0.65, 0.55, 0.45, 0.35, 0.25, 0.15) {
+        $mix = 0..2 | ForEach-Object { [int][Math]::Round($f[$_] + (($b[$_] - $f[$_]) * $w)) }
+        $hex = '#{0:x2}{1:x2}{2:x2}' -f $mix[0], $mix[1], $mix[2]
+        $r = Get-ContrastRatio -A $hex -B $bg
+        if ($null -ne $r -and $r -ge $MinRatio) { return $hex }
+    }
+    $best
+}
+
+function Get-HintEscape {
+    <#
+    .SYNOPSIS
+    The SGR escape for secondary text, readable on the scheme given -- or on the
+    style currently applied when none is.
+
+    .DESCRIPTION
+    One place, because there were ten. Every hint, badge and parenthetical in
+    this project was the literal `ESC[38;2;160;160;160m`, a grey picked once
+    against a dark terminal and then printed onto whatever background the user
+    actually has. On `gitbash`, the one light theme, that is 2.61 against the
+    4.5 WCAG body-text threshold -- in `tstyles list`, in the tuner, and in the
+    picker, all at once and for the same reason.
+
+    Note what does NOT need this: `-ForegroundColor Yellow` and friends name a
+    PALETTE SLOT, and the applied style repaints those slots, so they adapt on
+    their own. Only a hardcoded truecolor triple is frozen against a background
+    that moves, which is why this was invisible until someone applied a light
+    theme.
+
+    With no -Scheme it resolves the active style's, so a listing reads correctly
+    against the terminal the reader is actually looking at. Every failure --
+    no active style, an unreadable scheme.json, a colour that will not parse --
+    lands on the old grey, which is exactly what everything got before.
+    #>
+    [CmdletBinding()]
+    param($Scheme)
+
+    $s = $Scheme
+    if (-not $s) {
+        try {
+            $name = Get-CurrentStyleName
+            if ($name) {
+                $dir = Get-StyleDir -StyleName $name
+                if ($dir) {
+                    $path = Join-Path $dir 'scheme.json'
+                    if (Test-Path -LiteralPath $path) {
+                        $s = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)) |
+                             ConvertFrom-Json
+                    }
+                }
+            }
+        } catch { $s = $null }
+    }
+
+    $fallback = "$([char]27)[38;2;160;160;160m"
+    if (-not $s) { return $fallback }
+    $hex = Get-SchemeHintColor -Scheme $s
+    if (-not $hex) { return $fallback }
+    $rgb = @(1, 3, 5) | ForEach-Object { [Convert]::ToInt32($hex.Substring($_, 2), 16) }
+    "$([char]27)[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m"
 }
 
 function Get-SchemeUnreadableSlots {

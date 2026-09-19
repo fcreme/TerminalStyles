@@ -1248,7 +1248,10 @@ function Invoke-TerminalStyleTune {
     $applied = $false   # set true only after a saved style is applied; gates the revert
     $pendingApply = $false  # the explicit `& $writePreview` below seeds the preview; this gates only knob edits
 
-    $hint  = "$([char]27)[38;2;160;160;160m"
+    # From the scheme the tuner is CURRENTLY showing, not a fixed grey: this
+    # UI repaints the terminal on every adjustment, so the background moves
+    # under its own hints. See Get-HintEscape.
+    $hint  = Get-HintEscape -Scheme $baseScheme
     $reset = "$([char]27)[0m"
 
     # Recompute the adjusted scheme + cache its OSC packet.

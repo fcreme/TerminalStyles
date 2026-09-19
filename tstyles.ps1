@@ -1469,7 +1469,15 @@ function Invoke-TerminalStyle {
         # low-contrast themes (rain, forest, golden-forest) sits too close
         # to the background to read. A fixed #a0a0a0 stays legible on every
         # background -- dark themes and the light gitbash alike.
-        $hintColor  = "$([char]27)[38;2;160;160;160m"
+        # The FALLBACK only. The live value is recomputed per redraw from the
+        # highlighted style's own scheme -- see $hintFor in $drawMenu -- because
+        # the picker previews by repainting the terminal, so a fixed grey is
+        # sitting on a background it never saw. Measured across the bundled
+        # styles, this one fails WCAG outright on gitbash (2.61 against the 4.5
+        # body-text threshold; gitbash is the light theme) and is marginal on
+        # six more.
+        $script:PickerHintFallback = "$([char]27)[38;2;160;160;160m"
+        $hintColor  = $script:PickerHintFallback
         $resetColor = "$([char]27)[0m"
 
         # Clear once, then capture the buffer Y of the picker's home row.
@@ -1533,6 +1541,23 @@ function Invoke-TerminalStyle {
             if ($capabilityNote) { $notes++ }
             $wh = 0
             try { $wh = [Console]::WindowHeight } catch { $wh = 0 }
+            # Secondary text, in the palette of the style currently painted.
+            # Recomputed every redraw because the preview repaints the terminal
+            # on every arrow key: a colour chosen once is readable against one
+            # background and guessing against the other fourteen.
+            #
+            # $schemes[$idx] is $null for a style whose scheme.json would not
+            # parse -- those still list, and the fixed grey above is what they
+            # get, which is no worse than before.
+            $hintColor = $script:PickerHintFallback
+            if ($schemes[$idx]) {
+                $hx = Get-SchemeHintColor -Scheme $schemes[$idx]
+                if ($hx) {
+                    $rgb = @(1, 3, 5) | ForEach-Object { [Convert]::ToInt32($hx.Substring($_, 2), 16) }
+                    $hintColor = "$([char]27)[38;2;$($rgb[0]);$($rgb[1]);$($rgb[2])m"
+                }
+            }
+
             $plan = Get-PickerFramePlan -Total $styles.Count -Selected $idx `
                         -WindowHeight $wh -NoteCount $notes
             $vp = @{ First = $plan.First; Count = $plan.Count; More = $plan.More }
