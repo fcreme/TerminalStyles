@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- **the `halo` style.** Removed at the author's request, with everything that named it: the style folder, its screenshot, its row in the README gallery, its section below, and both of its entries in the docs site's data (the image map and the style record). The bundled set is now 15.
+
+  The suite drops from 2172 to 2134 tests, which is halo's share of the per-style parametrised cases -- prompt parity, banner alignment, README accuracy and the rest are all `-ForEach` over the styles on disk, so they follow the folder rather than a list that would have gone stale. Nothing asserted a count of 16, which is why removing one needed no test edited.
+
+
 ## [0.8.31] - 2026-09-19
 
 ### Fixed

@@ -28,16 +28,15 @@ PowerShell. Runs on PowerShell 7 and Windows PowerShell 5.1. Keep your own promp
     <td align="center"><b>garden-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/garden-rain.gif" width="210" alt="garden-rain"></td>
     <td align="center"><b>gitbash</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/gitbash.png" width="210" alt="gitbash"></td>
     <td align="center"><b>golden-forest</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/golden-forest.gif" width="210" alt="golden-forest"></td>
-    <td align="center"><b>halo</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/halo.gif" width="210" alt="halo"></td>
+    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="210" alt="kitty"></td>
   </tr>
   <tr>
-    <td align="center"><b>kitty</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/kitty.gif" width="210" alt="kitty"></td>
     <td align="center"><b>lain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/lain.gif" width="210" alt="lain"></td>
     <td align="center"><b>marquee</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/marquee.gif" width="210" alt="marquee"></td>
     <td align="center"><b>neon-rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/neon-rain.gif" width="210" alt="neon-rain"></td>
+    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="210" alt="rain"></td>
   </tr>
   <tr>
-    <td align="center"><b>rain</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/rain.gif" width="210" alt="rain"></td>
     <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="210" alt="snowday"></td>
     <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="210" alt="sober"></td>
     <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="210" alt="tombraider"></td>
@@ -348,16 +347,6 @@ detection. The only light-mode theme in the catalog.
 
 **Warm sepia autumn.** Amber and moss palette over deep dark green.
 Quiet — no banner, gentle for long sessions.
-
-### [halo](styles/halo)
-
-![halo](docs/screenshots/halo.png)
-
-**EXT3-series LED halo portrait.** Third in the EXT3 dot-matrix
-series alongside tombraider and marquee. Psychedelic multi-color
-portrait inside a circular halo ring — coral primary, gold EXT3
-label, blue and lavender accents. Right-aligned on pure black,
-vintage CRT cursor. *"Look up. Look closer."*
 
 ### [kitty](styles/kitty)
 
