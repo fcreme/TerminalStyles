@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.34'
+    ModuleVersion     = '0.8.35'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.34: URGENT for anyone on 0.8.32 or 0.8.33 from PSGallery. Those two packages shipped a shell runtime with Windows line endings, and a carriage return is not whitespace to zsh or bash -- it becomes part of the token, so `case $x in` read as `in^M` and the runtime died where every interactive shell sources it, taking the tstyles command with it: ''zsh: command not found: tstyles''. The repo was never wrong; the publish workflow runs on a Windows runner, where the checkout converts LF to CRLF on the way in, and nothing looked at the package afterwards. Three layers now stand between that and a release: .gitattributes pins eol=lf on every extension a shell reads, a test reads the BYTES of every tracked .sh and .js rather than its lines, and the publish script refuses to ship a staged tree carrying one. Also in this release: the installer and the first interactive tstyles now open with the tstyles wordmark, once, on a real console.'
+            ReleaseNotes = 'v0.8.35: the hints, badges and descriptions this tool prints are now readable on every style, instead of on the dark ones it happened to be developed against. Ten places printed the same hardcoded grey -- the picker''s hints and style descriptions, tstyles list''s parentheticals and its ''yours'' badges, the tuner''s hints while it previews live, and the notes that stand in for an unreadable swatch -- and every one of them renders against whatever background the applied style painted. On gitbash, the one light theme, that grey sits at 2.61 against the 4.5 contrast threshold for body text, and the picker previews by repainting the terminal, so the text went faint the moment you arrowed onto it. The colour is now taken from the highlighted style''s own foreground and blended toward its background, so it still reads as secondary text; every bundled style lands between 4.60 and 5.99. Anything that cannot be read -- a scheme.json that will not parse, no active style at all -- keeps the old grey, which is what everything had before.'
         }
     }
 }

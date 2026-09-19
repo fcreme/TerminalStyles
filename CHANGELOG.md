@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.35] - 2026-09-19
+
 ### Fixed
 
 - **the picker's hints and style descriptions were a fixed grey, on a background that changes under them.** `#a0a0a0` was chosen once against a dark terminal and then asked to sit on whatever the previewed style paints -- and the picker previews by REPAINTING the terminal, so the mismatch arrives on the first arrow key. Measured against the 4.5 WCAG body-text threshold: it fails outright on `gitbash` at **2.61**, the one light theme, and is marginal on six more (`rain` 5.07, `snowday` 5.97, `garden-rain` 6.34, `kitty` 6.80, `neon-rain` 6.82, `forest` 6.90).
@@ -1242,7 +1244,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.34...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.35...HEAD
+[0.8.35]: https://github.com/fcreme/TerminalStyles/compare/v0.8.34...v0.8.35
 [0.8.34]: https://github.com/fcreme/TerminalStyles/compare/v0.8.33...v0.8.34
 [0.8.33]: https://github.com/fcreme/TerminalStyles/compare/v0.8.32...v0.8.33
 [0.8.32]: https://github.com/fcreme/TerminalStyles/compare/v0.8.31...v0.8.32
