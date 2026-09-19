@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Windows Terminal expresses alignment as ONE value carrying both axes (`bottomRight`); WezTerm takes two, so the map turns each into an `horizontal_align`/`vertical_align` pair. Nothing is passed through from the theme: the enums are case-exact (`'left'` is rejected where `'Left'` is accepted) and a rejected value is not a differently-placed image, it is the user's whole config replaced by the default one. An unrecognised value centres, which is Windows Terminal's own default, rather than guessing.
 
   Measured against the real binary: all 15 bundled styles regenerated and loaded with validation on, each carrying its declared alignment -- `golden-forest` Left/Top, `kitty` Right/Bottom, `tombraider` and `marquee` Right/Middle, the rest Center/Middle. The test pairs that with an assertion that at least one style is NOT centred, since a check over an all-centre set would pass just as well against the hardcoded value it replaced.
+### Changed
+
+- **the picker no longer reflows the terminal while you arrow through the list.** Colours and the background swap in place, but `font_size` and `window_padding` do not -- WezTerm reflows the whole terminal for either, so the text jumped on every row and the list was hard to read while moving through it. Only three of the bundled styles differ in weight or padding (`gitbash`, `rain`, `sober`), which is just enough to make the list feel like it stutters on those rows and nowhere else.
+
+  Layout is now pinned for the whole preview session to whatever style is already applied, and the chosen style's real font and padding arrive on confirm. Every bundled style declares Cascadia Code at size 11, so weight and padding are the whole of what a reader perceives as "this theme's text is a different size".
+
+  `-LayoutTheme` has three states and only two are values, so it is forwarded by what the caller BOUND rather than by value: unbound means "this style's own layout", which is the normal apply, and an explicit `$null` means "write no layout at all" -- what a preview wants on a machine with nothing applied, where the user's own `wezterm.lua` settings then hold and are as stable as anything we could pick. Passing it unconditionally would have turned unbound into `$null` and silently dropped font and padding from every apply, which is the splat trap in CLAUDE.md pointed at a parameter whose `$null` is meaningful.
+
+  Measured: previewing sober, eva and gitbash while sober is applied emits one font line, one size and one padding across all three, with three different `color_scheme` names. Confirming each gives back padding 16, 12 and 10 and weight Regular, DemiBold, Regular.
 
 
 ### Removed
