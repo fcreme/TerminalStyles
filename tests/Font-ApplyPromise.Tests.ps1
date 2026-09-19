@@ -76,7 +76,13 @@ Describe 'tstyles font does not chase a settings.json that cannot exist' {
             Mock Get-TerminalKind { 'WezTerm' }
             $out = Invoke-TerminalStyleFont -Name 'JetBrains Mono' 6>&1 | Out-String
             $out | Should -Not -Match 'will be listed there'
-            $out | Should -Match 'theme\.json'
+            # Names a route the user can actually take. It used to say
+            # theme.json, which is true but not actionable -- editing a bundled
+            # style's theme.json is overwritten by the next update. The two
+            # routes it names now are both measured: tune saves `font` into the
+            # style it writes, and config.font set after the require line wins.
+            $out | Should -Match 'tstyles tune|config\.font' `
+                -Because 'a WezTerm user needs somewhere to put it that survives'
         }
 
         It 'still applies on Windows Terminal' {
@@ -109,8 +115,12 @@ Describe 'the two shortest descriptions of tstyles font tell the truth' {
             $out = Show-FontList -Catalog $cat -Installed @() 6>&1 | Out-String
 
             $out | Should -Match 'tstyles font <name>' -Because 'the footer must still say how to install one'
-            $out | Should -Not -Match 'apply' `
-                -Because "tstyles font cannot apply a font on $kind, and says so when you run it"
+            # The PROMISE is the literal "Install + apply" line, which is the
+            # one Windows Terminal keeps. Matching the bare word 'apply' was too
+            # blunt: WezTerm's footer now uses it as a noun -- "overridden on the
+            # next apply" -- which is the opposite of promising one.
+            $out | Should -Not -Match 'Install \+ apply' `
+                -Because "tstyles font cannot apply a font on $kind, and must not offer to"
         }
 
         It 'and still promises it where it is kept' {
@@ -175,5 +185,63 @@ Describe 'README says the same thing the command does' {
         $section | Should -Not -BeNullOrEmpty -Because 'this test is about that section'
         $section | Should -Match '(?i)windows terminal' `
             -Because 'applying the font to a profile is the only half that is Windows Terminal only'
+    }
+}
+
+Describe 'the font messages name whoever really decides the font' {
+    InModuleScope TerminalStyles {
+
+        It 'gives three answers, because there are three' {
+            # `tstyles font` used to ask only "can I write it?" and tell every
+            # no that the terminal takes its font from its own settings. True
+            # for Terminal.app, iTerm2, Ghostty, kitty and Alacritty. FALSE for
+            # WezTerm since 0.8.29, where the generated module sets config.font
+            # from the applied style.
+            Get-FontOwner -Kind 'WindowsTerminal' | Should -Be 'command'
+            Get-FontOwner -Kind 'WezTerm'         | Should -Be 'style'
+            foreach ($k in 'AppleTerminal', 'ITerm2', 'Ghostty', 'Kitty', 'Alacritty', 'VSCode') {
+                Get-FontOwner -Kind $k | Should -Be 'terminal' -Because "$k's own settings decide"
+            }
+        }
+
+        It 'agrees with the two things it is derived from' {
+            # The bug was two messages answering this separately. One predicate
+            # now, and it must stay consistent with the writer gate and the
+            # capability flag rather than becoming a third opinion.
+            foreach ($k in 'WindowsTerminal', 'WezTerm', 'AppleTerminal', 'ITerm2', 'Ghostty',
+                           'Kitty', 'Alacritty', 'VSCode') {
+                $owner = Get-FontOwner -Kind $k
+                if ($owner -eq 'command') {
+                    Test-FontCommandCanApply -Kind $k | Should -BeTrue
+                } else {
+                    Test-FontCommandCanApply -Kind $k | Should -BeFalse
+                }
+                if ($owner -eq 'style') {
+                    (Get-TerminalCapability -Kind $k).Font | Should -BeTrue `
+                        -Because 'style means a style apply writes the font'
+                }
+            }
+        }
+
+        It 'never tells a terminal whose style writes the font to choose it there' {
+            # The measured consequence of the old wording: a user who set
+            # config.font in their own wezterm.lua ahead of the require had it
+            # overridden by the next apply -- ls-fonts reported the style's
+            # Cascadia Code as primary and demoted theirs to a fallback. Advice
+            # that does not stick is worse than no advice.
+            $out = (Show-FontList 6>&1 | Out-String)
+            $out | Should -Not -BeNullOrEmpty
+
+            Mock Get-TerminalKind { 'WezTerm' }
+            $wez = (Show-FontList 6>&1 | Out-String)
+            $wez | Should -Not -Match 'choose it there' `
+                -Because 'a font chosen in WezTerm''s own config is overridden by the next apply'
+            $wez | Should -Match 'applied style sets' -Because 'that is what really decides it'
+
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            $apple = (Show-FontList 6>&1 | Out-String)
+            $apple | Should -Match 'choose it there' `
+                -Because 'it is true for a terminal nothing of ours writes -- the fix must not over-apply'
+        }
     }
 }

@@ -548,6 +548,37 @@ function Test-FontCommandCanApply {
     return ($Kind -eq 'WindowsTerminal')
 }
 
+function Get-FontOwner {
+    <#
+    .SYNOPSIS
+    Who decides this terminal's font: this command, a style apply, or the
+    terminal itself.
+
+    .DESCRIPTION
+    THREE answers, not two, which is what the messages here used to get wrong.
+    `tstyles font` asked only "can I write it?" and said "this terminal takes
+    its font from its own settings" for every no -- true for Terminal.app,
+    iTerm2, Ghostty, kitty and Alacritty, and FALSE for WezTerm since 0.8.29,
+    where the generated Lua module sets `config.font` from the applied style.
+
+    On WezTerm that made the advice actively wrong rather than merely vague: a
+    user who followed "choose it there once installed" and set `config.font` in
+    their own wezterm.lua had it overridden by the next style apply. Measured --
+    with JetBrains Mono set in wezterm.lua ahead of the require, `wezterm
+    ls-fonts` reports the style's Cascadia Code as the primary and demotes
+    JetBrains Mono to a fallback.
+
+    One predicate so the list footer and the post-install line cannot answer it
+    differently; they did, and that is how the contradiction survived.
+    #>
+    [CmdletBinding()]
+    param([string]$Kind = (Get-TerminalKind))
+
+    if (Test-FontCommandCanApply -Kind $Kind)     { return 'command' }
+    if ((Get-TerminalCapability -Kind $Kind).Font) { return 'style'  }
+    return 'terminal'
+}
+
 function Show-FontList {
     # List the font catalog with an installed/installable marker. -Catalog and
     # -Installed are test seams; real callers omit them.
@@ -585,12 +616,21 @@ function Show-FontList {
     # terminal takes its font from its own settings -- so the shortest
     # description of the command contradicted the command itself.
     $listKind = Get-TerminalKind
-    if (Test-FontCommandCanApply -Kind $listKind) {
-        Write-Host "  Install + apply one with: tstyles font <name>" -ForegroundColor DarkGray
-    } else {
-        Write-Host "  Install one with: tstyles font <name>" -ForegroundColor DarkGray
-        Write-Host ("  {0} takes its font from its own settings, so choose it there once installed." -f
-                    (Get-TerminalDisplayName -Kind $listKind)) -ForegroundColor DarkGray
+    $listName = Get-TerminalDisplayName -Kind $listKind
+    switch (Get-FontOwner -Kind $listKind) {
+        'command' {
+            Write-Host "  Install + apply one with: tstyles font <name>" -ForegroundColor DarkGray
+        }
+        'style' {
+            Write-Host "  Install one with: tstyles font <name>" -ForegroundColor DarkGray
+            Write-Host ("  The applied style sets {0}'s font, so one chosen in its own config is" -f $listName) -ForegroundColor DarkGray
+            Write-Host "  overridden on the next apply. tstyles tune saves a font into a style." -ForegroundColor DarkGray
+        }
+        default {
+            Write-Host "  Install one with: tstyles font <name>" -ForegroundColor DarkGray
+            Write-Host ("  {0} takes its font from its own settings, so choose it there once installed." -f
+                        $listName) -ForegroundColor DarkGray
+        }
     }
 }
 
@@ -636,15 +676,22 @@ function Invoke-TerminalStyleFont {
     # 0.8.24, where this gate then fell through and printed exactly the red line
     # the comment above says it exists to prevent.
     $fontKind = Get-TerminalKind
-    if (-not (Test-FontCommandCanApply -Kind $fontKind)) {
-        Write-Host ("  {0} takes its font from its own settings, so tstyles font cannot apply it for you." -f (Get-TerminalDisplayName -Kind $fontKind)) -ForegroundColor DarkGray
-        if ((Get-TerminalCapability -Kind $fontKind).Font) {
-            # A terminal whose font a style apply DOES write (WezTerm, through
-            # the generated Lua module). "will be listed there" would be wrong:
-            # there is no font picker to list it in, it is named in a config
-            # file -- or in the theme.json of a style.
-            Write-Host ("  '{0}' is installed; name it in that config, or in the theme.json of a style." -f $font.family) -ForegroundColor DarkGray
+    $fontName = Get-TerminalDisplayName -Kind $fontKind
+    $owner    = Get-FontOwner -Kind $fontKind
+    if ($owner -ne 'command') {
+        if ($owner -eq 'style') {
+            # A terminal whose font a STYLE APPLY writes -- WezTerm, through the
+            # generated Lua module. Saying it "takes its font from its own
+            # settings" was false here: a font set in the user's own config is
+            # overridden by the next apply, so that advice sent them to do
+            # something that does not stick. Both routes below are measured:
+            # setting config.font after the require line wins, and a tuned
+            # style carries `font` into its theme.json, which the writer emits.
+            Write-Host ("  '{0}' is installed. The applied style sets {1}'s font." -f $font.family, $fontName) -ForegroundColor DarkGray
+            Write-Host "  To use it: tstyles tune <style> and save, which keeps the font with the style --" -ForegroundColor DarkGray
+            Write-Host "  or set config.font AFTER the terminalstyles require line in your own config." -ForegroundColor DarkGray
         } else {
+            Write-Host ("  {0} takes its font from its own settings, so tstyles font cannot apply it for you." -f $fontName) -ForegroundColor DarkGray
             Write-Host ("  '{0}' is installed and will be listed there." -f $font.family) -ForegroundColor DarkGray
         }
         return
