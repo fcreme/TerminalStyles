@@ -94,6 +94,114 @@ function Show-UpdateNoticeIfAvailable {
     }
 }
 
+function Get-NewestInstalledVersion {
+    # The highest TerminalStyles version on the module path, as a string, or
+    # $null when that cannot be read. Its own function because the update path
+    # asks twice -- once either side of the install -- and the two readings have
+    # to be taken the same way to be comparable.
+    [CmdletBinding()]
+    param()
+    try {
+        $m = @(Get-Module -ListAvailable -Name TerminalStyles -ErrorAction Stop |
+               Sort-Object Version -Descending)
+        if (-not $m) { return $null }
+        return $m[0].Version.ToString()
+    } catch { return $null }
+}
+
+function Get-InstalledReleaseNotes {
+    # The ReleaseNotes of an installed version, or '' when unreadable. Read from
+    # the manifest on disk rather than from the loaded module: after an update
+    # the session still holds the OLD one, so $MyInvocation and the imported
+    # module would both report what was just replaced.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Version)
+    try {
+        $m = @(Get-Module -ListAvailable -Name TerminalStyles -ErrorAction Stop |
+               Where-Object { $_.Version.ToString() -eq $Version })
+        if (-not $m) { return '' }
+        $data = Test-ModuleManifest -Path $m[0].Path -ErrorAction Stop
+        return "$($data.ReleaseNotes)"
+    } catch { return '' }
+}
+
+function Get-UpdateOutcome {
+    <#
+    .SYNOPSIS
+    Did the update change anything: 'updated', 'current', or 'unknown'.
+
+    .DESCRIPTION
+    `Update-PSResource` is a no-op when the newest version is already installed,
+    and says nothing either way -- so the PSGallery arm printed "Update
+    complete" whether it had updated or not. Running `tstyles update` on the
+    latest version reported success for work it had not done, which is this
+    project's most-shipped defect class and the one the Bootstrap arm already
+    gets right ("Already up to date (abc1234)").
+
+    'unknown' is a real answer, not a failure: the version can be unreadable
+    before or after (a repository that answers slowly, a module path the user
+    has since changed), and claiming either outcome would be guessing. The
+    caller says what it knows and no more.
+
+    Pure so it can be tested; the command around it cannot be.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()][string]$Before, [AllowNull()][string]$After)
+
+    if (-not $Before -or -not $After) { return 'unknown' }
+    $b = $null; $a = $null
+    if (-not [version]::TryParse($Before, [ref]$b)) { return 'unknown' }
+    if (-not [version]::TryParse($After,  [ref]$a)) { return 'unknown' }
+    if ($a -gt $b) { return 'updated' }
+    if ($a -eq $b) { return 'current' }
+    # After < Before. Not a state the gallery produces, but a pinned or
+    # side-loaded copy can, and calling that an update would be false.
+    return 'unknown'
+}
+
+function Get-ReleaseNoteSummary {
+    <#
+    .SYNOPSIS
+    The opening of a release note, short enough to print after an update.
+
+    .DESCRIPTION
+    ReleaseNotes in this project run to a thousand characters -- they are the
+    PSGallery listing, written to be read on a web page. Printing the whole
+    thing after an update buries the one line that matters (that it worked) and
+    scrolls the reload instruction off the top.
+
+    Cut at a SENTENCE boundary rather than mid-word, and only if there is more
+    than one sentence to cut. A summary that ends mid-clause reads like the
+    output was truncated by accident.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()][string]$Notes, [int]$MaxLength = 220)
+
+    $t = "$Notes".Trim() -replace '\s+', ' '
+    if (-not $t) { return '' }
+    if ($t.Length -le $MaxLength) { return $t }
+
+    # Find where sentences END and slice there, rather than gluing matches back
+    # together. Two traps, both hit on the way here:
+    #
+    #   * the terminator must be FOLLOWED by a space or end-of-string, or
+    #     "v0.8.32" is three sentences and the summary opens "v0. 8. 32:";
+    #   * matches are not contiguous from the start, so concatenating their
+    #     values silently drops whatever the engine skipped -- that version
+    #     prefix came out as "32: two WezTerm compositions restored".
+    #
+    # Slicing the ORIGINAL string at an index cannot do either.
+    $end = 0
+    foreach ($m in [regex]::Matches($t, '[.!?](?=\s|$)')) {
+        $idx = $m.Index + 1
+        if ($idx -gt $MaxLength) { break }
+        $end = $idx
+    }
+    if ($end -gt 0) { return $t.Substring(0, $end).Trim() }
+    # One very long opening sentence: fall back to a hard cut, marked as one.
+    return $t.Substring(0, [Math]::Max(1, $MaxLength - 1)).TrimEnd() + [char]0x2026
+}
+
 function Invoke-TerminalStylesUpdate {
     [CmdletBinding()]
     param([switch]$Force)
@@ -104,11 +212,43 @@ function Invoke-TerminalStylesUpdate {
     switch (Get-TerminalStylesInstallKind) {
         'PSResourceGet' {
             try {
+                # What was here BEFORE, so the report afterwards can be true.
+                # Update-PSResource is a no-op when the newest version is already
+                # installed and says nothing either way, so this arm reported
+                # "Update complete" for work it had not done -- while the
+                # Bootstrap arm below already distinguished the two. One command,
+                # two install kinds, two different answers to "did anything
+                # happen?".
+                $before = Get-NewestInstalledVersion
                 Update-PSResource -Name TerminalStyles -TrustRepository -ErrorAction Stop
+                $after  = Get-NewestInstalledVersion
+
                 Write-Host ""
-                Write-Host "Update complete. To use the new version in THIS session," -ForegroundColor Yellow
-                Write-Host "open a new tab, or run:" -ForegroundColor Yellow
-                Write-Host "  Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                switch (Get-UpdateOutcome -Before $before -After $after) {
+                    'current' {
+                        Write-Host "  Already the latest ($after). Nothing to do." -ForegroundColor Green
+                    }
+                    'updated' {
+                        Write-Host ("  Updated {0} -> {1}" -f $before, $after) -ForegroundColor Green
+                        $notes = Get-ReleaseNoteSummary -Notes (Get-InstalledReleaseNotes -Version $after)
+                        if ($notes) {
+                            Write-Host ""
+                            Write-Host "  $notes" -ForegroundColor Gray
+                        }
+                        Write-Host ""
+                        Write-Host "  Open a new tab to use it, or run:" -ForegroundColor Yellow
+                        Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                    }
+                    default {
+                        # The version could not be read on one side or the other.
+                        # Say what happened and what was not established, rather
+                        # than picking the cheerful branch.
+                        Write-Host "  Update ran. Could not read the installed version, so this cannot say" -ForegroundColor Yellow
+                        Write-Host "  whether anything changed. Check with: tstyles help" -ForegroundColor Yellow
+                        Write-Host "  Open a new tab, or run:" -ForegroundColor Yellow
+                        Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                    }
+                }
             } catch {
                 Write-Host "Update failed: $_" -ForegroundColor Red
                 Write-Host "You can retry manually:" -ForegroundColor Yellow
