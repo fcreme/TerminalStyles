@@ -612,7 +612,32 @@ function Invoke-WelcomeFirstRun {
     # that wraps under it undoes the point of having any of this.
     Write-Host "  $count styles ready. Arrow to preview, Enter to keep, Esc to cancel." -ForegroundColor Gray
     Write-Host ''
-    [void](Read-Host '  Press Enter to look')
+
+    # The keypress appears only when nothing after it will hold the screen.
+    #
+    # It exists because the picker Clear-Host's on the way in, so a banner that
+    # merely printed would flash past unread. But two real questions follow this
+    # on a first run, and each of them blocks -- so on that path the keypress is
+    # ceremony in front of someone who has not seen a style yet.
+    #
+    # Not dropped outright, because "nothing follows" is the COMMON case for
+    # people who already use this: they answered the font prompt in an earlier
+    # version, so its marker is present and it will not fire, and the welcome is
+    # the only new thing on their screen. Asking the two gates rather than
+    # assuming is what tells those situations apart.
+    $heldByNext =
+        (Test-ShouldPromptFonts `
+            -MarkerPresent (Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot '.fonts-prompted')) `
+            -Interactive   $true) -or
+        (Test-ShouldOfferWezTerm `
+            -MarkerPresent    (Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot '.wezterm-offered')) `
+            -Interactive      $true `
+            -Platform         (Get-TStylesPlatform) `
+            -Kind             (Get-TerminalKind) `
+            -AlreadyInstalled (Test-WezTermInstalled) `
+            -BrewPresent      ([bool](Get-Command brew -ErrorAction SilentlyContinue)))
+
+    if (-not $heldByNext) { [void](Read-Host '  Press Enter to look') }
 
     # Written LAST and guarded: a marker written before the banner is shown
     # would spend the one showing on a run that then failed to draw it. A write
