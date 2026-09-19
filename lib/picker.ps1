@@ -542,6 +542,87 @@ function Get-PickerCapabilityNote {
     return $null
 }
 
+function Get-TStylesWordmark {
+    <#
+    .SYNOPSIS
+    The tstyles wordmark, as lines.
+
+    .DESCRIPTION
+    The same lettering install.ps1 prints, and deliberately a SECOND copy of it:
+    install.ps1 is fetched and piped to iex before this module exists, so it
+    cannot read anything from here. Every other duplicate in this project is
+    held in step by a test rather than by hope, and so is this one --
+    tests/Install-Hardening.Tests.ps1 compares the two character for character.
+
+    Single-quoted: the lettering is full of backslashes and pipes, and in a
+    double-quoted PowerShell string a backtick escapes the next character.
+    There is no backtick or $ in it today, and single quotes mean one cannot
+    arrive by accident.
+    #>
+    [CmdletBinding()]
+    param()
+    ,@(
+        '   _       _         _'
+        '  | |_ ___| |_ _   _| | ___  ___'
+        '  | __/ __| __| | | | |/ _ \/ __|'
+        '  | |_\__ \ |_| |_| | |  __/\__ \'
+        '   \__|___/\__|\__, |_|\___||___/'
+        '                |___/'
+    )
+}
+
+function Test-ShouldShowWelcome {
+    # Pure gate, same shape as Test-ShouldPromptFonts and for the same reasons:
+    # once ever, and only where someone can actually see it.
+    #
+    # The interactive half is not belt-and-braces. This marker is one-time by
+    # design, so printing into a redirect would spend it on a banner nobody saw
+    # -- which is precisely what happened to the font prompt, and is written up
+    # at length above it.
+    param(
+        [Parameter(Mandatory)][bool]$MarkerPresent,
+        [Parameter(Mandatory)][bool]$Interactive
+    )
+    return (-not $MarkerPresent) -and $Interactive
+}
+
+function Invoke-WelcomeFirstRun {
+    # The wordmark, once, on the first interactive `tstyles`.
+    #
+    # It has to HOLD the screen. The picker Clear-Host's on the way in and
+    # anything printed above the frame is wiped unread, so a banner that merely
+    # printed would flash and vanish -- and would have burned its one-time
+    # marker doing it. The font prompt that follows only blocks when IT has
+    # something to ask, so this cannot lean on that either.
+    #
+    # One keypress, once, on the first run of a tool whose whole subject is what
+    # the terminal looks like.
+    $marker = Join-Path $script:TStylesDataRoot '.welcomed'
+    if (-not (Test-ShouldShowWelcome -MarkerPresent (Test-Path -LiteralPath $marker) `
+                                     -Interactive (Test-InteractiveConsole))) {
+        return
+    }
+
+    Write-Host ''
+    foreach ($line in (Get-TStylesWordmark)) { Write-Host $line -ForegroundColor Cyan }
+    Write-Host '        themed styles for your terminal' -ForegroundColor DarkGray
+    Write-Host ''
+    $count = @(Get-AvailableStyles).Count
+    # Short enough not to wrap. The art is held to 78 by a test, and a hint
+    # that wraps under it undoes the point of having any of this.
+    Write-Host "  $count styles ready. Arrow to preview, Enter to keep, Esc to cancel." -ForegroundColor Gray
+    Write-Host ''
+    [void](Read-Host '  Press Enter to look')
+
+    # Written LAST and guarded: a marker written before the banner is shown
+    # would spend the one showing on a run that then failed to draw it. A write
+    # that fails is not worth taking the picker down for -- the cost is seeing
+    # this once more.
+    try {
+        [System.IO.File]::WriteAllText($marker, '', [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
 function Test-ShouldPromptFonts {
     # Pure gate: only prompt on an interactive session that hasn't been prompted.
     param(

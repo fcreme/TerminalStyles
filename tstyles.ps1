@@ -831,6 +831,12 @@ function Invoke-TerminalStyle {
         return
     }
 
+    # The welcome comes FIRST: it is the introduction, and the font question is
+    # the first thing the tool asks of you. Both are one-time and interactive-
+    # only, and both sit above the picker's Clear-Host because that is the only
+    # place output survives to be read.
+    Invoke-WelcomeFirstRun
+
     # One-time opt-in font prompt (fires only in interactive sessions, never for
     # subcommands — they all `return` above before reaching this point).
     Invoke-FontFirstRunPrompt
