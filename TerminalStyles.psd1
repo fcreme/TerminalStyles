@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.38'
+    ModuleVersion     = '0.8.39'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.38: tstyles font is a picker now. Arrow to a font instead of typing its name back exactly, in a tool that had already taught you to arrow through styles -- and the catalogue says what each font IS, which a name and a licence never did. Those descriptions are measured rather than recalled: ligatures from the GSUB calt feature, the shape of the zero from the third contour of its glyph, x-height from OS/2 sxHeight over unitsPerEm. All six bundled fonts mark their zero, which is exactly the differentiator a guess would have got wrong. There is deliberately no live preview: there is no escape sequence for a font face, so off Windows Terminal nothing can show you a font before it is installed, and rather than imply otherwise the footer says what Enter will actually do on YOUR terminal, which is one of three different things. The style picker gives a viewport row back in the same release. The tip pointing at tstyles help retires after the first few openings, because onboarding that never ends is a permanent tax on the menu -- one fewer style visible in every window, and on a 24-row terminal with 15 styles that is 14 now rather than 13.'
+            ReleaseNotes = 'v0.8.39: the README now opens with the tool working rather than with its output. Fifteen styles previewing live as the picker arrows down the list -- neither the screenshots nor the per-style GIFs could show that, because every one of them shows what a style looks like and none of them shows the thing being used. It is recorded by scripts/demo-picker.ps1, a scripted tour that drives the real picker so a take is one clean sweep rather than someone typing at the right speed. The driver waits for the picker to be drawn rather than sleeping and hoping, and measures the window before spending ten seconds on it, because a new WezTerm window is 75x24 and at 24 rows a fifteen-style list scrolls. Two stale claims went with it. The opening paragraph said sixteen themes while the folder holds fifteen, true once and left behind when halo was removed; and it credited the font, opacity and animated background to Windows Terminal alone, which reads as not on your Mac to every macOS reader, when WezTerm has carried all three from the applied style since 0.8.29 and off Windows is the only terminal that animates one. Both are tested now. Also: the font list pads its licence column, so the descriptions line up instead of starting wherever the licence happened to end.'
         }
     }
 }
