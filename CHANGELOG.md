@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **a banner at the top of the README, in place of the plain heading.** GitHub strips CSS from a README, so a title cannot be given a typeface -- an attractive one has to become an image. This one is the tstyles wordmark the tool itself prints on first run, set in JetBrains Mono (a font `tstyles font` installs), in umbrella's palette, over a strip of the real accent colour every bundled style paints.
+
+  Rendered by `scripts/make-banner.py` rather than screenshotted. The first version was captured from a live WezTerm window and looked good, but it depended on a terminal being visible on the right desktop -- mid-attempt the capture caught a browser instead. A generated PNG is deterministic, 22KB, crisp at any size, and needs nothing from the screen.
+
+  It is also a claim: it states a theme count and paints one swatch per style, both read from `styles/` at render time, and this project shipped "16 themes" against a folder of 15 for several releases. A PNG cannot be inspected by a test, so the generator writes `docs/banner.json` recording what it drew and a test compares that against `styles/`. Add or remove a style without regenerating and the build fails. The alt text carries the name if the image ever 404s, because the banner replaced the `# TerminalStyles` heading rather than sitting above it.
+
 ## [0.8.39] - 2026-09-21
 
 - **a demo of the tool being used, at the top of the README.** Fifteen styles previewing live as the picker arrows down the list -- the one thing neither the screenshots nor the per-style GIFs could show, because both show the OUTPUT and none of them show the thing working.

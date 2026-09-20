@@ -1,6 +1,7 @@
 
-
-# TerminalStyles
+<p align="center">
+  <img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tstyles-banner.png" width="600" alt="tstyles — switch terminal themes live">
+</p>
 
 [![Tests](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg)](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery)](https://www.powershellgallery.com/packages/TerminalStyles)
