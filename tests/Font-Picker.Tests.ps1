@@ -194,6 +194,28 @@ Describe 'Invoke-FontPicker' {
             Should -Invoke Clear-Host -Times 1 -Exactly
         }
 
+        It 'survives a console that cannot be cleared' {
+            # Clear-Host sets the cursor position on Windows, so with no console
+            # handle it throws "The handle is invalid" -- which took the picker
+            # down on both Windows CI jobs while every Unix one passed. A picker
+            # that cannot clear the screen should still draw on it.
+            Mock -CommandName Clear-Host -MockWith { throw [System.IO.IOException]::new('The handle is invalid.') }
+            $painted = [System.Collections.Generic.List[string]]::new()
+            $r = Invoke-FontPicker -Catalog $script:Cat -Installed @() `
+                    -ReadKey (NewKeys 'DownArrow', 'Enter') -Write { param($l) $painted.Add($l) }
+            $r.Outcome | Should -Be 'confirmed'
+            $painted.Count | Should -BeGreaterThan 0 -Because 'the frame still has to be painted'
+        }
+
+        It 'does not retry a clear that threw' {
+            # Once per picker, not once per keystroke: a console that cannot be
+            # cleared cannot be cleared the second time either.
+            Mock -CommandName Clear-Host -MockWith { throw [System.IO.IOException]::new('The handle is invalid.') }
+            Invoke-FontPicker -Catalog $script:Cat -Installed @() `
+                -ReadKey (NewKeys 'DownArrow', 'DownArrow', 'Enter') -Write { } | Out-Null
+            Should -Invoke Clear-Host -Times 1 -Exactly
+        }
+
         It 'repaints for every arrow' {
             $painted = [System.Collections.Generic.List[string]]::new()
             Invoke-FontPicker -Catalog $script:Cat -Installed @() `

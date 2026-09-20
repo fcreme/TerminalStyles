@@ -827,7 +827,15 @@ function Invoke-FontPicker {
         $wh = 24; $w = 100
         try { $wh = [Console]::WindowHeight } catch { }
         try { $w  = [Console]::WindowWidth  } catch { }
-        if (-not $c.Cleared) { Clear-Host; $c.Cleared = $true }
+        # Both guarded, and the flag set either way. Clear-Host sets the cursor
+        # position on Windows, so with no console handle -- a redirected run, a
+        # CI runner -- it throws "The handle is invalid" exactly like the call
+        # below, which was guarded while it was not. Retrying it on every
+        # keystroke would turn one failure into one per arrow.
+        if (-not $c.Cleared) {
+            $c.Cleared = $true
+            try { Clear-Host } catch { }
+        }
         try { [Console]::SetCursorPosition(0, 0) } catch { }
         $el = "$([char]27)[K"
         foreach ($line in (Get-FontPickerFrame -Catalog $c.Catalog -Installed $c.Installed -Index $idx `

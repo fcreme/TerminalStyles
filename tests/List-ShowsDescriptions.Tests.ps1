@@ -157,7 +157,12 @@ Describe 'the comments name commands that exist' {
         # cannot be edited into truth. tests/ has to name the thing it guards.
         # And CHANGELOG.md exists precisely to record what the code used to
         # say -- an entry that cannot name the wrong name says nothing.
-        $hits = Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.ps1', '*.psm1', '*.md' |
+        # Matched on the extension itself, not through -Include: on Windows
+        # that wildcard also picked up TerminalStyles.psd1, whose release notes
+        # describe this very fix. Unix runners matched only what was asked for,
+        # so the hole was invisible until the Windows jobs ran.
+        $hits = Get-ChildItem -LiteralPath $root -Recurse -File |
+            Where-Object { $_.Extension -in '.ps1', '.psm1', '.md' } |
             Where-Object {
                 $rel = $_.FullName.Substring($root.Length).TrimStart([char]47, [char]92)
                 $rel -notlike 'out*' -and $rel -notlike 'tests*' -and $rel -notlike '.git*' -and
