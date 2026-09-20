@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the font list's licence column is padded, so the descriptions line up.** Unpadded it was seven characters for `OFL-1.1` and three for `MIT`, which started each description at a different place and made the list read as ragged rather than listed. Shipped that way in 0.8.38.
+
+  The first fix did not work: the row was trimmed of trailing whitespace before the description was appended, which removed the padding on exactly the short licences it had been added for. Trimmed now only when there is no description to follow, because those trailing spaces *are* the column.
+
+
 ## [0.8.38] - 2026-09-20
 
 ### Added

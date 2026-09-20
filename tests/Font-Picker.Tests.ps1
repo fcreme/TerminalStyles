@@ -99,6 +99,29 @@ Describe 'Get-FontPickerFooter' {
     }
 }
 
+Describe 'Show-FontList' {
+    InModuleScope TerminalStyles {
+
+        It 'starts every description in the same column' {
+            # The licence is a column and has to be padded like one. Unpadded it
+            # was 7 characters for OFL-1.1 and 3 for MIT, so the descriptions
+            # began at different places and read as ragged rather than listed.
+            Mock -CommandName Get-ConsoleWidth -MockWith { 200 }
+            $lines = (Show-FontList -Installed @() 6>&1 | Out-String) `
+                        -split "`n" -replace "$([char]27)\[[0-9;]*[A-Za-z]", ''
+            $rows = @($lines | Where-Object { $_ -match '\[[+ ]\]' -and $_ -match 'zero' })
+            $rows.Count | Should -BeGreaterThan 1
+
+            # 'No ligatures' starts one word earlier than 'Ligatures', so the
+            # anchor is whichever of the two opens the description.
+            $cols = $rows | ForEach-Object {
+                if ($_ -match 'No ligatures') { $_.IndexOf('No ligatures') } else { $_.IndexOf('Ligatures') }
+            }
+            ($cols | Select-Object -Unique).Count | Should -Be 1 -Because 'a column that moves is not a column'
+        }
+    }
+}
+
 Describe 'Get-FontPickerFrame' {
     InModuleScope TerminalStyles {
 
