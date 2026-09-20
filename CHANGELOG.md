@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.40] - 2026-09-21
+
 ### Added
 
 - **a banner at the top of the README, in place of the plain heading.** GitHub strips CSS from a README, so a title cannot be given a typeface -- an attractive one has to become an image. This one is the tstyles wordmark the tool itself prints on first run, set in JetBrains Mono (a font `tstyles font` installs), in umbrella's palette, over a strip of the real accent colour every bundled style paints.
@@ -1375,7 +1377,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.39...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.40...HEAD
+[0.8.40]: https://github.com/fcreme/TerminalStyles/compare/v0.8.39...v0.8.40
 [0.8.39]: https://github.com/fcreme/TerminalStyles/compare/v0.8.38...v0.8.39
 [0.8.38]: https://github.com/fcreme/TerminalStyles/compare/v0.8.37...v0.8.38
 [0.8.37]: https://github.com/fcreme/TerminalStyles/compare/v0.8.36...v0.8.37
