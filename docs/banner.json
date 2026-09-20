@@ -1,0 +1,37 @@
+{
+  "themes": 15,
+  "styles": [
+    "eva",
+    "ex-machina",
+    "forest",
+    "garden-rain",
+    "gitbash",
+    "golden-forest",
+    "kitty",
+    "lain",
+    "marquee",
+    "neon-rain",
+    "rain",
+    "snowday",
+    "sober",
+    "tombraider",
+    "umbrella"
+  ],
+  "accents": [
+    "#ff3d5a",
+    "#ff7b8a",
+    "#e0a088",
+    "#c87080",
+    "#cd3131",
+    "#d4825c",
+    "#ffb3c1",
+    "#d06070",
+    "#ff6098",
+    "#d86850",
+    "#c87878",
+    "#e89880",
+    "#c87878",
+    "#ff5090",
+    "#e04848"
+  ]
+}
