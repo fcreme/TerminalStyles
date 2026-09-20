@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`scripts/demo-picker.ps1`** drives the real style picker through a scripted tour, so the README demo is one clean take rather than a dozen attempts at typing at the right speed. It sends keys through `wezterm cli send-text --no-paste`, which needs no Accessibility grant, and waits for the picker to actually be drawn -- polling `wezterm cli get-text` for the header -- instead of sleeping and hoping. A fixed sleep is how a demo ends up recording a shell prompt.
+
+  The default tour is a single downward sweep of the whole list: every style previewed once, the highlight only ever moving one way. The first version took a named route and zig-zagged, which on screen reads as indecision and turned 14 presses into 38.
+
+  The tour arithmetic lives in `scripts/demo-lib.ps1`, which defines and runs nothing, so it can be dot-sourced by a test that must not open a window. A test fails if that file ever grows a statement that executes.
+
+
 ### Fixed
 
 - **the font list's licence column is padded, so the descriptions line up.** Unpadded it was seven characters for `OFL-1.1` and three for `MIT`, which started each description at a different place and made the list read as ragged rather than listed. Shipped that way in 0.8.38.
