@@ -133,11 +133,12 @@ Describe 'Show-StyleList' {
             # listing, while the picker had been reading it for weeks.
             Mock -CommandName Show-UpdateNoticeIfAvailable -MockWith { }
             Mock -CommandName Get-ConsoleWidth -MockWith { 200 }
-            $lines = & {
-                $orig = $PSStyle.OutputRendering
-                $PSStyle.OutputRendering = 'PlainText'
-                try { Show-StyleList 6>&1 | Out-String } finally { $PSStyle.OutputRendering = $orig }
-            }
+            # Strip the escapes out of the captured text rather than asking the
+            # engine not to emit them: $PSStyle is PowerShell 7 only, and
+            # reaching for it here failed the 5.1 job on scaffolding, not on
+            # the feature. What is asserted below is text, so the colour is
+            # irrelevant either way.
+            $lines = (Show-StyleList 6>&1 | Out-String) -replace "$([char]27)\[[0-9;]*[A-Za-z]", ''
             $lines | Should -Match 'umbrella'
             $lines | Should -Match 'Resident-Evil survival horror'
         }
