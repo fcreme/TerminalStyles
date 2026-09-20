@@ -90,6 +90,49 @@ Describe 'Get-TourPlan' {
     }
 }
 
+Describe 'Test-PaneFitsPicker' {
+
+    It 'refuses the default WezTerm window as too short' {
+        # `wezterm cli spawn --new-window` gives 75x24 unless initial_rows says
+        # otherwise. With fifteen styles the list scrolls there, so the take
+        # shows the picker paging rather than the whole set -- which is the one
+        # thing the demo exists to show. Measured from a real spawn.
+        $fit = Test-PaneFitsPicker -Rows 24 -Cols 75 -StyleCount 15
+        $fit.Fits | Should -BeFalse
+        $fit.NeedRows | Should -Be 26
+        @($fit.Reasons).Count | Should -Be 2 -Because 'it is both too short and too narrow'
+    }
+
+    It 'accepts a window with room for every style' {
+        (Test-PaneFitsPicker -Rows 26 -Cols 100 -StyleCount 15).Fits | Should -BeTrue
+    }
+
+    It 'counts the chrome the frame actually spends' {
+        # 9 rows of chrome once the help tip has retired, 10 while it shows,
+        # plus the row the frame deliberately never paints. 11 is the honest
+        # worst case, so a window has to beat StyleCount + 11.
+        (Test-PaneFitsPicker -Rows 25 -Cols 120 -StyleCount 15).Fits | Should -BeFalse
+        (Test-PaneFitsPicker -Rows 26 -Cols 120 -StyleCount 15).Fits | Should -BeTrue
+    }
+
+    It 'says which dimension is wrong, not just that something is' {
+        $short = Test-PaneFitsPicker -Rows 10 -Cols 140 -StyleCount 15
+        @($short.Reasons).Count | Should -Be 1
+        $short.Reasons[0] | Should -Match 'rows'
+
+        $narrow = Test-PaneFitsPicker -Rows 40 -Cols 70 -StyleCount 15
+        @($narrow.Reasons).Count | Should -Be 1
+        $narrow.Reasons[0] | Should -Match 'columns'
+    }
+
+    It 'scales with the number of styles' {
+        # Someone with thirty of their own needs a taller window, and the
+        # warning has to say so rather than naming a constant.
+        (Test-PaneFitsPicker -Rows 26 -Cols 120 -StyleCount 30).Fits | Should -BeFalse
+        (Test-PaneFitsPicker -Rows 41 -Cols 120 -StyleCount 30).Fits | Should -BeTrue
+    }
+}
+
 Describe 'the demo driver' {
 
     It 'reads its style list from the picker''s own reader' {
@@ -99,6 +142,25 @@ Describe 'the demo driver' {
         # lands somewhere other than where it said.
         $src = Get-Content (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/demo-picker.ps1') -Raw
         $src | Should -Match 'Get-PickerStyleSet'
+    }
+
+    It 'keeps the window open long enough to be recorded' {
+        # Without -NoExit the spawned program IS the picker, so Enter ends the
+        # process and takes the window with it -- cutting the recording off at
+        # exactly the frame the demo is for, and making -KeepOpen a switch that
+        # could not do what it said.
+        $src = Get-Content (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/demo-picker.ps1') -Raw
+        $src | Should -Match '-NoExit'
+    }
+
+    It 'restores the style on every path, not just the confirmed one' {
+        # -StartAt moves the active style BEFORE the picker opens, and Esc
+        # reverts only as far as the picker found it. So the rehearsal -- the
+        # one mode that promises to change nothing -- was the mode that left a
+        # different style applied.
+        $src = Get-Content (Join-Path (Split-Path $PSScriptRoot -Parent) 'scripts/demo-picker.ps1') -Raw
+        $src | Should -Not -Match 'if \(-not \$Cancel -and -not \$NoRestore'
+        $src | Should -Match 'endedOn'
     }
 
     It 'waits for the picker rather than sleeping and hoping' {

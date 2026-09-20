@@ -63,3 +63,52 @@ function Get-TourPlan {
     if ($plan.Count -gt 0) { $plan[$plan.Count - 1].PauseMs = $SettleMs }
     return $plan
 }
+
+
+function Test-PaneFitsPicker {
+    <#
+    .SYNOPSIS
+    Is a pane tall and wide enough to record the picker in?
+
+    .DESCRIPTION
+    `wezterm cli spawn --new-window` uses the config default, which is 75x24
+    unless the user set initial_rows. At 24 rows a fifteen-style list scrolls,
+    so the recording shows the picker paging rather than the whole set -- the
+    one thing the demo exists to show. Worth saying out loud before ten seconds
+    are spent capturing it.
+
+    Rows: the frame's chrome is 9 rows once the help tip has retired, 10 while
+    it is still showing, plus a row the frame deliberately never paints. 11 is
+    the honest worst case.
+
+    Columns: the picker is legible from about 60, but a README animation scaled
+    to fit a page wants more than that or the text turns to mush.
+
+    Returns @{ Fits; Rows; Cols; NeedRows; NeedCols; Reasons = @(...) }.
+    Pure.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$Rows,
+        [Parameter(Mandatory)][int]$Cols,
+        [Parameter(Mandatory)][int]$StyleCount,
+        [int]$MinCols = 100
+    )
+
+    $needRows = $StyleCount + 11
+    $reasons = @()
+    if ($Rows -lt $needRows) {
+        $reasons += "only $Rows rows; the list scrolls below $needRows, so the recording shows paging rather than all $StyleCount styles"
+    }
+    if ($Cols -lt $MinCols) {
+        $reasons += "only $Cols columns; below $MinCols the text is mush once the GIF is scaled to a README"
+    }
+    @{
+        Fits     = ($reasons.Count -eq 0)
+        Rows     = $Rows
+        Cols     = $Cols
+        NeedRows = $needRows
+        NeedCols = $MinCols
+        Reasons  = $reasons
+    }
+}
