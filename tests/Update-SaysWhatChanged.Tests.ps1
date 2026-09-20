@@ -49,11 +49,11 @@ Describe 'Get-UpdateOutcome' {
     }
 }
 
-Describe 'Get-ReleaseNoteSummary' {
+Describe 'Get-SentenceSummary' {
     InModuleScope TerminalStyles {
 
         It 'keeps a short note whole' {
-            Get-ReleaseNoteSummary -Notes 'One short line.' | Should -Be 'One short line.'
+            Get-SentenceSummary -Notes 'One short line.' | Should -Be 'One short line.'
         }
 
         It 'does not treat a version number as three sentences' {
@@ -61,7 +61,7 @@ Describe 'Get-ReleaseNoteSummary' {
             # summary with "v0. 8. 32:". A terminator only ends a sentence when
             # a space or the end of the string follows it.
             $n = 'v0.8.32: two things restored. And a second sentence that pushes this well past the cap so a cut is actually required here.'
-            $s = Get-ReleaseNoteSummary -Notes $n -MaxLength 60
+            $s = Get-SentenceSummary -Notes $n -MaxLength 60
             $s | Should -BeLike 'v0.8.32: two things restored.*'
             $s | Should -Not -Match 'v0\. 8\. 32'
         }
@@ -72,25 +72,25 @@ Describe 'Get-ReleaseNoteSummary' {
             # came out as "32: two things restored". Slicing the original string
             # at an index cannot do that.
             $n = 'v0.8.32: two things restored. Another sentence follows it here to force a cut.'
-            (Get-ReleaseNoteSummary -Notes $n -MaxLength 40) | Should -BeLike 'v0.8.32:*'
+            (Get-SentenceSummary -Notes $n -MaxLength 40) | Should -BeLike 'v0.8.32:*'
         }
 
         It 'cuts at a sentence end, not mid-clause' {
             $n = 'First sentence here. Second sentence here. Third sentence here.'
-            $s = Get-ReleaseNoteSummary -Notes $n -MaxLength 45
+            $s = Get-SentenceSummary -Notes $n -MaxLength 45
             $s | Should -Match '\.$'
             $s.Length | Should -BeLessOrEqual 45
         }
 
         It 'marks a hard cut when there is no sentence end to use' {
-            $s = Get-ReleaseNoteSummary -Notes ('x' * 400) -MaxLength 50
+            $s = Get-SentenceSummary -Notes ('x' * 400) -MaxLength 50
             $s.Length | Should -BeLessOrEqual 50
             $s | Should -BeLike "*$([char]0x2026)"
         }
 
         It 'answers empty for nothing' {
-            Get-ReleaseNoteSummary -Notes ''    | Should -BeNullOrEmpty
-            Get-ReleaseNoteSummary -Notes $null | Should -BeNullOrEmpty
+            Get-SentenceSummary -Notes ''    | Should -BeNullOrEmpty
+            Get-SentenceSummary -Notes $null | Should -BeNullOrEmpty
         }
     }
 }
