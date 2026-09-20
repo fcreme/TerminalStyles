@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.39] - 2026-09-21
+
 - **a demo of the tool being used, at the top of the README.** Fifteen styles previewing live as the picker arrows down the list -- the one thing neither the screenshots nor the per-style GIFs could show, because both show the OUTPUT and none of them show the thing working.
 
   It lives on the `gifs` branch like every other animation here, so main stays small. 640px, 64 colours, 6fps, 6.2MB: these backgrounds are photographic, so every frame differs everywhere and GIF gets no delta compression at all -- the first encode at 800px came out at 20.9MB.
@@ -1365,7 +1367,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.38...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.39...HEAD
+[0.8.39]: https://github.com/fcreme/TerminalStyles/compare/v0.8.38...v0.8.39
 [0.8.38]: https://github.com/fcreme/TerminalStyles/compare/v0.8.37...v0.8.38
 [0.8.37]: https://github.com/fcreme/TerminalStyles/compare/v0.8.36...v0.8.37
 [0.8.36]: https://github.com/fcreme/TerminalStyles/compare/v0.8.35...v0.8.36
