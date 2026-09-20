@@ -159,48 +159,6 @@ function Get-UpdateOutcome {
     return 'unknown'
 }
 
-function Get-ReleaseNoteSummary {
-    <#
-    .SYNOPSIS
-    The opening of a release note, short enough to print after an update.
-
-    .DESCRIPTION
-    ReleaseNotes in this project run to a thousand characters -- they are the
-    PSGallery listing, written to be read on a web page. Printing the whole
-    thing after an update buries the one line that matters (that it worked) and
-    scrolls the reload instruction off the top.
-
-    Cut at a SENTENCE boundary rather than mid-word, and only if there is more
-    than one sentence to cut. A summary that ends mid-clause reads like the
-    output was truncated by accident.
-    #>
-    [CmdletBinding()]
-    param([AllowNull()][string]$Notes, [int]$MaxLength = 220)
-
-    $t = "$Notes".Trim() -replace '\s+', ' '
-    if (-not $t) { return '' }
-    if ($t.Length -le $MaxLength) { return $t }
-
-    # Find where sentences END and slice there, rather than gluing matches back
-    # together. Two traps, both hit on the way here:
-    #
-    #   * the terminator must be FOLLOWED by a space or end-of-string, or
-    #     "v0.8.32" is three sentences and the summary opens "v0. 8. 32:";
-    #   * matches are not contiguous from the start, so concatenating their
-    #     values silently drops whatever the engine skipped -- that version
-    #     prefix came out as "32: two WezTerm compositions restored".
-    #
-    # Slicing the ORIGINAL string at an index cannot do either.
-    $end = 0
-    foreach ($m in [regex]::Matches($t, '[.!?](?=\s|$)')) {
-        $idx = $m.Index + 1
-        if ($idx -gt $MaxLength) { break }
-        $end = $idx
-    }
-    if ($end -gt 0) { return $t.Substring(0, $end).Trim() }
-    # One very long opening sentence: fall back to a hard cut, marked as one.
-    return $t.Substring(0, [Math]::Max(1, $MaxLength - 1)).TrimEnd() + [char]0x2026
-}
 
 function Invoke-TerminalStylesUpdate {
     [CmdletBinding()]
@@ -230,7 +188,7 @@ function Invoke-TerminalStylesUpdate {
                     }
                     'updated' {
                         Write-Host ("  Updated {0} -> {1}" -f $before, $after) -ForegroundColor Green
-                        $notes = Get-ReleaseNoteSummary -Notes (Get-InstalledReleaseNotes -Version $after)
+                        $notes = Get-SentenceSummary -Notes (Get-InstalledReleaseNotes -Version $after)
                         if ($notes) {
                             Write-Host ""
                             Write-Host "  $notes" -ForegroundColor Gray

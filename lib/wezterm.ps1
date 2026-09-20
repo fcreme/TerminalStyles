@@ -70,8 +70,14 @@ function Get-WezTermModulePath {
 }
 
 function Get-WezTermWiringLine {
-    # The one line the user adds. Printed in full by wezterm-init and searched
-    # for by Test-WezTermStyleWired, so it lives in exactly one place.
+    # The one line the user adds. Printed in full by Publish-StyleWezTermConfig
+    # when the module is not yet wired, written into the generated file's own
+    # header, and searched for by Test-WezTermStyleWired -- so it lives in
+    # exactly one place.
+    #
+    # This used to credit a subcommand that does not exist and never did. A
+    # comment is a claim like any other line of output, and the reader it
+    # misleads is the next person to go looking for that command.
     "local ok, ts = pcall(require, 'terminalstyles'); if ok then ts.apply_to_config(config) end"
 }
 

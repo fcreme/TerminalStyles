@@ -16,12 +16,77 @@ function Get-UnreadableSchemeSwatch {
     return "$(Get-HintEscape)(unreadable scheme.json)$([char]27)[0m"
 }
 
+function Get-ConsoleWidth {
+    <#
+    .SYNOPSIS
+    Terminal width in columns, or a workable default when there is no terminal.
+
+    .DESCRIPTION
+    [Console]::WindowWidth throws or answers 0 when output is redirected and on
+    a CI runner with no tty. Returning that 0 straight through would mean "no
+    room for anything", which silently drops content -- and drops it only where
+    nobody is watching, so a listing that looks right locally ships missing half
+    its text. A redirected listing is still a listing someone reads later; give
+    it a sane width instead of nothing.
+    #>
+    [CmdletBinding()]
+    param([int]$Fallback = 100)
+    try {
+        $w = [Console]::WindowWidth
+        if ($w -gt 20) { return $w }
+    } catch { }
+    $Fallback
+}
+
+function Get-ListRowDescription {
+    <#
+    .SYNOPSIS
+    The trailing description for one `tstyles list` row, already trimmed to fit.
+
+    .DESCRIPTION
+    Pure, so the fitting can be tested at any width without a terminal. Returns
+    '' when there is nothing to say or no room to say it in: a swatch is five
+    colour cells plus the name column and any `yours` badge, so on an
+    80-column window the tail is short, and four cut-off words read worse than
+    a clean row. The cut lands on a character boundary with an ellipsis, never
+    mid-escape, because the description itself carries no escapes -- only the
+    hint colour wrapped around it here does.
+    #>
+    [CmdletBinding()]
+    param(
+        [int]$Width,
+        [AllowNull()][string]$Swatch,
+        [AllowNull()][string]$Badge,
+        [AllowNull()][string]$Description,
+        [AllowNull()][string]$HintEscape
+    )
+    if (-not $Description) { return '' }
+    # 2 indent + marker + space + 16-wide name column + 2 gap, then whatever the
+    # swatch and badge actually occupy -- measured, not assumed, because both
+    # are mostly SGR bytes that take no columns, and the swatch degrades to a
+    # written note on a scheme this tool cannot read.
+    $used = 22 + (Get-VisibleLength $Swatch) + (Get-VisibleLength $Badge)
+    $room = $Width - $used - 3
+    if ($room -lt 24) { return '' }
+    # Cut at a sentence, not at a character. Descriptions are two short
+    # sentences by design, so on a narrow window the first one usually fits
+    # whole -- "Warm sepia autumn." reads as a description, where the hard cut
+    # this used to do gave "Warm sepia autumn. Amber and" and read as damage.
+    $d = Get-SentenceSummary -Notes $Description -MaxLength $room
+    if (-not $d) { return '' }
+    "  $HintEscape$d$([char]27)[0m"
+}
+
+
 function Show-StyleList {
     # Resolved ONCE per listing, from the style the reader is actually looking
     # at. Every parenthetical and badge below was a fixed grey, which on the one
     # light theme renders at 2.61 against the 4.5 WCAG threshold -- see
     # Get-HintEscape.
     $hintEsc = Get-HintEscape
+    # Read once for the listing, not once per row: a row's description is
+    # trimmed to what is left of the line after its swatch and badge.
+    $listWidth = Get-ConsoleWidth
 
     # `tstyles list` -- print available styles, marking the active one.
     Show-UpdateNoticeIfAvailable
@@ -70,7 +135,12 @@ function Show-StyleList {
                 'shadow' { $badge = "  $hintEsc" + "yours (shadows bundled)$([char]27)[0m"; $anyYours = $true }
             }
         } catch { }
-        Write-Host ("  {0} {1,-16}  {2}{3}" -f $marker, $s.Name, $swatch, $badge)
+        # What the style IS, from the same meta.json the picker reads. The
+        # listing knew a style's name, its colours and whether it was yours --
+        # everything except the one thing a reader is actually choosing between.
+        $desc = Get-ListRowDescription -Width $listWidth -Swatch $swatch -Badge $badge `
+                    -Description (Get-StyleMeta -StyleDir $s.FullName).Description -HintEscape $hintEsc
+        Write-Host ("  {0} {1,-16}  {2}{3}{4}" -f $marker, $s.Name, $swatch, $badge, $desc)
     }
     Write-Host ""
     if ($current) {
