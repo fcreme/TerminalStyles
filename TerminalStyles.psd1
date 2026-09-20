@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.37'
+    ModuleVersion     = '0.8.38'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.37: tstyles list now says what each style is. The listing printed a name, a colour swatch and whether the style was yours -- everything except the one thing a reader scanning it is choosing between. The descriptions already lived in each style''s own meta.json and the picker had been reading them for some time; the listing simply never asked. Each row now carries one, trimmed to what is left of the line and cut at a sentence boundary rather than mid-word, so a narrow window reads "Warm sepia autumn." instead of a fragment, and a row with no room for a whole clause prints nothing rather than four cut-off words. The swatch is measured in columns rather than bytes: five colour cells are about 130 characters of escape sequence and 25 columns wide, and the difference between those two numbers is every description silently disappearing. The sentence cutter is the one already used for release notes, moved rather than copied, because two implementations of one rule drift. Also: a comment in the WezTerm writer credited the wiring line to a wezterm-init subcommand that has never existed in any version. A comment is a claim like any other line of output, and the reader it misleads is the next person who goes looking for that command.'
+            ReleaseNotes = 'v0.8.38: tstyles font is a picker now. Arrow to a font instead of typing its name back exactly, in a tool that had already taught you to arrow through styles -- and the catalogue says what each font IS, which a name and a licence never did. Those descriptions are measured rather than recalled: ligatures from the GSUB calt feature, the shape of the zero from the third contour of its glyph, x-height from OS/2 sxHeight over unitsPerEm. All six bundled fonts mark their zero, which is exactly the differentiator a guess would have got wrong. There is deliberately no live preview: there is no escape sequence for a font face, so off Windows Terminal nothing can show you a font before it is installed, and rather than imply otherwise the footer says what Enter will actually do on YOUR terminal, which is one of three different things. The style picker gives a viewport row back in the same release. The tip pointing at tstyles help retires after the first few openings, because onboarding that never ends is a permanent tax on the menu -- one fewer style visible in every window, and on a 24-row terminal with 15 styles that is 14 now rather than 13.'
         }
     }
 }

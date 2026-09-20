@@ -77,16 +77,24 @@ function Get-PickerFramePlan {
         [Parameter(Mandatory)][int]$Total,
         [Parameter(Mandatory)][int]$Selected,
         [Parameter(Mandatory)][int]$WindowHeight,
-        [int]$NoteCount = 0
+        [int]$NoteCount = 0,
+        [bool]$TipRow = $true
     )
 
-    # 10, not 8: the two rows under the list that describe the highlighted
+    # 9, not 7: the two rows under the list that describe the highlighted
     # style -- its one-liner and its quote. BOTH are always painted, blank when
     # the style has no meta.json or no quote, for the same reason the scroll
     # indicators are: the frame is overwritten in place, so a row that comes and
     # goes strands the taller frame's last line on screen. A style with no quote
     # must cost exactly what a style with one costs.
-    $chrome = 10 + [Math]::Max(0, $NoteCount)
+    #
+    # The tip row is the tenth, and the only one the picker can give back. It
+    # says "run tstyles help for all commands" -- useful the first few times
+    # and then a permanent tax: one fewer style visible in every window, for
+    # the life of the tool. The controls line above it is not the same thing;
+    # that one has to be there every time, because it is what the keys do.
+    $chrome = 9 + [Math]::Max(0, $NoteCount)
+    if ($TipRow) { $chrome++ }
     # -1: reserve a row the frame will not paint, so ending the last line cannot
     # scroll the buffer.
     $available = if ($WindowHeight -gt 0) { $WindowHeight - $chrome - 1 } else { $Total }
@@ -770,6 +778,77 @@ function Invoke-WezTermOfferFirstRun {
         Write-Host "  Could not install WezTerm: $_" -ForegroundColor Yellow
         Write-Host "    brew install --cask wezterm" -ForegroundColor Cyan
     }
+}
+
+function Get-PickerRunCount {
+    <#
+    .SYNOPSIS
+    How many times the picker has been opened on this machine.
+
+    .DESCRIPTION
+    Zero for anything unreadable, missing or not a number. This decides only
+    whether one hint row is painted, so every failure has to mean "show it" --
+    the state being unreadable is not a reason to hide the line that tells a
+    newcomer where the commands are.
+    #>
+    [CmdletBinding()]
+    param([string]$DataDir = $script:TStylesDataRoot)
+
+    $path = Join-Path $DataDir '.picker-runs'
+    if (-not (Test-Path -LiteralPath $path)) { return 0 }
+    try {
+        $raw = ([System.IO.File]::ReadAllText($path)).Trim()
+        $n = 0
+        if ([int]::TryParse($raw, [ref]$n) -and $n -ge 0) { return $n }
+        return 0
+    } catch { return 0 }
+}
+
+function Add-PickerRun {
+    <#
+    .SYNOPSIS
+    Record one more opening of the picker, and return the new count.
+
+    .DESCRIPTION
+    Best-effort on the write: a read-only or missing data directory must not
+    take the picker down over a counter whose only job is to retire a hint. On
+    failure it still returns the incremented count, so the session behaves as
+    though it were recorded -- the next session simply counts it again, which
+    costs a hint row and nothing else.
+    #>
+    [CmdletBinding()]
+    param([string]$DataDir = $script:TStylesDataRoot)
+
+    $next = (Get-PickerRunCount -DataDir $DataDir) + 1
+    try {
+        if (-not (Test-Path -LiteralPath $DataDir)) {
+            New-Item -ItemType Directory -Path $DataDir -Force -ErrorAction Stop | Out-Null
+        }
+        [System.IO.File]::WriteAllText((Join-Path $DataDir '.picker-runs'), "$next")
+    } catch { }
+    return $next
+}
+
+function Test-ShouldShowPickerTip {
+    <#
+    .SYNOPSIS
+    Is the "run tstyles help" line still worth a row of the picker?
+
+    .DESCRIPTION
+    Pure. The line is onboarding, and onboarding that never ends is a tax: it
+    costs a viewport row on every redraw of every session forever, which is one
+    fewer style visible in the window. The same reasoning the WezTerm offer is
+    built on -- something that comes back every run stops being help.
+
+    A few runs rather than one: a single showing of a hint is easy to miss, and
+    unlike an offer nobody has to answer it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][int]$RunCount,
+        [int]$Limit = 3
+    )
+    return ($RunCount -le $Limit)
 }
 
 function Test-ShouldPromptFonts {

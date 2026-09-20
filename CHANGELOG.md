@@ -7,7 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.38] - 2026-09-20
+
 ### Added
+
+- **the picker gives a viewport row back.** It painted two hint lines on every redraw. The first says what the keys do and has to be there every time; the second was `Tip: run 'tstyles help' for all commands`, which is onboarding -- and onboarding that never ends is a tax. It cost a row of the menu on every redraw of every session forever, which is one fewer style visible. On a 24-row terminal with 15 styles that is 13 visible instead of 14.
+
+  It now retires after the first few openings, counted in the data root, on the same reasoning the WezTerm offer is built on: something that comes back every run has stopped being help. A few runs rather than one, because unlike an offer nobody has to answer it and a single showing is easy to miss.
+
+  The budget knows about it. A painted row the frame plan has not been told about is exactly what garbles an in-place redraw, so `Get-PickerFramePlan` takes the tip as a parameter and the row is bought or not bought in one place. Anything it cannot read about the counter -- missing, unparseable, negative -- reads as zero and shows the tip: state this tool cannot read is not a reason to hide the line pointing a newcomer at the commands.
 
 - **`tstyles font` is a picker, and the catalog says what each font is.** The list showed six names and their licences and then asked you to type one back exactly -- in a tool that had already taught you to arrow through styles. Two vocabularies for the same act of choosing.
 
@@ -1321,7 +1329,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.37...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.38...HEAD
+[0.8.38]: https://github.com/fcreme/TerminalStyles/compare/v0.8.37...v0.8.38
 [0.8.37]: https://github.com/fcreme/TerminalStyles/compare/v0.8.36...v0.8.37
 [0.8.36]: https://github.com/fcreme/TerminalStyles/compare/v0.8.35...v0.8.36
 [0.8.35]: https://github.com/fcreme/TerminalStyles/compare/v0.8.34...v0.8.35
