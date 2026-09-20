@@ -1533,6 +1533,11 @@ function Invoke-TerminalStyle {
             $oscPackets[$i] = Get-SchemeOscPacket -Scheme $schemes[$i]
         }
 
+        # Counted once per opening, before the first draw. The tip is onboarding:
+        # useful while the commands are new, a permanent tax on the viewport
+        # after that -- one fewer style visible in every window, forever.
+        $showPickerTip = Test-ShouldShowPickerTip -RunCount (Add-PickerRun)
+
         $drawMenu = {
             param($idx)
             # The whole row budget, from one pure function -- Get-PickerFramePlan
@@ -1565,7 +1570,7 @@ function Invoke-TerminalStyle {
             }
 
             $plan = Get-PickerFramePlan -Total $styles.Count -Selected $idx `
-                        -WindowHeight $wh -NoteCount $notes
+                        -WindowHeight $wh -NoteCount $notes -TipRow $showPickerTip
             $vp = @{ First = $plan.First; Count = $plan.Count; More = $plan.More }
             # The origin is an ABSOLUTE row captured once, so anything that
             # scrolls the buffer invalidates it for every later redraw. The -1
@@ -1591,7 +1596,13 @@ function Invoke-TerminalStyle {
             Write-Host "$el  Choose a style for " -NoNewline
             Write-Host $pickerTargetLabel -ForegroundColor Cyan
             Write-Host "$el$hintColor  Up/Down to preview, Enter to keep, Esc to cancel$resetColor"
-            Write-Host "$el$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
+            # Retired after the first few openings, and the row given back to
+            # the list. Decided ONCE, before the loop, so the frame is the same
+            # height on every redraw -- the same rule the three notes below
+            # follow, and the reason none of them is recomputed here.
+            if ($showPickerTip) {
+                Write-Host "$el$hintColor  Tip: run 'tstyles help' for all commands$resetColor"
+            }
             # A style dropped by the parse above is reported HERE rather than
             # before the menu, because the picker Clear-Host's on the way in and
             # anything printed above the frame is wiped unread -- the same
