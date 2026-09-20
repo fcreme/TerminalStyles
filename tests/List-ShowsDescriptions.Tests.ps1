@@ -150,12 +150,19 @@ Describe 'the comments name commands that exist' {
         # lib/wezterm.ps1 said the wiring line was "printed in full by
         # wezterm-init". There is no wezterm-init and there never was.
         $root = Split-Path $PSScriptRoot -Parent
-        # Sources only: out/ is a staging copy of a previously published
-        # version, and tests/ is allowed to name the thing it is guarding.
+        # Markdown is in scope deliberately: a README telling someone to run
+        # this is the same defect as a comment claiming it exists.
+        #
+        # Three exclusions, each for a different reason. out/ is a staging copy
+        # of an already-published version, so it records what WAS shipped and
+        # cannot be edited into truth. tests/ has to name the thing it guards.
+        # And CHANGELOG.md exists precisely to record what the code used to
+        # say -- an entry that cannot name the wrong name says nothing.
         $hits = Get-ChildItem -LiteralPath $root -Recurse -File -Include '*.ps1', '*.psm1', '*.md' |
             Where-Object {
                 $rel = $_.FullName.Substring($root.Length).TrimStart([char]47, [char]92)
-                $rel -notlike 'out*' -and $rel -notlike 'tests*' -and $rel -notlike '.git*'
+                $rel -notlike 'out*' -and $rel -notlike 'tests*' -and $rel -notlike '.git*' -and
+                $rel -ne 'CHANGELOG.md'
             } |
             Select-String -SimpleMatch 'wezterm-init'
         $hits | Should -BeNullOrEmpty -Because 'no such subcommand is dispatched'

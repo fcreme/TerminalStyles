@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.36'
+    ModuleVersion     = '0.8.37'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.36: the first run now offers, once, to install WezTerm. Every bundled style ships an animated background and off Windows exactly one terminal renders it as one -- Terminal.app shows a still first frame and the rest show no image at all -- so there is a real gap between what a style IS and what you can see of it. The offer defaults to no, names the exact command before running it, and is recorded whether you accept or refuse, because an offer that comes back every run is a nag rather than an offer. It never appears to someone already running WezTerm, or where it is already installed, or without Homebrew to install it with, or in a session whose output is redirected. The welcome''s keypress is now conditional on the same reasoning: two real questions follow it on a first run and each holds the screen, so the Press Enter in front of them was ceremony -- but for anyone already using this the font prompt has been answered in an earlier version and nothing follows, so the keypress stays exactly where it is still doing work.'
+            ReleaseNotes = 'v0.8.37: tstyles list now says what each style is. The listing printed a name, a colour swatch and whether the style was yours -- everything except the one thing a reader scanning it is choosing between. The descriptions already lived in each style''s own meta.json and the picker had been reading them for some time; the listing simply never asked. Each row now carries one, trimmed to what is left of the line and cut at a sentence boundary rather than mid-word, so a narrow window reads "Warm sepia autumn." instead of a fragment, and a row with no room for a whole clause prints nothing rather than four cut-off words. The swatch is measured in columns rather than bytes: five colour cells are about 130 characters of escape sequence and 25 columns wide, and the difference between those two numbers is every description silently disappearing. The sentence cutter is the one already used for release notes, moved rather than copied, because two implementations of one rule drift. Also: a comment in the WezTerm writer credited the wiring line to a wezterm-init subcommand that has never existed in any version. A comment is a claim like any other line of output, and the reader it misleads is the next person who goes looking for that command.'
         }
     }
 }

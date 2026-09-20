@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.37] - 2026-09-20
+
+### Added
+
+- **`tstyles list` now says what each style is.** The listing printed a name, a colour swatch and whether the style was yours -- everything except the one thing a reader scanning it is choosing between. The descriptions already lived in each style's own `meta.json`, and the picker had been reading them for weeks; `Get-StyleMeta` was referenced zero times in the whole of the listing.
+
+  ```
+      eva               [swatch]  Evangelion / Asuka body-scan.
+      golden-forest     [swatch]  Warm sepia autumn.
+      umbrella          [swatch]  Resident-Evil survival horror.
+  ```
+
+  The fitting is the part that could go wrong quietly, so it is a pure function with three guards behind it.
+
+  The swatch is measured in **columns, not bytes**. Five colour cells are about 130 characters of SGR escape and 25 columns wide, and `.Length` would report no room left on the line and drop every description -- on every terminal, failing nothing.
+
+  The width itself is never zero. `[Console]::WindowWidth` answers 0 or throws under redirected output and on a CI runner with no tty, and passing that through means "no room for anything": content dropped exactly where nobody is watching, so the listing looks right locally and ships empty.
+
+  The cut lands on a **sentence boundary**. At 80 columns that is `Warm sepia autumn.` and not `Warm sepia autumn. Amber and`; a row with no space for a whole clause prints nothing rather than four cut-off words. That rule already existed for release notes, so it moved to a new `lib/text.ps1` as `Get-SentenceSummary` rather than being written a second time -- its old name described one of what are now two callers.
+
+### Fixed
+
+- **a comment naming a command that has never existed.** The WezTerm writer credited its wiring line to a `wezterm-init` subcommand, which is dispatched nowhere and never has been. A comment is a claim like any other line of output, and the reader it misleads is the next person who goes looking for that command. It now names the functions that actually print the line, and a test fails if any shipped source mentions the dead name.
+
 ## [0.8.36] - 2026-09-20
 
 ### Changed
@@ -1273,7 +1297,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.36...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.37...HEAD
+[0.8.37]: https://github.com/fcreme/TerminalStyles/compare/v0.8.36...v0.8.37
 [0.8.36]: https://github.com/fcreme/TerminalStyles/compare/v0.8.35...v0.8.36
 [0.8.35]: https://github.com/fcreme/TerminalStyles/compare/v0.8.34...v0.8.35
 [0.8.34]: https://github.com/fcreme/TerminalStyles/compare/v0.8.33...v0.8.34
