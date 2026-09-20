@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- **a demo of the tool being used, at the top of the README.** Fifteen styles previewing live as the picker arrows down the list -- the one thing neither the screenshots nor the per-style GIFs could show, because both show the OUTPUT and none of them show the thing working.
+
+  It lives on the `gifs` branch like every other animation here, so main stays small. 640px, 64 colours, 6fps, 6.2MB: these backgrounds are photographic, so every frame differs everywhere and GIF gets no delta compression at all -- the first encode at 800px came out at 20.9MB.
+
+### Fixed
+
+- **two stale claims in the README's opening paragraph.** It said "arrow through 16 themes" when `styles/` holds 15 -- true once, and left behind when `halo` was removed. And it credited the font, opacity and animated background to Windows Terminal alone, which reads as "not on your Mac" to every macOS reader: WezTerm has carried all three from the applied style since 0.8.29, and off Windows it is the only terminal that animates one.
+
+  Both are now tested. The per-style README guard only ever looked at `styles/<name>/README.md`, so the page people actually land on -- which is also the PSGallery listing -- had nothing checking it.
+
 ### Added
 
 - **`scripts/demo-picker.ps1`** drives the real style picker through a scripted tour, so the README demo is one clean take rather than a dozen attempts at typing at the right speed. It sends keys through `wezterm cli send-text --no-paste`, which needs no Accessibility grant, and waits for the picker to actually be drawn -- polling `wezterm cli get-text` for the header -- instead of sleeping and hoping. A fixed sleep is how a demo ends up recording a shell prompt.
