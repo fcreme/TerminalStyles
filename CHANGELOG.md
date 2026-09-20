@@ -15,6 +15,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   The tour arithmetic lives in `scripts/demo-lib.ps1`, which defines and runs nothing, so it can be dot-sourced by a test that must not open a window. A test fails if that file ever grows a statement that executes.
 
+- **the demo driver, fixed by actually running it.** Three defects a dry run could not have found:
+
+  `-Cancel` -- the rehearsal, the one mode that promises to change nothing -- left a different style applied. It skipped the restore on the reasoning that Esc reverts, but Esc reverts only as far as the picker found things, and `-StartAt` had already moved the active style before the picker opened. It now asks what is active at the end and restores when that differs, on every path.
+
+  `-KeepOpen` could not keep anything open. The spawned program IS the picker, so Enter ended the process and took the window with it -- cutting the recording off at exactly the frame the demo exists for. `-NoExit` makes the switch mean what it says.
+
+  The setup step spoke about the wrong terminal. It runs in whichever terminal launched the script, so it printed "Terminal.app can't show: font, cursor shape, padding" directly above a countdown about a WezTerm window.
+
+  It also now measures the window before spending ten seconds recording it. A new WezTerm window is 75x24 unless `initial_rows` says otherwise, and at 24 rows a fifteen-style list scrolls -- so the take would show the picker paging rather than the whole set, which is the one thing the demo is for.
+
 
 ### Fixed
 

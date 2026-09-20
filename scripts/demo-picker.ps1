@@ -187,7 +187,11 @@ if (-not (Test-WezTermMux)) {
 
 if ($StartAt -ne $startStyle) {
     Write-Host "  Setting up: applying '$StartAt' so the sweep starts at the top." -ForegroundColor DarkGray
-    Invoke-TerminalStyle $StartAt | Out-Null
+    # Silenced on the information stream too. This runs in whatever terminal
+    # launched the script, so it reports on THAT one -- "Terminal.app can't
+    # show: font, cursor shape, padding" is true, irrelevant, and confusing
+    # directly above a countdown about a WezTerm window.
+    Invoke-TerminalStyle $StartAt 6>$null | Out-Null
 }
 
 for ($i = $Countdown; $i -gt 0; $i--) {
@@ -196,12 +200,36 @@ for ($i = $Countdown; $i -gt 0; $i--) {
 }
 Write-Host "`r  Opening.                        " -ForegroundColor Green
 
-$paneId = (& wezterm cli spawn --new-window -- pwsh-preview -NoProfile -Command tstyles).Trim()
+# -NoExit, because without it the window closes the instant the picker
+# returns: the spawned program IS the picker, so Enter ends the process and
+# takes the window with it. That made -KeepOpen a switch that could not do what
+# it said, and it cut the recording off at the moment the chosen style lands --
+# which is the frame the whole demo is for.
+$paneId = (& wezterm cli spawn --new-window -- pwsh-preview -NoProfile -NoExit -Command tstyles).Trim()
 if (-not $paneId) { throw 'WezTerm did not report a pane id for the spawned window.' }
 
 try {
     if (-not (Wait-ForPicker -PaneId $paneId)) {
         throw "The picker never drew in pane $paneId. Nothing was sent."
+    }
+
+    # Said before the ten seconds are spent, not after. A new WezTerm window is
+    # 75x24 unless initial_rows says otherwise, and at 24 rows the list scrolls
+    # -- so the take shows the picker paging instead of the whole set, which is
+    # the one thing the demo is for.
+    $pane = @(& wezterm cli list --format json 2>$null | ConvertFrom-Json) |
+                Where-Object { "$($_.pane_id)" -eq $paneId } | Select-Object -First 1
+    if ($pane) {
+        $fit = Test-PaneFitsPicker -Rows $pane.size.rows -Cols $pane.size.cols -StyleCount $styles.Count
+        if (-not $fit.Fits) {
+            Write-Host ""
+            Write-Host "  This window is smaller than the demo wants:" -ForegroundColor Yellow
+            foreach ($r in $fit.Reasons) { Write-Host "    - $r" -ForegroundColor Yellow }
+            Write-Host ("    Set initial_rows = {0} and initial_cols = {1} in your wezterm.lua." -f
+                        $fit.NeedRows, $fit.NeedCols) -ForegroundColor DarkGray
+            Write-Host "  Continuing anyway." -ForegroundColor DarkGray
+            Write-Host ""
+        }
     }
     # A beat on the opening frame: the first thing the recording shows should be
     # the menu at rest, not a list already moving.
@@ -218,11 +246,20 @@ finally {
     if (-not $KeepOpen) {
         & wezterm cli kill-pane --pane-id $paneId 2>$null | Out-Null
     }
-    # Esc already reverted, so there is nothing to put back on that path.
-    if (-not $Cancel -and -not $NoRestore -and $startStyle) {
-        Write-Host "  Restoring '$startStyle'." -ForegroundColor DarkGray
-        try { Invoke-TerminalStyle $startStyle | Out-Null } catch {
-            Write-Host "  Could not restore it: $_" -ForegroundColor Yellow
+    # Restored whenever the active style is not the one this script found, on
+    # EVERY path. It used to skip the Esc path on the grounds that Esc reverts
+    # -- but Esc reverts to whatever was active when the PICKER opened, and
+    # -StartAt had already moved that. So a rehearsal, the one mode that
+    # promises to change nothing, was the mode that quietly left a different
+    # style applied. Asking what is active now cannot make that mistake.
+    if (-not $NoRestore -and $startStyle) {
+        $endedOn = ''
+        try { $endedOn = "$(Get-CurrentStyleName)" } catch { }
+        if ($endedOn -ne $startStyle) {
+            Write-Host "  Restoring '$startStyle'." -ForegroundColor DarkGray
+            try { Invoke-TerminalStyle $startStyle 6>$null | Out-Null } catch {
+                Write-Host "  Could not restore it: $_" -ForegroundColor Yellow
+            }
         }
     }
 }
