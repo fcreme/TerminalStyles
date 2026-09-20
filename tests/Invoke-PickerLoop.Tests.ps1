@@ -1,4 +1,4 @@
-# Pester 5 tests for Invoke-StylePickerLoop -- the seam-injected picker engine.
+# Pester 5 tests for Invoke-PickerLoop -- the seam-injected picker engine.
 # Unit tests drive the loop with scripted keys + recording seams (no real I/O);
 # integration tests (Task 2) wire the real settings writers.
 # Run: Invoke-Pester -Path tests
@@ -13,7 +13,7 @@ BeforeAll {
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
 }
 
-Describe 'Invoke-StylePickerLoop' {
+Describe 'Invoke-PickerLoop' {
     InModuleScope TerminalStyles {
 
         BeforeAll {
@@ -40,7 +40,7 @@ Describe 'Invoke-StylePickerLoop' {
             It 'Up clamps at index 0 and applies nothing' {
                 $applied = [System.Collections.Generic.List[int]]::new()
                 $keys = New-KeyStub @([ConsoleKey]::UpArrow, [ConsoleKey]::Enter)
-                $r = Invoke-StylePickerLoop -StyleCount 3 -StartIndex 0 `
+                $r = Invoke-PickerLoop -ItemCount 3 -StartIndex 0 `
                     -ReadKey $keys `
                     -OnPreview { param($i) $applied.Add($i) } `
                     -OnRevert  { }
@@ -51,7 +51,7 @@ Describe 'Invoke-StylePickerLoop' {
 
             It 'Down clamps at the last index' {
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, [ConsoleKey]::Enter)
-                $r = Invoke-StylePickerLoop -StyleCount 3 -StartIndex 2 `
+                $r = Invoke-PickerLoop -ItemCount 3 -StartIndex 2 `
                     -ReadKey $keys -OnPreview { param($i) } -OnRevert { }
                 $r.Index | Should -Be 2
                 $r.Outcome | Should -Be 'confirmed'
@@ -61,7 +61,7 @@ Describe 'Invoke-StylePickerLoop' {
                 $applied = [System.Collections.Generic.List[int]]::new()
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, [ConsoleKey]::DownArrow,
                                       [ConsoleKey]::DownArrow, $null, [ConsoleKey]::Enter)
-                $r = Invoke-StylePickerLoop -StyleCount 5 -StartIndex 0 `
+                $r = Invoke-PickerLoop -ItemCount 5 -StartIndex 0 `
                     -ReadKey $keys `
                     -OnPreview { param($i) $applied.Add($i) } `
                     -OnRevert  { }
@@ -75,7 +75,7 @@ Describe 'Invoke-StylePickerLoop' {
                 $applied = [System.Collections.Generic.List[int]]::new()
                 $reverts = @{ n = 0 }
                 $keys = New-KeyStub @([ConsoleKey]::Enter)
-                $r = Invoke-StylePickerLoop -StyleCount 3 -StartIndex 1 `
+                $r = Invoke-PickerLoop -ItemCount 3 -StartIndex 1 `
                     -ReadKey $keys `
                     -OnPreview { param($i) $applied.Add($i) } `
                     -OnRevert  { $reverts.n++ }
@@ -89,7 +89,7 @@ Describe 'Invoke-StylePickerLoop' {
                 $applied = [System.Collections.Generic.List[int]]::new()
                 $reverts = @{ n = 0 }
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, [ConsoleKey]::Escape)
-                $r = Invoke-StylePickerLoop -StyleCount 3 -StartIndex 0 `
+                $r = Invoke-PickerLoop -ItemCount 3 -StartIndex 0 `
                     -ReadKey $keys `
                     -OnPreview { param($i) $applied.Add($i) } `
                     -OnRevert  { $reverts.n++ }
@@ -160,7 +160,7 @@ Describe 'Invoke-StylePickerLoop' {
                 $originalBytes = [System.IO.File]::ReadAllBytes($script:settingsPath)
                 # Down -> (idle drains the preview, reformatting the file) -> Esc.
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, $null, [ConsoleKey]::Escape)
-                $r = Invoke-StylePickerLoop -StyleCount 2 -StartIndex 0 `
+                $r = Invoke-PickerLoop -ItemCount 2 -StartIndex 0 `
                     -ReadKey $keys -OnPreview $script:onPreview -OnRevert $script:onRevert
                 $r.Outcome | Should -Be 'cancelled'
                 $afterBytes = [System.IO.File]::ReadAllBytes($script:settingsPath)
@@ -190,7 +190,7 @@ Describe 'Invoke-StylePickerLoop' {
                     Should -BeTrue -Because 'the fixture must really carry a BOM or this case measures nothing'
 
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, $null, [ConsoleKey]::Escape)
-                $r = Invoke-StylePickerLoop -StyleCount 2 -StartIndex 0 `
+                $r = Invoke-PickerLoop -ItemCount 2 -StartIndex 0 `
                     -ReadKey $keys -OnPreview $script:onPreview -OnRevert $script:onRevert
                 $r.Outcome | Should -Be 'cancelled'
                 $afterBytes = [System.IO.File]::ReadAllBytes($script:settingsPath)
@@ -200,7 +200,7 @@ Describe 'Invoke-StylePickerLoop' {
             It 'persists the chosen style on Enter' {
                 # Down -> Enter (Enter drains the pending preview for index 1 = beta).
                 $keys = New-KeyStub @([ConsoleKey]::DownArrow, [ConsoleKey]::Enter)
-                $r = Invoke-StylePickerLoop -StyleCount 2 -StartIndex 0 `
+                $r = Invoke-PickerLoop -ItemCount 2 -StartIndex 0 `
                     -ReadKey $keys -OnPreview $script:onPreview -OnRevert $script:onRevert
                 $r.Outcome | Should -Be 'confirmed'
                 $r.Index   | Should -Be 1

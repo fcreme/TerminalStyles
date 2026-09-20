@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tstyles font` is a picker, and the catalog says what each font is.** The list showed six names and their licences and then asked you to type one back exactly -- in a tool that had already taught you to arrow through styles. Two vocabularies for the same act of choosing.
+
+  ```
+     > JetBrains Mono       [+]
+       Fira Code            [ ]
+       Cascadia Code        [ ]
+
+    Ligatures, dotted zero. A tall x-height that holds up at small sizes.
+    OFL-1.1 -- installed
+  ```
+
+  The descriptions name what people actually pick a typeface on, and they are **measured rather than recalled**: ligatures are the GSUB `calt` feature, the zero's mark is the third contour of its glyph (roughly square and small is a dot, tall and narrow is a slash), the x-height is OS/2 `sxHeight` over `unitsPerEm`. All six of these fonts mark their zero -- which is the differentiator a guess would have got wrong.
+
+  There is deliberately **no live preview**. A style previews by repainting the terminal and there is no escape sequence for a font face, so off Windows Terminal nothing here can show you a font before it is installed. Rather than imply otherwise, the footer says what Enter will actually do on *this* terminal, which is one of the three things `Get-FontOwner` already distinguishes. Only the Windows Terminal footer says Enter sets the font, and a test fails if either of the others starts to.
+
+  The picker drives `Invoke-PickerLoop` -- the style picker's loop, which owns only the index and key dispatch and never learns what is being picked. It was `Invoke-StylePickerLoop` taking a `-StyleCount` until fonts became its second caller and the name started to lie.
+
+### Fixed
+
+- **the font list and the style list now share one fitter.** `Get-ListRowDescription` takes the columns a row has already spent rather than the pieces of a style row, because a font row spends them on different things. Two implementations of one rule drift; this project has paid for that before.
+
+
 ## [0.8.37] - 2026-09-20
 
 ### Added

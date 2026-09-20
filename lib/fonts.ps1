@@ -605,10 +605,19 @@ function Show-FontList {
     Write-Host ""
     Write-Host "  Available coding fonts ([+] installed, [ ] installable):" -ForegroundColor Cyan
     Write-Host ""
+    # The same treatment `tstyles list` gets, for the same reason: a name and a
+    # licence say nothing about what anyone is choosing between. Ligatures, the
+    # shape of the zero and the x-height are the differences people pick on.
+    $listWidth = Get-ConsoleWidth
+    $fontHint  = Get-HintEscape
     foreach ($f in $Catalog) {
         $isIn = Test-FontInstalled -Family $f.family -Installed $Installed
         $mark = if ($isIn) { '[+]' } else { '[ ]' }
-        Write-Host ("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license)
+        # 3 indent + 3 marker + 1 + 20 name column + 1 + the licence text.
+        $used = 28 + "$($f.license)".Length
+        $desc = Get-ListRowDescription -Width $listWidth -Used $used `
+                    -Description $f.description -HintEscape $fontHint
+        Write-Host (("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license) + $desc)
     }
     Write-Host ""
     # "Install + apply" is a promise only Windows Terminal keeps. Everywhere
@@ -634,13 +643,232 @@ function Show-FontList {
     }
 }
 
+function Get-FontPickerFooter {
+    <#
+    .SYNOPSIS
+    What Enter will actually do, for the terminal this is running in.
+
+    .DESCRIPTION
+    One line, and it has to be true on all three answers Get-FontOwner gives.
+    "Install + apply" is a promise only Windows Terminal keeps; saying it in a
+    picker running on Terminal.app would be the same contradiction the list
+    footer already had to be fixed for, except harder to miss, because here it
+    sits directly above the key that is supposed to do it.
+    #>
+    [CmdletBinding()]
+    param([string]$Owner, [string]$TerminalName)
+
+    # ALWAYS two lines, blank-padded, for the same reason the scroll indicators
+    # are always emitted: the frame is overwritten in place and a footer that
+    # was two rows for one terminal and one for another would strand a row.
+    #
+    # Two SHORT lines rather than one long one, because the trimming that keeps
+    # a row inside the window cuts at a sentence -- and here the first sentence
+    # is the least informative part. On an 80-column terminal the single-line
+    # version came out as "Enter installs it." and dropped the entire point.
+    switch ($Owner) {
+        'command' { @("Enter installs it and sets it as $TerminalName's font.", '') }
+        'style'   { @("Enter installs it. The applied style sets $TerminalName's font.",
+                      'tstyles tune <style> keeps a font with a style.') }
+        default   { @("Enter installs it. $TerminalName takes its font from its own",
+                      'settings, so choose it there once installed.') }
+    }
+}
+
+# Rows the font frame spends on anything that is not a font: a leading blank,
+# the header, the hint line, a blank, both scroll indicators, a blank, the
+# description, the licence-and-state line, a blank, the footer's two lines,
+# and one spare
+# so the shell prompt has somewhere to land. Every row painted has to be bought
+# here or the menu runs off the bottom -- and both indicators are ALWAYS
+# emitted, blank when there is nothing to report, because the frame is
+# overwritten in place and a row that comes and goes strands the taller frame's
+# last line on screen.
+$script:FontFrameChrome = 13
+
+function Get-FontPickerFrame {
+    <#
+    .SYNOPSIS
+    Every line of the font picker's frame, for one highlight position.
+
+    .DESCRIPTION
+    Pure -- it returns strings and paints nothing -- because the property that
+    matters here cannot be eyeballed: the frame is overwritten in place at a
+    fixed origin, so it must be the SAME NUMBER OF ROWS on every redraw. A
+    description one line longer for one font would strand the previous frame's
+    last row on screen and smear from there until the picker exits.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][object[]]$Catalog,
+        [string[]]$Installed = @(),
+        [Parameter(Mandatory)][int]$Index,
+        [int]$WindowHeight = 24,
+        [int]$Width = 100,
+        [string]$Owner = 'terminal',
+        [string]$TerminalName = 'This terminal',
+        [string]$HintEscape = ''
+    )
+
+    $reset = "$([char]27)[0m"
+    $room  = [Math]::Max(1, $Width - 4)
+    # -1 so the frame never paints the window's last row: the newline that ends
+    # it would scroll the buffer, and the whole frame is drawn at a fixed origin
+    # on every redraw. The style picker's plan carries the same -1 for the same
+    # reason, and was off by one before it did.
+    $avail = $WindowHeight - $script:FontFrameChrome - 1
+    $vp    = Get-PickerViewport -Total $Catalog.Count -Selected $Index -Available $avail
+
+    $out = [System.Collections.Generic.List[string]]::new()
+    $out.Add('')
+    $out.Add('  Choose a font')
+    $out.Add("$HintEscape  Up/Down to move, Enter to install, Esc to cancel$reset")
+    $out.Add('')
+
+    if ($vp.More -and $vp.First -gt 0) {
+        $out.Add("$HintEscape     ... $($vp.First) more above$reset")
+    } else { $out.Add('') }
+
+    for ($i = $vp.First; $i -lt ($vp.First + $vp.Count); $i++) {
+        $f = $Catalog[$i]
+        # Two different facts, two different marks, the same split the style
+        # picker draws: '>' is where the cursor is, '[+]' is what is already on
+        # this machine. They are unrelated and were never meant to be one mark.
+        $prefix = if ($i -eq $Index) { '   > ' } else { '     ' }
+        $mark   = if (Test-FontInstalled -Family $f.family -Installed $Installed) { '[+]' } else { '[ ]' }
+        $out.Add(($prefix + ('{0,-20} {1}' -f $f.name, $mark)))
+    }
+
+    $below = $Catalog.Count - ($vp.First + $vp.Count)
+    if ($vp.More -and $below -gt 0) {
+        $out.Add("$HintEscape     ... $below more below$reset")
+    } else { $out.Add('') }
+
+    $sel = $Catalog[$Index]
+    $out.Add('')
+    $out.Add("$HintEscape  " + (Get-SentenceSummary -Notes $sel.description -MaxLength $room) + $reset)
+    $state = if (Test-FontInstalled -Family $sel.family -Installed $Installed) { 'installed' } else { 'not installed' }
+    $out.Add("$HintEscape  $($sel.license) -- $state$reset")
+    $out.Add('')
+    foreach ($line in (Get-FontPickerFooter -Owner $Owner -TerminalName $TerminalName)) {
+        if ($line) {
+            $out.Add("$HintEscape  " + (Get-SentenceSummary -Notes $line -MaxLength $room) + $reset)
+        } else { $out.Add('') }
+    }
+    $out.Add('')
+    return $out.ToArray()
+}
+
+function Invoke-FontPicker {
+    <#
+    .SYNOPSIS
+    `tstyles font` with no argument on an interactive console: arrow to a font.
+
+    .DESCRIPTION
+    Drives Invoke-PickerLoop, the same loop the style picker uses, rather than
+    growing a second one -- it owns only the index and key dispatch and never
+    learns what is being picked.
+
+    There is deliberately no live preview. A style previews by repainting the
+    terminal, and there is no escape sequence for a font face: off Windows
+    Terminal nothing here can show you the font before it is installed. Rather
+    than imply otherwise, the footer says what Enter will actually do on THIS
+    terminal, which is one of three different things.
+
+    Seams: -ReadKey and -Write are injected so the whole interaction can be
+    driven by tests. Returns @{ Outcome = 'confirmed'|'cancelled'; Index; Font }.
+    #>
+    [CmdletBinding()]
+    param(
+        [object[]]$Catalog,
+        [string[]]$Installed,
+        [scriptblock]$ReadKey,
+        [scriptblock]$Write,
+        [int]$StartIndex = 0
+    )
+    if (-not $Catalog)  { $Catalog = @(Get-FontCatalog) }
+    if (-not $PSBoundParameters.ContainsKey('Installed')) { $Installed = Get-InstalledFontFamily }
+    if (-not $ReadKey)  { $ReadKey = { if ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null } } }
+    if (-not $Write)    { $Write   = { param($line) Write-Host $line } }
+
+    $kind  = Get-TerminalKind
+    $owner = Get-FontOwner -Kind $kind
+    $tname = Get-TerminalDisplayName -Kind $kind
+    $hint  = Get-HintEscape
+
+    # Per-call state in $script:, and the draw block is deliberately NOT a
+    # closure. GetNewClosure rebinds the block to the session state of the
+    # scope that made it, and under Pester's InModuleScope that is not the
+    # module's -- so every call the block made to a module-private function
+    # (Get-FontPickerFrame, here) died with "not recognized". A plain block
+    # keeps the module session state it was defined in, and $script: inside a
+    # module is the module's scope, so both halves resolve.
+    #
+    # Rebuilt on every call, Cleared included: $script: outlives the function,
+    # and a flag left $true would mean the SECOND picker of a session never
+    # clears the screen it is about to paint over.
+    $script:FontPickerCtx = @{
+        Catalog = $Catalog; Installed = $Installed; Owner = $owner
+        Terminal = $tname;  Hint = $hint; Write = $Write; Cleared = $false
+    }
+
+    # Cleared ONCE, then every redraw overwrites in place from row 0. Clearing
+    # per keystroke flickers the whole screen on each arrow, and nothing here
+    # repaints the terminal between frames -- unlike the style picker, whose
+    # preview does -- so the origin is simply the top of a screen this picker
+    # owns for the duration.
+    #
+    # Erase-to-end-of-line on every row, because overwriting in place leaves the
+    # previous frame's tail on any row that gets SHORTER -- which is what a
+    # narrower description, or a window resize, does.
+    $draw = {
+        param($idx)
+        $c = $script:FontPickerCtx
+        $wh = 24; $w = 100
+        try { $wh = [Console]::WindowHeight } catch { }
+        try { $w  = [Console]::WindowWidth  } catch { }
+        if (-not $c.Cleared) { Clear-Host; $c.Cleared = $true }
+        try { [Console]::SetCursorPosition(0, 0) } catch { }
+        $el = "$([char]27)[K"
+        foreach ($line in (Get-FontPickerFrame -Catalog $c.Catalog -Installed $c.Installed -Index $idx `
+                            -WindowHeight $wh -Width $w -Owner $c.Owner -TerminalName $c.Terminal `
+                            -HintEscape $c.Hint)) {
+            & $c.Write ($el + $line)
+        }
+    }
+
+    $result = Invoke-PickerLoop -ItemCount $Catalog.Count -StartIndex $StartIndex `
+                -ReadKey $ReadKey -OnPreview {} -OnRevert {} -OnDraw $draw
+    @{
+        Outcome = $result.Outcome
+        Index   = $result.Index
+        Font    = if ($result.Outcome -eq 'confirmed') { $Catalog[$result.Index] } else { $null }
+    }
+}
+
 function Invoke-TerminalStyleFont {
     # `tstyles font` (list) / `tstyles font <name>` (install if needed + apply).
     param(
         [string]$Name,
         [string]$Target
     )
-    if (-not $Name) { Show-FontList; return }
+    if (-not $Name) {
+        # The picker only where there is someone to press a key. Redirected
+        # output, a script, a CI runner: the list is the right answer there and
+        # the picker would block forever waiting on a keystroke nobody can send.
+        if (Test-InteractiveConsole) {
+            $picked = Invoke-FontPicker
+            if ($picked.Outcome -ne 'confirmed') {
+                Clear-Host
+                Write-Host "Cancelled." -ForegroundColor Yellow
+                return
+            }
+            Clear-Host
+            $Name = $picked.Font.name
+        } else {
+            Show-FontList; return
+        }
+    }
 
     $catalog = @(Get-FontCatalog)
     $font = $catalog | Where-Object { $_.name -eq $Name } | Select-Object -First 1

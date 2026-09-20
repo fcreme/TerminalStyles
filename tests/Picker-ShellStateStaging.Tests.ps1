@@ -332,7 +332,7 @@ Describe 'the picker puts the terminal back when you cancel' {
 
         $loopCall = @($fn.FindAll({ param($n)
             $n -is [System.Management.Automation.Language.CommandAst] -and
-            $n.GetCommandName() -eq 'Invoke-StylePickerLoop' }, $true))
+            $n.GetCommandName() -eq 'Invoke-PickerLoop' }, $true))
         @($loopCall).Count | Should -BeGreaterThan 0
 
         $firstAssign = ($assign | ForEach-Object { $_.Extent.StartOffset } | Measure-Object -Minimum).Minimum
@@ -498,7 +498,7 @@ Describe 'the update notice survives the picker clearing the screen' {
         # function -- an earlier subcommand branch clears the screen too, so
         # that index belongs to a different code path entirely.
         $src.IndexOf('$pendingUpdate = Test-UpdateAvailable') |
-            Should -BeLessThan $src.IndexOf('Invoke-StylePickerLoop')
+            Should -BeLessThan $src.IndexOf('Invoke-PickerLoop')
         # ...and it is actually printed somewhere after the confirm output.
         $src.IndexOf('Style applied: ') |
             Should -BeLessThan $src.LastIndexOf('$showPendingUpdate')

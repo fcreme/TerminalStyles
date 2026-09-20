@@ -75,7 +75,7 @@ Describe 'Get-ListRowDescription' {
         }
 
         It 'prints the whole description when the window has room' {
-            $out = Get-ListRowDescription -Width 140 -Swatch $script:Swatch -Badge '' `
+            $out = Get-ListRowDescription -Width 140 -Used (Get-VisibleLength $script:Swatch) `
                         -Description $script:Desc -HintEscape ''
             $out.Trim() | Should -BeLike "*$($script:Desc)*"
         }
@@ -84,16 +84,16 @@ Describe 'Get-ListRowDescription' {
             # The regression guard. With .Length the swatch alone reads as ~130
             # columns, $room goes negative, and every row loses its description.
             $plain = ' ' * (Get-VisibleLength $script:Swatch)
-            $escaped = Get-ListRowDescription -Width 140 -Swatch $script:Swatch -Badge '' `
+            $escaped = Get-ListRowDescription -Width 140 -Used (Get-VisibleLength $script:Swatch) `
                         -Description $script:Desc -HintEscape ''
-            $bare = Get-ListRowDescription -Width 140 -Swatch $plain -Badge '' `
+            $bare = Get-ListRowDescription -Width 140 -Used $plain.Length `
                         -Description $script:Desc -HintEscape ''
             $escaped | Should -Be $bare
             $escaped | Should -Not -BeNullOrEmpty
         }
 
         It 'cuts at a sentence rather than mid-word on a narrow window' {
-            $out = ((Get-ListRowDescription -Width 80 -Swatch $script:Swatch -Badge '' `
+            $out = ((Get-ListRowDescription -Width 80 -Used (22 + (Get-VisibleLength $script:Swatch)) `
                         -Description $script:Desc -HintEscape '') -replace "$([char]27)\[[0-9;]*m", '').Trim()
             $out | Should -Be 'Warm sepia autumn.'
             $out | Should -Not -Match 'and$'
@@ -101,24 +101,23 @@ Describe 'Get-ListRowDescription' {
 
         It 'gives up rather than printing a fragment' {
             # Four cut-off words read worse than a clean row.
-            Get-ListRowDescription -Width 52 -Swatch $script:Swatch -Badge '' `
+            Get-ListRowDescription -Width 52 -Used (22 + (Get-VisibleLength $script:Swatch)) `
                 -Description $script:Desc -HintEscape '' | Should -Be ''
         }
 
         It 'counts the badge against the budget too' {
+            $base  = 22 + (Get-VisibleLength $script:Swatch)
             $badge = '  yours (shadows bundled)'
-            $withBadge = Get-ListRowDescription -Width 96 -Swatch $script:Swatch -Badge $badge `
+            $withBadge = Get-ListRowDescription -Width 96 -Used ($base + $badge.Length) `
                             -Description $script:Desc -HintEscape ''
-            $without = Get-ListRowDescription -Width 96 -Swatch $script:Swatch -Badge '' `
+            $without = Get-ListRowDescription -Width 96 -Used $base `
                             -Description $script:Desc -HintEscape ''
             (Get-VisibleLength $withBadge) | Should -BeLessThan (Get-VisibleLength $without)
         }
 
         It 'says nothing for a style with no description' {
-            Get-ListRowDescription -Width 200 -Swatch $script:Swatch -Badge '' `
-                -Description '' -HintEscape '' | Should -Be ''
-            Get-ListRowDescription -Width 200 -Swatch $script:Swatch -Badge '' `
-                -Description $null -HintEscape '' | Should -Be ''
+            Get-ListRowDescription -Width 200 -Used 22 -Description '' -HintEscape '' | Should -Be ''
+            Get-ListRowDescription -Width 200 -Used 22 -Description $null -HintEscape '' | Should -Be ''
         }
     }
 }

@@ -258,7 +258,7 @@ function Get-StylePreviewJson {
     # $writeSettings choke point already treats as a no-op -- the gate is the
     # return value rather than a fourth guard beside a fourth merge.
     #
-    # Carved out here for the same reason Invoke-StylePickerLoop and
+    # Carved out here for the same reason Invoke-PickerLoop and
     # Get-PickerViewport are: the picker body cannot be driven by a test, and a
     # decision that only exists inside it can only ever be asserted on its
     # source text.
@@ -357,10 +357,15 @@ function Get-RevertOscPacket {
     return (Get-OscResetPacket)
 }
 
-function Invoke-StylePickerLoop {
+function Invoke-PickerLoop {
     # The interactive picker's selection loop, with all I/O / rendering / input
     # injected as seams so it can be driven by tests. Owns ONLY the highlight
-    # index, the pendingApply debounce, and key dispatch. Returns the outcome:
+    # index, the pendingApply debounce, and key dispatch -- it never learns what
+    # is being picked, which is why the font picker drives this loop rather than
+    # growing a second one. It was Invoke-StylePickerLoop taking a -StyleCount
+    # until fonts became its second caller and the name started to lie.
+    #
+    # Returns the outcome:
     #   @{ Outcome = 'confirmed' | 'cancelled'; Index = <int> }
     #
     # Seams:
@@ -373,7 +378,7 @@ function Invoke-StylePickerLoop {
     #   OnIdle    -> & $OnIdle           : idle slice (prebuild / sleep).
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][int]$StyleCount,
+        [Parameter(Mandatory)][int]$ItemCount,
         [int]$StartIndex = 0,
         [Parameter(Mandatory)][scriptblock]$ReadKey,
         [Parameter(Mandatory)][scriptblock]$OnPreview,
@@ -403,7 +408,7 @@ function Invoke-StylePickerLoop {
                     }
                 }
                 'DownArrow' {
-                    if ($idx -lt $StyleCount - 1) {
+                    if ($idx -lt $ItemCount - 1) {
                         $idx++; $needsRedraw = $true; $pendingApply = $idx
                         & $OnRetint $idx
                     }

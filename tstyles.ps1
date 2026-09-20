@@ -1793,7 +1793,7 @@ function Invoke-TerminalStyle {
         # that .Key shape if this adapter ever changes.
         $readKey = { if ([Console]::KeyAvailable) { [Console]::ReadKey($true) } else { $null } }
 
-        $result = Invoke-StylePickerLoop -StyleCount $styles.Count -StartIndex $idx `
+        $result = Invoke-PickerLoop -ItemCount $styles.Count -StartIndex $idx `
             -ReadKey $readKey -OnPreview $applyTheme -OnRevert $onRevert `
             -OnDraw $drawMenu -OnRetint $onRetint -OnIdle $onIdle
 

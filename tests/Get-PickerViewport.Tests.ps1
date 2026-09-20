@@ -11,7 +11,7 @@
 # Terminal.app window is 24 -- two more user styles and it breaks.
 #
 # The arithmetic is a pure function precisely so it can be tested without a
-# terminal, the same reasoning that carved out Invoke-StylePickerLoop.
+# terminal, the same reasoning that carved out Invoke-PickerLoop.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
