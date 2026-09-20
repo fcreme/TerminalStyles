@@ -613,11 +613,20 @@ function Show-FontList {
     foreach ($f in $Catalog) {
         $isIn = Test-FontInstalled -Family $f.family -Installed $Installed
         $mark = if ($isIn) { '[+]' } else { '[ ]' }
-        # 3 indent + 3 marker + 1 + 20 name column + 1 + the licence text.
-        $used = 28 + "$($f.license)".Length
+        # The licence is a COLUMN, so it is padded like one. Unpadded it was
+        # seven characters for OFL-1.1 and three for MIT, which started each
+        # description at a different place and made the descriptions look
+        # ragged rather than listed.
+        #
+        # 3 indent + 3 marker + 1 + 20 name + 1 + 8 licence.
+        $used = 36
         $desc = Get-ListRowDescription -Width $listWidth -Used $used `
                     -Description $f.description -HintEscape $fontHint
-        Write-Host (("   {0} {1,-20} {2}" -f $mark, $f.name, $f.license) + $desc)
+        # Trimmed only when there is no description to follow, because the
+        # trailing spaces ARE the column -- trimming them unconditionally undid
+        # the padding on exactly the short licences it was added for.
+        $row = "   {0} {1,-20} {2,-8}" -f $mark, $f.name, $f.license
+        if ($desc) { Write-Host ($row + $desc) } else { Write-Host $row.TrimEnd() }
     }
     Write-Host ""
     # "Install + apply" is a promise only Windows Terminal keeps. Everywhere
