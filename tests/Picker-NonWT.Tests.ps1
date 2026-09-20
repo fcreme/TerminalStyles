@@ -32,7 +32,7 @@ Describe 'picker guards on a non-console session' {
             # Clear-Host must NOT run: the guard returns before the picker takes
             # over the screen, so the user's scrollback survives.
             Mock Clear-Host { throw 'the picker must not clear the screen before bailing out' }
-            Mock Invoke-StylePickerLoop { throw 'the picker loop must not start without a console' }
+            Mock Invoke-PickerLoop { throw 'the picker loop must not start without a console' }
 
             if ([Console]::IsInputRedirected) {
                 { Invoke-TerminalStyle } | Should -Not -Throw

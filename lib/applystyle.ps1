@@ -41,32 +41,35 @@ function Get-ConsoleWidth {
 function Get-ListRowDescription {
     <#
     .SYNOPSIS
-    The trailing description for one `tstyles list` row, already trimmed to fit.
+    The trailing description for one listing row, already trimmed to fit.
 
     .DESCRIPTION
+    Shared by `tstyles list` and `tstyles font`, which is why it takes a column
+    count rather than the pieces of a row: a style row spends its width on a
+    marker, a name column, a swatch and a `yours` badge, a font row on a marker
+    and a name, and a third caller would spend it on something else again. What
+    they have in common is the rule, not the geometry.
+
     Pure, so the fitting can be tested at any width without a terminal. Returns
-    '' when there is nothing to say or no room to say it in: a swatch is five
-    colour cells plus the name column and any `yours` badge, so on an
-    80-column window the tail is short, and four cut-off words read worse than
-    a clean row. The cut lands on a character boundary with an ellipsis, never
-    mid-escape, because the description itself carries no escapes -- only the
-    hint colour wrapped around it here does.
+    '' when there is nothing to say or no room to say it in -- four cut-off
+    words read worse than a clean row.
+
+    -Used is the printable columns already spent on the row. Callers measure
+    anything carrying escapes with Get-VisibleLength rather than .Length; a
+    swatch is five colour cells, about 130 characters and 25 columns, and the
+    difference between those two numbers is every description disappearing.
     #>
     [CmdletBinding()]
     param(
         [int]$Width,
-        [AllowNull()][string]$Swatch,
-        [AllowNull()][string]$Badge,
+        [int]$Used,
         [AllowNull()][string]$Description,
         [AllowNull()][string]$HintEscape
     )
     if (-not $Description) { return '' }
-    # 2 indent + marker + space + 16-wide name column + 2 gap, then whatever the
-    # swatch and badge actually occupy -- measured, not assumed, because both
-    # are mostly SGR bytes that take no columns, and the swatch degrades to a
-    # written note on a scheme this tool cannot read.
-    $used = 22 + (Get-VisibleLength $Swatch) + (Get-VisibleLength $Badge)
-    $room = $Width - $used - 3
+    # Two columns of slack so text never reaches the final column, where it
+    # would wrap and cost the row an extra line.
+    $room = $Width - $Used - 3
     if ($room -lt 24) { return '' }
     # Cut at a sentence, not at a character. Descriptions are two short
     # sentences by design, so on a narrow window the first one usually fits
@@ -138,7 +141,12 @@ function Show-StyleList {
         # What the style IS, from the same meta.json the picker reads. The
         # listing knew a style's name, its colours and whether it was yours --
         # everything except the one thing a reader is actually choosing between.
-        $desc = Get-ListRowDescription -Width $listWidth -Swatch $swatch -Badge $badge `
+        # 2 indent + marker + space + 16-wide name column + 2 gap, then whatever
+        # the swatch and badge actually occupy. Measured, not assumed: both are
+        # mostly SGR bytes that take no columns, and the swatch degrades to a
+        # written note on a scheme this tool cannot read.
+        $rowUsed = 22 + (Get-VisibleLength $swatch) + (Get-VisibleLength $badge)
+        $desc = Get-ListRowDescription -Width $listWidth -Used $rowUsed `
                     -Description (Get-StyleMeta -StyleDir $s.FullName).Description -HintEscape $hintEsc
         Write-Host ("  {0} {1,-16}  {2}{3}{4}" -f $marker, $s.Name, $swatch, $badge, $desc)
     }

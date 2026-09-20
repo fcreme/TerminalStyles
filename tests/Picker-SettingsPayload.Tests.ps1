@@ -29,7 +29,7 @@
 # WHY THESE TESTS HAVE THIS SHAPE. The picker body cannot be driven by a test:
 # it returns early on [Console]::IsInputRedirected / IsOutputRedirected, which
 # are .NET statics and true under Pester. So the decision was carved out into
-# Get-StylePreviewJson in lib/picker.ps1 -- the same reason Invoke-StylePickerLoop
+# Get-StylePreviewJson in lib/picker.ps1 -- the same reason Invoke-PickerLoop
 # and Get-PickerViewport live there -- and the behavioural half below drives that
 # for real. The structural half then pins the rule for every OTHER caller,
 # because what actually went wrong here is that a function was added in 0.8.18

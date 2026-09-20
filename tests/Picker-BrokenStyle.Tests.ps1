@@ -196,7 +196,7 @@ Describe 'the picker itself' {
             # keep the test from hanging on a machine that has a real console
             # attached while the fix is reverted.
             Mock Clear-Host { throw 'the picker must not clear the screen with nothing to show' }
-            Mock Invoke-StylePickerLoop { throw 'the picker loop must not start with no styles' }
+            Mock Invoke-PickerLoop { throw 'the picker loop must not start with no styles' }
 
             { Invoke-TerminalStyle } | Should -Not -Throw
             ($errors -join "`n") | Should -Match 'readable scheme\.json'
