@@ -5,12 +5,16 @@
 [![Tests](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg)](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml)
 [![PowerShell Gallery](https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery)](https://www.powershellgallery.com/packages/TerminalStyles)
 
-**Switch terminal themes live.** Run `tstyles`, arrow through 16 themes
+**Switch terminal themes live.** Run `tstyles`, arrow through 15 themes
 previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
 exactly how it looked before. The palette, the cursor color and the prompt
-repaint instantly on any terminal that speaks OSC; on **Windows Terminal** the
-font, opacity and animated background come with them. All in one command, all
-non-destructive.
+repaint instantly on any terminal that speaks OSC; on **Windows Terminal** and
+**WezTerm** the font, opacity and animated background come with them. All in one
+command, all non-destructive.
+
+<p align="center">
+  <img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/picker-demo.gif" width="720" alt="Arrowing through the style picker, each theme previewing live in the terminal">
+</p>
 
 Works on **Windows Terminal**, **macOS Terminal.app**, **iTerm2**, and any
 terminal that speaks OSC color sequences — and in **zsh** and **bash**, not just
