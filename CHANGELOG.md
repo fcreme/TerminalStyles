@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.41] - 2026-09-21
+
 ### Fixed
 
 - **a cached background was never revalidated, so an updated asset reached only people who had never applied that style.** `Get-StyleBundledBackground` returned the cached file unconditionally. The *negative* cache immediately beside it already had two carefully-reasoned lifetimes, and its own comment says why: *"the gifs branch is updated independently of releases, so a style CAN gain an asset later. Re-probe monthly."* Every word of that applies to a style whose asset **changed** -- only the 404 path got it. Anyone who had applied the style was pinned to whatever they downloaded the first time, permanently.
@@ -1396,7 +1398,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.40...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.41...HEAD
+[0.8.41]: https://github.com/fcreme/TerminalStyles/compare/v0.8.40...v0.8.41
 [0.8.40]: https://github.com/fcreme/TerminalStyles/compare/v0.8.39...v0.8.40
 [0.8.39]: https://github.com/fcreme/TerminalStyles/compare/v0.8.38...v0.8.39
 [0.8.38]: https://github.com/fcreme/TerminalStyles/compare/v0.8.37...v0.8.38

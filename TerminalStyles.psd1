@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.40'
+    ModuleVersion     = '0.8.41'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.40: the README opens with a banner instead of a plain heading. GitHub strips CSS from a README, so a title cannot be given a typeface -- an attractive one has to become an image. This one is the tstyles wordmark the tool itself prints on first run, set in JetBrains Mono, a font tstyles font installs, in the umbrella palette, over a strip of the real accent colour every bundled style paints. It is rendered by scripts/make-banner.py rather than screenshotted, so it is deterministic and does not depend on a terminal being visible on the right desktop; the first version was a capture and the capture caught a browser instead. The banner is also a claim: it states a theme count and paints one swatch per style, both read from the styles folder when it renders, and this project shipped sixteen themes against a folder of fifteen for several releases. A PNG cannot be inspected by a test, so the generator writes docs/banner.json with what it drew and a test compares that against the styles folder. Adding or removing a style without regenerating now fails the build.'
+            ReleaseNotes = 'v0.8.41: a cached background is revalidated instead of being pinned forever. Get-StyleBundledBackground returned the cached file unconditionally, so replacing an image on the gifs branch reached exactly the people who had never applied that style; anyone who had was stuck with whatever they downloaded the first time. The negative cache beside it already had two reasoned lifetimes and a comment saying why -- the gifs branch is updated independently of releases -- and every word of that applies to an asset that CHANGED. The positive cache now expires the same way: a fortnight after a successful check, an hour after a failed one, through a HEAD compared by etag or by length. Every failure path returns the image already on disk, and it never runs on the picker thread, where resolving a background happens on every arrow key. Also: the theme count was still wrong in four more places, including the published site, because the guard for it pinned one sentence by its exact wording and a count two hundred lines away was spelled out in words. It now checks every count on both pages, in digits or words. And the README puts the install commands directly after the demo rather than below the style grid, with the macOS PowerShell prerequisite named at the command that needs it rather than 537 lines further down.'
         }
     }
 }
