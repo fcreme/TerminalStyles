@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.42] - 2026-09-21
+
 ### Added
 
 - **`koholint`, the sixteenth theme.** *Link's Awakening* opens on a shipwreck: Link face-down on driftwood, the Wind Fish's island past the horizon. Four fifths of that frame is water and sky, so four fifths of this style is too.
@@ -1428,7 +1430,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.41...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.42...HEAD
+[0.8.42]: https://github.com/fcreme/TerminalStyles/compare/v0.8.41...v0.8.42
 [0.8.41]: https://github.com/fcreme/TerminalStyles/compare/v0.8.40...v0.8.41
 [0.8.40]: https://github.com/fcreme/TerminalStyles/compare/v0.8.39...v0.8.40
 [0.8.39]: https://github.com/fcreme/TerminalStyles/compare/v0.8.38...v0.8.39
