@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Every failure path returns the image that was already there. Losing a background to a flaky network would be a worse bug than the staleness this fixes, and the replacement is written `.part`-then-rename like the first fetch, because a file at the cache path is treated as complete by every reader.
 
   It does **not** run under `-NoFetch`. That switch exists because the picker resolves a background on every arrow key and the fetch path can spend four ten-second timeouts; revalidating there would reintroduce exactly the stall it was added to prevent. An interactive preview keeps using what is on disk, and the apply that follows picks up a changed asset.
+- **the theme count was still wrong in four more places, including the published site.** The guard added alongside the README banner pinned one sentence by its exact wording -- `arrow through (\d+) themes`. Two hundred lines further down the same README said "Sixteen themes ship out of the box", and `docs/index.html`, which is served at fcreme.github.io, said sixteen four more times: in its meta description, its eyebrow, its lede and a section heading. A guard shaped like one sentence only ever guards that sentence.
+
+  It now scans both pages for any count at all -- digits or words -- and fails on every one that does not match `styles/`.
+
+- **the badges sit under the banner rather than beside the left margin.** They are HTML anchors now, because `align="center"` applies to an HTML block and markdown badge syntax inside one is not centred by it.
+
+- **the install commands sat below the style grid.** The order was pitch, demo, twenty-four lines of HTML table, and only then how to get it -- so a reader sold by the demo had to scroll past the whole grid to find the command. Install now follows the demo, and the grid follows install.
+
+  The macOS prerequisite moved with it. `Install-PSResource` is the first command in the README and on a Mac with no PowerShell it fails with "command not found", while `brew install powershell` sat 537 lines further down under Requirements. It is named at the point of use now.
 
 ## [0.8.40] - 2026-09-21
 
