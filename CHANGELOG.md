@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **koholint's background is 900x500 rather than 500x500, and covers again.** A square picture cannot fill a wide terminal without being cropped, stretched, or ringed with margins -- those are the only three outcomes, which is why it shipped at native size with the sea colour either side. So the picture is wider now instead of the fit being compromised: the sky, cloud band, horizon dither and open water are mirrored outward 200px each side, where they continue seamlessly.
+
+  Link and his raft are **not** mirrored. Any pixel in the margin belonging to them is replaced with open water, because the first attempt grew a second Link at both edges -- his hat and hair on the left, his tunic and hand on the right. That is the duplication `tombraider` had to be fixed for.
+
+  Covering an ordinary 1038x622 window now costs 1.24x and an 82px crop, against 2.08x and 638px at the square source. 332 KB across 20 frames, up from 146 KB.
+
 ## [0.8.42] - 2026-09-21
 
 ### Added
