@@ -22,6 +22,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **the badges sit under the banner rather than beside the left margin.** They are HTML anchors now, because `align="center"` applies to an HTML block and markdown badge syntax inside one is not centred by it.
 
+- **the install commands sat below the style grid.** The order was pitch, demo, twenty-four lines of HTML table, and only then how to get it -- so a reader sold by the demo had to scroll past the whole grid to find the command. Install now follows the demo, and the grid follows install.
+
+  The macOS prerequisite moved with it. `Install-PSResource` is the first command in the README and on a Mac with no PowerShell it fails with "command not found", while `brew install powershell` sat 537 lines further down under Requirements. It is named at the point of use now.
+
 ## [0.8.40] - 2026-09-21
 
 ### Added
