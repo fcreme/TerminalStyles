@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`phosphor`, an eighteenth theme, and the first one that is not a picture.** Early terminals could not choose a colour: the inside of the tube carried a single phosphor and that was the whole palette -- P1 green on the VT220 and the IBM 5151, P3 amber on the Wyse. Emphasis was not a different colour, it was more electrons.
+
+  So twelve of the sixteen ANSI slots are one green at different intensities. The four that are not -- `red`, `yellow` and their bright pairs -- are amber, because a machine that genuinely needed to signal alarm on a green tube is a machine with two phosphors in it. The foreground measures 14.71:1 on the background and 8.75:1 on the selection, and every slot clears the 3:1 accent floor.
+
+  It is the **only style in the set that turns `experimental.retroTerminalEffect` on**. Windows Terminal's scanline-and-glow filter is a poor fit for a photograph and exactly right for a tube; it is ignored everywhere else, which costs nothing.
+
+  Its background is a 756-byte solid `#020d02` rather than an animation -- a colour, not a picture -- like `sober`'s and `gitbash`'s. The file still has to exist, because it is what wipes the previously-active style's wallpaper. That made it the third `.png` in a set of `.gif`s, which both the docs image map and `scripts/make-preview.py` had to be told about.
+
 ## [0.8.44] - 2026-09-21
 
 ### Added

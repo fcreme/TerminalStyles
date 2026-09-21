@@ -28,7 +28,10 @@ W, H = 900, 340
 im = Image.new('RGB', (W, H), scheme['background'])
 
 # The real background, at the opacity the style asks for -- not an approximation.
-url = f'https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/{name}.gif'
+# Solid-ground styles ship a .png rather than an animated .gif -- a colour is
+# not a picture, and the file exists to wipe the previous style's wallpaper.
+ext = 'png' if name in ('gitbash', 'sober', 'phosphor') else 'gif'
+url = f'https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/{name}.{ext}'
 try:
     raw = urllib.request.urlopen(url, timeout=20).read()
     gif = Image.open(io.BytesIO(raw)).convert('RGB')
