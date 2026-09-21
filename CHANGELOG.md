@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.44] - 2026-09-21
+
 ### Added
 
 - **`skyline`, a seventeenth theme.** A balcony over a lit city at night -- a crescent moon, a strip of green signage along the far bank, towers with about a third of their windows still on.
@@ -1452,7 +1454,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.43...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.44...HEAD
+[0.8.44]: https://github.com/fcreme/TerminalStyles/compare/v0.8.43...v0.8.44
 [0.8.43]: https://github.com/fcreme/TerminalStyles/compare/v0.8.42...v0.8.43
 [0.8.42]: https://github.com/fcreme/TerminalStyles/compare/v0.8.41...v0.8.42
 [0.8.41]: https://github.com/fcreme/TerminalStyles/compare/v0.8.40...v0.8.41
