@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.45] - 2026-09-21
+
 ### Added
 
 - **`phosphor`, an eighteenth theme, and the first one that is not a picture.** Early terminals could not choose a colour: the inside of the tube carried a single phosphor and that was the whole palette -- P1 green on the VT220 and the IBM 5151, P3 amber on the Wyse. Emphasis was not a different colour, it was more electrons.
@@ -1479,7 +1481,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.44...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.45...HEAD
+[0.8.45]: https://github.com/fcreme/TerminalStyles/compare/v0.8.44...v0.8.45
 [0.8.44]: https://github.com/fcreme/TerminalStyles/compare/v0.8.43...v0.8.44
 [0.8.43]: https://github.com/fcreme/TerminalStyles/compare/v0.8.42...v0.8.43
 [0.8.42]: https://github.com/fcreme/TerminalStyles/compare/v0.8.41...v0.8.42
