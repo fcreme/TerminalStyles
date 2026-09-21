@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.43] - 2026-09-21
+
 ### Changed
 
 - **koholint's background is 900x500 rather than 500x500, and covers again.** A square picture cannot fill a wide terminal without being cropped, stretched, or ringed with margins -- those are the only three outcomes, which is why it shipped at native size with the sea colour either side. So the picture is wider now instead of the fit being compromised: the sky, cloud band, horizon dither and open water are mirrored outward 200px each side, where they continue seamlessly.
@@ -1438,7 +1440,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.42...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.43...HEAD
+[0.8.43]: https://github.com/fcreme/TerminalStyles/compare/v0.8.42...v0.8.43
 [0.8.42]: https://github.com/fcreme/TerminalStyles/compare/v0.8.41...v0.8.42
 [0.8.41]: https://github.com/fcreme/TerminalStyles/compare/v0.8.40...v0.8.41
 [0.8.40]: https://github.com/fcreme/TerminalStyles/compare/v0.8.39...v0.8.40
