@@ -3,8 +3,10 @@
   <img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tstyles-banner.png" width="600" alt="tstyles — switch terminal themes live">
 </p>
 
-[![Tests](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg)](https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml)
-[![PowerShell Gallery](https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery)](https://www.powershellgallery.com/packages/TerminalStyles)
+<p align="center">
+  <a href="https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml"><img src="https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
+  <a href="https://www.powershellgallery.com/packages/TerminalStyles"><img src="https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery" alt="PowerShell Gallery"></a>
+</p>
 
 **Switch terminal themes live.** Run `tstyles`, arrow through 15 themes
 previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
@@ -295,7 +297,7 @@ would not see.
 
 ## Styles
 
-Sixteen themes ship out of the box. Click any name to jump to that style's
+Fifteen themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
