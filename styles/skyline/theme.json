@@ -13,7 +13,7 @@
     },
     "padding": "14",
     "backgroundImage": "{{BACKGROUND_IMAGE}}",
-    "backgroundImageOpacity": 0.32,
-    "backgroundImageStretchMode": "uniformToFill",
-    "backgroundImageAlignment": "center"
+    "backgroundImageOpacity": 0.38,
+    "backgroundImageStretchMode": "none",
+    "backgroundImageAlignment": "bottom"
 }

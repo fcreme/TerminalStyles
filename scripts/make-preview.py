@@ -43,7 +43,13 @@ try:
         s = max(W / gif.width, H / gif.height)
     elif mode == 'fill':
         s = None
-    else:                                    # uniform, none -> contain
+    elif mode == 'none':
+        # NOT contain. 'none' means draw it at its own size -- the whole point
+        # of the styles that ask for it. Treating it as contain made the
+        # preview shrink a 660-wide image to 255 and show a fit no style asks
+        # for, which is the same class of lie as hardcoding the prompt was.
+        s = 1.0
+    else:                                    # uniform -> contain
         s = min(W / gif.width, H / gif.height)
     if s is None:
         placed = gif.resize((W, H), Image.NEAREST)
@@ -54,7 +60,10 @@ try:
             l, t = (n.width - W) // 2, (n.height - H) // 2
             placed = n.crop((l, t, l + W, t + H))
         else:
-            placed.paste(n, ((W - n.width) // 2, (H - n.height) // 2))
+            align = str(theme.get('backgroundImageAlignment', 'center')).lower()
+            top = H - n.height if 'bottom' in align else (0 if 'top' in align
+                                                          else (H - n.height) // 2)
+            placed.paste(n, ((W - n.width) // 2, top))
     im = Image.blend(im, placed, float(theme.get('backgroundImageOpacity', 0.3)))
 except Exception as e:
     print(f'no background ({e}); rendering on the solid scheme colour')

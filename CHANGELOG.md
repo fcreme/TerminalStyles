@@ -16,6 +16,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It is the **only style in the set that turns `experimental.retroTerminalEffect` on**. Windows Terminal's scanline-and-glow filter is a poor fit for a photograph and exactly right for a tube; it is ignored everywhere else, which costs nothing.
 
   Its background is a 756-byte solid `#020d02` rather than an animation -- a colour, not a picture -- like `sober`'s and `gitbash`'s. The file still has to exist, because it is what wipes the previously-active style's wallpaper. That made it the third `.png` in a set of `.gif`s, which both the docs image map and `scripts/make-preview.py` had to be told about.
+### Changed
+
+- **skyline sits at native size, flush with the bottom of the window.** Covering scaled everything 2.30x and the scene read magnified. Native size does not enlarge it, but a 492x270 picture fills 47% of an ordinary window, so the background is widened to 1052x270 first: the left of the frame is pure cityscape and mirrors outward without a join. Two reflections, taken from left of the pole so the girl is never in the mirror source, and the moon painted out of both -- patched with a moon-free slab of the same sky, so the gradient and the starfield carry through. Three crescents is the one thing that would have given it away.
+
+  Widening sideways does **not** reduce the zoom, which is worth recording because it looked like it should: covering is driven by height, 622 over 270, and the width never entered into it.
+
+  What removes the last visible edge is alignment, not more picture. The image's top three rows are 100% `#130047`, which is the scheme background, so the margin above it was never visible; its bottom row is 54% `#005fdf`, so that one was. Sitting it flush against the bottom of the window puts the visible edge off-screen and leaves the invisible one facing the margin. No zoom, full width, no join, and the composition reads the way the scene is built -- city along the bottom, sky above.
+
+  114 frames rather than 228 at double the duration, so the loop is still 22.8 seconds and the file is 2466 KB for an image with 2.1x the pixels.
+
+- **neon-rain sits at its own size too, at street level.** It is 660x880 -- too NARROW rather than too short, which is the opposite of skyline's problem. Covering scaled it 1.57x to reach across an ordinary window and then discarded 762px of height, so what you saw was 45% of the picture, enlarged. Native size does not enlarge it, and sitting it at the bottom frames the canopy, the neon sign and the truck rather than a magnified slice of tower.
+
+  The side margins do show here, and that is the trade. skyline's top rows are exactly its scheme background, so its margin cannot be seen; neon-rain's edges are `#173e65` against a `#0c1828` background. Dark blue on dark blue, but not invisible.
+
+- **`scripts/make-preview.py` rendered a fit no style asks for.** It computed a contain-scale for `none` as well as for `uniform`, so a 660-wide image previewed at 255 wide -- and it ignored `backgroundImageAlignment` entirely, centring a style that asks to sit at the bottom. Both are fixed, and the previews for every style that asks for `none` are regenerated. Second defect of this shape in that file today: it also hardcoded one style's prompt while claiming to read each style's own.
 
 ## [0.8.44] - 2026-09-21
 
