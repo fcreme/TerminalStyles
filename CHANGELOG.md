@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the README denied a feature it spends thirty-seven lines explaining.** The Background image section ended "no other terminal gets one yet", sixty-eight lines after a section titled "Animated backgrounds on WezTerm". WezTerm has carried a background from the applied style since 0.8.29 and is the only terminal off Windows that animates one, so a macOS reader who reached that sentence learned the opposite of the truth.
+
+- **the install size was stated twice, with two different numbers, and both were wrong.** "~100 KB" in one section, "~350 KB" two hundred and sixty lines later, for a package that actually weighs 917 KB.
+
+  A size cannot be pinned exactly -- it moves with every file added -- so the test pins what can be: that there is one number, that it is the same everywhere it appears, and that it is within half to double of what `publish.ps1` would actually stage. It reads that allowlist from `publish.ps1` rather than keeping a second copy, because a second copy of that list is how the package and the claim about it drifted apart in the first place.
+
+- **`scripts/publish.ps1` still described `styles/` as "16 themes"** in the comment beside its allowlist.
+
 ## [0.8.41] - 2026-09-21
 
 ### Fixed

@@ -38,7 +38,7 @@ $allowlist = @(
     'README.md',
     'LICENSE',
     'fonts.json',
-    'styles',                              # whole tree, 16 themes + their shell prompts
+    'styles',                              # whole tree, every theme + their shell prompts
     'shell'                                # zsh/bash runtime + the Terminal.app profile helper
     # NOTE: scripts/ is deliberately NOT shipped. capture-screenshots.ps1 used to
     # be, as "useful for theme authors" -- but it requires $env:WT_SESSION, the
