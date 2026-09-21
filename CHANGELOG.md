@@ -26,6 +26,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
   114 frames rather than 228 at double the duration, so the loop is still 22.8 seconds and the file is 2466 KB for an image with 2.1x the pixels.
 
+- **neon-rain sits at its own size too, at street level.** It is 660x880 -- too NARROW rather than too short, which is the opposite of skyline's problem. Covering scaled it 1.57x to reach across an ordinary window and then discarded 762px of height, so what you saw was 45% of the picture, enlarged. Native size does not enlarge it, and sitting it at the bottom frames the canopy, the neon sign and the truck rather than a magnified slice of tower.
+
+  The side margins do show here, and that is the trade. skyline's top rows are exactly its scheme background, so its margin cannot be seen; neon-rain's edges are `#173e65` against a `#0c1828` background. Dark blue on dark blue, but not invisible.
+
+- **`scripts/make-preview.py` rendered a fit no style asks for.** It computed a contain-scale for `none` as well as for `uniform`, so a 660-wide image previewed at 255 wide -- and it ignored `backgroundImageAlignment` entirely, centring a style that asks to sit at the bottom. Both are fixed, and the previews for every style that asks for `none` are regenerated. Second defect of this shape in that file today: it also hardcoded one style's prompt while claiming to read each style's own.
+
 ## [0.8.44] - 2026-09-21
 
 ### Added
