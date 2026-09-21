@@ -121,6 +121,82 @@ function Get-StyleBackgroundAbsence {
     }
 }
 
+function Test-BackgroundRefreshDue {
+    <#
+    .SYNOPSIS
+    Is it time to re-check a background this machine already has?
+
+    .DESCRIPTION
+    The negative cache below was given two carefully-reasoned lifetimes because
+    "the gifs branch is updated independently of releases, so a style CAN gain
+    an asset later". Every word of that applies to a style whose asset CHANGED,
+    and only the 404 path got it: a cached file was returned unconditionally and
+    never revalidated, so replacing an image on the gifs branch reached exactly
+    the people who had never applied that style. Anyone who had was pinned to
+    whatever they downloaded the first time, for good.
+
+    Same marker shape as the negative cache, and the same rule that an empty or
+    unparseable marker means "check now" -- a marker this tool cannot read must
+    never be the reason it stops checking.
+
+      checked      the asset was compared against the server. Two weeks: the
+                   branch changes rarely, and the check costs a round trip on
+                   an interactive apply.
+      unreachable  the check failed. An hour, so a spell offline does not make
+                   every apply pay a timeout, and does not pin the image either.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()][string]$MarkerText, [datetime]$Now = [datetime]::UtcNow)
+
+    if ([string]::IsNullOrWhiteSpace($MarkerText)) { return $true }
+    try { $marker = $MarkerText | ConvertFrom-Json } catch { return $true }
+    if (-not $marker -or -not $marker.kind -or -not $marker.at) { return $true }
+
+    # Parsed exactly the way Test-BackgroundProbeSuppressed parses its stamp --
+    # RoundtripKind consumes the trailing Z but hands back Kind=Unspecified, so
+    # a later ToUniversalTime shifts a UTC stamp by the machine's offset.
+    $at = [datetime]::MinValue
+    $styles = [System.Globalization.DateTimeStyles]::AdjustToUniversal -bor
+              [System.Globalization.DateTimeStyles]::AssumeUniversal
+    if (-not [datetime]::TryParse($marker.at, [System.Globalization.CultureInfo]::InvariantCulture,
+                                  $styles, [ref]$at)) { return $true }
+
+    $age = $Now - $at
+    switch ($marker.kind) {
+        'checked'     { return ($age.TotalDays -ge 14) }
+        'unreachable' { return ($age.TotalHours -ge 1) }
+        default       { return $true }
+    }
+}
+
+function Test-BackgroundChanged {
+    <#
+    .SYNOPSIS
+    Does the server's copy differ from the one on disk?
+
+    .DESCRIPTION
+    Pure, so the comparison can be tested without a network. Conservative in
+    ONE direction on purpose: when there is nothing to compare -- no etag, no
+    length -- it answers $false and keeps what is already there. A wrong "yes"
+    costs a download of an image the user already has; a wrong "no" is just the
+    bug this whole function exists to fix, so neither is free, but only one of
+    them can loop.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()][string]$LocalEtag,
+        [AllowNull()][string]$RemoteEtag,
+        [long]$LocalLength = 0,
+        [long]$RemoteLength = 0
+    )
+
+    # An etag is the server telling us what it has. Trust it over a length,
+    # which two different images can share.
+    if ($RemoteEtag -and $LocalEtag) { return ($RemoteEtag -ne $LocalEtag) }
+    if ($RemoteLength -gt 0 -and $LocalLength -gt 0) { return ($RemoteLength -ne $LocalLength) }
+    return $false
+}
+
 function Get-BackgroundFileIn {
     # The background image sitting DIRECTLY in one directory, or $null.
     #
@@ -138,6 +214,125 @@ function Get-BackgroundFileIn {
         if (Test-Path -LiteralPath $candidate) { return $candidate }
     }
     return $null
+}
+
+function Update-CachedBackground {
+    <#
+    .SYNOPSIS
+    Re-check a cached background against the gifs branch, and replace it if the
+    server has a different one. Returns the path to use either way.
+
+    .DESCRIPTION
+    Never answers $null and never leaves the caller worse off: every failure
+    path returns the file that was already there. The whole point is that a
+    cached image stops being permanent, not that it becomes fragile -- losing a
+    background to a flaky network would be a worse bug than the one this fixes.
+
+    Throttled by a dated marker so an apply pays a round trip about twice a
+    month rather than every time, and the HEAD gets a SHORT timeout: unlike the
+    first fetch, there is already a perfectly good image on disk, so there is
+    nothing worth waiting ten seconds for.
+
+    -WebRequest is a test seam. Real callers omit it.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$CachePath,
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$CacheDir,
+        [scriptblock]$WebRequest,
+        [datetime]$Now = [datetime]::UtcNow
+    )
+
+    $markerPath = Join-Path $CacheDir '.background-checked'
+    $markerText = ''
+    if (Test-Path -LiteralPath $markerPath) {
+        try {
+            $markerText = [System.IO.File]::ReadAllText($markerPath, [System.Text.UTF8Encoding]::new($false))
+        } catch { $markerText = '' }
+    }
+    if (-not (Test-BackgroundRefreshDue -MarkerText $markerText -Now $Now)) { return $CachePath }
+
+    $ext = [System.IO.Path]::GetExtension($CachePath).TrimStart('.')
+    $url = "https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/$StyleName.$ext"
+    if (-not $WebRequest) {
+        $WebRequest = {
+            param($Uri, $Method, $OutFile)
+            if ($OutFile) {
+                Invoke-WebRequest -Uri $Uri -OutFile $OutFile -UseBasicParsing -TimeoutSec 10 -ErrorAction Stop
+            } else {
+                Invoke-WebRequest -Uri $Uri -Method $Method -UseBasicParsing -TimeoutSec 5 -ErrorAction Stop
+            }
+        }
+    }
+
+    $stamp = {
+        param([string]$Kind, [string]$Etag)
+        try {
+            if (-not (Test-Path -LiteralPath $CacheDir)) {
+                New-Item -ItemType Directory -Path $CacheDir -Force -ErrorAction Stop | Out-Null
+            }
+            $body = @{ kind = $Kind; at = $Now.ToString('o') }
+            if ($Etag) { $body.etag = $Etag }
+            [System.IO.File]::WriteAllText($markerPath, ($body | ConvertTo-Json -Compress),
+                                           [System.Text.UTF8Encoding]::new($false))
+        } catch { }
+    }
+
+    $localLength = 0
+    try { $localLength = (Get-Item -LiteralPath $CachePath -ErrorAction Stop).Length } catch { }
+    $localEtag = ''
+    if ($markerText) {
+        try { $localEtag = "$(($markerText | ConvertFrom-Json).etag)" } catch { }
+    }
+
+    $prevProgress = $ProgressPreference
+    $ProgressPreference = 'SilentlyContinue'
+    try {
+        $head = & $WebRequest $url 'Head' $null
+        $remoteEtag = ''
+        $remoteLength = 0
+        if ($head -and $head.Headers) {
+            # Header values arrive as a string on 5.1 and a string[] on 7.
+            $raw = $head.Headers['ETag']
+            if ($raw) { $remoteEtag = "$(@($raw)[0])" }
+            $len = $head.Headers['Content-Length']
+            if ($len) { [void][long]::TryParse("$(@($len)[0])", [ref]$remoteLength) }
+        }
+
+        if (-not (Test-BackgroundChanged -LocalEtag $localEtag -RemoteEtag $remoteEtag `
+                    -LocalLength $localLength -RemoteLength $remoteLength)) {
+            & $stamp 'checked' $remoteEtag
+            return $CachePath
+        }
+
+        # Same .part-then-rename as the first fetch, for the same reason: a file
+        # at the cache path is treated as complete by every reader, so a
+        # half-written replacement would become this style's background.
+        $part = "$CachePath.part-refresh"
+        try {
+            & $WebRequest $url 'Get' $part
+            $got = Get-Item -LiteralPath $part -ErrorAction SilentlyContinue
+            if ($got -and $got.Length -gt 0) {
+                Move-Item -LiteralPath $part -Destination $CachePath -Force
+                & $stamp 'checked' $remoteEtag
+                return $CachePath
+            }
+            # Answered, but with nothing in it. Keep what we have.
+            if ($got) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
+            & $stamp 'checked' $localEtag
+            return $CachePath
+        } catch {
+            if (Test-Path -LiteralPath $part) { Remove-Item -LiteralPath $part -Force -ErrorAction SilentlyContinue }
+            & $stamp 'unreachable' $localEtag
+            return $CachePath
+        }
+    } catch {
+        & $stamp 'unreachable' $localEtag
+        return $CachePath
+    } finally {
+        $ProgressPreference = $prevProgress
+    }
 }
 
 function Get-StyleBundledBackground {
@@ -173,7 +368,18 @@ function Get-StyleBundledBackground {
 
     # 2. Cached (under data root)
     $cached = Get-BackgroundFileIn -Directory $cacheDir
-    if ($cached) { return $cached }
+    if ($cached) {
+        # Revalidated, but only where reaching for the network is allowed at
+        # all. -NoFetch exists because the picker calls this on every arrow key
+        # and tier 3 can spend four ten-second timeouts; a refresh check on that
+        # thread would reintroduce exactly the stall that switch was added to
+        # prevent. So an interactive preview keeps using what is on disk, and
+        # the apply that follows is what picks up a changed asset.
+        if (-not $NoFetch) {
+            $cached = Update-CachedBackground -CachePath $cached -StyleName $styleName -CacheDir $cacheDir
+        }
+        return $cached
+    }
     # 2b. Inheritance: a tuned style inherits its base's background. For a
     # non-tuned style this returns $null instantly (no tune.json), so the
     # normal path is unaffected. -NoInherit suppresses this (used when

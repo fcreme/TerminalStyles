@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **a cached background was never revalidated, so an updated asset reached only people who had never applied that style.** `Get-StyleBundledBackground` returned the cached file unconditionally. The *negative* cache immediately beside it already had two carefully-reasoned lifetimes, and its own comment says why: *"the gifs branch is updated independently of releases, so a style CAN gain an asset later. Re-probe monthly."* Every word of that applies to a style whose asset **changed** -- only the 404 path got it. Anyone who had applied the style was pinned to whatever they downloaded the first time, permanently.
+
+  The positive cache now expires on the same shape of marker: a fortnight after a successful check, an hour after a failed one. The check is a HEAD, compared by etag where the server sends one and by length otherwise, so the usual outcome costs one short round trip and no download.
+
+  Every failure path returns the image that was already there. Losing a background to a flaky network would be a worse bug than the staleness this fixes, and the replacement is written `.part`-then-rename like the first fetch, because a file at the cache path is treated as complete by every reader.
+
+  It does **not** run under `-NoFetch`. That switch exists because the picker resolves a background on every arrow key and the fetch path can spend four ten-second timeouts; revalidating there would reintroduce exactly the stall it was added to prevent. An interactive preview keeps using what is on disk, and the apply that follows picks up a changed asset.
+
 ## [0.8.40] - 2026-09-21
 
 ### Added
