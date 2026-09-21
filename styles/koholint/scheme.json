@@ -1,0 +1,23 @@
+{
+    "name": "koholint",
+    "background": "#182098",
+    "foreground": "#f8f8f8",
+    "cursorColor": "#f0f848",
+    "selectionBackground": "#4058f8",
+    "black": "#101660",
+    "red": "#d05840",
+    "green": "#4a9468",
+    "yellow": "#f8a840",
+    "blue": "#7080e0",
+    "purple": "#9c78dc",
+    "cyan": "#58b0d8",
+    "white": "#c8d4f0",
+    "brightBlack": "#a8a8d0",
+    "brightRed": "#f87858",
+    "brightGreen": "#58b878",
+    "brightYellow": "#f0f848",
+    "brightBlue": "#8898f8",
+    "brightPurple": "#b894f8",
+    "brightCyan": "#78d0f0",
+    "brightWhite": "#f8f8f8"
+}

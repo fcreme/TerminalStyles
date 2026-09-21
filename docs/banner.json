@@ -1,5 +1,5 @@
 {
-  "themes": 15,
+  "themes": 16,
   "styles": [
     "eva",
     "ex-machina",
@@ -8,6 +8,7 @@
     "gitbash",
     "golden-forest",
     "kitty",
+    "koholint",
     "lain",
     "marquee",
     "neon-rain",
@@ -25,6 +26,7 @@
     "#cd3131",
     "#d4825c",
     "#ffb3c1",
+    "#f87858",
     "#d06070",
     "#ff6098",
     "#d86850",

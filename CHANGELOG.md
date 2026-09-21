@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`koholint`, the sixteenth theme.** *Link's Awakening* opens on a shipwreck: Link face-down on driftwood, the Wind Fish's island past the horizon. Four fifths of that frame is water and sky, so four fifths of this style is too.
+
+  The palette is **sampled from the source frames, not chosen**. `#182098` is the sea and 39.9% of every pixel in the GIF, so it is the background; `#f0f848` is the band on the hat, 0.3% of the picture and the only yellow in it, so it is the cursor and nothing else. Cloud white on sea blue measures 11.6:1, and every bright ANSI slot clears the repo's 3:1 accent floor -- two of them did not at first, and `tests/Scheme-Contrast` said so.
+
+- **`scripts/make-preview.py`** renders `docs/screenshots/<style>.png` from a style's own files: colours from scheme.json, the background from the `gifs` branch at the opacity theme.json asks for, honouring the declared stretch mode. The other screenshots are real Windows Terminal captures from `capture-screenshots.ps1`, which needs `$env:WT_SESSION` and a Windows box; this one reproduces anywhere, which three failed capture attempts on a moving window argued for.
+
+### Fixed
+
+- **a square background was blown up and cropped to a strip.** `uniformToFill` scales to cover, so a 500x500 source on a normal 1038x622 window is enlarged 2.08x and loses 638px -- two thirds of the picture. koholint showed sea and the top of a hat; `eva`, at 480x480, was cut off at the chin and lost its EXT3 label entirely.
+
+  Both now declare `none`: native size on Windows Terminal, and Contain on WezTerm, which has no natural-size variant. The margins take the scheme background, which in both cases is a colour sampled from the image itself, so nothing reads as letterboxing.
+
+  Deliberately NOT changed: `ex-machina`, `forest`, `rain` and `neon-rain` are flagged by the same arithmetic and are fine. They are landscape or abstract, so a centre crop keeps the subject and containing them would leave between 66% and 77% of the window flat -- `neon-rain` is a tall composition and would fill 23% of the width. The defect was never "scaled up"; it was "the subject cropped out", and a metric counting lost pixels cannot tell those apart.
+
+- **`docs/index.html` carried a full inline copy of every scheme, description and quote** -- the second list of styles `Get-StyleMeta`'s docstring warns about, and the reason removing `halo` once meant hunting an entry down by hand. Those three are read from `styles/` now. Banner art still has to be carried across by name, since it lives inside each profile.ps1.
+
+- **the banners on that page were stored double-escaped**, so fcreme.github.io rendered lain's as `\"Present day, present time. Hahaha.\"` with the backslashes visible. Unescaped on the way through.
+
 ### Fixed
 
 - **the README denied a feature it spends thirty-seven lines explaining.** The Background image section ended "no other terminal gets one yet", sixty-eight lines after a section titled "Animated backgrounds on WezTerm". WezTerm has carried a background from the applied style since 0.8.29 and is the only terminal off Windows that animates one, so a macOS reader who reached that sentence learned the opposite of the truth.
