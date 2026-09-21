@@ -76,7 +76,12 @@ Describe 'the README does not deny its own features' {
         # Anchored to the line start, because '##' also matches inside '###' --
         # the first version of this grabbed '### Background images on
         # Terminal.app' instead and failed on a section that was already fine.
-        $bg = [regex]::Match($script:Readme, '(?sm)^## Background image$.*?(?=\n## )').Value
+        #
+        # \r? on both ends, because actions/checkout hands Windows a CRLF
+        # working tree: '$' matches only before the \n, and with \r sitting
+        # in between, '^## Background image$' matched nothing there. macOS and
+        # Linux passed; the two Windows jobs did not.
+        $bg = [regex]::Match($script:Readme, '(?sm)^## Background image\r?$.*?(?=\r?\n## )').Value
         $bg | Should -Not -BeNullOrEmpty -Because 'the section has to be found before it can be checked'
         $bg | Should -Match 'WezTerm' -Because 'the section about background images has to mention the terminal that shows them best'
         $bg | Should -Not -Match 'no other terminal gets one yet'
