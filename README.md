@@ -570,11 +570,13 @@ Each bundled style has its own animated background, hosted on the
 [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs) of
 this repo. `tstyles` lazy-fetches each one on first use of the style and
 caches it under `%LOCALAPPDATA%\TerminalStyles\cache\<name>\`, so the
-install ZIP stays small (~100 KB instead of ~10 MB). On Windows Terminal,
+install stays small (~900 KB instead of ~10 MB). On Windows Terminal,
 picking a style auto-applies the image and the arrow keys cycle the
 background live alongside the colors / cursor / font. Terminal.app takes
 one through a generated profile, which means a new window and a still
-frame (see above); no other terminal gets one yet.
+frame (see above). **WezTerm** shows one live in the running window and is the
+only terminal off Windows that animates it — see "Animated backgrounds on
+WezTerm". Every other terminal gets the colors and the prompt, but no image.
 
 To override the bundled image with your own:
 
@@ -831,7 +833,7 @@ takes one PNG of the WT window, then restores your original theme.
   globally — there's no per-tab prompt configuration.
 - **Background images live on a separate branch.** They are deliberately
   not committed to `main` — `.gitignore` blocks them and a test fails the
-  build if one becomes tracked — so the install stays ~350 KB instead of
+  build if one becomes tracked — so the install stays ~900 KB instead of
   ~10 MB. They sit flat-named on the [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs)
   and are fetched on first use. Contributors should keep each under ~2 MB
   and only submit images they have the right to redistribute.
