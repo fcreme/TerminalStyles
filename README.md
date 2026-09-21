@@ -8,7 +8,7 @@
   <a href="https://www.powershellgallery.com/packages/TerminalStyles"><img src="https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery" alt="PowerShell Gallery"></a>
 </p>
 
-**Switch terminal themes live.** Run `tstyles`, arrow through 16 themes
+**Switch terminal themes live.** Run `tstyles`, arrow through 17 themes
 previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
 exactly how it looked before. The palette, the cursor color and the prompt
 repaint instantly on any terminal that speaks OSC; on **Windows Terminal** and
@@ -91,6 +91,7 @@ whichever your `$PROFILE` loads wins; the other is orphaned silently.
     <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="210" alt="sober"></td>
     <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="210" alt="tombraider"></td>
     <td align="center"><b>koholint</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/koholint.gif" width="210" alt="koholint"></td>
+    <td align="center"><b>skyline</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/skyline.gif" width="210" alt="skyline"></td>
   </tr>
 </table>
 
@@ -302,7 +303,7 @@ would not see.
 
 ## Styles
 
-Sixteen themes ship out of the box. Click any name to jump to that style's
+Seventeen themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -312,6 +313,15 @@ folder for full palette / prompt / theme.json details.
 **Resident-Evil / survival-horror.** Blood-red brackets, bone-white text,
 three-line classified-doc prompt with a startup banner.
 *"Welcome to Umbrella Corporation. Status: FINE."*
+
+### [skyline](styles/skyline)
+
+![skyline](docs/screenshots/skyline.png)
+
+**A balcony over the city at night.** Saturated indigo, lit windows, and a
+strip of green signage along the far bank — the one bright colour in the
+frame, so it is the cursor.
+*"The city keeps its own hours."*
 
 ### [koholint](styles/koholint)
 

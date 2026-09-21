@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`skyline`, a seventeenth theme.** A balcony over a lit city at night -- a crescent moon, a strip of green signage along the far bank, towers with about a third of their windows still on.
+
+  Sampled rather than chosen, like koholint: `#130047` is the indigo the whole frame sits in and 26.9% of every pixel, so it is the background; `#42ff8e` is the signage strip, 2% of the picture and the brightest thing in it, so it is the cursor. `#ff2e7a` is the only warm colour anywhere in the frame, so it is what errors are painted in. The foreground measures 15.98:1 on the background and 6.54:1 on the selection, and every slot clears the 3:1 accent floor.
+
+  Nothing else in the set is indigo -- `lain` is the nearest and reads black-violet. And unlike koholint the source is 492x270, already close to a terminal's shape, so it covers with a 93px crop and needed no widening.
+
+### Fixed
+
+- **`scripts/make-preview.py` hardcoded one style's prompt while claiming to read each style's own.** Its docstring said the prompt came "out of the style's profile.ps1 rather than being typed here"; the code then assigned the literal `~~~~` and `>>`, so skyline's preview rendered with koholint's prompt. It now dot-sources the style's profile.ps1, calls the prompt function it defines, and parses the real ANSI output, so a preview cannot show a prompt the style does not have.
+
 ## [0.8.43] - 2026-09-21
 
 ### Changed

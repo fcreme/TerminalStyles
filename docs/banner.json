@@ -1,5 +1,5 @@
 {
-  "themes": 16,
+  "themes": 17,
   "styles": [
     "eva",
     "ex-machina",
@@ -13,6 +13,7 @@
     "marquee",
     "neon-rain",
     "rain",
+    "skyline",
     "snowday",
     "sober",
     "tombraider",
@@ -31,6 +32,7 @@
     "#ff6098",
     "#d86850",
     "#c87878",
+    "#ff2e7a",
     "#e89880",
     "#c87878",
     "#ff5090",
