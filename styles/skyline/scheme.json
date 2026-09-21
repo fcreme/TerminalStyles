@@ -1,0 +1,23 @@
+{
+    "name": "skyline",
+    "background": "#130047",
+    "foreground": "#e8ecff",
+    "cursorColor": "#42ff8e",
+    "selectionBackground": "#003ddf",
+    "black": "#0c0030",
+    "red": "#d02a63",
+    "green": "#2fbd6b",
+    "yellow": "#b89a84",
+    "blue": "#0071ff",
+    "purple": "#9440ab",
+    "cyan": "#0095c8",
+    "white": "#b8c8f8",
+    "brightBlack": "#5f6bb0",
+    "brightRed": "#ff2e7a",
+    "brightGreen": "#42ff8e",
+    "brightYellow": "#d7b7a1",
+    "brightBlue": "#0095ff",
+    "brightPurple": "#bd57d7",
+    "brightCyan": "#00bcff",
+    "brightWhite": "#e8ecff"
+}

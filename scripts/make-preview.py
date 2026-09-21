@@ -14,7 +14,7 @@ It is a render, not a photograph, and the per-style README says so.
 
 Needs Pillow and a JetBrains Mono install (tstyles font 'JetBrains Mono').
 """
-import io, json, os, re, sys, urllib.request
+import io, json, os, re, subprocess, sys, urllib.request
 from PIL import Image, ImageDraw, ImageFont
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,26 +60,63 @@ F = os.path.expanduser('~/Library/Fonts')
 mono = ImageFont.truetype(f'{F}/JetBrainsMono-Regular.ttf', 23)
 draw = ImageDraw.Draw(im)
 
-# The prompt, lifted from the style's own profile.ps1 rather than retyped: the
-# literal it returns is the one thing a preview must not invent.
-src = open(os.path.join(d, 'profile.ps1'), encoding='utf-8').read()
-ret = re.search(r'\n\s*"(\$\(\$Dim\).*?)"\s*\n\}', src, re.S)
-p1, p2 = ('~~~~', 'TerminalStyles'), ('>', '>')
+# The prompt, obtained by RUNNING the style's profile.ps1 and calling the
+# function it defines -- not by reading a literal out of it, and certainly not
+# by hardcoding one. The first version of this file did the last of those while
+# its own docstring claimed the first, so every preview rendered koholint's
+# prompt regardless of the style it was previewing.
+def style_prompt(style_dir):
+    ps = os.path.join(style_dir, 'profile.ps1')
+    if not os.path.exists(ps):
+        return []
+    script = (
+        f'. "{ps}" *> $null; '
+        'Set-Location $HOME; '
+        '$p = prompt; '
+        '[Console]::Out.Write($p)'
+    )
+    try:
+        out = subprocess.run(['pwsh-preview', '-NoProfile', '-Command', script],
+                             capture_output=True, text=True, timeout=30).stdout
+    except Exception:
+        return []
+    # Split the returned string into (text, colour) runs on its SGR escapes.
+    rows, cur, colour = [], [], None
+    for line in out.split('\n'):
+        cur = []
+        for part in re.split(r'(\x1b\[[0-9;]*m)', line):
+            if not part:
+                continue
+            m = re.fullmatch(r'\x1b\[38;2;(\d+);(\d+);(\d+)m', part)
+            if m:
+                colour = '#%02x%02x%02x' % tuple(int(g) for g in m.groups())
+                continue
+            if re.fullmatch(r'\x1b\[[0-9;]*m', part):
+                colour = None
+                continue
+            cur.append((part, colour or scheme['foreground']))
+        rows.append(cur)
+    return rows
 
-rows = [
-    [(p1[0] + ' ', scheme['brightBlack']), (p1[1], scheme['brightCyan'])],
-    [(p2[0], scheme['brightBlue']), (p2[1] + ' ', scheme['brightYellow']),
-     ('tstyles list', scheme['foreground'])],
-    [('', scheme['foreground'])],
-    [(f'    * {name}', scheme['brightYellow']),
-     ('   ' + meta['description'][:46], scheme['brightBlack'])],
-    [('      umbrella', scheme['foreground']),
-     ('   Resident-Evil survival horror.', scheme['brightBlack'])],
-    [('', scheme['foreground'])],
-    [(p1[0] + ' ', scheme['brightBlack']), (p1[1], scheme['brightCyan'])],
-    [(p2[0], scheme['brightBlue']), (p2[1] + ' ', scheme['brightYellow']),
-     ('█', scheme['cursorColor'])],
-]
+prompt_rows = style_prompt(d)
+if not prompt_rows:
+    prompt_rows = [[('$ ', scheme['foreground'])]]
+
+def line(extra):
+    return prompt_rows[-1] + extra
+
+rows = []
+rows += prompt_rows[:-1]
+rows.append(line([('tstyles list', scheme['foreground'])]))
+rows.append([('', scheme['foreground'])])
+rows.append([(f'    * {name}', scheme['cursorColor']),
+             ('   ' + meta['description'][:40], scheme['brightBlack'])])
+rows.append([('      umbrella', scheme['foreground']),
+             ('   Resident-Evil survival horror.', scheme['brightBlack'])])
+rows.append([('', scheme['foreground'])])
+rows += prompt_rows[:-1]
+rows.append(line([('\u2588', scheme['cursorColor'])]))
+
 y = 28
 for row in rows:
     x = 32

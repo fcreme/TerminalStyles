@@ -1,0 +1,19 @@
+{
+    "colorScheme": "skyline",
+    "tabTitle": "SKYLINE",
+    "tabColor": "#0095ff",
+    "cursorShape": "bar",
+    "useAcrylic": false,
+    "opacity": 100,
+    "experimental.retroTerminalEffect": false,
+    "font": {
+        "face": "Cascadia Code",
+        "size": 11,
+        "weight": "normal"
+    },
+    "padding": "14",
+    "backgroundImage": "{{BACKGROUND_IMAGE}}",
+    "backgroundImageOpacity": 0.32,
+    "backgroundImageStretchMode": "uniformToFill",
+    "backgroundImageAlignment": "center"
+}
