@@ -16,6 +16,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It is the **only style in the set that turns `experimental.retroTerminalEffect` on**. Windows Terminal's scanline-and-glow filter is a poor fit for a photograph and exactly right for a tube; it is ignored everywhere else, which costs nothing.
 
   Its background is a 756-byte solid `#020d02` rather than an animation -- a colour, not a picture -- like `sober`'s and `gitbash`'s. The file still has to exist, because it is what wipes the previously-active style's wallpaper. That made it the third `.png` in a set of `.gif`s, which both the docs image map and `scripts/make-preview.py` had to be told about.
+### Changed
+
+- **skyline sits at native size, flush with the bottom of the window.** Covering scaled everything 2.30x and the scene read magnified. Native size does not enlarge it, but a 492x270 picture fills 47% of an ordinary window, so the background is widened to 1052x270 first: the left of the frame is pure cityscape and mirrors outward without a join. Two reflections, taken from left of the pole so the girl is never in the mirror source, and the moon painted out of both -- patched with a moon-free slab of the same sky, so the gradient and the starfield carry through. Three crescents is the one thing that would have given it away.
+
+  Widening sideways does **not** reduce the zoom, which is worth recording because it looked like it should: covering is driven by height, 622 over 270, and the width never entered into it.
+
+  What removes the last visible edge is alignment, not more picture. The image's top three rows are 100% `#130047`, which is the scheme background, so the margin above it was never visible; its bottom row is 54% `#005fdf`, so that one was. Sitting it flush against the bottom of the window puts the visible edge off-screen and leaves the invisible one facing the margin. No zoom, full width, no join, and the composition reads the way the scene is built -- city along the bottom, sky above.
+
+  114 frames rather than 228 at double the duration, so the loop is still 22.8 seconds and the file is 2466 KB for an image with 2.1x the pixels.
 
 ## [0.8.44] - 2026-09-21
 
