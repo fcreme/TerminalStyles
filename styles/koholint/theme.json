@@ -1,7 +1,7 @@
 {
-    "colorScheme": "eva",
-    "tabTitle": "EVA // NERV",
-    "tabColor": "#ff3d5a",
+    "colorScheme": "koholint",
+    "tabTitle": "KOHOLINT",
+    "tabColor": "#4058f8",
     "cursorShape": "filledBox",
     "useAcrylic": false,
     "opacity": 100,
@@ -9,11 +9,11 @@
     "font": {
         "face": "Cascadia Code",
         "size": 11,
-        "weight": "semi-bold"
+        "weight": "normal"
     },
     "padding": "12",
     "backgroundImage": "{{BACKGROUND_IMAGE}}",
-    "backgroundImageOpacity": 0.35,
+    "backgroundImageOpacity": 0.3,
     "backgroundImageStretchMode": "none",
     "backgroundImageAlignment": "center"
 }

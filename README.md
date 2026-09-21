@@ -8,7 +8,7 @@
   <a href="https://www.powershellgallery.com/packages/TerminalStyles"><img src="https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery" alt="PowerShell Gallery"></a>
 </p>
 
-**Switch terminal themes live.** Run `tstyles`, arrow through 15 themes
+**Switch terminal themes live.** Run `tstyles`, arrow through 16 themes
 previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
 exactly how it looked before. The palette, the cursor color and the prompt
 repaint instantly on any terminal that speaks OSC; on **Windows Terminal** and
@@ -90,6 +90,7 @@ whichever your `$PROFILE` loads wins; the other is orphaned silently.
     <td align="center"><b>snowday</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/snowday.gif" width="210" alt="snowday"></td>
     <td align="center"><b>sober</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/sober.png" width="210" alt="sober"></td>
     <td align="center"><b>tombraider</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tombraider.gif" width="210" alt="tombraider"></td>
+    <td align="center"><b>koholint</b><br><img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/koholint.gif" width="210" alt="koholint"></td>
   </tr>
 </table>
 
@@ -301,7 +302,7 @@ would not see.
 
 ## Styles
 
-Fifteen themes ship out of the box. Click any name to jump to that style's
+Sixteen themes ship out of the box. Click any name to jump to that style's
 folder for full palette / prompt / theme.json details.
 
 ### [umbrella](styles/umbrella)
@@ -311,6 +312,15 @@ folder for full palette / prompt / theme.json details.
 **Resident-Evil / survival-horror.** Blood-red brackets, bone-white text,
 three-line classified-doc prompt with a startup banner.
 *"Welcome to Umbrella Corporation. Status: FINE."*
+
+### [koholint](styles/koholint)
+
+![koholint](docs/screenshots/koholint.png)
+
+**Link's Awakening, adrift off Koholint.** GBC sea blue and cloud white,
+with the hat band as the only yellow on screen — so it is the cursor and
+nothing else.
+*"The Wind Fish sleeps long."*
 
 ### [eva](styles/eva)
 
