@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **a shell script is now written with LF endings at the point it is staged, not just checked upstream of it.** `Sync-ShellRuntime` copied `shell/tstyles.sh` into the data root byte for byte, and `Set-ShellStyleState` did the same with a style's `prompt.sh`. A CR is part of the token to zsh and bash, so one in a staged `.sh` is `command not found: ^M` on every interactive shell — which is what PSGallery 0.8.32 and 0.8.33 shipped.
+
+  Three guards were added after that release and every one of them sits upstream: `.gitattributes` stops a Windows checkout converting the file, `tests/Shell-Files-Are-LF` pins the repo, and `scripts/publish.ps1` refuses to publish a package carrying one. None protects a machine that already has a bad copy, and none runs at the moment the bytes land in somebody's home directory.
+
+  That gap mattered because the failure blocks its own cure: the `tstyles` shell function is defined by the file that is broken, so `tstyles update` from zsh cannot run at all. Recovering meant knowing to open pwsh and call `Invoke-TerminalStylesUpdate` by hand, and nothing said so. Anyone still on those releases now recovers by applying a style.
+
+  `-replace`, not `TrimEnd`: 0.8.32 had a CR on every line, and trimming would have fixed the file's tail and left the rest broken. A lone CR is handled too, and the write emits no BOM — a BOM at the top of a sourced script is the same bug in a different disguise.
+
 ## [0.8.45] - 2026-09-21
 
 ### Added

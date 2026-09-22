@@ -922,7 +922,12 @@ Describe 'Sync-ShellRuntime says WHICH staging failure happened' {
             # was refused", whatever refused it.
             Test-Path -LiteralPath (Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'tstyles.sh') |
                 Should -BeTrue -Because 'the fixture must set the branch under test'
-            Mock Copy-Item { throw [System.UnauthorizedAccessException]::new('Access to the path is denied.') }
+            # Copy-ShellFileAsLf, not Copy-Item: staging reads and rewrites the
+            # file so it lands with LF endings, because a CR in a staged .sh is
+            # `command not found: ^M` on every interactive shell. The cause
+            # under test is unchanged -- the write was refused, whatever
+            # refused it -- only the call that performs it moved.
+            Mock Copy-ShellFileAsLf { throw [System.UnauthorizedAccessException]::new('Access to the path is denied.') }
             Sync-ShellRuntime | Should -Be 'failed'
         }
 
@@ -941,7 +946,12 @@ Describe 'Sync-ShellRuntime says WHICH staging failure happened' {
         }
 
         It 'shell-init names the data root when the data root is what refused' {
-            Mock Copy-Item { throw [System.UnauthorizedAccessException]::new('Access to the path is denied.') }
+            # Copy-ShellFileAsLf, not Copy-Item: staging reads and rewrites the
+            # file so it lands with LF endings, because a CR in a staged .sh is
+            # `command not found: ^M` on every interactive shell. The cause
+            # under test is unchanged -- the write was refused, whatever
+            # refused it -- only the call that performs it moved.
+            Mock Copy-ShellFileAsLf { throw [System.UnauthorizedAccessException]::new('Access to the path is denied.') }
 
             $ev = $null
             Invoke-TerminalStylesShellInit -HomeDir $script:h -ErrorVariable ev -ErrorAction SilentlyContinue *> $null

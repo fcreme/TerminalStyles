@@ -540,6 +540,51 @@ function Get-ShellCliPath { Join-Path $script:TStylesDataRoot 'tstyles-cli.ps1' 
 # valid only for the caller that just received one.
 $script:TStylesShellStagingError = $null
 
+function Copy-ShellFileAsLf {
+    <#
+    .SYNOPSIS
+    Stage a shell script into the data root with LF endings, whatever the
+    source has.
+
+    .DESCRIPTION
+    The LAST line of defence, and the only one standing where it matters. A CR
+    is part of the token to zsh and bash, so one in a staged .sh is not a
+    cosmetic difference -- it is
+
+        tstyles.sh:37: command not found: ^M
+        tstyles.sh:41: parse error near `in^M'
+
+    on every interactive shell, which is what PSGallery 0.8.32 and 0.8.33
+    shipped. Three guards already exist and every one of them sits upstream of
+    here: .gitattributes stops a Windows checkout converting the file,
+    tests/Shell-Files-Are-LF pins the repo, and scripts/publish.ps1 refuses to
+    publish a package carrying one. None of them protects a machine that
+    ALREADY has a bad copy, and none of them runs at the moment the bytes land
+    in somebody's home directory. This does.
+
+    It also means a user stuck on one of those releases recovers by applying a
+    style, which matters because that failure blocks its own cure: the
+    `tstyles` shell function is defined by the very file that is broken, so
+    `tstyles update` from zsh cannot run. Recovering meant knowing to open pwsh
+    and call Invoke-TerminalStylesUpdate by hand, and nothing said so.
+
+    Copy-Item is a byte copy, so it faithfully reproduces whatever it is given.
+    Read, strip, write -- and write with a UTF8Encoding that emits no BOM,
+    because a BOM at the top of a sourced script is the same class of bug in a
+    different disguise.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Source,
+        [Parameter(Mandatory)][string]$Destination
+    )
+    $text = [System.IO.File]::ReadAllText($Source, [System.Text.UTF8Encoding]::new($false))
+    # -replace, not TrimEnd: a CR in the MIDDLE of the file is the one that
+    # breaks a line, and 0.8.32 had one on every line.
+    $text = $text -replace "`r`n", "`n" -replace "`r", "`n"
+    [System.IO.File]::WriteAllText($Destination, $text, [System.Text.UTF8Encoding]::new($false))
+}
+
 function Sync-ShellRuntime {
     # Refresh the staged runtime from the module. Runs on every apply so an
     # upgraded module's runtime replaces the staged copy without the user having
@@ -565,7 +610,10 @@ function Sync-ShellRuntime {
         # -ErrorAction Stop because Copy-Item ALSO writes the failure to the
         # error stream: without it a red "Access to the path ... is denied"
         # printed immediately above the message that contradicted it.
-        Copy-Item -LiteralPath $src -Destination (Get-ShellRuntimePath) -Force -ErrorAction Stop
+        # Through Copy-ShellFileAsLf, not Copy-Item: this is the last point at
+        # which these bytes are ours, and a CR here is `command not found: ^M`
+        # on every interactive shell.
+        Copy-ShellFileAsLf -Source $src -Destination (Get-ShellRuntimePath)
 
         # Entry point for the `tstyles` shell function. Generated rather than
         # shipped because a BOOTSTRAP install is not on $env:PSModulePath, so
@@ -660,7 +708,9 @@ function Set-ShellStyleState {
         $promptSrc = Join-Path $StyleDir 'prompt.sh'
         $promptDst = Get-ShellPromptPath
         if (-not $KeepPrompt -and (Test-Path -LiteralPath $promptSrc)) {
-            Copy-Item -LiteralPath $promptSrc -Destination $promptDst -Force
+            # Same rule as tstyles.sh above: a style's prompt.sh is sourced by
+            # the same shells and breaks the same way.
+            Copy-ShellFileAsLf -Source $promptSrc -Destination $promptDst
         } elseif (Test-Path -LiteralPath $promptDst) {
             # -KeepPrompt, or a style with no shell prompt: drop the previous
             # style's, or the old prompt would outlive the style that installed it.
