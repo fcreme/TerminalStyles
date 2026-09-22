@@ -76,7 +76,15 @@ Describe 'Copy-ShellFileAsLf' {
         }
 
         It 'keeps non-ASCII content intact' {
-            $text = "echo 'café — naïve'`n"
+            # Built from code points, so this FILE stays pure ASCII in the
+            # places that get tokenised. Windows PowerShell 5.1 reads a .ps1
+            # with no BOM using the system codepage -- no file here carries one
+            # -- so the same characters written as a literal came back as
+            # mojibake and took the whole file down with a parse error. The
+            # repo's own "every test file parses, or its tests vanish silently"
+            # is what caught it; the tests would otherwise have reported green
+            # by not existing.
+            $text = "echo 'caf$([char]0xE9) $([char]0x2014) na$([char]0xEF)ve'`n"
             [System.IO.File]::WriteAllText($script:Src, $text, [System.Text.UTF8Encoding]::new($false))
             Copy-ShellFileAsLf -Source $script:Src -Destination $script:Dst
             [System.IO.File]::ReadAllText($script:Dst, [System.Text.UTF8Encoding]::new($false)) |
