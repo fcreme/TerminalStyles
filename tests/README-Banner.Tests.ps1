@@ -42,14 +42,36 @@ Describe 'the banner matches the styles it claims' {
 
     It 'is what the README actually shows' {
         $readme = Get-Content (Join-Path $script:Root 'README.md') -Raw
-        $readme | Should -Match 'tstyles-banner\.png' -Because 'a banner nothing references is not a banner'
+        $readme | Should -Match 'docs/banner\.png' -Because 'a banner nothing references is not a banner'
+    }
+
+    It 'ships the image it describes' {
+        # banner.json could always be compared to styles/, but nothing could
+        # tell whether the IMAGE had been regenerated after the JSON was. A
+        # 15-swatch banner beside 16 styles got as far as being caught by eye.
+        $png = Join-Path $script:Root 'docs/banner.png'
+        Test-Path -LiteralPath $png | Should -BeTrue -Because 'the banner lives in the repo now, not on the gifs branch'
+        $script:Manifest.sha256 | Should -Not -BeNullOrEmpty
+        $actual = (Get-FileHash -LiteralPath $png -Algorithm SHA256).Hash.ToLowerInvariant()
+        $actual | Should -Be $script:Manifest.sha256 `
+            -Because 'regenerate both with: python3 scripts/make-banner.py'
+    }
+
+    It 'does not reach off to another branch for it' {
+        # The gifs branch exists to keep 32MB of style animations off main. A
+        # 21KB banner there was one more copy to forget to push, and the
+        # PowerShell Gallery does not render the README anyway -- it shows the
+        # release notes -- so the absolute URL bought nothing.
+        $readme = Get-Content (Join-Path $script:Root 'README.md') -Raw
+        $readme | Should -Not -Match 'gifs/tstyles-banner\.png'
     }
 
     It 'leaves the page with a name when the image does not load' {
-        # raw.githubusercontent is not this project's to rely on, and the banner
-        # replaced the H1. Alt text is what carries the name when it 404s.
+        # The banner replaced the H1, so alt text is what carries the name
+        # when the image does not render -- a reader on a plain-text view, a
+        # screen reader, or a mirror that did not copy docs/.
         $readme = Get-Content (Join-Path $script:Root 'README.md') -Raw
-        $m = [regex]::Match($readme, 'tstyles-banner\.png"[^>]*alt="([^"]+)"')
+        $m = [regex]::Match($readme, 'docs/banner\.png"[^>]*alt="([^"]+)"')
         $m.Success | Should -BeTrue -Because 'the banner needs alt text'
         $m.Groups[1].Value | Should -Match 'tstyles'
     }

@@ -1,6 +1,6 @@
 
 <p align="center">
-  <img src="https://raw.githubusercontent.com/fcreme/TerminalStyles/gifs/tstyles-banner.png" width="600" alt="tstyles — switch terminal themes live">
+  <img src="docs/banner.png" width="600" alt="tstyles — switch terminal themes live">
 </p>
 
 <p align="center">

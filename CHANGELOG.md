@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **the banner lives in the repo, and the build fails if the image and what it claims disagree.** `docs/banner.json` records the theme count and one accent per style, and a test compares that to `styles/` -- but nothing could tell whether the PNG had been regenerated after the JSON was. A 15-swatch banner beside 16 styles got as far as being caught by eye. The generator now records the image's SHA-256 alongside, and the test compares them.
+
+  It also moved off the `gifs` branch. That branch exists to keep 32MB of style animations off `main`; a 21KB banner never needed to be there, and putting it there made it one more copy to forget to push. `docs/screenshots/*.png` have always been committed and referenced with a relative path, and the banner now matches them.
+
+  The absolute `raw.githubusercontent` URL bought nothing either, which rests on a correction: **the PowerShell Gallery does not render the README.** Its package page shows the version, the minimum PowerShell version, owners, copyright and the **release notes**; `README.md` appears only as an entry in the package's file listing. The release notes are the only prose that reaches a gallery visitor.
+
 ## [0.8.46] - 2026-09-23
 
 ### Fixed
