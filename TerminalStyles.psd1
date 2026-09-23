@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.45'
+    ModuleVersion     = '0.8.46'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.45: phosphor, an eighteenth theme and the first that is not a picture. Early terminals could not choose a colour -- the inside of the tube carried a single phosphor and that was the whole palette, P1 green on the VT220 and the IBM 5151, P3 amber on the Wyse -- so emphasis was not a different colour, it was more electrons. Twelve of the sixteen colour slots are one green at different intensities; the four that are not are amber, because a machine that genuinely needed to signal alarm on a green tube is a machine with two phosphors in it. It is the only style that turns the retro terminal effect on, which suits a tube and not a photograph, and its background is a solid colour rather than an animation. Two backgrounds also stop being scaled up. skyline was too SHORT -- covering was driven by height -- so its picture was widened by mirroring the cityscape, with the moon painted out of the reflections, and it now sits flush with the bottom where its only visible edge goes off-screen. neon-rain was too NARROW, the opposite problem: covering enlarged it by half again and threw away most of its height, so it sits at its own size at street level. Neither is enlarged now.'
+            ReleaseNotes = 'v0.8.46: a shell script is written with LF endings at the point it is staged into your data root, not only checked upstream of it. A carriage return is part of the token to zsh and bash, so one in a staged .sh is command not found, caret M, on every interactive shell -- which is what 0.8.32 and 0.8.33 shipped. Three guards were added after that release and every one of them sits upstream: git attributes stop a Windows checkout converting the file, a test pins the repo, and the publish script refuses a package carrying one. None of them protects a machine that already has a bad copy, and none runs at the moment the bytes land in somebody''s home directory. That gap mattered because the failure blocks its own cure: the tstyles shell function is defined by the file that is broken, so tstyles update from zsh cannot run at all, and recovering meant knowing to open pwsh and call the update function by hand. Anyone still on those releases now recovers by applying a style. The same rule covers each style''s prompt file, which is sourced by the same shells and breaks the same way.'
         }
     }
 }
