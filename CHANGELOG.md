@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.46] - 2026-09-23
+
 ### Fixed
 
 - **a shell script is now written with LF endings at the point it is staged, not just checked upstream of it.** `Sync-ShellRuntime` copied `shell/tstyles.sh` into the data root byte for byte, and `Set-ShellStyleState` did the same with a style's `prompt.sh`. A CR is part of the token to zsh and bash, so one in a staged `.sh` is `command not found: ^M` on every interactive shell — which is what PSGallery 0.8.32 and 0.8.33 shipped.
@@ -1491,7 +1493,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.45...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.46...HEAD
+[0.8.46]: https://github.com/fcreme/TerminalStyles/compare/v0.8.45...v0.8.46
 [0.8.45]: https://github.com/fcreme/TerminalStyles/compare/v0.8.44...v0.8.45
 [0.8.44]: https://github.com/fcreme/TerminalStyles/compare/v0.8.43...v0.8.44
 [0.8.43]: https://github.com/fcreme/TerminalStyles/compare/v0.8.42...v0.8.43
