@@ -359,8 +359,8 @@ function Invoke-TerminalStylesStateMigration {
 # and reported "Reset <terminal> to its unstyled default."
 $script:TStylesSubcommands = @(
     'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
-    'reset', 'restore', 'shell-init', 'shell-remove', 'trash', 'tune', 'update',
-    'uninstall', 'profiles')
+    'reset', 'restore', 'shell-init', 'shell-remove', 'show', 'trash', 'tune',
+    'update', 'uninstall', 'profiles')
 
 function Test-StyleNameIsSingleSegment {
     <#
@@ -784,6 +784,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'font')                 { Invoke-TerminalStyleFont -Name $SubArg -Target $Target; return }
     if ($Arg -eq 'list' -or $Arg -eq 'ls') { Show-StyleList;                return }
     if ($Arg -eq 'current')              { Show-CurrentStyle;               return }
+    if ($Arg -eq 'show')                 { Invoke-TerminalStyleShow -Name $SubArg; return }
     if ($Arg -eq 'random')               {
         Invoke-RandomStyle -Target $Target `
             -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided `

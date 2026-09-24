@@ -97,7 +97,19 @@ function Get-TerminalStyleHelpData {
                        "if none is detected).")
             Keys = @(); Examples = @('tstyles current')
         }
-        [pscustomobject]@{
+                [pscustomobject]@{
+            Name = 'show'; Usage = 'show <name>'; Summary = 'Preview a style without applying it'
+            Detail = @("Repaints the palette so you can see a style, waits for a keypress,",
+                       "then puts the terminal back. It writes nothing -- no settings file,",
+                       "no profile, no current-style record -- which is the whole point: it",
+                       "is the way to look at a style without committing to it.",
+                       "",
+                       "The cost of writing nothing is that a background, font and cursor",
+                       "shape are not part of what you see. On Windows Terminal those are",
+                       "most of a style, and the command says so on screen.")
+            Keys = @(); Examples = @('tstyles show lain', 'tstyles show koholint')
+        },
+[pscustomobject]@{
             Name = 'random'; Usage = 'random'; Summary = 'Apply a random style'
             Detail = @("Picks a random style and applies it immediately.")
             Keys = @(); Examples = @('tstyles random')

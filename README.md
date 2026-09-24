@@ -131,6 +131,7 @@ you ran `tstyles`.
 tstyles umbrella                  # Apply a specific style directly (no picker)
 tstyles list                      # List all themes; '*' marks the active one, 'yours' marks yours
 tstyles current                   # Print just the active style name
+tstyles show <name>               # Preview a style's colours, then put the terminal back. Applies nothing.
 tstyles random                    # Pick a random style and apply it
 tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
