@@ -111,7 +111,7 @@ The `scripts/publish.ps1` allowlist controls what ships. Currently:
   `terminals.ps1`, a missing `lib/` file does **not** fail the import — the
   module loads clean and then dies at first use — so `Get-PublishStagePlan`
   refuses to stage a directory entry that contains an untracked, unignored file
-- `styles/` (all 16 themes, including each one's `prompt.sh`)
+- `styles/` (every theme, including each one's `prompt.sh`)
 - `shell/` — the zsh/bash runtime (`tstyles.sh`) and the Terminal.app
   profile helper (`appleterminal.js`)
 - `fonts.json` (coding-font catalog for `tstyles font`)

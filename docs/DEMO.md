@@ -50,9 +50,12 @@ demo.
 
 **100 columns × 34 rows.**
 
-The picker draws 5 header lines + one row per style + a trailing blank — 22 lines
-for 16 styles. 34 rows leaves room for the typed command and the banner without
-scrolling. 100 columns keeps each name and its 5-block swatch on one line while
+The picker draws 5 header lines + one row per style + a trailing blank, so its
+height tracks `styles/` and a number written down here goes stale the next time
+one is added. `Test-PaneFitsPicker` in `scripts/demo-lib.ps1` is the arithmetic
+— worst case `StyleCount + 11` rows — and `demo.ps1` checks it before you
+record. 34 rows has headroom over that for the typed command and the banner
+without scrolling. 100 columns keeps each name and its 5-block swatch on one line while
 staying dense enough to crop to 16:9.
 
 `demo.ps1` warns if the window is too small before you start recording.
