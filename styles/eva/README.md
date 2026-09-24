@@ -41,3 +41,6 @@ animation with strong red CRT scanlines.
 [PILOT // EVA-02] [LOC: C:\Users\felip]
 > _
 ```
+
+`docs/screenshots/eva.png` is **rendered**, not captured, by
+`scripts/make-preview.py` — see the note in `styles/koholint/README.md`.
