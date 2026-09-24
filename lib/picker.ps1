@@ -851,6 +851,218 @@ function Test-ShouldShowPickerTip {
     return ($RunCount -le $Limit)
 }
 
+function Get-StyleShowLines {
+    <#
+    .SYNOPSIS
+    What `tstyles show` prints about one style, as lines.
+
+    .DESCRIPTION
+    Pure: it returns strings and paints nothing, so what the command SAYS can
+    be tested without a terminal and without applying anything.
+
+    The capability note is the load-bearing part. `show` repaints the palette
+    and nothing else -- it deliberately writes no settings file, no profile and
+    no current-style record, because a command whose whole promise is "look
+    without committing" must not be the one command that leaves something
+    behind. That means a style's background, font and cursor shape are NOT in
+    what you see, and on Windows Terminal those are most of the style. Saying
+    so is the difference between a preview and a misrepresentation.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)]$Scheme,
+        $Meta,
+        [AllowNull()][string]$Swatch,
+        [AllowNull()][string]$CapabilityNote,
+        [string]$HintEscape = '',
+        [bool]$IsCurrent = $false
+    )
+
+    $reset = "$([char]27)[0m"
+    $out = [System.Collections.Generic.List[string]]::new()
+    $out.Add('')
+    $marker = if ($IsCurrent) { '  (currently applied)' } else { '' }
+    $out.Add("  $Name$HintEscape$marker$reset")
+    if ($Swatch) { $out.Add("  $Swatch") }
+    $out.Add('')
+    if ($Meta -and $Meta.Description) { $out.Add("$HintEscape  $($Meta.Description)$reset") }
+    if ($Meta -and $Meta.Quote)       { $out.Add("$HintEscape  `"$($Meta.Quote)`"$reset") }
+    $out.Add('')
+    # Sample text in the scheme's own colours, so the palette is visible as
+    # something other than a row of blocks: this is what code will look like.
+    $out.Add((Get-StyleShowSample -Scheme $Scheme))
+    $out.Add('')
+    if ($CapabilityNote) { $out.Add("$HintEscape$CapabilityNote$reset") }
+    return $out.ToArray()
+}
+
+function Get-StyleShowSample {
+    <#
+    .SYNOPSIS
+    One line of sample text painted in a scheme's own ANSI colours.
+
+    .DESCRIPTION
+    A swatch shows five background cells. This shows the colours doing the job
+    they are actually for -- foreground text at the weights a terminal uses --
+    which is the difference between "these are the colours" and "this is what
+    your screen will look like".
+
+    Reads the scheme's slots by name and degrades to the plain string for any
+    the scheme does not carry: a hand-authored style is only required to have
+    background and foreground.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)]$Scheme)
+
+    $esc = [char]27
+    # Through ConvertTo-NormalHex, which is this project's one answer to "is
+    # that a colour". Its own docstring records what a second opinion cost:
+    # two slots tested different patterns, so a shorthand #013 was frozen by
+    # the tuner while its neighbours moved, and the swatch silently substituted
+    # a different slot than the one it was showing.
+    $fg = {
+        param($hex, $text)
+        $norm = ConvertTo-NormalHex $hex
+        if (-not $norm) { return $text }
+        $r = [Convert]::ToInt32($norm.Substring(1, 2), 16)
+        $g = [Convert]::ToInt32($norm.Substring(3, 2), 16)
+        $b = [Convert]::ToInt32($norm.Substring(5, 2), 16)
+        "$esc[38;2;$r;$g;$($b)m$text$esc[0m"
+    }
+    $parts = @(
+        (& $fg $Scheme.brightGreen  'function'),
+        (& $fg $Scheme.foreground   'Get-Thing'),
+        (& $fg $Scheme.brightBlack  '{'),
+        (& $fg $Scheme.brightCyan   '$path'),
+        (& $fg $Scheme.brightYellow "'~/code'"),
+        (& $fg $Scheme.brightRed    'throw'),
+        (& $fg $Scheme.brightBlack  '}')
+    )
+    '  ' + ($parts -join ' ')
+}
+
+function Invoke-TerminalStyleShow {
+    <#
+    .SYNOPSIS
+    `tstyles show <name>` -- look at a style without applying it.
+
+    .DESCRIPTION
+    The gap this fills: until now the only ways to see a style were to APPLY
+    it, or to open the picker and arrow to it. Both change what is applied
+    until you back out, and neither is a way to answer "what is lain like"
+    from a prompt.
+
+    It repaints the palette and puts it back, and it writes NOTHING: no
+    settings file, no profile, no current-style record, no shell staging. A
+    command whose whole promise is "look without committing" must not be the
+    one command that leaves something behind, so the restore is in a finally
+    and the preview never touches the apply path at all.
+
+    The cost of writing nothing is that a style's background, font and cursor
+    shape are not in what you see -- on Windows Terminal that is most of a
+    style. Get-StyleShowLines says so on screen rather than letting the reader
+    assume they have seen the whole thing.
+
+    Non-interactive callers get the description and the palette without the
+    repaint: there is no keypress coming to end it, and painting a terminal
+    nobody is watching and never putting it back is worse than not painting.
+
+    -ReadKey and -Write are test seams. Real callers omit them.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$Name,
+        [scriptblock]$ReadKey,
+        [scriptblock]$Write,
+        [System.Nullable[bool]]$Interactive
+    )
+
+    if (-not $Write) { $Write = { param($line) Write-Host $line } }
+
+    if (-not $Name) {
+        & $Write "Usage: tstyles show <name>"
+        & $Write "Available: $(@(Get-AvailableStyles | ForEach-Object Name) -join ', ')"
+        return
+    }
+
+    $dir = Get-StyleDir -StyleName $Name
+    if (-not $dir) {
+        # Same shape as `tstyles font` uses for an unknown font: name what was
+        # asked for, then what could have been.
+        & $Write "Unknown style: '$Name'"
+        & $Write "Available: $(@(Get-AvailableStyles | ForEach-Object Name) -join ', ')"
+        return
+    }
+
+    $scheme = $null
+    try {
+        $scheme = [System.IO.File]::ReadAllText((Join-Path $dir 'scheme.json'),
+                    [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } catch { }
+    if (-not $scheme) {
+        # A style whose scheme.json will not parse is exactly what
+        # Get-PickerStyleSet drops, and for the same reason: there is nothing
+        # to show and a raw parser exception is not an answer.
+        & $Write "'$Name' has no readable scheme.json, so there is nothing to show."
+        return
+    }
+
+    $kind = Get-TerminalKind
+    $note = Get-PickerCapabilityNote -Kind $kind -UseSettingsFile $false
+    if (-not $note) {
+        $note = '  Colours only: a background, font and cursor shape are not part of this preview.'
+    }
+    $current = ''
+    try { $current = "$(Get-CurrentStyleName)" } catch { }
+
+    $lines = Get-StyleShowLines -Name $Name -Scheme $scheme `
+                -Meta (Get-StyleMeta -StyleDir $dir) `
+                -Swatch (Get-SchemeSwatchOrNote -Scheme $scheme) `
+                -CapabilityNote $note -HintEscape (Get-HintEscape) `
+                -IsCurrent ($current -eq $Name)
+
+    $live = if ($null -ne $Interactive) { [bool]$Interactive } else { Test-InteractiveConsole }
+    if (-not $live) {
+        foreach ($l in $lines) { & $Write $l }
+        return
+    }
+
+    # What to put back. The style the user is ON, not this one -- and $null
+    # when nothing is applied, which Get-RevertOscPacket reads as "hand colour
+    # control back to the terminal" rather than "re-emit a style they were
+    # never looking at".
+    $startScheme = $null
+    if ($current) {
+        $curDir = Get-StyleDir -StyleName $current
+        if ($curDir) {
+            try {
+                $startScheme = [System.IO.File]::ReadAllText((Join-Path $curDir 'scheme.json'),
+                                 [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            } catch { }
+        }
+    }
+
+    if (-not $ReadKey) {
+        $ReadKey = { [void][Console]::ReadKey($true) }
+    }
+
+    try {
+        & $Write (Get-SchemeOscPacket -Scheme $scheme)
+        foreach ($l in $lines) { & $Write $l }
+        & $Write ''
+        & $Write "$(Get-HintEscape)  Press any key to put it back.$([char]27)[0m"
+        & $ReadKey
+    } finally {
+        # In a finally because a preview that fails halfway through must still
+        # put the terminal back: leaving someone in a palette they did not
+        # choose, with no record of it anywhere, is the one outcome this
+        # command cannot have.
+        & $Write (Get-RevertOscPacket -UseSettingsFile $false `
+                    -HadStartingStyle ([bool]$startScheme) -StartingScheme $startScheme)
+    }
+}
+
 function Test-ShouldPromptFonts {
     # Pure gate: only prompt on an interactive session that hasn't been prompted.
     param(

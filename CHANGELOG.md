@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`tstyles show <name>` -- look at a style without applying it.** Until now the only ways to see one were to APPLY it, or to open the picker and arrow to it. Both change what is applied until you back out, and neither answers "what is lain like" from a prompt.
+
+  It **writes nothing**: no settings file, no profile, no current-style record, no shell staging. A command whose whole promise is "look without committing" must not be the one that leaves something behind, so it repaints the palette, waits for a keypress, and restores in a `finally` -- a preview that fails halfway through still puts the terminal back.
+
+  The cost of writing nothing is that a background, font and cursor shape are not part of what you see, and on Windows Terminal those are most of a style. The command says so on screen rather than letting a reader assume they have seen the whole thing.
+
+  It prints the same description and quote the picker shows, the swatch `tstyles list` shows, and one line of sample text painted in the scheme's own colours -- a swatch shows five blocks, that shows the colours doing the job they are for. Non-interactive callers get all of it without the repaint: there is no keypress coming to end one, and painting a terminal nobody is watching and never putting it back is worse than not painting.
+
 ### Fixed
 
 - **the banner lives in the repo, and the build fails if the image and what it claims disagree.** `docs/banner.json` records the theme count and one accent per style, and a test compares that to `styles/` -- but nothing could tell whether the PNG had been regenerated after the JSON was. A 15-swatch banner beside 16 styles got as far as being caught by eye. The generator now records the image's SHA-256 alongside, and the test compares them.
