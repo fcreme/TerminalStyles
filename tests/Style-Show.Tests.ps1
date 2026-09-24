@@ -27,9 +27,20 @@ Describe 'Invoke-TerminalStyleShow' {
         # a $script: variable the test set is $null. A plain local captured by
         # value works because a List is a reference: the closure and the test
         # see the same object. Same trap the font picker's draw block hit.
-        BeforeAll { $script:Osc = "$([char]27)]11;" }
+        BeforeAll {
+            $script:Osc   = "$([char]27)]11;"   # "set this colour"
+            $script:Reset = "$([char]27)]104"   # "take your palette back"
+        }
 
-        It 'puts the terminal back, last of all' {
+        # Which restore packet `show` ends with depends on whether a style was
+        # applied when it ran, and that is ambient: a dev box has one on, a CI
+        # runner does not. The first version of these tests read the machine
+        # instead of pinning it -- green here, red on all four CI legs, because
+        # with nothing applied the revert is the reset packet and carries no
+        # ESC]11; at all. Both paths are worth having, so both are pinned.
+
+        It 'puts back the style you were on, last of all' {
+            Mock -CommandName Get-CurrentStyleName -MockWith { 'eva' }
             $painted = [System.Collections.Generic.List[string]]::new()
             Invoke-TerminalStyleShow -Name 'koholint' -Interactive $true `
                 -ReadKey { } -Write { param($l) $painted.Add($l) }.GetNewClosure()
@@ -37,11 +48,30 @@ Describe 'Invoke-TerminalStyleShow' {
             $packets.Count | Should -Be 2 -Because 'one to paint it, one to put it back'
             $painted[-1] | Should -Match ([regex]::Escape($script:Osc)) `
                 -Because 'the restore must be the last thing written'
+            $evaBg = (Get-Content (Join-Path (Get-StyleDir -StyleName 'eva') 'scheme.json') `
+                        -Raw | ConvertFrom-Json).background
+            $painted[-1] | Should -Match ([regex]::Escape($evaBg)) `
+                -Because 'it must put back eva, not the style it just previewed'
+        }
+
+        It 'hands the palette back when you were on nothing' {
+            # The other half of the same promise. Re-emitting a style here
+            # would leave someone in colours they never chose -- so with
+            # nothing applied the last packet is the reset, not a scheme.
+            Mock -CommandName Get-CurrentStyleName -MockWith { '' }
+            $painted = [System.Collections.Generic.List[string]]::new()
+            Invoke-TerminalStyleShow -Name 'koholint' -Interactive $true `
+                -ReadKey { } -Write { param($l) $painted.Add($l) }.GetNewClosure()
+            $painted[-1] | Should -Match ([regex]::Escape($script:Reset)) `
+                -Because 'the restore must be the last thing written'
+            $painted[-1] | Should -Not -Match ([regex]::Escape($script:Osc)) `
+                -Because 'there was no style to put back'
         }
 
         It 'puts the terminal back even when the preview throws' {
             # The one outcome this command cannot have is leaving someone in a
             # palette they did not choose, with no record of it anywhere.
+            Mock -CommandName Get-CurrentStyleName -MockWith { 'eva' }
             $painted = [System.Collections.Generic.List[string]]::new()
             $sink = { param($l) $painted.Add($l) }.GetNewClosure()
             { Invoke-TerminalStyleShow -Name 'koholint' -Interactive $true `
