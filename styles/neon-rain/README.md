@@ -8,3 +8,6 @@ dusty foreground.
 
 District-05 / night-sector themed banner and prompt. *"The neon never
 sleeps."*
+
+`docs/screenshots/neon-rain.png` is **rendered**, not captured, by
+`scripts/make-preview.py` — see the note in `styles/koholint/README.md`.

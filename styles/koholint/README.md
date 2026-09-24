@@ -37,9 +37,18 @@ fetched into your cache on first use, so `main` stays binary-free.
 >> _
 ```
 
-`docs/screenshots/koholint.png` is **rendered**, not captured. Every other
-screenshot in that folder came from `scripts/capture-screenshots.ps1`, which
-needs `$env:WT_SESSION` and a Windows box; this one is drawn by
+`docs/screenshots/koholint.png` is **rendered**, not captured. Most of that
+folder came from `scripts/capture-screenshots.ps1`, which needs
+`$env:WT_SESSION` and a Windows box; this one is drawn by
 `scripts/make-preview.py` from the style's own files — colours from
 scheme.json, the background from the `gifs` branch at the opacity theme.json
 asks for. It is reproducible on any machine, which a screen capture is not.
+
+Every render says so in its own style README, and
+`tests/Screenshot-Provenance.Tests.ps1` enforces that, so those notes are the
+list — no count is written down here to go stale.
+
+A render is drawn on a 900x340 canvas, which is wider and shorter than a real
+terminal window. A background taller than 340px is therefore cropped top and
+bottom where a real 1038x622 window would show it whole: eva's EXT3 label sits
+in rows a render cannot reach.

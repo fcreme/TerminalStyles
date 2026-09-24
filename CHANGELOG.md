@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.47] - 2026-09-24
+
 ### Added
 
 - **`tstyles show <name>` -- look at a style without applying it.** Until now the only ways to see one were to APPLY it, or to open the picker and arrow to it. Both change what is applied until you back out, and neither answers "what is lain like" from a prompt.
@@ -18,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   It prints the same description and quote the picker shows, the swatch `tstyles list` shows, and one line of sample text painted in the scheme's own colours -- a swatch shows five blocks, that shows the colours doing the job they are for. Non-interactive callers get all of it without the repaint: there is no keypress coming to end one, and painting a terminal nobody is watching and never putting it back is worse than not painting.
 
 ### Fixed
+
+- **eva's screenshot showed the crop 0.8.42 removed, and three renders did not say they were renders.** `docs/screenshots/eva.png` was captured in May, under `uniformToFill`: a 480x480 source enlarged 2.16x on a 1038x622 window, cut off at the chin. That is the defect `none` was introduced to fix, so the picture advertising the style was the one thing still showing it. It is redrawn from eva's own files, at native size.
+
+  One thing the redraw does **not** restore. 0.8.42 also noted eva had lost its EXT3 label, which sits in the top rows of the source; a render is drawn on a 900x340 canvas, so a 480px-tall image loses 70 rows top and bottom and the label is outside the frame. A real 1038x622 window shows it. That is a limit of the render canvas, not of the style, and it applies to any source taller than 340px -- koholint included.
+
+  Redrawing it made it the fifth **rendered** screenshot, and only two of the five said so. A render comes out of `scripts/make-preview.py` and is reproducible on any machine; a capture is a photograph of a real Windows Terminal. A reader cannot tell them apart by looking, so an undisclosed render reads as a photograph -- the same claim-shaped defect as help text describing a narrower command than the one that runs. eva, neon-rain and phosphor now carry the note koholint and skyline already did, and `tests/Screenshot-Provenance.Tests.ps1` decides which is which by the canvas size it parses out of the generator, so neither half can drift alone.
 
 - **the banner lives in the repo, and the build fails if the image and what it claims disagree.** `docs/banner.json` records the theme count and one accent per style, and a test compares that to `styles/` -- but nothing could tell whether the PNG had been regenerated after the JSON was. A 15-swatch banner beside 16 styles got as far as being caught by eye. The generator now records the image's SHA-256 alongside, and the test compares them.
 
@@ -1511,7 +1519,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.46...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.47...HEAD
+[0.8.47]: https://github.com/fcreme/TerminalStyles/compare/v0.8.46...v0.8.47
 [0.8.46]: https://github.com/fcreme/TerminalStyles/compare/v0.8.45...v0.8.46
 [0.8.45]: https://github.com/fcreme/TerminalStyles/compare/v0.8.44...v0.8.45
 [0.8.44]: https://github.com/fcreme/TerminalStyles/compare/v0.8.43...v0.8.44

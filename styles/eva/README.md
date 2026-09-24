@@ -10,7 +10,7 @@ directly from Asuka / Unit-02 stills.
 
 - **scheme.json** — coral-red / yellow / pink-white palette on near-black.
 - **theme.json** — filledBox cursor (CRT block feel), Cascadia Code
-  semi-bold, GIF stretched to fill, centered at 0.35 opacity.
+  semi-bold, GIF at its native size, centered at 0.35 opacity.
 - **profile.ps1** — replaces `$PROFILE` with:
   - 2-line prompt: `[PILOT // EVA-02] [LOC: <path>]` / `>`
   - Startup banner: NERV operations readout with Asuka's signature line
@@ -41,3 +41,6 @@ animation with strong red CRT scanlines.
 [PILOT // EVA-02] [LOC: C:\Users\felip]
 > _
 ```
+
+`docs/screenshots/eva.png` is **rendered**, not captured, by
+`scripts/make-preview.py` — see the note in `styles/koholint/README.md`.

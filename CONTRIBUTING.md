@@ -153,7 +153,11 @@ Invoke-Pester -Path .\tests\Scheme-Contrast.Tests.ps1  # just the contrast guard
 
 ### Screenshots
 
-After adding a theme, regenerate the README screenshot gallery:
+After adding a theme, regenerate the README screenshot gallery. Note that
+this overwrites **every** screenshot, including the ones that are renders
+rather than captures (each says so in its style README) — stage only the
+file you meant to change, and redraw a render with
+`python3 scripts/make-preview.py <style>`:
 
 ```powershell
 # Must be run from inside a Windows Terminal tab

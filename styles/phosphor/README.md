@@ -45,3 +45,6 @@ the previously-active style is wiped.
 ```
 [dotfiles]> _
 ```
+
+`docs/screenshots/phosphor.png` is **rendered**, not captured, by
+`scripts/make-preview.py` — see the note in `styles/koholint/README.md`.
