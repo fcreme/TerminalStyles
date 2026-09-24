@@ -21,7 +21,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- **eva's screenshot showed the crop 0.8.44 removed, and three renders did not say they were renders.** `docs/screenshots/eva.png` was captured in May, under `uniformToFill`: a 480x480 source enlarged 2.08x on a 1038x622 window, cut off at the chin with the EXT3 label gone. That is the defect `none` was introduced to fix, so the picture advertising the style was the one thing still showing it. It is redrawn from eva's own files.
+- **eva's screenshot showed the crop 0.8.42 removed, and three renders did not say they were renders.** `docs/screenshots/eva.png` was captured in May, under `uniformToFill`: a 480x480 source enlarged 2.16x on a 1038x622 window, cut off at the chin. That is the defect `none` was introduced to fix, so the picture advertising the style was the one thing still showing it. It is redrawn from eva's own files, at native size.
+
+  One thing the redraw does **not** restore. 0.8.42 also noted eva had lost its EXT3 label, which sits in the top rows of the source; a render is drawn on a 900x340 canvas, so a 480px-tall image loses 70 rows top and bottom and the label is outside the frame. A real 1038x622 window shows it. That is a limit of the render canvas, not of the style, and it applies to any source taller than 340px -- koholint included.
 
   Redrawing it made it the fifth **rendered** screenshot, and only two of the five said so. A render comes out of `scripts/make-preview.py` and is reproducible on any machine; a capture is a photograph of a real Windows Terminal. A reader cannot tell them apart by looking, so an undisclosed render reads as a photograph -- the same claim-shaped defect as help text describing a narrower command than the one that runs. eva, neon-rain and phosphor now carry the note koholint and skyline already did, and `tests/Screenshot-Provenance.Tests.ps1` decides which is which by the canvas size it parses out of the generator, so neither half can drift alone.
 

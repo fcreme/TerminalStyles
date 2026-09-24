@@ -72,7 +72,11 @@ Describe 'a screenshot says which kind of picture it is' {
     It '<Name> is rendered, and its README says so' -ForEach $script:RenderCases {
         $ReadmePath | Should -Exist -Because "a render of $Name needs somewhere to disclose it"
         $readme = [System.IO.File]::ReadAllText($ReadmePath, [System.Text.UTF8Encoding]::new($false))
-        $readme | Should -Match 'is \*\*rendered\*\*' `
+        # The note has to name ITS OWN picture. Matching the phrase alone
+        # passes on a note copy-pasted from another style, which is the most
+        # likely way this ever goes wrong -- all five were written that way.
+        $pattern = '`docs/screenshots/' + [regex]::Escape($Name) + '\.png` is \*\*rendered\*\*'
+        $readme | Should -Match $pattern `
             -Because "docs/screenshots/$Name.png is drawn, not photographed, and a reader cannot tell by looking"
     }
 

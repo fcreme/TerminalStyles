@@ -2,9 +2,11 @@
 
     python3 scripts/make-preview.py koholint
 
-The other screenshots in that folder are real Windows Terminal captures made
-by scripts/capture-screenshots.ps1, which needs $env:WT_SESSION and a Windows
-box. This renders instead, from the style's OWN data: the colours come out of
+Most of the other screenshots in that folder are real Windows Terminal captures
+made by scripts/capture-screenshots.ps1, which needs $env:WT_SESSION and a
+Windows box -- but several are renders too, and each one says so in its style
+README; tests/Screenshot-Provenance.Tests.ps1 holds them to it, classifying by
+the W, H below. This renders instead, from the style's OWN data: the colours come out of
 scheme.json, the background out of the gifs branch at the opacity theme.json
 asks for, and the prompt out of the style's profile.ps1 rather than being typed
 here. Nothing about it depends on a terminal being visible on the right
