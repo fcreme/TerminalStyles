@@ -56,6 +56,25 @@ Describe 'Get-VSCodeSettingsPath' {
                 Should -Be '/home/x/.config/Code/User/settings.json'
         }
 
+        It 'lets a bound -HomeDir beat the machine''s own XDG_CONFIG_HOME' {
+            # The ubuntu runner sets XDG_CONFIG_HOME, so this case passed on
+            # three legs and failed on the fourth: the caller said where home
+            # was and the ambient variable answered instead. Same rule the rest
+            # of the repo applies to $env:ZDOTDIR.
+            $saved = $env:XDG_CONFIG_HOME
+            try {
+                $env:XDG_CONFIG_HOME = '/somewhere/else'
+                Get-VSCodeSettingsPath -Platform 'Linux' -HomeDir '/home/x' |
+                    Should -Be '/home/x/.config/Code/User/settings.json'
+            } finally { $env:XDG_CONFIG_HOME = $saved }
+        }
+
+        It 'still honours an XDG path the caller asked for by name' {
+            # Binding both is a caller who means it.
+            Get-VSCodeSettingsPath -Platform 'Linux' -HomeDir '/home/x' -XdgConfigHome '/home/x/cfg' |
+                Should -Be '/home/x/cfg/Code/User/settings.json'
+        }
+
         It 'gives the same answer whatever machine is asking' {
             # The property CI found missing. A Windows path is backslashed and
             # a macOS path is not, on every host -- otherwise a function whose

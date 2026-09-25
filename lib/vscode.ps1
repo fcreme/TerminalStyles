@@ -63,7 +63,8 @@ function Get-VSCodeSettingsPath {
         [string]$Variant = 'Code',
         [string]$Platform = (Get-TStylesPlatform),
         [string]$HomeDir  = $HOME,
-        [string]$AppData  = $env:APPDATA
+        [string]$AppData  = $env:APPDATA,
+        [string]$XdgConfigHome = $env:XDG_CONFIG_HOME
     )
 
     $sep = Get-PlatformPathSeparator -Platform $Platform
@@ -81,7 +82,18 @@ function Get-VSCodeSettingsPath {
         }
         default {
             # Linux and anything else XDG-shaped.
-            $cfg = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-PlatformPath -Separator $sep -Parts @($HomeDir, '.config') }
+            #
+            # A BOUND -HomeDir suppresses the ambient XDG_CONFIG_HOME, the same
+            # way a bound -HomeDir suppresses $env:ZDOTDIR everywhere else in
+            # this repo. Reading the live variable through a seam is how the
+            # ubuntu leg went red while the other three passed: the runner sets
+            # XDG_CONFIG_HOME, so the caller said where home was and the
+            # machine answered anyway. Binding both is still honoured -- that
+            # caller is asking about an XDG layout on purpose.
+            $xdg = $XdgConfigHome
+            if ($PSBoundParameters.ContainsKey('HomeDir') -and
+                -not $PSBoundParameters.ContainsKey('XdgConfigHome')) { $xdg = $null }
+            $cfg = if ($xdg) { $xdg } else { Join-PlatformPath -Separator $sep -Parts @($HomeDir, '.config') }
             return (Join-PlatformPath -Separator $sep -Parts @($cfg, $Variant, 'User', 'settings.json'))
         }
     }
