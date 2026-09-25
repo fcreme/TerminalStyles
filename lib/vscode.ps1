@@ -40,12 +40,22 @@ function Get-VSCodeSettingsPath {
     installed but never opened has a User directory and no settings.json yet,
     and "not there" is the caller's decision to make, not this function's.
 
-    Built with [System.IO.Path]::Combine, not Join-Path. Join-Path goes through
-    the PowerShell provider and resolves the drive, so joining onto
-    'C:\Users\x' throws "a drive with the name 'C' does not exist" on macOS and
-    Linux -- which is every CI leg but two, and exactly where the Windows
-    branch has to be exercised from. Combine is a string operation and has no
-    opinion about drives.
+    The answer depends on -Platform and on NOTHING ABOUT THE HOST. Neither of
+    the obvious joins gets that right:
+
+      Join-Path goes through the PowerShell provider and resolves the drive, so
+      joining onto 'C:\Users\x' throws "a drive with the name 'C' does not
+      exist" on macOS and Linux -- which is where the Windows branch gets
+      exercised.
+
+      [System.IO.Path]::Combine has no opinion about drives, but it separates
+      with the HOST's character. Asked for a macOS path on Windows it returns
+      '/Users/x\Library\Application Support\...', which is not a path on either
+      system. CI caught exactly that: both Windows legs red, both Unix legs
+      green, on a function whose output should not have known the difference.
+
+    So the separator comes from the platform being ASKED ABOUT. A parameterised
+    answer that varies by machine is not a parameterised answer.
     #>
     [CmdletBinding()]
     param(
@@ -56,30 +66,46 @@ function Get-VSCodeSettingsPath {
         [string]$AppData  = $env:APPDATA
     )
 
-    $combine = {
-        param([string[]]$Parts)
-        $acc = $Parts[0]
-        foreach ($p in $Parts[1..($Parts.Count - 1)]) { $acc = [System.IO.Path]::Combine($acc, $p) }
-        return $acc
-    }
+    $sep = Get-PlatformPathSeparator -Platform $Platform
 
     switch ($Platform) {
         'Windows' {
             # %APPDATA% (Roaming), not LOCALAPPDATA: settings.json is the file
             # that follows a roaming profile, which is why VS Code puts it
             # there and the extension cache elsewhere.
-            $root = if ($AppData) { $AppData } else { & $combine @($HomeDir, 'AppData', 'Roaming') }
-            return (& $combine @($root, $Variant, 'User', 'settings.json'))
+            $root = if ($AppData) { $AppData } else { Join-PlatformPath -Separator $sep -Parts @($HomeDir, 'AppData', 'Roaming') }
+            return (Join-PlatformPath -Separator $sep -Parts @($root, $Variant, 'User', 'settings.json'))
         }
         'MacOS' {
-            return (& $combine @($HomeDir, 'Library', 'Application Support', $Variant, 'User', 'settings.json'))
+            return (Join-PlatformPath -Separator $sep -Parts @($HomeDir, 'Library', 'Application Support', $Variant, 'User', 'settings.json'))
         }
         default {
             # Linux and anything else XDG-shaped.
-            $cfg = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { & $combine @($HomeDir, '.config') }
-            return (& $combine @($cfg, $Variant, 'User', 'settings.json'))
+            $cfg = if ($env:XDG_CONFIG_HOME) { $env:XDG_CONFIG_HOME } else { Join-PlatformPath -Separator $sep -Parts @($HomeDir, '.config') }
+            return (Join-PlatformPath -Separator $sep -Parts @($cfg, $Variant, 'User', 'settings.json'))
         }
     }
+}
+
+function Get-PlatformPathSeparator {
+    # The separator a given platform uses, NOT the one this machine uses.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Platform)
+    if ($Platform -eq 'Windows') { return '\' }
+    return '/'
+}
+
+function Join-PlatformPath {
+    # Join path parts with an explicit separator. Pure string work: no
+    # provider, no drive resolution, no [System.IO.Path], and so no dependence
+    # on the host. Trailing separators on a part are trimmed so a HomeDir of
+    # 'C:\Users\x\' does not produce a doubled one.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Separator,
+        [Parameter(Mandatory)][string[]]$Parts
+    )
+    return (@($Parts | ForEach-Object { "$_".TrimEnd('\', '/') }) -join $Separator)
 }
 
 function Get-VSCodeTerminalColor {

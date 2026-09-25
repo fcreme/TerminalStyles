@@ -26,28 +26,49 @@ BeforeAll {
 Describe 'Get-VSCodeSettingsPath' {
     InModuleScope TerminalStyles {
 
+        # Exact strings, not patterns. The answer depends on -Platform and on
+        # nothing about the machine asking, so there is one right answer per
+        # case and it is the same on all four CI legs. The first version of
+        # these used regexes with a literal '/' and passed here while failing
+        # on both Windows legs, because the path was being built with the
+        # HOST's separator -- so the pattern was hiding the bug it should have
+        # caught.
         It 'puts settings under Application Support on macOS' {
-            $p = Get-VSCodeSettingsPath -Platform 'macOS' -HomeDir '/Users/x'
-            $p | Should -Match 'Library/Application Support/Code/User/settings\.json$'
+            Get-VSCodeSettingsPath -Platform 'MacOS' -HomeDir '/Users/x' |
+                Should -Be '/Users/x/Library/Application Support/Code/User/settings.json'
         }
 
         It 'uses roaming APPDATA on Windows, not the local one' {
             # settings.json is the file that follows a roaming profile. Putting
             # it under LOCALAPPDATA would work on one machine and lose the
             # style on every other one the user signs in to.
-            $p = Get-VSCodeSettingsPath -Platform 'Windows' -AppData 'C:\Users\x\AppData\Roaming'
-            $p | Should -Match 'Roaming'
-            $p | Should -Match 'Code.User.settings\.json$'
+            Get-VSCodeSettingsPath -Platform 'Windows' -AppData 'C:\Users\x\AppData\Roaming' |
+                Should -Be 'C:\Users\x\AppData\Roaming\Code\User\settings.json'
         }
 
         It 'falls back to a roaming path when APPDATA is not set' {
-            $p = Get-VSCodeSettingsPath -Platform 'Windows' -AppData '' -HomeDir 'C:\Users\x'
-            $p | Should -Match 'AppData.Roaming.Code'
+            Get-VSCodeSettingsPath -Platform 'Windows' -AppData '' -HomeDir 'C:\Users\x' |
+                Should -Be 'C:\Users\x\AppData\Roaming\Code\User\settings.json'
         }
 
         It 'uses XDG config on Linux' {
-            $p = Get-VSCodeSettingsPath -Platform 'Linux' -HomeDir '/home/x'
-            $p | Should -Match '/\.config/Code/User/settings\.json$'
+            Get-VSCodeSettingsPath -Platform 'Linux' -HomeDir '/home/x' |
+                Should -Be '/home/x/.config/Code/User/settings.json'
+        }
+
+        It 'gives the same answer whatever machine is asking' {
+            # The property CI found missing. A Windows path is backslashed and
+            # a macOS path is not, on every host -- otherwise a function whose
+            # platform is a PARAMETER quietly answers about the host instead.
+            $win = Get-VSCodeSettingsPath -Platform 'Windows' -AppData 'C:\Users\x\AppData\Roaming'
+            $mac = Get-VSCodeSettingsPath -Platform 'MacOS' -HomeDir '/Users/x'
+            $win | Should -Not -Match '/'
+            $mac | Should -Not -Match ([regex]::Escape('\'))
+        }
+
+        It 'does not double a separator the caller already left on' {
+            Get-VSCodeSettingsPath -Platform 'MacOS' -HomeDir '/Users/x/' |
+                Should -Be '/Users/x/Library/Application Support/Code/User/settings.json'
         }
 
         It 'gives <Variant> its own path, because they install side by side' -ForEach @(
