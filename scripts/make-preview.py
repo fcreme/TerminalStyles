@@ -57,15 +57,17 @@ try:
         placed = gif.resize((W, H), Image.NEAREST)
     else:
         n = gif.resize((max(1, int(gif.width * s)), max(1, int(gif.height * s))), Image.NEAREST)
+        # Alignment decides which part survives a crop as much as where a
+        # smaller image sits: skyline covers anchored bottomRight so the girl
+        # stays in frame, and a centre crop would render the one she is not in.
+        # Offsets go negative when the image overflows, so one paste does both.
+        align = str(theme.get('backgroundImageAlignment', 'center')).lower()
+        left = W - n.width if 'right' in align else (0 if 'left' in align
+                                                     else (W - n.width) // 2)
+        top = H - n.height if 'bottom' in align else (0 if 'top' in align
+                                                      else (H - n.height) // 2)
         placed = Image.new('RGB', (W, H), scheme['background'])
-        if n.width >= W and n.height >= H:
-            l, t = (n.width - W) // 2, (n.height - H) // 2
-            placed = n.crop((l, t, l + W, t + H))
-        else:
-            align = str(theme.get('backgroundImageAlignment', 'center')).lower()
-            top = H - n.height if 'bottom' in align else (0 if 'top' in align
-                                                          else (H - n.height) // 2)
-            placed.paste(n, ((W - n.width) // 2, top))
+        placed.paste(n, (left, top))
     im = Image.blend(im, placed, float(theme.get('backgroundImageOpacity', 0.3)))
 except Exception as e:
     print(f'no background ({e}); rendering on the solid scheme colour')

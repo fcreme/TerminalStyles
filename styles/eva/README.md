@@ -10,7 +10,9 @@ directly from Asuka / Unit-02 stills.
 
 - **scheme.json** — coral-red / yellow / pink-white palette on near-black.
 - **theme.json** — filledBox cursor (CRT block feel), Cascadia Code
-  semi-bold, GIF at its native size, centered at 0.35 opacity.
+  semi-bold, GIF scaled to the window's height (`uniform`) and centered at
+  0.35 opacity. Covering would crop the chin and the EXT3 label; the GIF's own
+  edges are near-black, so the bars either side read as part of the frame.
 - **profile.ps1** — replaces `$PROFILE` with:
   - 2-line prompt: `[PILOT // EVA-02] [LOC: <path>]` / `>`
   - Startup banner: NERV operations readout with Asuka's signature line
