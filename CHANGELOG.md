@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.48] - 2026-09-27
+
 ### Changed
 
 - **eva and skyline fill the window again, without losing what 0.8.42 and 0.8.45 kept.** Both declared `none`, which on Windows Terminal draws the GIF at its own size: eva was a 480px square in the middle of a ~1038x622 window, and skyline a 270px strip along the bottom with the top 57% of the window flat indigo. Keeping the subject had cost the window.
@@ -1529,7 +1531,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.47...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.48...HEAD
+[0.8.48]: https://github.com/fcreme/TerminalStyles/compare/v0.8.47...v0.8.48
 [0.8.47]: https://github.com/fcreme/TerminalStyles/compare/v0.8.46...v0.8.47
 [0.8.46]: https://github.com/fcreme/TerminalStyles/compare/v0.8.45...v0.8.46
 [0.8.45]: https://github.com/fcreme/TerminalStyles/compare/v0.8.44...v0.8.45
