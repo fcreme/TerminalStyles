@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **eva and skyline fill the window again, without losing what 0.8.42 and 0.8.45 kept.** Both declared `none`, which on Windows Terminal draws the GIF at its own size: eva was a 480px square in the middle of a ~1038x622 window, and skyline a 270px strip along the bottom with the top 57% of the window flat indigo. Keeping the subject had cost the window.
+
+  eva is `uniform` now -- scaled until it meets the window's height, whole. Covering is still wrong for it (cut off at the chin, EXT3 label gone), but the source's left and right edges are near-black, so at 0.35 opacity the bars either side are three levels off the scheme background and read as part of the frame.
+
+  skyline is `uniformToFill` anchored `bottomRight`. Its 1052x270 source is short, so covering is set by the height and crops the width; centred, that crop kept the mirrored city and two moons and lost the girl. Anchored right it keeps the girl, the pole and the real moon, and gives up the reflection that was only added to pad `none`.
+
+  `scripts/make-preview.py` centre-cropped anything that covered the canvas and ignored horizontal alignment everywhere, so it would have rendered skyline's screenshot as the frame without her. It now applies the style's alignment on both axes, crop or not, and both screenshots are redrawn.
+
 ## [0.8.47] - 2026-09-24
 
 ### Added

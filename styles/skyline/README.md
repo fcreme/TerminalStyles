@@ -18,9 +18,9 @@ black-violet; this one is saturated.
   foreground measures 15.98:1 on the background and 6.54:1 on the
   selection, and every slot clears the 3:1 accent floor.
 - **theme.json** — bar cursor, Cascadia Code regular, padding 14,
-  background at 0.32. The source is 492×270, which is already close to a
-  terminal's shape, so it covers with a 93px crop rather than the 2× blow-up
-  a square image needs.
+  background at 0.38. The source is 1052×270, so covering an ordinary
+  window is set by its height; it is anchored `bottomRight`, which keeps the
+  girl, the pole and the moon and gives up the mirrored city on the left.
 - **profile.ps1** — title `SKYLINE`, two-line prompt: the folder in
   lit-window blue under a dim `..`, then a green `|` bar. PSReadLine takes
   the same palette, with the neon pink kept for errors — the one warm
