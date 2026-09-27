@@ -108,7 +108,7 @@ Each of these has hidden a real bug in this repo. Check for them in anything you
 
 ## Style parity
 
-All 16 styles promise their `profile.ps1` and `prompt.sh` halves render **byte-identically**
+Every style promises that its `profile.ps1` and `prompt.sh` halves render **byte-identically**
 — it is written at the top of every `prompt.sh`. Shell-side names must be `_ts_`-prefixed,
 on **every** column of a line, not just the first. `shell/tstyles.sh` is sourced on every
 interactive shell, so it is held to the same rule (`TSTYLES_DATA` is a deliberate exception).
