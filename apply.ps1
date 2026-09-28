@@ -123,7 +123,7 @@ Write-Host "Settings file: $SettingsPath"
 
 # UTF-8 explicit: Get-Content -Raw in WinPS 5.1 defaults to Windows-1252,
 # which mangles non-ASCII WT profile names (e.g. "Símbolo del sistema").
-$settings = ConvertFrom-WTJson ([System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)))
+$settings = ConvertFrom-JsoncText ([System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)))
 
 # --- Target profile selection ---
 # The module's own list, not a fork of it. Built here by hand it always offered
