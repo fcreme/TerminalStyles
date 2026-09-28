@@ -392,6 +392,69 @@ function Get-VSCodeStylePlan {
     return ,$entries.ToArray()
 }
 
+function Get-VSCodeColorOverride {
+    <#
+    .SYNOPSIS
+    Theme-scoped colour blocks that would win over the colours we write.
+
+    .DESCRIPTION
+    Pure. workbench.colorCustomizations may hold THEME-SCOPED blocks as well as
+    plain colour ids:
+
+        "workbench.colorCustomizations": {
+            "[Default Dark+]": { "terminal.background": "#000000" },
+            "terminal.background": "#182098"
+        }
+
+    When that theme is active the scoped entry is what takes effect, so a style
+    written into the plain siblings is correct, saved, and invisible. VS Code
+    has issues filed on exactly that confusion (microsoft/vscode#61566, and
+    #303246 for terminal.background specifically).
+
+    This is the capability rule pointed one level down. "Capabilities are
+    promises, not possibilities" is about claiming a writer this module does
+    not have; the same false promise happens when the writer exists, succeeds,
+    and is overruled -- the user is told a style was applied and their terminal
+    does not change. Detecting it is what lets the caller say so instead.
+
+    Returns one record per scoped block that collides:
+      @{ Scope = '[Default Dark+]'; Ids = @('terminal.background', ...) }
+    Empty when nothing collides, which is the normal case.
+
+    It does NOT look at workspace settings. A .vscode/settings.json overrides
+    the user file and is not visible from this text at all; that belongs to
+    whatever eventually reads files, and is called out rather than pretended
+    about.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Ids
+    )
+
+    $out = [System.Collections.Generic.List[object]]::new()
+    $tokens = Get-JsoncToken -Text $Text
+    $found = Resolve-JsoncPath -Text $Text -Tokens $tokens -Path @('workbench.colorCustomizations')
+    if (-not $found.Member -or $found.Member.ValueOpen -lt 0) { return ,$out.ToArray() }
+
+    $members = Get-JsoncObjectMember -Text $Text -Tokens $tokens -OpenIndex $found.Member.ValueOpen
+    foreach ($m in $members) {
+        # A scope is a key in brackets: "[Monokai]", "[Abyss][Red]", "[Monokai*]".
+        if (-not $m.Name -or -not $m.Name.StartsWith('[')) { continue }
+        if ($m.ValueOpen -lt 0 -or $tokens[$m.ValueOpen].Kind -ne 'BraceOpen') { continue }
+
+        $inner = Get-JsoncObjectMember -Text $Text -Tokens $tokens -OpenIndex $m.ValueOpen
+        $hits = [System.Collections.Generic.List[string]]::new()
+        foreach ($i in $inner) {
+            if ($Ids -contains $i.Name) { $hits.Add($i.Name) }
+        }
+        if ($hits.Count -gt 0) {
+            $out.Add(@{ Scope = $m.Name; Ids = $hits.ToArray() })
+        }
+    }
+    return ,$out.ToArray()
+}
+
 function Invoke-VSCodeStyleApply {
     <#
     .SYNOPSIS

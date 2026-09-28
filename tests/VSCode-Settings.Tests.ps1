@@ -316,6 +316,89 @@ Describe 'Get-VSCodeStylePlan' {
     }
 }
 
+Describe 'Get-VSCodeColorOverride' {
+    InModuleScope TerminalStyles {
+
+        # A style can be written correctly, saved, and still not show up: a
+        # theme-scoped block inside workbench.colorCustomizations wins over its
+        # plain siblings when that theme is active. VS Code has issues filed on
+        # the confusion (microsoft/vscode#61566; #303246 names
+        # terminal.background). Reporting success over that is the capability
+        # rule's false promise with the writer working.
+
+        It 'finds a theme-scoped block that sets a colour we write' {
+            $t = @'
+{
+  "workbench.colorCustomizations": {
+    "[Default Dark+]": { "terminal.background": "#000000" },
+    "terminal.background": "#182098"
+  }
+}
+'@
+            $hits = Get-VSCodeColorOverride -Text $t -Ids @('terminal.background', 'terminal.foreground')
+            $hits.Count | Should -Be 1
+            $hits[0].Scope | Should -Be '[Default Dark+]'
+            $hits[0].Ids   | Should -Contain 'terminal.background'
+        }
+
+        It 'ignores a scoped block that touches nothing of ours' {
+            $t = '{ "workbench.colorCustomizations": { "[Monokai]": { "sideBar.background": "#347890" } } }'
+            (Get-VSCodeColorOverride -Text $t -Ids @('terminal.background')).Count | Should -Be 0
+        }
+
+        It 'ignores plain colour ids, which we overwrite on purpose' {
+            $t = '{ "workbench.colorCustomizations": { "terminal.background": "#000000" } }'
+            (Get-VSCodeColorOverride -Text $t -Ids @('terminal.background')).Count | Should -Be 0
+        }
+
+        It 'finds every colliding scope, not just the first' {
+            $t = @'
+{
+  "workbench.colorCustomizations": {
+    "[Abyss]": { "terminal.background": "#000000" },
+    "[Monokai*]": { "terminal.foreground": "#ffffff" }
+  }
+}
+'@
+            $hits = Get-VSCodeColorOverride -Text $t -Ids @('terminal.background', 'terminal.foreground')
+            $hits.Count | Should -Be 2
+            @($hits | ForEach-Object { $_.Scope }) | Should -Contain '[Monokai*]'
+        }
+
+        It 'does not read the ROOT object when a scoped key holds no object' {
+            # Legal JSON, nonsense settings: a "[Theme]" key whose value is a
+            # string. Its ValueOpen is -1, and without the object guard the
+            # member scan starts at token 0 -- the root -- and reports root
+            # keys as though they sat inside the scoped block. A mutation
+            # removing that guard survived until this fixture existed, because
+            # the earlier ones had nothing at the root to collide with.
+            $t = @'
+{
+  "terminal.background": "#deadbe",
+  "workbench.colorCustomizations": { "[Monokai]": "#ffffff" }
+}
+'@
+            (Get-VSCodeColorOverride -Text $t -Ids @('terminal.background')).Count | Should -Be 0
+        }
+
+        It 'says nothing when there is no colour block at all' {
+            (Get-VSCodeColorOverride -Text '{ "editor.fontSize": 13 }' -Ids @('terminal.background')).Count |
+                Should -Be 0
+        }
+
+        It 'reports what a real style would actually collide with' {
+            # The ids are the plan's, not a hand-written list, so this cannot
+            # drift away from what the apply writes.
+            $plan = Get-VSCodeStylePlan -StyleDir (Get-StyleDir -StyleName 'koholint')
+            $ids = @($plan | Where-Object { $_.Path.Count -eq 2 } | ForEach-Object { $_.Path[1] })
+            $t = '{ "workbench.colorCustomizations": { "[Default Dark+]": { "terminal.ansiRed": "#ff0000" } } }'
+            $hits = Get-VSCodeColorOverride -Text $t -Ids $ids
+            $hits.Count | Should -Be 1
+            $hits[0].Ids | Should -Contain 'terminal.ansiRed'
+        }
+    }
+}
+
 Describe 'applying and resetting a style in settings.json text' {
     InModuleScope TerminalStyles {
 
