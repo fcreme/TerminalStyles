@@ -91,3 +91,60 @@ jobs:
           Write-Host ""
           Write-Host "This check runs again every Monday until the two agree."
           exit 1
+
+      - name: Every tag, not just the newest
+        shell: pwsh
+        run: |
+          # The step above asks whether the NEWEST tag shipped. It stops asking
+          # the moment a later version does: newest tag and Gallery agree again,
+          # and a version that was tagged and skipped leaves no trace.
+          #
+          # That is not hypothetical. v0.8.22 and v0.8.23 -- the incident quoted
+          # in this file's own header -- are still not on the Gallery, and this
+          # workflow has been green throughout. v0.8.47 joined them: it shipped
+          # `tstyles show` and its release notes were never published, so the
+          # Gallery, which renders no README, has never mentioned the command.
+          #
+          # One request lists every published version, so this is a set
+          # comparison rather than one call per tag.
+          try {
+              $published = @(Find-PSResource -Name TerminalStyles -Repository PSGallery -Version '*' -ErrorAction Stop |
+                               ForEach-Object { $_.Version.ToString() })
+          } catch {
+              Write-Host "::warning::Could not reach PSGallery: $($_.Exception.Message)"
+              exit 0
+          }
+
+          $tags = @(git tag -l 'v*' |
+                      Where-Object { $_ -match '^v\d+(\.\d+){1,3}$' } |
+                      ForEach-Object { $_ -replace '^v', '' })
+
+          # Versions already known never to have shipped, with what carried
+          # their code instead. Anything here is acknowledged, not forgotten.
+          # Relative to the checkout, NOT $PSScriptRoot: a pwsh `run:` block is
+          # written to a temp file on the runner, so $PSScriptRoot is that temp
+          # directory and the lookup would silently find nothing -- turning
+          # every recorded gap back into a failure.
+          $knownPath = Join-Path $env:GITHUB_WORKSPACE 'docs/unshipped-versions.txt'
+          $known = @()
+          if (Test-Path -LiteralPath $knownPath) {
+              $known = @(Get-Content -LiteralPath $knownPath |
+                           Where-Object { $_ -and $_ -notmatch '^\s*#' } |
+                           ForEach-Object { ($_ -split '\s+')[0] })
+          }
+
+          $gaps = @($tags | Where-Object { $published -notcontains $_ -and $known -notcontains $_ })
+          if ($gaps.Count -eq 0) {
+              Write-Host "Every tag is on the Gallery, or is recorded in docs/unshipped-versions.txt."
+              exit 0
+          }
+
+          Write-Host "::error::Tagged but never published, and not recorded: $($gaps -join ', ')"
+          Write-Host ""
+          Write-Host "The code in a skipped version ships inside the next one published."
+          Write-Host "Its RELEASE NOTES do not: the Gallery shows only the notes of the"
+          Write-Host "version being viewed, and renders no README, so nobody reads them."
+          Write-Host ""
+          Write-Host "Either publish it, or carry what its notes said into the next notes"
+          Write-Host "you publish and add it to docs/unshipped-versions.txt."
+          exit 1

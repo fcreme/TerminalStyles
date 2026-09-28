@@ -12,17 +12,27 @@
 # Get-UnsupportedStyleField says so on screen -- claiming it would be exactly
 # the false promise CLAUDE.md's capability rule exists to prevent.
 #
-# JSONC, AND WHAT A WRITE COSTS. settings.json is JSON with comments, same as
-# Windows Terminal's, so Remove-JsonComment already solves the parse. The write
-# is the problem: a parse/serialise round trip drops every comment and all
-# formatting, and people hand-maintain this file far more than they do
-# settings.json for a terminal. That is a real cost, not a footnote -- see the
-# note on Merge-StyleIntoVSCodeSettings. Nothing here writes a file; the
-# functions take a parsed object and give one back, which is also what makes
-# them testable without going near anyone's real editor.
+# HOW IT WRITES. Through lib/jsonctext.ps1, which splices the original text
+# rather than reparsing and reserialising it. The round trip this replaced
+# dropped every comment and all formatting in a file people hand-annotate far
+# more than they do a terminal's config. Nothing here touches a file; the
+# functions take text and give text back, which is what lets the tests drive
+# every hard case as a string.
 #
-# The shape mirrors lib/wtsettings.ps1 on purpose. Two writers that merge a
-# style into a JSONC config should not invent two vocabularies for it.
+# HOW IT UNDOES. Off a RECORD of what the apply wrote, not off the style.
+# For each key the record keeps the literal written and the literal that was
+# there before. Two defects follow from not having one:
+#
+#   - "this key holds our value" is not "this key is ours". Somebody who set
+#     terminal.integrated.cursorStyle to block years ago collides with
+#     koholint, whose filledBox maps to block; value-matching deletes their
+#     setting and calls it cleanup.
+#   - a reset that rebuilds the key list from the style cannot run once the
+#     style is gone. `tstyles delete koholint` then reset used to strand
+#     twenty colour keys with nothing able to name them.
+#
+# UNITS. Windows Terminal's font.size is POINTS, VS Code's
+# terminal.integrated.fontSize is PIXELS. See ConvertTo-VSCodePixelSize.
 
 function Get-VSCodeSettingsPath {
     <#
@@ -97,6 +107,79 @@ function Get-VSCodeSettingsPath {
             return (Join-PlatformPath -Separator $sep -Parts @($cfg, $Variant, 'User', 'settings.json'))
         }
     }
+}
+
+function Get-VSCodeVariant {
+    <#
+    .SYNOPSIS
+    Which VS Code-family editor this terminal belongs to, or $null if unsure.
+
+    .DESCRIPTION
+    Pure. Cursor, Windsurf and VSCodium all set TERM_PROGRAM=vscode in their
+    integrated terminals, so Get-TerminalKind's 'VSCode' says WHICH FAMILY and
+    cannot say which application. Defaulting that to stable VS Code writes a
+    Cursor user's style into ~/Library/Application Support/Code/User/settings.json
+    -- creating that file for an editor they may not have installed -- while the
+    terminal they are looking at does not change and the command reports
+    success. The same bug has been filed against other tools that guessed here
+    (anthropics/claude-code#33454).
+
+    The evidence is the application path VS Code's own git integration exports:
+    VSCODE_GIT_ASKPASS_NODE, or GIT_ASKPASS. A fork ships that from its own
+    install directory, so the path carries the application name.
+
+    Matching is by PATH SEGMENT, not substring, and an ambiguous answer is no
+    answer:
+
+      - each segment is compared whole (with a trailing .app removed) against
+        the known names. A substring match would read /Users/cursor/... as
+        Cursor for somebody whose username is cursor.
+      - if the segments name exactly one variant, that is the answer.
+      - if they name none, or more than one, the answer is $null. A caller
+        that cannot tell which editor it is in must refuse, not guess: writing
+        the wrong application's settings file and reporting success is worse
+        than doing nothing, and the user has no reason to look for it.
+
+    -AskpassNode / -GitAskpass are test seams; real callers omit them.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$AskpassNode = $env:VSCODE_GIT_ASKPASS_NODE,
+        [string]$GitAskpass  = $env:GIT_ASKPASS
+    )
+
+    # <lowercased path segment> -> <the -Variant name Get-VSCodeSettingsPath takes>
+    $known = @{
+        'cursor'                     = 'Cursor'
+        'windsurf'                   = 'Windsurf'
+        'vscodium'                   = 'VSCodium'
+        'codium'                     = 'VSCodium'
+        'code - insiders'            = 'Code - Insiders'
+        'visual studio code - insiders' = 'Code - Insiders'
+        'code-insiders'              = 'Code - Insiders'
+        'visual studio code'         = 'Code'
+        'code'                       = 'Code'
+    }
+
+    $seen = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidate in @($AskpassNode, $GitAskpass)) {
+        if (-not $candidate) { continue }
+        foreach ($segment in ($candidate -split '[\\/]')) {
+            if (-not $segment) { continue }
+            $name = $segment
+            if ($name.Length -gt 4 -and $name.Substring($name.Length - 4) -eq '.app') {
+                $name = $name.Substring(0, $name.Length - 4)
+            }
+            $name = $name.ToLowerInvariant()
+            if ($known.ContainsKey($name)) {
+                $variant = $known[$name]
+                if (-not $seen.Contains($variant)) { $seen.Add($variant) }
+            }
+        }
+    }
+
+    if ($seen.Count -eq 1) { return $seen[0] }
+    return $null
 }
 
 function Get-PlatformPathSeparator {
@@ -225,37 +308,52 @@ function Get-VSCodeFontWeight {
     }
 }
 
-function Set-JsonMember {
-    # Set a property on a PSCustomObject whether or not it is already there.
-    # ConvertFrom-Json gives PSCustomObject on every engine this ships to
-    # (-AsHashtable is pwsh-only), so this is the one way to write a key.
-    [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)]$Object,
-        [Parameter(Mandatory)][string]$Name,
-        $Value
-    )
-    if ($Object.PSObject.Properties[$Name]) {
-        $Object.PSObject.Properties[$Name].Value = $Value
-    } else {
-        $Object | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
-    }
-}
-
-function Get-VSCodeStyleSetting {
+function ConvertTo-VSCodePixelSize {
     <#
     .SYNOPSIS
-    Everything a style asks VS Code for, as flat <setting key> -> <value>.
+    A Windows Terminal font size (POINTS) as a VS Code font size (PIXELS).
 
     .DESCRIPTION
-    Pure, and deliberately the ONLY place that decides what a style means for
-    VS Code. Both the merge and the removal read it, so "what did we write"
-    and "what should we take back" cannot drift into two answers -- the defect
-    shape CLAUDE.md warns about, and the one that had a registration list and a
-    removal list disagreeing here before.
+    Pure, and the reason it exists is that the two are not the same unit and
+    nothing said so. Windows Terminal documents `font.size` as "the profile's
+    font size in points"; VS Code documents `terminal.integrated.fontSize` as
+    the size in pixels. Copying the number across writes a terminal about a
+    quarter smaller than the style asks for -- 11pt is 14.7px, not 11px -- on
+    every bundled style, which makes it the normal outcome rather than an edge
+    case.
 
-    The terminal colours are returned nested under 'workbench.colorCustomizations'
-    because that is how they sit in the file; everything else is flat.
+    96 CSS pixels to the inch, 72 points to the inch, so the ratio is 4/3.
+
+    Rounds AWAY FROM ZERO, not with [Math]::Round's default. That default is
+    banker's rounding: [Math]::Round(14.5) is 14, not 15, which would quietly
+    shrink every half-point size by one pixel.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][double]$PointSize)
+
+    if ($PointSize -le 0) { return 0 }
+    return [int][Math]::Round(($PointSize * 4.0 / 3.0), [System.MidpointRounding]::AwayFromZero)
+}
+
+function Get-VSCodeStylePlan {
+    <#
+    .SYNOPSIS
+    Everything a style asks VS Code for, as a flat list of path/value entries.
+
+    .DESCRIPTION
+    Pure, and the ONE place that decides what a style means for VS Code. The
+    apply reads it to write, and the apply's RECORD is what the reset reads --
+    so the two halves cannot drift into different opinions about which keys are
+    involved.
+
+    Each entry is @{ Path = <string[]>; Value = <object> }. Path is an array
+    because VS Code keys contain dots: "terminal.integrated.fontSize" is one
+    top-level key, and "terminal.background" is one key nested inside
+    "workbench.colorCustomizations". Nothing here ever splits a string on '.'.
+
+    A key the style has no opinion about is omitted rather than defaulted: "this
+    style does not say" and "this style says the default" are different claims
+    and only one of them is true.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$StyleDir)
@@ -268,129 +366,274 @@ function Get-VSCodeStyleSetting {
         try { $theme = [System.IO.File]::ReadAllText($themePath, $enc) | ConvertFrom-Json } catch { }
     }
 
-    $flat = [ordered]@{}
+    $entries = [System.Collections.Generic.List[object]]::new()
+
+    $colors = Get-VSCodeTerminalColor -Scheme $scheme
+    foreach ($id in $colors.Keys) {
+        $entries.Add(@{ Path = @('workbench.colorCustomizations', $id); Value = $colors[$id] })
+    }
+
     if ($theme) {
         if ($theme.font -and $theme.font.face) {
-            $flat['terminal.integrated.fontFamily'] = $theme.font.face
+            $entries.Add(@{ Path = @('terminal.integrated.fontFamily'); Value = $theme.font.face })
         }
         if ($theme.font -and $theme.font.size) {
-            $flat['terminal.integrated.fontSize'] = $theme.font.size
+            $entries.Add(@{ Path = @('terminal.integrated.fontSize')
+                            Value = (ConvertTo-VSCodePixelSize -PointSize ([double]$theme.font.size)) })
         }
         if ($theme.font -and $theme.font.weight) {
             $w = Get-VSCodeFontWeight -Weight $theme.font.weight
-            if ($null -ne $w) { $flat['terminal.integrated.fontWeight'] = $w }
+            if ($null -ne $w) { $entries.Add(@{ Path = @('terminal.integrated.fontWeight'); Value = $w }) }
         }
         $cursor = Get-VSCodeCursorStyle -CursorShape $theme.cursorShape
-        if ($cursor) { $flat['terminal.integrated.cursorStyle'] = $cursor }
+        if ($cursor) { $entries.Add(@{ Path = @('terminal.integrated.cursorStyle'); Value = $cursor }) }
     }
 
-    return [ordered]@{
-        Colors   = (Get-VSCodeTerminalColor -Scheme $scheme)
-        Settings = $flat
-    }
+    return ,$entries.ToArray()
 }
 
-function Merge-StyleIntoVSCodeSettings {
+function Get-VSCodeColorOverride {
     <#
     .SYNOPSIS
-    Merge a style into a parsed settings.json object. Returns the object.
+    Theme-scoped colour blocks that would win over the colours we write.
 
     .DESCRIPTION
-    Takes what ConvertFrom-Json gave and gives it back merged. It writes no
-    file, which is what lets a test drive it without going near a real editor
-    -- and it is the caller's job to take the first-touch backup before
-    serialising, because a round trip through ConvertTo-Json DROPS EVERY
-    COMMENT AND ALL FORMATTING in the file. settings.json is hand-maintained
-    far more often than a terminal's config is, so that cost lands on more
-    people here than it does in lib/wtsettings.ps1. Preserving comments would
-    mean editing the text in place rather than reparsing it, and this
-    prototype does not.
+    Pure. workbench.colorCustomizations may hold THEME-SCOPED blocks as well as
+    plain colour ids:
 
-    What it will NOT touch:
-      - any colour customisation that is not one of the terminal IDs a style
-        sets, so an editor or statusBar override the user made survives
-      - any setting outside terminal.integrated.*
-      - any terminal.integrated.* key a style has no opinion about
+        "workbench.colorCustomizations": {
+            "[Default Dark+]": { "terminal.background": "#000000" },
+            "terminal.background": "#182098"
+        }
 
-    A style with no font block leaves the font alone rather than resetting it
-    to a default: "this style does not say" and "this style says default" are
-    different, and only one of them is true.
+    When that theme is active the scoped entry is what takes effect, so a style
+    written into the plain siblings is correct, saved, and invisible. VS Code
+    has issues filed on exactly that confusion (microsoft/vscode#61566, and
+    #303246 for terminal.background specifically).
+
+    This is the capability rule pointed one level down. "Capabilities are
+    promises, not possibilities" is about claiming a writer this module does
+    not have; the same false promise happens when the writer exists, succeeds,
+    and is overruled -- the user is told a style was applied and their terminal
+    does not change. Detecting it is what lets the caller say so instead.
+
+    Returns one record per scoped block that collides:
+      @{ Scope = '[Default Dark+]'; Ids = @('terminal.background', ...) }
+    Empty when nothing collides, which is the normal case.
+
+    It does NOT look at workspace settings. A .vscode/settings.json overrides
+    the user file and is not visible from this text at all; that belongs to
+    whatever eventually reads files, and is called out rather than pretended
+    about.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]$Settings,
-        [Parameter(Mandatory)][string]$StyleDir
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Ids
     )
 
-    $plan = Get-VSCodeStyleSetting -StyleDir $StyleDir
+    $out = [System.Collections.Generic.List[object]]::new()
+    $tokens = Get-JsoncToken -Text $Text
+    $found = Resolve-JsoncPath -Text $Text -Tokens $tokens -Path @('workbench.colorCustomizations')
+    if (-not $found.Member -or $found.Member.ValueOpen -lt 0) { return ,$out.ToArray() }
 
-    if ($plan.Colors.Count -gt 0) {
-        $custom = $null
-        if ($Settings.PSObject.Properties['workbench.colorCustomizations']) {
-            $custom = $Settings.'workbench.colorCustomizations'
+    $members = Get-JsoncObjectMember -Text $Text -Tokens $tokens -OpenIndex $found.Member.ValueOpen
+    foreach ($m in $members) {
+        # A scope is a key in brackets: "[Monokai]", "[Abyss][Red]", "[Monokai*]".
+        if (-not $m.Name -or -not $m.Name.StartsWith('[')) { continue }
+        if ($m.ValueOpen -lt 0 -or $tokens[$m.ValueOpen].Kind -ne 'BraceOpen') { continue }
+
+        $inner = Get-JsoncObjectMember -Text $Text -Tokens $tokens -OpenIndex $m.ValueOpen
+        $hits = [System.Collections.Generic.List[string]]::new()
+        foreach ($i in $inner) {
+            if ($Ids -contains $i.Name) { $hits.Add($i.Name) }
         }
-        if (-not $custom) { $custom = [pscustomobject]@{} }
-        foreach ($id in $plan.Colors.Keys) {
-            Set-JsonMember -Object $custom -Name $id -Value $plan.Colors[$id]
+        if ($hits.Count -gt 0) {
+            $out.Add(@{ Scope = $m.Name; Ids = $hits.ToArray() })
         }
-        Set-JsonMember -Object $Settings -Name 'workbench.colorCustomizations' -Value $custom
     }
-
-    foreach ($key in $plan.Settings.Keys) {
-        Set-JsonMember -Object $Settings -Name $key -Value $plan.Settings[$key]
-    }
-
-    return $Settings
+    return ,$out.ToArray()
 }
 
-function Remove-StyleFromVSCodeSettings {
+function Invoke-VSCodeStyleApply {
     <#
     .SYNOPSIS
-    Take a style back out of a parsed settings.json object.
+    Apply a style to settings.json TEXT. Returns @{ Text; Record; Changed; Status }.
 
     .DESCRIPTION
-    The other half of the merge, and written against the same plan so the two
-    cannot describe different key sets.
+    Pure: text in, text out, no file touched. Every write goes through
+    lib/jsonctext.ps1, so comments and formatting survive.
 
-    It removes a key only when the value still matches what the style put
-    there. A user who changed terminal.ansiRed by hand after applying a style
-    meant it, and reset is not entitled to that edit -- "remove what an apply
-    put there, leave the user's own settings alone" is the rule the Windows
-    Terminal reset already states in those words.
+    The RECORD is the point. For every key it writes, it keeps the literal it
+    wrote and the literal that was there BEFORE -- or $null when the key was
+    absent. That record, not the style, is what a later reset reads.
 
-    `workbench.colorCustomizations` is deleted outright if emptying it leaves
-    nothing, rather than leaving `{}` behind: an orphan object in a config we
-    were asked to clean out is the same defect as an orphan colour scheme.
+    Two things follow from that, and both were defects without it:
+
+      - Reset can tell OUR key from a key that merely holds our value. A user
+        who set "terminal.integrated.cursorStyle": "block" years ago collides
+        with koholint, whose filledBox maps to block; value-matching deletes
+        their setting and calls it cleanup.
+      - Reset does not need the style any more. `tstyles delete koholint`
+        followed by a reset used to leave twenty colour keys stranded with no
+        command able to name them.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)]$Settings,
-        [Parameter(Mandatory)][string]$StyleDir
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [string]$StyleName,
+        [AllowNull()]$PreviousRecord
     )
 
-    $plan = Get-VSCodeStyleSetting -StyleDir $StyleDir
+    $current = $Text
+    $carriedKept = @()
 
-    if ($Settings.PSObject.Properties['workbench.colorCustomizations']) {
-        $custom = $Settings.'workbench.colorCustomizations'
-        if ($custom) {
-            foreach ($id in $plan.Colors.Keys) {
-                $prop = $custom.PSObject.Properties[$id]
-                if ($prop -and $prop.Value -eq $plan.Colors[$id]) {
-                    $custom.PSObject.Properties.Remove($id)
+    # Undo the style that is already on before applying this one. Without it,
+    # switching styles leaves the previous one's keys behind AND poisons this
+    # apply's record: each key's "what was there before" would be the PREVIOUS
+    # STYLE's value, not the user's, so a later reset restores a value the user
+    # never had and no command can remove it.
+    #
+    # Measured, not theorised. eva writes fontWeight 600 and koholint writes
+    # "normal"; apply eva, apply koholint, reset koholint, and the file is left
+    # holding 600 -- eva's, on a machine whose owner never set a font weight.
+    #
+    # Switching styles is the common case. The prompt for this work said "runs
+    # a style, changes their mind", and in practice changing your mind means
+    # another style, not a reset.
+    if ($PreviousRecord) {
+        $undo = Invoke-VSCodeStyleReset -Text $current -Record $PreviousRecord
+        $current = $undo.Text
+        $carriedKept = $undo.Kept
+    }
+
+    $plan = Get-VSCodeStylePlan -StyleDir $StyleDir
+    $wrote = [System.Collections.Generic.List[object]]::new()
+    $created = [System.Collections.Generic.List[object]]::new()
+
+    foreach ($entry in $plan) {
+        # A nested key needs its parent object to exist. Creating it is
+        # recorded, so a reset that empties it again can take it away rather
+        # than leaving an empty block behind.
+        if ($entry.Path.Count -gt 1) {
+            $parentPath = $entry.Path[0..($entry.Path.Count - 2)]
+            if ($null -eq (Get-JsoncValueLiteral -Text $current -Path $parentPath)) {
+                $mk = Set-JsoncLiteral -Text $current -Path $parentPath -Literal '{}'
+                if (-not $mk.Changed) {
+                    return @{ Text = $Text; Record = $null; Changed = $false; Status = $mk.Status }
                 }
+                $current = $mk.Text
+                $created.Add($parentPath)
             }
-            if (@($custom.PSObject.Properties).Count -eq 0) {
-                $Settings.PSObject.Properties.Remove('workbench.colorCustomizations')
-            }
+        }
+
+        $had = Get-JsoncValueLiteral -Text $current -Path $entry.Path
+        $literal = ConvertTo-JsoncLiteral -Value $entry.Value
+        $r = Set-JsoncLiteral -Text $current -Path $entry.Path -Literal $literal
+        if ($r.Status -eq 'rootnotobject' -or $r.Status -eq 'parentnotobject' -or
+            $r.Status -eq 'parentmissing' -or $r.Status -eq 'unterminated') {
+            return @{ Text = $Text; Record = $null; Changed = $false; Status = $r.Status }
+        }
+        $current = $r.Text
+        $wrote.Add(@{ Path = $entry.Path; Literal = $literal; Had = $had })
+    }
+
+    $record = @{
+        Style          = $StyleName
+        Wrote          = $wrote.ToArray()
+        CreatedParents = $created.ToArray()
+    }
+    return @{
+        Text    = $current
+        Record  = $record
+        Changed = ($current -cne $Text)
+        Status  = 'applied'
+        # What the undo of the previous style declined to touch, because the
+        # user had changed it since. Carried out so a caller can say so rather
+        # than leaving it to be discovered.
+        Kept    = $carriedKept
+    }
+}
+
+function Invoke-VSCodeStyleReset {
+    <#
+    .SYNOPSIS
+    Undo an apply, using its record. Returns @{ Text; Restored; Removed; Kept; Status }.
+
+    .DESCRIPTION
+    Pure. Walks the record and, for each key we wrote:
+
+      - the value is no longer the literal we wrote  -> KEPT, untouched. The
+        user changed it after we did, and that edit is theirs. It is reported,
+        not silently skipped: "I left it because it looks like yours" must not
+        collapse into "there was nothing to do", which CLAUDE.md names as a
+        defect this repo has already shipped once.
+      - there was a value before we wrote            -> RESTORED to it, exactly
+        as it was, byte for byte. Not deleted: the user had a setting and we
+        overwrote it, so putting it back is the undo. Deleting it would be a
+        second, uninvited change.
+      - there was no key before                      -> REMOVED.
+
+    Comparison is ORDINAL (-cne). '#F5F5F5' is the same colour as '#f5f5f5' and
+    is not the same text; if the bytes differ, something other than us wrote
+    them, and the safe reading of that is "leave it alone".
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][AllowNull()]$Record
+    )
+
+    if (-not $Record -or -not $Record.Wrote) {
+        return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Status = 'norecord' }
+    }
+
+    $current = $Text
+    $restored = [System.Collections.Generic.List[string]]::new()
+    $removed  = [System.Collections.Generic.List[string]]::new()
+    $kept     = [System.Collections.Generic.List[string]]::new()
+
+    foreach ($w in $Record.Wrote) {
+        $name = ($w.Path -join '/')
+        $now = Get-JsoncValueLiteral -Text $current -Path $w.Path
+        if ($null -eq $now) { continue }                 # already gone; nothing to undo
+        if ($now -cne $w.Literal) { $kept.Add($name); continue }
+
+        if ($null -eq $w.Had) {
+            $r = Remove-JsoncValue -Text $current -Path $w.Path
+            if ($r.Changed) { $current = $r.Text; $removed.Add($name) }
+        } else {
+            $r = Set-JsoncLiteral -Text $current -Path $w.Path -Literal $w.Had
+            if ($r.Changed) { $current = $r.Text; $restored.Add($name) }
         }
     }
 
-    foreach ($key in $plan.Settings.Keys) {
-        $prop = $Settings.PSObject.Properties[$key]
-        if ($prop -and $prop.Value -eq $plan.Settings[$key]) {
-            $Settings.PSObject.Properties.Remove($key)
+    # A parent object this apply created, and which is empty again, goes too --
+    # an orphan {} left in a config we were asked to clean out is the same
+    # defect as an orphan colour scheme in Windows Terminal's settings.
+    foreach ($parentPath in @($Record.CreatedParents)) {
+        if (-not $parentPath) { continue }
+        $tokens = Get-JsoncToken -Text $current
+        $found = Resolve-JsoncPath -Text $current -Tokens $tokens -Path $parentPath
+        if (-not $found.Member -or $found.Member.ValueOpen -lt 0) { continue }
+        # NOT @(...) around this call. Get-JsoncObjectMember returns ,$arr to
+        # stop a one-member object unrolling into a bare hashtable -- and a
+        # comma-wrapped return put back inside @() is an array of ONE, whatever
+        # it holds. Wrapping it here reported an empty object as having one
+        # member, so the emptied colour block was never taken away.
+        $members = Get-JsoncObjectMember -Text $current -Tokens $tokens -OpenIndex $found.Member.ValueOpen
+        if (@($members).Count -eq 0 -or $null -eq $members -or $members.Count -eq 0) {
+            $r = Remove-JsoncValue -Text $current -Path $parentPath
+            if ($r.Changed) { $current = $r.Text; $removed.Add(($parentPath -join '/')) }
         }
     }
 
-    return $Settings
+    return @{
+        Text     = $current
+        Restored = $restored.ToArray()
+        Removed  = $removed.ToArray()
+        Kept     = $kept.ToArray()
+        Status   = 'reset'
+    }
 }
