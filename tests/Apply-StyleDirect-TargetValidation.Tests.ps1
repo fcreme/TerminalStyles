@@ -7,7 +7,7 @@
 # typo in -Target printed "Style applied" in green having applied nothing.
 #
 # The write was not harmless either. Write-SettingsFile re-serializes the PARSED
-# object, and ConvertFrom-WTJson strips comments on the way in -- so a misspelled
+# object, and ConvertFrom-JsoncText strips comments on the way in -- so a misspelled
 # profile name silently and irreversibly deleted every JSONC comment the user had
 # written in their settings.json.
 #

@@ -5,14 +5,14 @@
 # settings object UNTOUCHED for a style with a scheme.json and no theme.json --
 # deliberately, because a colour scheme is only reachable through a profile's
 # colorScheme key, which theme.json carries. Writing the returned object anyway
-# is NOT a no-op: it re-serializes what ConvertFrom-WTJson parsed, which drops
+# is NOT a no-op: it re-serializes what ConvertFrom-JsoncText parsed, which drops
 # every // and /* */ comment and every trailing comma the user wrote. So the
 # caller has to ask Get-StyleSettingsPayload FIRST. Apply-StyleDirect asks;
 # apply.ps1 asks; 0.8.18's CHANGELOG says "all four write paths -- the direct
 # apply, the picker, the tuner and apply.ps1 -- now check first and say plainly
 # that nothing was written."
 #
-# The picker never did. It held three open-coded copies of ConvertFrom-WTJson ->
+# The picker never did. It held three open-coded copies of ConvertFrom-JsoncText ->
 # Merge-StyleIntoSettings -> ConvertTo-Json -> write, and Get-StyleSettingsPayload
 # had exactly three references in the whole repo, none of them in tstyles.ps1 and
 # none in tests/. A style directory with scheme.json and no theme.json is legal
@@ -57,7 +57,7 @@ Describe 'Get-StylePreviewJson decides whether the picker writes at all' {
             # A settings.json in the shape the picker actually reads: the byte-
             # exact source text, carrying the comments that are the thing at
             # risk. JSONC -- which is what Windows Terminal ships and what
-            # ConvertFrom-WTJson exists to parse.
+            # ConvertFrom-JsoncText exists to parse.
             $script:live = @'
 {
     // My Windows Terminal settings -- hand-tuned, do not lose me!
@@ -151,12 +151,12 @@ Describe 'Get-StylePreviewJson decides whether the picker writes at all' {
 
         It 'and the rewrite it avoids really would have eaten the comments' {
             # The premise, measured rather than asserted from the CHANGELOG: a
-            # settings.json that goes through ConvertFrom-WTJson and back out
+            # settings.json that goes through ConvertFrom-JsoncText and back out
             # comes back without a single comment. This is why "write the
             # untouched object anyway" is not a harmless no-op, and why the gate
             # has to be in front of the merge rather than after it.
             $script:live | Should -Match 'hand-tuned, do not lose me'
-            $roundTripped = ConvertFrom-WTJson $script:live | ConvertTo-Json -Depth 100
+            $roundTripped = ConvertFrom-JsoncText $script:live | ConvertTo-Json -Depth 100
             $roundTripped | Should -Not -Match 'hand-tuned, do not lose me'
             $roundTripped | Should -Match '"schemes"' -Because 'it is otherwise the same document'
         }

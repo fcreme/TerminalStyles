@@ -868,7 +868,7 @@ function Apply-StyleDirect {
     }
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $settings = ConvertFrom-WTJson $originalJson
+    $settings = ConvertFrom-JsoncText $originalJson
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settings }
     if (-not $Target) {
@@ -881,7 +881,7 @@ function Apply-StyleDirect {
     # this function used to write and report success regardless -- so a typo in
     # -Target printed "Style applied" in green having applied nothing. Worse,
     # the write was not a no-op: Write-SettingsFile re-serializes the PARSED
-    # object, and ConvertFrom-WTJson has already stripped every comment the user
+    # object, and ConvertFrom-JsoncText has already stripped every comment the user
     # wrote in their settings.json. A misspelled profile name silently and
     # irreversibly deleted their JSONC comments.
     $resolvedTarget = Resolve-WTProfileTarget -Settings $settings -TargetName $Target
@@ -1124,7 +1124,7 @@ function Reset-StyleDirect {
     }
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $settings = ConvertFrom-WTJson $originalJson
+    $settings = ConvertFrom-JsoncText $originalJson
 
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settings }
     if (-not $Target) {

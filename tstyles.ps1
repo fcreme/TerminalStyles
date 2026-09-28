@@ -905,7 +905,7 @@ function Invoke-TerminalStyle {
     # further down produces. Merge-StyleIntoSettings returns the settings
     # UNTOUCHED for a name that is not in profiles.list, and the picker then
     # wrote them anyway -- and that write is not a no-op, because re-serializing
-    # the object ConvertFrom-WTJson parsed drops every // and /* */ comment and
+    # the object ConvertFrom-JsoncText parsed drops every // and /* */ comment and
     # every trailing comma the user wrote. So `tstyles -Target 'NoSuchProfile'`
     # deleted the comments out of settings.json, applied nothing, printed
     # "Style applied" in green, and recorded the style -- after which `tstyles
@@ -932,7 +932,7 @@ function Invoke-TerminalStyle {
     $originalSettings = $null
     if ($useSettingsFile) {
         $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-        $originalSettings = ConvertFrom-WTJson $originalJson
+        $originalSettings = ConvertFrom-JsoncText $originalJson
 
         if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
 
@@ -965,7 +965,7 @@ function Invoke-TerminalStyle {
 
     # The other half of that choke point: put the user's own settings.json back.
     # $originalJson is the byte-exact source text, so this restores the // and
-    # /* */ comments ConvertFrom-WTJson dropped on the way into a preview.
+    # /* */ comments ConvertFrom-JsoncText dropped on the way into a preview.
     #
     # Guarded on having written, because a picker session can now legitimately
     # write NOTHING -- open it on a style with no theme.json and press Esc and

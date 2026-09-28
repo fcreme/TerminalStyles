@@ -1180,7 +1180,7 @@ function Invoke-TerminalStyleTune {
     $target = $null
     if ($tuneUsesSettings) {
         $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-        $originalSettings = ConvertFrom-WTJson $originalJson
+        $originalSettings = ConvertFrom-JsoncText $originalJson
         $target = Get-CurrentWTProfileName -Settings $originalSettings
         if (-not $target) {
             Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
@@ -1285,7 +1285,7 @@ function Invoke-TerminalStyleTune {
         [System.IO.File]::WriteAllText((Join-Path $scratchDir 'tune.json'),
             ('{"base":"' + $baseName + '"}'), [System.Text.UTF8Encoding]::new($false))
 
-        $preview = ConvertFrom-WTJson $originalJson
+        $preview = ConvertFrom-JsoncText $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $scratchDir `
             -TargetName $target -BackgroundImage '' -BackgroundImageProvided $false
         Write-SettingsAtomic -Path $settingsPath -Json ($preview | ConvertTo-Json -Depth 100)

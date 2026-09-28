@@ -17,7 +17,7 @@
 #     the command, and $ErrorActionPreference is 'Continue' in an interactive
 #     shell -- so the assignment never happened, $settings still held the
 #     parsed-but-unmerged object, and the very next line wrote THAT out:
-#     ConvertFrom-WTJson had already stripped the comments, so every // note in
+#     ConvertFrom-JsoncText had already stripped the comments, so every // note in
 #     the user's settings.json was deleted, "Style applied" printed in green,
 #     and `tstyles current` named a style no profile had received. Run it a
 #     second time and the .bak -- the one copy that still held the comments --
@@ -45,7 +45,7 @@ BeforeAll {
 Describe "Resolve-WTProfileTarget refuses 'defaults' when there is nothing to create it on" {
     InModuleScope TerminalStyles {
         # $null models the zero-byte / whitespace-only / truncated file: on
-        # pwsh 7 ConvertFrom-WTJson returns $null for it, which is what every
+        # pwsh 7 ConvertFrom-JsoncText returns $null for it, which is what every
         # reader downstream then holds.
         It "refuses -Target defaults for <case>" -ForEach @(
             @{ case = 'a settings.json with no profiles key'; json = '{"schemes":[]}' }
@@ -229,7 +229,7 @@ Describe 'an apply to a settings.json that has no profiles object costs the user
 
             [System.IO.File]::ReadAllText($script:sPath, [System.Text.UTF8Encoding]::new($false)) |
                 Should -Be $live -Because @'
-Write-SettingsFile re-serializes the PARSED object and ConvertFrom-WTJson has
+Write-SettingsFile re-serializes the PARSED object and ConvertFrom-JsoncText has
 already dropped every comment, so any write at all deletes the user's own notes.
 '@
             [System.IO.File]::ReadAllText("$script:sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
@@ -244,7 +244,7 @@ already dropped every comment, so any write at all deletes the user's own notes.
             # different points and both are correct: pwsh 7's ConvertFrom-Json
             # returns $null for an empty string and the target guard refuses it,
             # while Windows PowerShell 5.1 rejects the empty string outright and
-            # ConvertFrom-WTJson's parse error stops the command earlier. What
+            # ConvertFrom-JsoncText's parse error stops the command earlier. What
             # has to be true on both is that nothing was written -- and it was
             # not: this shape reached the same crash and then overwrote
             # settings.json.bak with the empty file while printing "Backed up

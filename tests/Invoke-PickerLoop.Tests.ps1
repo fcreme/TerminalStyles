@@ -144,7 +144,7 @@ Describe 'Invoke-PickerLoop' {
                 # Real seams: a deferred merge+write preview, and a byte-exact revert.
                 $script:onPreview = {
                     param($i)
-                    $merged = ConvertFrom-WTJson $script:originalJson
+                    $merged = ConvertFrom-JsoncText $script:originalJson
                     $merged = Merge-StyleIntoSettings -Settings $merged -StyleDir $script:styleDirs[$i] `
                         -TargetName $script:target -BackgroundImage '' -BackgroundImageProvided $false
                     Write-SettingsAtomic -Path $script:settingsPath -Json ($merged | ConvertTo-Json -Depth 100)

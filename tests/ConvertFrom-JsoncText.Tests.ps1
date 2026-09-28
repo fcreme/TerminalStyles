@@ -1,4 +1,4 @@
-# Pester 5 tests for Remove-JsonComment / ConvertFrom-WTJson -- the JSONC
+# Pester 5 tests for Remove-JsonComment / ConvertFrom-JsoncText -- the JSONC
 # tolerance layer for reading Windows Terminal settings.json. WT's
 # auto-generated settings.json ships with // comments, which Windows
 # PowerShell 5.1's ConvertFrom-Json rejects outright (pwsh 7 tolerates them).
@@ -108,7 +108,7 @@ Describe 'Remove-JsonTrailingComma' {
     }
 }
 
-Describe 'ConvertFrom-WTJson' {
+Describe 'ConvertFrom-JsoncText' {
     InModuleScope TerminalStyles {
         It 'parses Windows-Terminal-style JSON that contains // comments' {
             $json = @'
@@ -117,19 +117,55 @@ Describe 'ConvertFrom-WTJson' {
     "profiles": { "list": [ { "name": "PowerShell" } ] }
 }
 '@
-            $obj = ConvertFrom-WTJson -Json $json
+            $obj = ConvertFrom-JsoncText -Json $json
             $obj.profiles.list[0].name | Should -Be 'PowerShell'
         }
         It 'parses comment-free JSON like ConvertFrom-Json' {
             $json = '{"x":42,"y":"z"}'
-            (ConvertFrom-WTJson -Json $json).x | Should -Be 42
-            (ConvertFrom-WTJson -Json $json).y | Should -Be 'z'
+            (ConvertFrom-JsoncText -Json $json).x | Should -Be 42
+            (ConvertFrom-JsoncText -Json $json).y | Should -Be 'z'
         }
         It 'throws an actionable error mentioning settings.json on invalid input' {
-            { ConvertFrom-WTJson -Json '{ not json' } | Should -Throw '*settings.json*'
+            { ConvertFrom-JsoncText -Json '{ not json' } | Should -Throw '*settings.json*'
+        }
+
+        It 'names the file the CALLER is parsing, not always Windows Terminal' {
+            # This message used to be one hard-coded sentence naming Windows
+            # Terminal, its settings.json, and "open WT Settings and Save
+            # once". All three are wrong in front of somebody whose VS Code
+            # settings.json will not parse -- on a Mac, where Windows Terminal
+            # does not exist and that remedy does nothing.
+            $msg = ''
+            try {
+                ConvertFrom-JsoncText -Json '{ not json' `
+                    -SourceName "VS Code's settings.json" `
+                    -Remedy 'fix the JSON it reports below and run this again'
+            } catch { $msg = $_.Exception.Message }
+            $msg | Should -Match ([regex]::Escape("VS Code's settings.json"))
+            $msg | Should -Not -Match 'Windows Terminal'
+            $msg | Should -Match 'fix the JSON it reports below'
+        }
+
+        It 'still names Windows Terminal for the caller that did not ask' {
+            $msg = ''
+            try { ConvertFrom-JsoncText -Json '{ not json' } catch { $msg = $_.Exception.Message }
+            $msg | Should -Match 'Windows Terminal settings\.json'
+        }
+
+        It 'blames Windows PowerShell 5.1 only when it is running on 5.1' {
+            # Engine-dependent on purpose: the sentence explains the cause on
+            # 5.1 and is simply untrue on 7, where comments are not why the
+            # parse failed. CI runs both, so both arms are exercised.
+            $msg = ''
+            try { ConvertFrom-JsoncText -Json '{ not json' } catch { $msg = $_.Exception.Message }
+            if ($PSVersionTable.PSVersion.Major -lt 6) {
+                $msg | Should -Match '5\.1'
+            } else {
+                $msg | Should -Not -Match '5\.1'
+            }
         }
         It 'parses JSON with a trailing comma (which WinPS 5.1 rejects natively)' {
-            (ConvertFrom-WTJson -Json '{"a":1,}').a | Should -Be 1
+            (ConvertFrom-JsoncText -Json '{"a":1,}').a | Should -Be 1
         }
         It 'parses WT-style JSON with BOTH comments and trailing commas' {
             $json = @'
@@ -143,12 +179,12 @@ Describe 'ConvertFrom-WTJson' {
     },
 }
 '@
-            $obj = ConvertFrom-WTJson -Json $json
+            $obj = ConvertFrom-JsoncText -Json $json
             $obj.profiles.list.Count | Should -Be 2
             $obj.profiles.list[1].name | Should -Be 'cmd'
         }
         It 'does not strip a comma inside a string value' {
-            $obj = ConvertFrom-WTJson -Json '{"note":"a,b","n":2}'
+            $obj = ConvertFrom-JsoncText -Json '{"note":"a,b","n":2}'
             $obj.note | Should -Be 'a,b'
             $obj.n    | Should -Be 2
         }

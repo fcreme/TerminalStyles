@@ -246,14 +246,14 @@ function Get-StylePreviewJson {
     # contributes anything to settings.json at all. Apply-StyleDirect asks it,
     # apply.ps1 asks it, and 0.8.18's CHANGELOG says "all four write paths ...
     # now check first" -- but the picker never did, because it held THREE
-    # open-coded copies of ConvertFrom-WTJson -> Merge-StyleIntoSettings ->
+    # open-coded copies of ConvertFrom-JsoncText -> Merge-StyleIntoSettings ->
     # ConvertTo-Json (the first preview, the per-keystroke apply, the idle
     # prebuild) and none of them asked. A style with a scheme.json and no
     # theme.json is legal -- README documents theme.json as optional and
     # Get-AvailableStyles admits the folder, so it is listed and selectable --
     # and Merge-StyleIntoSettings returns the settings object UNTOUCHED for it.
     # The picker wrote that object anyway, which re-serializes what
-    # ConvertFrom-WTJson parsed and drops every // and /* */ comment the user
+    # ConvertFrom-JsoncText parsed and drops every // and /* */ comment the user
     # wrote, then printed "Style applied: <name>" in green and recorded the
     # style. So `tstyles current` and the `*` in `tstyles list` both named a
     # style Windows Terminal had never been told about, while `tstyles <name>`
@@ -281,7 +281,7 @@ function Get-StylePreviewJson {
 
     if (-not (Get-StyleSettingsPayload -StyleDir $StyleDir).Ok) { return $null }
 
-    $preview = ConvertFrom-WTJson $OriginalJson
+    $preview = ConvertFrom-JsoncText $OriginalJson
     $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $StyleDir `
                    -TargetName $TargetName -BackgroundImage $BackgroundImage `
                    -BackgroundImageProvided $BackgroundImageProvided

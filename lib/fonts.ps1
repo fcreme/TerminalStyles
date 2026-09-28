@@ -488,7 +488,7 @@ function Set-ProfileFont {
         [Parameter(Mandatory)][string]$Family
     )
     $json = [System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false))
-    $settings = ConvertFrom-WTJson $json
+    $settings = ConvertFrom-JsoncText $json
 
     $entry = $null
     if ($TargetName -eq 'defaults') {
@@ -946,7 +946,7 @@ function Invoke-TerminalStyleFont {
     if (-not $settingsPath) { Write-Host "Could not locate Windows Terminal settings.json." -ForegroundColor Red; return }
     # Parsed once and reused: the auto-detect below and the target check share it.
     $settingsJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
-    $settingsObj  = ConvertFrom-WTJson $settingsJson
+    $settingsObj  = ConvertFrom-JsoncText $settingsJson
     if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $settingsObj }
     if (-not $Target) { Write-Host "Could not detect the current profile; pass -Target '<name>'." -ForegroundColor Yellow; return }
 

@@ -1,7 +1,7 @@
 # Pester 5 tests: apply.ps1 must USE the library, not carry a copy of it.
 #
 # These replace the old "parity" tests, which asserted that apply.ps1's forked
-# copies of Remove-JsonComment / ConvertFrom-WTJson / Write-WTSettingsFile /
+# copies of Remove-JsonComment / ConvertFrom-JsoncText / Write-WTSettingsFile /
 # Find-SettingsPath still behaved like the module's. Parity tests can only ever
 # catch drift in the functions someone remembered to write one for -- and the two
 # that actually drifted had none:
@@ -65,7 +65,7 @@ Describe 'apply.ps1 defines no copy of a library function' {
     $forked = @(
         'Remove-JsonComment'
         'Remove-JsonTrailingComma'
-        'ConvertFrom-WTJson'
+        'ConvertFrom-JsoncText'
         'Get-AvailableStyles'
         'Get-StyleBundledBackground'
         'Merge-ThemeIntoEntry'
@@ -133,7 +133,7 @@ Describe 'apply.ps1 still loads standalone' {
         $TStylesApplyNoRun = $true
         . $script:applyPath
         Get-Command Merge-StyleIntoSettings -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
-        Get-Command ConvertFrom-WTJson      -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
+        Get-Command ConvertFrom-JsoncText      -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
         Get-Command Find-WTSettingsPath     -ErrorAction SilentlyContinue | Should -Not -BeNullOrEmpty
     }
 }

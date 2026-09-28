@@ -112,23 +112,44 @@ function Remove-JsonTrailingComma {
     $sb.ToString()
 }
 
-function ConvertFrom-WTJson {
-    # Parse a Windows Terminal settings.json string, tolerating the // and /* */
-    # comments and trailing commas WT writes by default. On Windows PowerShell 5.1
-    # ConvertFrom-Json rejects both outright, so a fresh WT install (or a hand edit)
-    # would otherwise abort every mutating command with a raw parse error. Strips
-    # comments first, then trailing commas, then parses; throws one actionable
-    # message if the text still isn't valid JSON.
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Json)
+function ConvertFrom-JsoncText {
+    <#
+    .SYNOPSIS
+    Parse JSONC -- JSON with // and /* */ comments and trailing commas.
+
+    .DESCRIPTION
+    Windows Terminal ships settings.json with both, and Windows PowerShell 5.1's
+    ConvertFrom-Json rejects both outright, so a fresh install or a hand edit
+    would abort every mutating command with a raw parse error. Strips comments,
+    then trailing commas, then parses.
+
+    -SourceName and -Remedy are what the failure says. They exist because this
+    was `ConvertFrom-JsoncText` and its one hard-coded message named Windows
+    Terminal, its settings.json, and "open WT Settings and Save once" -- three
+    claims that are all wrong in front of somebody whose VS Code settings.json
+    will not parse, on a Mac, where Windows Terminal does not exist. A message
+    is a claim, and this one has a second caller now.
+
+    The Windows PowerShell 5.1 sentence is added only ON 5.1. It explains the
+    cause there and is simply untrue anywhere else.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Json,
+        [string]$SourceName = 'Windows Terminal settings.json',
+        [string]$Remedy = 'open Windows Terminal Settings and Save once, or remove the offending text'
+    )
 
     $clean = Remove-JsonComment -Text $Json
     $clean = Remove-JsonTrailingComma -Text $clean
     try {
         $clean | ConvertFrom-Json
     } catch {
-        throw ("TerminalStyles: could not parse Windows Terminal settings.json. " +
-               "On Windows PowerShell 5.1, JSON comments other than // and /* */ are not supported -- " +
-               "open WT Settings and Save once, or remove the offending text. " +
+        $why = ''
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $why = 'On Windows PowerShell 5.1, JSON comments other than // and /* */ are not supported. '
+        }
+        throw ("TerminalStyles: could not parse $SourceName. " + $why +
+               "To fix it: $Remedy. " +
                "Underlying error: $($_.Exception.Message)")
     }
 }
@@ -226,7 +247,7 @@ function Get-StyleSettingsPayload {
     through a profile's colorScheme key, which theme.json carries, so writing
     the scheme anyway would strand it where Reset can never remove it. But
     every caller then wrote the returned object regardless, and that write is
-    not a no-op: re-serializing what ConvertFrom-WTJson parsed drops every //
+    not a no-op: re-serializing what ConvertFrom-JsoncText parsed drops every //
     and /* */ comment the user wrote. So applying a scheme-only style destroyed
     the comments in settings.json, applied nothing, and reported "Style
     applied" in green.
