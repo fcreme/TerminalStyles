@@ -560,10 +560,46 @@ function Set-JsoncValue {
         [Parameter(Mandatory)][string[]]$Path,
         [Parameter(Mandatory)][AllowNull()]$Value
     )
+    return (Set-JsoncLiteral -Text $Text -Path $Path -Literal (ConvertTo-JsoncLiteral -Value $Value))
+}
+
+function Get-JsoncValueLiteral {
+    <#
+    .SYNOPSIS
+    The SOURCE TEXT of the value at -Path, or $null when the key is absent.
+
+    .DESCRIPTION
+    Pure. Source text, not a parsed value, because the caller comparing this
+    wants to know whether the bytes are still the ones it wrote. Parsed
+    equality would call '#F5F5F5' and '#f5f5f5' the same value; they are the
+    same colour but they are not the same text, and only one of them is ours.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][string[]]$Path
+    )
 
     $tokens = Get-JsoncToken -Text $Text
     $found = Resolve-JsoncPath -Text $Text -Tokens $tokens -Path $Path
-    $literal = ConvertTo-JsoncLiteral -Value $Value
+    if (-not $found.Member) { return $null }
+    return $Text.Substring($found.Member.ValueStart, $found.Member.ValueEnd - $found.Member.ValueStart)
+}
+
+function Set-JsoncLiteral {
+    # Set a key to a value given as JSONC SOURCE TEXT, with no encoding step.
+    # Writing back a value exactly as it was found is what a restore needs, and
+    # re-encoding a parsed value cannot promise that.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][string[]]$Path,
+        [Parameter(Mandatory)][string]$Literal
+    )
+
+    $tokens = Get-JsoncToken -Text $Text
+    $found = Resolve-JsoncPath -Text $Text -Tokens $tokens -Path $Path
+    $literal = $Literal
 
     if ($found.ParentOpenIndex -lt 0) {
         return @{ Text = $Text; Changed = $false; Status = $found.Reason }
@@ -572,7 +608,10 @@ function Set-JsoncValue {
     # Present: replace just the value span.
     if ($found.Member) {
         $m = $found.Member
-        if ($Text.Substring($m.ValueStart, $m.ValueEnd - $m.ValueStart) -eq $literal) {
+        # -cne, not -ne. PowerShell's -eq is case-insensitive, so writing
+        # "#F8F8F8" over "#f8f8f8" would report 'same' and change nothing --
+        # a silent no-op on an edit the caller asked for.
+        if ($Text.Substring($m.ValueStart, $m.ValueEnd - $m.ValueStart) -ceq $literal) {
             return @{ Text = $Text; Changed = $false; Status = 'same' }
         }
         $new = Invoke-JsoncSplice -Text $Text -Edits @(

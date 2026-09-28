@@ -183,143 +183,185 @@ Describe 'the vocabulary VS Code does not share with Windows Terminal' {
     }
 }
 
-Describe 'Merge-StyleIntoVSCodeSettings' {
+Describe 'ConvertTo-VSCodePixelSize' {
     InModuleScope TerminalStyles {
 
-        BeforeAll {
-            # A settings.json shaped like one somebody actually has: their own
-            # colour overrides, and settings that have nothing to do with us.
-            $script:UserJson = @'
-{
-  "editor.fontSize": 13,
-  "files.autoSave": "onFocusChange",
-  "workbench.colorCustomizations": {
-    "editor.background": "#1b1b1b",
-    "statusBar.background": "#332211"
-  },
-  "terminal.integrated.scrollback": 20000
-}
-'@
-            function New-UserSettings { $script:UserJson | ConvertFrom-Json }
+        # Windows Terminal documents font.size as POINTS; VS Code documents
+        # terminal.integrated.fontSize as PIXELS. Copying the number across
+        # wrote a terminal about a quarter smaller than the style asked for --
+        # on all 18 bundled styles, so the normal outcome, not an edge case.
+
+        It 'converts <Pt>pt to <Px>px' -ForEach @(
+            @{ Pt = 11; Px = 15 }    # the bundled styles' size: 14.67, not 11
+            @{ Pt = 12; Px = 16 }
+            @{ Pt = 9;  Px = 12 }
+            @{ Pt = 6;  Px = 8 }
+        ) {
+            ConvertTo-VSCodePixelSize -PointSize $Pt | Should -Be $Px
         }
 
-        It 'writes the style colours' {
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) `
-                    -StyleDir (Get-StyleDir -StyleName 'koholint')
-            $scheme = Get-Content (Join-Path (Get-StyleDir -StyleName 'koholint') 'scheme.json') -Raw | ConvertFrom-Json
-            $s.'workbench.colorCustomizations'.'terminal.background' | Should -Be $scheme.background
-            $s.'workbench.colorCustomizations'.'terminal.ansiMagenta' | Should -Be $scheme.purple
+        It 'rounds a half away from zero, not to even' {
+            # [Math]::Round defaults to banker's rounding, so 14.5 would become
+            # 14 and every half-point size would lose a pixel.
+            ConvertTo-VSCodePixelSize -PointSize 10.875 | Should -Be 15
         }
 
-        It 'leaves colour customisations that are not ours exactly where they were' {
-            # The whole file is one object. A merge that replaced
-            # workbench.colorCustomizations wholesale would silently delete
-            # every editor colour the user had set.
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) `
-                    -StyleDir (Get-StyleDir -StyleName 'koholint')
-            $s.'workbench.colorCustomizations'.'editor.background' | Should -Be '#1b1b1b'
-            $s.'workbench.colorCustomizations'.'statusBar.background' | Should -Be '#332211'
-        }
-
-        It 'leaves settings outside our own alone' {
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) `
-                    -StyleDir (Get-StyleDir -StyleName 'koholint')
-            $s.'editor.fontSize' | Should -Be 13
-            $s.'files.autoSave' | Should -Be 'onFocusChange'
-            $s.'terminal.integrated.scrollback' | Should -Be 20000
-        }
-
-        It 'creates the colour block when the file has none' {
-            $s = Merge-StyleIntoVSCodeSettings -Settings ('{ "editor.fontSize": 13 }' | ConvertFrom-Json) `
-                    -StyleDir (Get-StyleDir -StyleName 'koholint')
-            $s.'workbench.colorCustomizations'.'terminal.foreground' | Should -Not -BeNullOrEmpty
-        }
-
-        It 'says nothing about a font the style does not specify' {
-            # "this style has no opinion" and "this style wants the default"
-            # are different, and writing a default would be the second claim.
-            $dir = Join-Path $TestDrive 'nofont'
-            New-Item -ItemType Directory -Path $dir -Force | Out-Null
-            '{ "background": "#101010", "foreground": "#eeeeee" }' |
-                Set-Content (Join-Path $dir 'scheme.json') -Encoding utf8
-            '{ "colorScheme": "nofont" }' | Set-Content (Join-Path $dir 'theme.json') -Encoding utf8
-
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) -StyleDir $dir
-            $s.PSObject.Properties['terminal.integrated.fontFamily'] | Should -BeNullOrEmpty
-            $s.PSObject.Properties['terminal.integrated.cursorStyle'] | Should -BeNullOrEmpty
-        }
-
-        It 'never mentions a background image, because VS Code has none' {
-            # The capability rule, as a test. koholint HAS a backgroundImage in
-            # its theme.json; if any key here carried it, the style would look
-            # applied while the picture was silently dropped.
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) `
-                    -StyleDir (Get-StyleDir -StyleName 'koholint')
-            ($s | ConvertTo-Json -Depth 100) | Should -Not -Match 'backgroundImage'
+        It 'is not the identity, which is what it replaced' {
+            ConvertTo-VSCodePixelSize -PointSize 11 | Should -Not -Be 11
         }
     }
 }
 
-Describe 'Remove-StyleFromVSCodeSettings' {
+Describe 'Get-VSCodeStylePlan' {
+    InModuleScope TerminalStyles {
+
+        BeforeAll { $script:Dir = Get-StyleDir -StyleName 'koholint' }
+
+        It 'converts the font size rather than copying it' {
+            $theme = Get-Content (Join-Path $script:Dir 'theme.json') -Raw | ConvertFrom-Json
+            # Assign, THEN pipe. Get-VSCodeStylePlan returns ,$arr so a
+            # one-entry plan does not unroll -- and piping that return value
+            # straight into Where-Object hands it the whole array as a single
+            # item, which matches nothing and reports zero.
+            $plan = Get-VSCodeStylePlan -StyleDir $script:Dir
+            $entry = @($plan | Where-Object { $_.Path[0] -eq 'terminal.integrated.fontSize' })
+            $entry.Count | Should -Be 1
+            $entry[0].Value | Should -Be (ConvertTo-VSCodePixelSize -PointSize ([double]$theme.font.size))
+            $entry[0].Value | Should -Not -Be $theme.font.size
+        }
+
+        It 'nests the colours and leaves the terminal settings at the top' {
+            $plan = Get-VSCodeStylePlan -StyleDir $script:Dir
+            @($plan | Where-Object { $_.Path[0] -eq 'workbench.colorCustomizations' }).Count |
+                Should -BeGreaterThan 15
+            @($plan | Where-Object { $_.Path.Count -eq 1 -and $_.Path[0] -notlike 'terminal.integrated.*' }).Count |
+                Should -Be 0
+        }
+
+        It 'never mentions a background image, because VS Code has none' {
+            ((Get-VSCodeStylePlan -StyleDir $script:Dir) | ConvertTo-Json -Depth 10) |
+                Should -Not -Match 'backgroundImage'
+        }
+    }
+}
+
+Describe 'applying and resetting a style in settings.json text' {
     InModuleScope TerminalStyles {
 
         BeforeAll {
-            $script:UserJson = @'
+            $script:Dir = Get-StyleDir -StyleName 'koholint'
+
+            # A file shaped like one somebody actually has: comments, their own
+            # colour overrides, unrelated settings -- AND a terminal setting
+            # they chose themselves whose value happens to be what koholint
+            # writes. That last line is the one the old round-trip fixture left
+            # out, which is why it could never catch the bug below.
+            $script:User = @'
 {
+  // --- my terminal ---
+  "terminal.integrated.cursorStyle": "block", // I hate the bar
   "editor.fontSize": 13,
   "workbench.colorCustomizations": {
     "editor.background": "#1b1b1b"
-  },
-  "terminal.integrated.scrollback": 20000
+  }
 }
 '@
-            function New-UserSettings { $script:UserJson | ConvertFrom-Json }
+        }
+
+        It 'keeps every comment in the file' {
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            $a.Changed | Should -BeTrue
+            Test-JsoncCommentsIntact -Before $script:User -After $a.Text | Should -BeTrue
+        }
+
+        It 'leaves settings and colours that are not ours alone' {
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            (Get-JsoncValueLiteral -Text $a.Text -Path @('editor.fontSize')) | Should -Be '13'
+            (Get-JsoncValueLiteral -Text $a.Text -Path @('workbench.colorCustomizations', 'editor.background')) |
+                Should -Be '"#1b1b1b"'
         }
 
         It 'puts the file back exactly as it was' {
-            # The property that makes this safe to ship: apply then reset is
-            # the identity. Compared as serialised JSON so key order, nesting
-            # and types all have to match, not just the values we thought to
-            # look at.
-            $dir = Get-StyleDir -StyleName 'koholint'
-            $before = (New-UserSettings) | ConvertTo-Json -Depth 100
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) -StyleDir $dir
-            $s = Remove-StyleFromVSCodeSettings -Settings $s -StyleDir $dir
-            ($s | ConvertTo-Json -Depth 100) | Should -Be $before
+            # Byte-identity, on a fixture that DOES contain one of the plan's
+            # keys. The previous version of this test used a fixture with none
+            # of them in it, so it could never reach the case below.
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            $b = Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record
+            $b.Text | Should -Be $script:User
         }
 
-        It 'keeps a colour the user changed by hand after applying' {
-            # Reset removes what an apply put there. A value that is no longer
-            # ours is the user's, and taking it out would be deleting their
-            # edit to fix our own.
-            $dir = Get-StyleDir -StyleName 'koholint'
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) -StyleDir $dir
-            $s.'workbench.colorCustomizations'.'terminal.ansiRed' = '#ff0000'
-            $s = Remove-StyleFromVSCodeSettings -Settings $s -StyleDir $dir
-            $s.'workbench.colorCustomizations'.'terminal.ansiRed' | Should -Be '#ff0000'
+        It 'restores a setting the user already had, rather than deleting it' {
+            # THE BUG THIS EXISTS FOR. koholint's filledBox maps to "block",
+            # and this user set "block" themselves years ago. Value-matching
+            # says "this key holds our value, so it is ours" and deletes their
+            # setting. Provenance says we overwrote a value that was already
+            # there, so undoing means putting it back.
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            $b = Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record
+            (Get-JsoncValueLiteral -Text $b.Text -Path @('terminal.integrated.cursorStyle')) |
+                Should -Be '"block"'
+            $b.Text | Should -Match ([regex]::Escape('// I hate the bar'))
         }
 
-        It 'does not leave an empty colour block behind' {
-            # An orphan {} in a config we were asked to clean out is the same
-            # defect as an orphan colour scheme in settings.json.
-            $dir = Get-StyleDir -StyleName 'koholint'
-            $s = Merge-StyleIntoVSCodeSettings -Settings ('{ "editor.fontSize": 13 }' | ConvertFrom-Json) -StyleDir $dir
-            $s = Remove-StyleFromVSCodeSettings -Settings $s -StyleDir $dir
-            $s.PSObject.Properties['workbench.colorCustomizations'] | Should -BeNullOrEmpty
+        It 'removes a key that was not there before' {
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            $b = Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record
+            (Get-JsoncValueLiteral -Text $b.Text -Path @('terminal.integrated.fontFamily')) |
+                Should -BeNullOrEmpty
+            $b.Removed | Should -Contain 'terminal.integrated.fontFamily'
         }
 
-        It 'keeps the colour block when the user has their own colours in it' {
-            $dir = Get-StyleDir -StyleName 'koholint'
-            $s = Merge-StyleIntoVSCodeSettings -Settings (New-UserSettings) -StyleDir $dir
-            $s = Remove-StyleFromVSCodeSettings -Settings $s -StyleDir $dir
-            $s.'workbench.colorCustomizations'.'editor.background' | Should -Be '#1b1b1b'
+        It 'keeps, and reports, a value the user changed after we wrote it' {
+            # "I left it because it looks like yours" must not collapse into
+            # "there was nothing to do".
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            $edited = (Set-JsoncLiteral -Text $a.Text -Path @('terminal.integrated.fontFamily') -Literal '"Fira Code"').Text
+            $b = Invoke-VSCodeStyleReset -Text $edited -Record $a.Record
+            (Get-JsoncValueLiteral -Text $b.Text -Path @('terminal.integrated.fontFamily')) | Should -Be '"Fira Code"'
+            $b.Kept | Should -Contain 'terminal.integrated.fontFamily'
         }
 
-        It 'removes what it wrote from a file it has never seen before' {
-            $dir = Get-StyleDir -StyleName 'koholint'
-            $s = Remove-StyleFromVSCodeSettings -Settings (New-UserSettings) -StyleDir $dir
-            $s.'editor.fontSize' | Should -Be 13
-            $s.'workbench.colorCustomizations'.'editor.background' | Should -Be '#1b1b1b'
+        It 'compares what it wrote ordinally, so a re-cased value is the user''s' {
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            # A colour with letters in it: koholint's background is #182098,
+            # all digits, so re-casing it changes nothing and the case would
+            # never be exercised.
+            $path = @('workbench.colorCustomizations', 'terminal.foreground')
+            $lit = Get-JsoncValueLiteral -Text $a.Text -Path $path
+            $lit | Should -Match '[a-f]' -Because 'the case has to be able to differ'
+            $edited = (Set-JsoncLiteral -Text $a.Text -Path $path -Literal $lit.ToUpperInvariant()).Text
+            $b = Invoke-VSCodeStyleReset -Text $edited -Record $a.Record
+            $b.Kept | Should -Contain 'workbench.colorCustomizations/terminal.foreground'
+        }
+
+        It 'creates the colour block when the file has none, and takes it away again' {
+            $bare = "{`n  `"editor.fontSize`": 13`n}"
+            $a = Invoke-VSCodeStyleApply -Text $bare -StyleDir $script:Dir -StyleName 'koholint'
+            (Get-JsoncValueLiteral -Text $a.Text -Path @('workbench.colorCustomizations', 'terminal.background')) |
+                Should -Not -BeNullOrEmpty
+            $b = Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record
+            $b.Text | Should -Be $bare
+        }
+
+        It 'does not need the style any more once it has applied it' {
+            # `tstyles delete koholint` then reset used to strand twenty colour
+            # keys with no command able to name them. The record names them.
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint'
+            $b = Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record
+            $b.Status | Should -Be 'reset'
+            $b.Text   | Should -Be $script:User
+        }
+
+        It 'refuses a file whose root is not an object' {
+            $a = Invoke-VSCodeStyleApply -Text '[1,2]' -StyleDir $script:Dir -StyleName 'koholint'
+            $a.Changed | Should -BeFalse
+            $a.Status  | Should -Be 'rootnotobject'
+        }
+
+        It 'says so rather than guessing when it has no record' {
+            $b = Invoke-VSCodeStyleReset -Text $script:User -Record $null
+            $b.Status | Should -Be 'norecord'
+            $b.Text   | Should -Be $script:User
         }
     }
 }

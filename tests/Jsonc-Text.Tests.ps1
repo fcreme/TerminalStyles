@@ -290,6 +290,54 @@ Describe 'the invariant the ownership rule exists to keep' {
     }
 }
 
+Describe 'the two ways a PowerShell array lies about its size' {
+    InModuleScope TerminalStyles {
+
+        # Both of these cost real bugs while this file was being written, and
+        # both report a plausible number rather than failing.
+
+        It 'reports no members for an empty object' {
+            # Get-JsoncObjectMember returns ,$arr so a ONE-member object does
+            # not unroll into a bare hashtable. The cost is that a
+            # comma-wrapped return put back inside @() is an array of one
+            # whatever it holds -- so @(Get-JsoncObjectMember ...) on '{}' is
+            # 1, and an emptied object looks occupied. Assign, do not wrap.
+            $t = '{}'
+            $members = Get-JsoncObjectMember -Text $t -Tokens (Get-JsoncToken -Text $t) -OpenIndex 0
+            $members.Count | Should -Be 0
+        }
+
+        It 'reports one member for a one-member object, not its key count' {
+            # The other direction: unrolled to a bare hashtable, .Count is the
+            # number of KEYS in the record, so $m[$m.Count - 1] indexes past
+            # the end and yields $null on the commonest shape there is.
+            $t = '{ "a": 1 }'
+            $members = Get-JsoncObjectMember -Text $t -Tokens (Get-JsoncToken -Text $t) -OpenIndex 0
+            $members.Count | Should -Be 1
+            $members[$members.Count - 1].Name | Should -Be 'a'
+        }
+    }
+}
+
+Describe 'Set-JsoncLiteral' {
+    InModuleScope TerminalStyles {
+
+        It 'changes a value that differs only in case' {
+            # PowerShell's -eq is case-insensitive, so a no-op check written
+            # with it reports 'same' and silently declines the edit.
+            $r = Set-JsoncLiteral -Text '{ "a": "#f8f8f8" }' -Path @('a') -Literal '"#F8F8F8"'
+            $r.Changed | Should -BeTrue
+            $r.Text | Should -Be '{ "a": "#F8F8F8" }'
+        }
+
+        It 'still reports same for a byte-identical value' {
+            $r = Set-JsoncLiteral -Text '{ "a": "#f8f8f8" }' -Path @('a') -Literal '"#f8f8f8"'
+            $r.Changed | Should -BeFalse
+            $r.Status  | Should -Be 'same'
+        }
+    }
+}
+
 Describe 'Test-JsoncCommentsIntact' {
     InModuleScope TerminalStyles {
 
