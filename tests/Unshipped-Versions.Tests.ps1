@@ -8,9 +8,15 @@
 # that reads it -- an unrecognised entry just fails to match a tag, which looks
 # exactly like a tag that was published.
 #
-# No network here. Whether a version is on the Gallery is release-drift.yml's
-# question and needs the internet; whether this file describes real tags is
-# answerable from the repo, on every CI leg, offline.
+# No network, and NO GIT TAGS. Whether a version is on the Gallery is
+# release-drift.yml's question and needs the internet. Whether these are real
+# versions is answerable from the repo -- but not from `git tag`: CI checks out
+# with actions/checkout and no fetch-depth, so no tags come with it and the
+# first version of this file failed on all four legs against an empty list.
+#
+# CHANGELOG.md is the right witness anyway. A tag says somebody typed `git
+# tag`; a `## [x.y.z]` heading says the version was a release with notes
+# written for it, which is exactly what this file is about losing.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -33,7 +39,10 @@ BeforeDiscovery {
 
 BeforeAll {
     $script:Root = Split-Path $PSScriptRoot -Parent
-    $script:Tags = @(git -C $script:Root tag -l 'v*' | Where-Object { $_ -match '^v\d+(\.\d+){1,3}$' })
+    $changelog = [System.IO.File]::ReadAllText((Join-Path $script:Root 'CHANGELOG.md'),
+                     [System.Text.UTF8Encoding]::new($false))
+    $script:Released = @([regex]::Matches($changelog, '(?m)^##\s*\[(\d+(?:\.\d+){1,3})\]') |
+                           ForEach-Object { $_.Groups[1].Value })
 
     # Parsed again here on purpose. A BeforeDiscovery variable is not reliably
     # there at run time, and a test that reads one gets $null -- whose .Count
@@ -48,16 +57,16 @@ BeforeAll {
 
 Describe 'docs/unshipped-versions.txt' {
 
-    It 'records <Version> as a version that really was tagged' -ForEach $script:Entries {
+    It 'records <Version> as a version that really was released' -ForEach $script:Entries {
         # A typo'd version records nothing: release-drift.yml would not match
-        # it against any tag, which is indistinguishable from the tag having
+        # it against any tag, which is indistinguishable from that tag having
         # been published.
-        $script:Tags | Should -Contain "v$Version"
+        $script:Released | Should -Contain $Version
     }
 
-    It 'names a real tag as what superseded <Version>' -ForEach $script:Entries {
+    It 'names a real version as what superseded <Version>' -ForEach $script:Entries {
         $SupersededBy | Should -Not -BeNullOrEmpty -Because 'the second field says what shipped instead'
-        $script:Tags | Should -Contain "v$SupersededBy"
+        $script:Released | Should -Contain $SupersededBy
     }
 
     It 'says <Version> was superseded by something NEWER' -ForEach $script:Entries {
@@ -69,6 +78,13 @@ Describe 'docs/unshipped-versions.txt' {
 
     It 'gives <Version> exactly the two fields the reader parses' -ForEach $script:Entries {
         $Fields | Should -Be 2
+    }
+
+    It 'found a list of released versions to check against' {
+        # Without this, an empty CHANGELOG match would make every -Contain
+        # above fail loudly rather than pass quietly -- but if the regex ever
+        # stops matching, this says which of the two is wrong.
+        $script:Released.Count | Should -BeGreaterThan 10
     }
 
     It 'records each version once' {
