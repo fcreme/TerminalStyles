@@ -265,12 +265,12 @@ Describe 'the invariant the ownership rule exists to keep' {
             )
             foreach ($p in $paths) {
                 $r = Remove-JsoncValue -Text $script:Hard -Path $p
-                $parsed = ConvertFrom-WTJson -Json $r.Text
+                $parsed = ConvertFrom-JsoncText -Json $r.Text
                 $parsed | Should -Not -BeNullOrEmpty -Because "removing $($p -join '/') must leave valid JSON"
             }
             foreach ($p in $paths) {
                 $r = Set-JsoncValue -Text $script:Hard -Path $p -Value 'zz'
-                $parsed = ConvertFrom-WTJson -Json $r.Text
+                $parsed = ConvertFrom-JsoncText -Json $r.Text
                 $parsed | Should -Not -BeNullOrEmpty
             }
         }
@@ -278,9 +278,9 @@ Describe 'the invariant the ownership rule exists to keep' {
         It 'changes exactly the one key it was asked to, and no other' {
             # The other half of "preserved": everything else must still hold
             # the value it held.
-            $before = ConvertFrom-WTJson -Json $script:Hard
+            $before = ConvertFrom-JsoncText -Json $script:Hard
             $r = Set-JsoncValue -Text $script:Hard -Path @('editor.fontSize') -Value 99
-            $after = ConvertFrom-WTJson -Json $r.Text
+            $after = ConvertFrom-JsoncText -Json $r.Text
             $after.'editor.fontSize' | Should -Be 99
             $after.'files.autoSave'  | Should -Be $before.'files.autoSave'
             $after.'terminal.integrated.scrollback' | Should -Be $before.'terminal.integrated.scrollback'
