@@ -88,6 +88,29 @@ How to publish a new version of TerminalStyles.
    fine. The alias is genuinely exported (`(Get-Module TerminalStyles).ExportedAliases`
    confirms it, and `tstyles` resolves).
 
+## If a version never gets published
+
+It happens: a version is bumped, tagged, and the publish does not run. The next
+release then goes out normally and everything looks fine, because the newest tag
+and the Gallery agree again.
+
+The **code** is not lost -- it ships inside the next version published. The
+**release notes** are. The Gallery renders no README; it shows the notes of the
+version being viewed and nothing else. So a skipped version's notes are read by
+nobody, ever. v0.8.47 introduced `tstyles show`, a whole command, and its notes
+were never published -- 0.8.48's notes are about background images, so as far as
+the Gallery is concerned that command does not exist.
+
+When you skip a version:
+
+1. **Carry what its notes said into the next notes you publish.** That is the
+   only place a Gallery visitor will ever read it.
+2. **Add it to `docs/unshipped-versions.txt`**, with the version that carried its
+   code instead. `release-drift.yml` fails on any unpublished tag that is not
+   recorded there, so a new gap stays visible instead of healing quietly.
+
+`tests/Unshipped-Versions.Tests.ps1` checks that file describes real tags.
+
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
