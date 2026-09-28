@@ -104,6 +104,77 @@ Describe 'Get-VSCodeSettingsPath' {
     }
 }
 
+Describe 'Get-VSCodeVariant' {
+    InModuleScope TerminalStyles {
+
+        # Cursor, Windsurf and VSCodium all set TERM_PROGRAM=vscode, so
+        # Get-TerminalKind's 'VSCode' names the FAMILY. Guessing stable VS Code
+        # from that writes a Cursor user's style into an editor they may not
+        # have installed, while the terminal in front of them does not change
+        # and the command says it worked.
+
+        It 'reads <Variant> out of a macOS application path' -ForEach @(
+            @{ Variant = 'Cursor'
+               Path = '/Applications/Cursor.app/Contents/Resources/app/extensions/git/dist/askpass-main.js' }
+            @{ Variant = 'Windsurf'
+               Path = '/Applications/Windsurf.app/Contents/Resources/app/extensions/git/dist/askpass-main.js' }
+            @{ Variant = 'VSCodium'
+               Path = '/Applications/VSCodium.app/Contents/Resources/app/extensions/git/dist/askpass-main.js' }
+            @{ Variant = 'Code'
+               Path = '/Applications/Visual Studio Code.app/Contents/Resources/app/extensions/git/dist/askpass-main.js' }
+            @{ Variant = 'Code - Insiders'
+               Path = '/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/extensions/git/dist/askpass-main.js' }
+        ) {
+            Get-VSCodeVariant -AskpassNode $Path | Should -Be $Variant
+        }
+
+        It 'reads a Windows install path' {
+            Get-VSCodeVariant -AskpassNode 'C:\Users\x\AppData\Local\Programs\cursor\resources\app\out\node.exe' |
+                Should -Be 'Cursor'
+        }
+
+        It 'reads a Linux install path' {
+            Get-VSCodeVariant -AskpassNode '/usr/share/code/resources/app/extensions/git/dist/askpass-main.js' |
+                Should -Be 'Code'
+        }
+
+        It 'falls back to GIT_ASKPASS when the VS Code variable is not set' {
+            Get-VSCodeVariant -AskpassNode '' `
+                -GitAskpass '/Applications/Windsurf.app/Contents/Resources/app/extensions/git/dist/askpass.sh' |
+                Should -Be 'Windsurf'
+        }
+
+        It 'is not fooled by a username that happens to be an editor' {
+            # Substring matching reads this as Cursor. Segment matching sees
+            # both 'cursor' (the home directory) and 'Visual Studio Code', which
+            # is two answers, which is no answer.
+            Get-VSCodeVariant -AskpassNode '/Users/cursor/Applications/Visual Studio Code.app/Contents/x.js' |
+                Should -BeNullOrEmpty
+        }
+
+        It 'says nothing rather than guessing when there is no evidence' {
+            Get-VSCodeVariant -AskpassNode '' -GitAskpass '' | Should -BeNullOrEmpty
+            Get-VSCodeVariant -AskpassNode '/usr/bin/env' -GitAskpass '' | Should -BeNullOrEmpty
+        }
+
+        It 'never answers a name Get-VSCodeSettingsPath would reject' {
+            # The two halves of one rule: a variant this returns has to be a
+            # variant the path builder accepts, or a correct detection still
+            # throws at the call site.
+            $paths = @(
+                '/Applications/Cursor.app/x', '/Applications/Windsurf.app/x',
+                '/Applications/VSCodium.app/x', '/Applications/Visual Studio Code.app/x',
+                '/Applications/Visual Studio Code - Insiders.app/x'
+            )
+            foreach ($p in $paths) {
+                $v = Get-VSCodeVariant -AskpassNode $p
+                $v | Should -Not -BeNullOrEmpty
+                { Get-VSCodeSettingsPath -Platform 'MacOS' -HomeDir '/Users/x' -Variant $v } | Should -Not -Throw
+            }
+        }
+    }
+}
+
 Describe 'Get-VSCodeTerminalColor' {
     InModuleScope TerminalStyles {
 
