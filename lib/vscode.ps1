@@ -419,11 +419,33 @@ function Invoke-VSCodeStyleApply {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
         [Parameter(Mandatory)][string]$StyleDir,
-        [string]$StyleName
+        [string]$StyleName,
+        [AllowNull()]$PreviousRecord
     )
 
-    $plan = Get-VSCodeStylePlan -StyleDir $StyleDir
     $current = $Text
+    $carriedKept = @()
+
+    # Undo the style that is already on before applying this one. Without it,
+    # switching styles leaves the previous one's keys behind AND poisons this
+    # apply's record: each key's "what was there before" would be the PREVIOUS
+    # STYLE's value, not the user's, so a later reset restores a value the user
+    # never had and no command can remove it.
+    #
+    # Measured, not theorised. eva writes fontWeight 600 and koholint writes
+    # "normal"; apply eva, apply koholint, reset koholint, and the file is left
+    # holding 600 -- eva's, on a machine whose owner never set a font weight.
+    #
+    # Switching styles is the common case. The prompt for this work said "runs
+    # a style, changes their mind", and in practice changing your mind means
+    # another style, not a reset.
+    if ($PreviousRecord) {
+        $undo = Invoke-VSCodeStyleReset -Text $current -Record $PreviousRecord
+        $current = $undo.Text
+        $carriedKept = $undo.Kept
+    }
+
+    $plan = Get-VSCodeStylePlan -StyleDir $StyleDir
     $wrote = [System.Collections.Generic.List[object]]::new()
     $created = [System.Collections.Generic.List[object]]::new()
 
@@ -459,7 +481,16 @@ function Invoke-VSCodeStyleApply {
         Wrote          = $wrote.ToArray()
         CreatedParents = $created.ToArray()
     }
-    return @{ Text = $current; Record = $record; Changed = ($current -cne $Text); Status = 'applied' }
+    return @{
+        Text    = $current
+        Record  = $record
+        Changed = ($current -cne $Text)
+        Status  = 'applied'
+        # What the undo of the previous style declined to touch, because the
+        # user had changed it since. Carried out so a caller can say so rather
+        # than leaving it to be discovered.
+        Kept    = $carriedKept
+    }
 }
 
 function Invoke-VSCodeStyleReset {

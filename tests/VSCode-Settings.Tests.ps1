@@ -423,6 +423,56 @@ Describe 'applying and resetting a style in settings.json text' {
             $b.Text   | Should -Be $script:User
         }
 
+        It 'takes the previous style off before putting the next one on' {
+            # MEASURED, not theorised. eva writes fontWeight 600 and koholint
+            # writes "normal". Apply eva, apply koholint, reset koholint, and
+            # the file was left holding 600 -- eva's value, on a machine whose
+            # owner never set a font weight, with no command able to remove it.
+            # koholint's record had captured eva's leftover as "what was there
+            # before", so the reset faithfully restored the wrong thing.
+            $user = "{`n  `"editor.fontSize`": 13`n}"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $b = Invoke-VSCodeStyleApply -Text $a.Text -StyleDir $script:Dir -StyleName 'koholint' -PreviousRecord $a.Record
+            $c = Invoke-VSCodeStyleReset -Text $b.Text -Record $b.Record
+            (Get-JsoncValueLiteral -Text $c.Text -Path @('terminal.integrated.fontWeight')) | Should -BeNullOrEmpty
+            $c.Text | Should -Be $user
+        }
+
+        It 'survives a chain of styles and still comes back' {
+            # Changing your mind means another style far more often than it
+            # means a reset, so the chain is the normal path, not the edge.
+            $user = "{`n  `"editor.fontSize`": 13`n}"
+            $r = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            foreach ($name in @('koholint', 'umbrella', 'lain')) {
+                $r = Invoke-VSCodeStyleApply -Text $r.Text -StyleDir (Get-StyleDir -StyleName $name) `
+                        -StyleName $name -PreviousRecord $r.Record
+            }
+            (Invoke-VSCodeStyleReset -Text $r.Text -Record $r.Record).Text | Should -Be $user
+        }
+
+        It 'keeps comments across a style switch' {
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $b = Invoke-VSCodeStyleApply -Text $a.Text -StyleDir $script:Dir -StyleName 'koholint' -PreviousRecord $a.Record
+            Test-JsoncCommentsIntact -Before $script:User -After $b.Text | Should -BeTrue
+        }
+
+        It 'reports what the outgoing style could not take back' {
+            # A value the user changed while style A was on is theirs. The
+            # switch must not silently drop it, and must not silently keep it
+            # either -- it says which.
+            $user = "{`n  `"editor.fontSize`": 13`n}"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $edited = (Set-JsoncLiteral -Text $a.Text -Path @('terminal.integrated.fontFamily') -Literal '"Fira Code"').Text
+            $b = Invoke-VSCodeStyleApply -Text $edited -StyleDir $script:Dir -StyleName 'koholint' -PreviousRecord $a.Record
+            $b.Kept | Should -Contain 'terminal.integrated.fontFamily'
+        }
+
+        It 'behaves as before when there is no previous style' {
+            $a = Invoke-VSCodeStyleApply -Text $script:User -StyleDir $script:Dir -StyleName 'koholint' -PreviousRecord $null
+            $b = Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record
+            $b.Text | Should -Be $script:User
+        }
+
         It 'refuses a file whose root is not an object' {
             $a = Invoke-VSCodeStyleApply -Text '[1,2]' -StyleDir $script:Dir -StyleName 'koholint'
             $a.Changed | Should -BeFalse
