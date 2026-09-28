@@ -99,6 +99,79 @@ function Get-VSCodeSettingsPath {
     }
 }
 
+function Get-VSCodeVariant {
+    <#
+    .SYNOPSIS
+    Which VS Code-family editor this terminal belongs to, or $null if unsure.
+
+    .DESCRIPTION
+    Pure. Cursor, Windsurf and VSCodium all set TERM_PROGRAM=vscode in their
+    integrated terminals, so Get-TerminalKind's 'VSCode' says WHICH FAMILY and
+    cannot say which application. Defaulting that to stable VS Code writes a
+    Cursor user's style into ~/Library/Application Support/Code/User/settings.json
+    -- creating that file for an editor they may not have installed -- while the
+    terminal they are looking at does not change and the command reports
+    success. The same bug has been filed against other tools that guessed here
+    (anthropics/claude-code#33454).
+
+    The evidence is the application path VS Code's own git integration exports:
+    VSCODE_GIT_ASKPASS_NODE, or GIT_ASKPASS. A fork ships that from its own
+    install directory, so the path carries the application name.
+
+    Matching is by PATH SEGMENT, not substring, and an ambiguous answer is no
+    answer:
+
+      - each segment is compared whole (with a trailing .app removed) against
+        the known names. A substring match would read /Users/cursor/... as
+        Cursor for somebody whose username is cursor.
+      - if the segments name exactly one variant, that is the answer.
+      - if they name none, or more than one, the answer is $null. A caller
+        that cannot tell which editor it is in must refuse, not guess: writing
+        the wrong application's settings file and reporting success is worse
+        than doing nothing, and the user has no reason to look for it.
+
+    -AskpassNode / -GitAskpass are test seams; real callers omit them.
+    #>
+    [CmdletBinding()]
+    param(
+        [string]$AskpassNode = $env:VSCODE_GIT_ASKPASS_NODE,
+        [string]$GitAskpass  = $env:GIT_ASKPASS
+    )
+
+    # <lowercased path segment> -> <the -Variant name Get-VSCodeSettingsPath takes>
+    $known = @{
+        'cursor'                     = 'Cursor'
+        'windsurf'                   = 'Windsurf'
+        'vscodium'                   = 'VSCodium'
+        'codium'                     = 'VSCodium'
+        'code - insiders'            = 'Code - Insiders'
+        'visual studio code - insiders' = 'Code - Insiders'
+        'code-insiders'              = 'Code - Insiders'
+        'visual studio code'         = 'Code'
+        'code'                       = 'Code'
+    }
+
+    $seen = [System.Collections.Generic.List[string]]::new()
+    foreach ($candidate in @($AskpassNode, $GitAskpass)) {
+        if (-not $candidate) { continue }
+        foreach ($segment in ($candidate -split '[\\/]')) {
+            if (-not $segment) { continue }
+            $name = $segment
+            if ($name.Length -gt 4 -and $name.Substring($name.Length - 4) -eq '.app') {
+                $name = $name.Substring(0, $name.Length - 4)
+            }
+            $name = $name.ToLowerInvariant()
+            if ($known.ContainsKey($name)) {
+                $variant = $known[$name]
+                if (-not $seen.Contains($variant)) { $seen.Add($variant) }
+            }
+        }
+    }
+
+    if ($seen.Count -eq 1) { return $seen[0] }
+    return $null
+}
+
 function Get-PlatformPathSeparator {
     # The separator a given platform uses, NOT the one this machine uses.
     [CmdletBinding()]
