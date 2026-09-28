@@ -1,0 +1,37 @@
+# Versions that were TAGGED but never reached the PowerShell Gallery.
+#
+# WHY THIS FILE EXISTS. release-drift.yml asks whether the NEWEST tag is on the
+# Gallery. That catches a forgotten release while it is the newest thing -- and
+# stops catching it the moment a later version ships, because the newest tag
+# and the Gallery agree again. The skipped version leaves no trace, and the
+# check that exists to notice goes green.
+#
+# It is not hypothetical. v0.8.22 and v0.8.23 are the incident release-drift.yml
+# was written for, quoted in its own header: both were tagged, neither reached
+# the Gallery, and every installed copy sat on 0.8.21 for weeks. They are still
+# not published today, and the check has been green throughout.
+#
+# WHAT IS ACTUALLY LOST. The code is not: it ships inside the next version
+# published. The RELEASE NOTES are. The Gallery renders no README -- only the
+# notes for the version being viewed -- so a skipped version's notes are read
+# by nobody, ever. v0.8.47 is why this file was written: it introduced
+# `tstyles show`, a whole command, and its notes were never published. 0.8.48's
+# notes are about background images and do not mention it, so as far as the
+# Gallery is concerned the command does not exist.
+#
+# SO, WHEN YOU SKIP A VERSION: carry what its notes said into the next set of
+# notes you DO publish, then add the version here. docs/RELEASING.md says the
+# same thing at the point where it can still be acted on.
+#
+# FORMAT: one `<version> <next published version>` per line. release-drift.yml
+# reads this and fails on any unpublished tag NOT listed, so a new gap is
+# visible instead of healing quietly.
+
+0.8.20 0.8.21
+0.8.22 0.8.25
+0.8.23 0.8.25
+0.8.24 0.8.25
+0.8.27 0.8.30
+0.8.28 0.8.30
+0.8.29 0.8.30
+0.8.47 0.8.48
