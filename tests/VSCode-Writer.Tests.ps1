@@ -250,3 +250,86 @@ Describe 'Test-VSCodeSettingsReadable' {
         }
     }
 }
+
+Describe 'Get-VSCodeWriterState and the question it asks' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+        }
+
+        It 'is undecided before anyone has been asked' {
+            (Get-VSCodeWriterState).Status | Should -Be 'undecided'
+            Test-VSCodeWriterActive | Should -BeFalse
+        }
+
+        It 'passes through an editor it cannot name' {
+            Mock Resolve-VSCodeTarget { @{ Status = 'unknownvariant'; Variant = $null; Path = $null } }
+            (Get-VSCodeWriterState).Status | Should -Be 'unknownvariant'
+        }
+
+        It 'passes through a missing settings folder' {
+            Mock Resolve-VSCodeTarget { @{ Status = 'nodir'; Variant = 'Code'; Path = $script:sPath } }
+            (Get-VSCodeWriterState).Status | Should -Be 'nodir'
+        }
+
+        It 'is statecorrupt when the record file cannot be read' {
+            [System.IO.File]::WriteAllText((Get-VSCodeStatePath), '{broken', [System.Text.UTF8Encoding]::new($false))
+            (Get-VSCodeWriterState).Status | Should -Be 'statecorrupt'
+        }
+
+        It 'asks at a console, remembers yes, and does not ask again' {
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $true }
+            Request-VSCodeWriterConsent | Should -Be 'active'
+            (Read-VSCodeState).Entries['Code'].consent | Should -Be 'yes'
+            Request-VSCodeWriterConsent | Should -Be 'active'
+            Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It -Because 'once per editor'
+            Test-VSCodeWriterActive | Should -BeTrue
+        }
+
+        It 'remembers no' {
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $false }
+            Request-VSCodeWriterConsent | Should -Be 'declined'
+            (Read-VSCodeState).Entries['Code'].consent | Should -Be 'no'
+            Request-VSCodeWriterConsent | Should -Be 'declined'
+            Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It
+        }
+
+        It 'does not ask, and stores nothing, when nobody is at the console' {
+            # Confirm-Action would answer $false here too -- for "nobody could be
+            # asked", which must not be stored as the user's no.
+            Mock Test-InteractiveConsole { $false }
+            Mock Confirm-Action { throw 'nobody is there to be asked' }
+            Request-VSCodeWriterConsent | Should -Be 'undecided'
+            [System.IO.File]::Exists((Get-VSCodeStatePath)) | Should -BeFalse
+        }
+
+        It 'names the file it would write, in the question' {
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $false }
+            Request-VSCodeWriterConsent | Out-Null
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match "Code's settings\.json" }
+        }
+
+        It 'reports an answer it could not store, and stays undecided' {
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $true }
+            Mock Set-VSCodeStateEntry { throw 'read-only' }
+            Request-VSCodeWriterConsent | Should -Be 'undecided'
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Could not save that answer' }
+        }
+
+        It 'does not ask an editor that has already answered' {
+            Set-VSCodeStateEntry -Variant 'Code' -Consent 'no'
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { throw 'already answered' }
+            Request-VSCodeWriterConsent | Should -Be 'declined'
+        }
+    }
+}

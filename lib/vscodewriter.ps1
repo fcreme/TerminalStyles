@@ -278,3 +278,97 @@ function Test-VSCodeSettingsReadable {
     if ($open -lt 0) { return $false }
     return ((Find-JsoncCloseBrace -Tokens $tokens -OpenIndex $open) -ge 0)
 }
+
+function Get-VSCodeWriterState {
+    <#
+    .SYNOPSIS
+    Does a VS Code apply write settings.json right now, and if not, why not.
+
+    .DESCRIPTION
+    THE one answer. Get-TerminalCapability asks it (through
+    Test-VSCodeWriterActive) to decide what VS Code claims, and the publisher
+    asks it to decide whether to write -- so the "can't show" notice and the
+    write cannot disagree about the same apply (CLAUDE.md: two implementations
+    of one rule diverge).
+
+    Returns @{ Status; Variant; Path; Entry }. Status is one of:
+      active          identified editor, settings folder present, consent yes
+      declined        consent no
+      undecided       never asked, or nobody was there to answer
+      unknownvariant  see Resolve-VSCodeTarget
+      nodir           see Resolve-VSCodeTarget
+      statecorrupt    vscode-state.json exists and cannot be read
+    #>
+    [CmdletBinding()]
+    param()
+
+    $t = Resolve-VSCodeTarget
+    $out = @{ Status = $t.Status; Variant = $t.Variant; Path = $t.Path; Entry = $null }
+    if ($t.Status -ne 'ok') { return $out }
+
+    $state = Read-VSCodeState
+    if (-not $state.Ok) { $out.Status = 'statecorrupt'; return $out }
+
+    $entry = $state.Entries[$t.Variant]
+    $out.Entry = $entry
+    $consent = ''
+    if ($entry) { $consent = $entry.consent }
+    switch ($consent) {
+        'yes'   { $out.Status = 'active' }
+        'no'    { $out.Status = 'declined' }
+        default { $out.Status = 'undecided' }
+    }
+    return $out
+}
+
+function Test-VSCodeWriterActive {
+    # What Get-TerminalCapability's VSCode arm asks. A predicate over the one
+    # decider above, not a second opinion.
+    [CmdletBinding()]
+    param()
+    return ((Get-VSCodeWriterState).Status -eq 'active')
+}
+
+function Request-VSCodeWriterConsent {
+    <#
+    .SYNOPSIS
+    Ask, once per editor, whether TerminalStyles may write its settings.json.
+    Returns the writer status after asking (see Get-VSCodeWriterState).
+
+    .DESCRIPTION
+    Only an 'undecided' editor is asked, and only at a real console. The
+    console check comes FIRST and is this function's own, not Confirm-Action's:
+    that function answers $false both for "the user said no" and for "nobody
+    could be asked", and storing the second as a no would turn the writer off
+    for good the first time `tstyles eva` ran from a script.
+
+    An answer that cannot be stored is reported, and the editor stays
+    undecided: without a stored state the publisher could not save an undo
+    record either, so honouring the yes for this run would only end in a
+    failed write.
+    #>
+    [CmdletBinding()]
+    param()
+
+    $w = Get-VSCodeWriterState
+    if ($w.Status -ne 'undecided') { return $w.Status }
+    if (-not (Test-InteractiveConsole)) { return 'undecided' }
+
+    Write-Host ""
+    Write-Host ("  Save styles to {0}'s settings.json, so new terminals keep them?" -f $w.Variant)
+    Write-Host "  This sets the terminal's colors, font and cursor there; tstyles reset" -ForegroundColor DarkGray
+    Write-Host "  puts back whatever was there before. Change your mind any time with" -ForegroundColor DarkGray
+    Write-Host "  tstyles vscode on  or  tstyles vscode off." -ForegroundColor DarkGray
+    $answer = 'no'
+    if (Confirm-Action -Question '  Save to settings.json? [y/N]') { $answer = 'yes' }
+
+    try {
+        Set-VSCodeStateEntry -Variant $w.Variant -SettingsPath $w.Path -Consent $answer
+    } catch {
+        Write-Host ("  Could not save that answer to {0}, so nothing is written to" -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+        Write-Host "  settings.json this time, and you will be asked again." -ForegroundColor Yellow
+        return 'undecided'
+    }
+    if ($answer -eq 'yes') { return 'active' }
+    return 'declined'
+}
