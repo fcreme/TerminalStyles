@@ -77,6 +77,15 @@ Describe 'Resolve-VSCodeTarget' {
             $t = Resolve-VSCodeTarget -Variant 'Code' -HomeDir $script:h
             $t.Path.StartsWith($script:h) | Should -BeTrue -Because "$($t.Path) must be inside the sandbox"
         }
+
+        It 'forwards an empty AppData when only -HomeDir is bound' {
+            # The test above cannot see this on macOS or Linux: only the Windows
+            # branch of Get-VSCodeSettingsPath reads APPDATA. So check what is
+            # PASSED ON, which is the same on every platform.
+            Mock Get-VSCodeSettingsPath { Join-Path $script:h 'x/settings.json' }
+            Resolve-VSCodeTarget -Variant 'Code' -HomeDir $script:h | Out-Null
+            Should -Invoke Get-VSCodeSettingsPath -Times 1 -Exactly -ParameterFilter { $AppData -ceq '' }
+        }
     }
 }
 
@@ -108,6 +117,15 @@ Describe 'the VS Code state store' {
             (Read-VSCodeState).Ok | Should -BeFalse
         }
 
+        It 'lets a failed state write through, so the caller knows the record did not land' {
+            # NO KEY WITHOUT A RECORD (see the header of lib/vscodewriter.ps1): the
+            # record is saved first and settings.json only after, which works only
+            # if a state write that fails says so. Write-SettingsAtomic is what
+            # fails here; everything above it has to let that through.
+            Mock Write-SettingsAtomic { throw 'read-only data root' }
+            { Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' } | Should -Throw
+        }
+
         It 'changes one editor and leaves the others as they were' {
             Set-VSCodeStateEntry -Variant 'Code'   -SettingsPath '/c/settings.json' -Consent 'yes'
             Set-VSCodeStateEntry -Variant 'Cursor' -SettingsPath '/u/settings.json' -Consent 'no'
@@ -132,6 +150,17 @@ Describe 'the VS Code state store' {
             (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty -Because '-Record was not bound'
             Set-VSCodeStateEntry -Variant 'Code' -Record $null
             (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'leaves consent and settingsPath alone when only a record is set' {
+            # Only what was BOUND changes. -Record $null is bound, so it clears
+            # the record; consent and settingsPath were not, so a 'yes' must still
+            # be a 'yes' -- losing it would ask the user a second time.
+            Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' -SettingsPath '/x'
+            Set-VSCodeStateEntry -Variant 'Code' -Record $null
+            $e = (Read-VSCodeState).Entries['Code']
+            $e.consent      | Should -Be 'yes'
+            $e.settingsPath | Should -Be '/x'
         }
 
         It 'brings a record back from the file that still undoes the apply byte for byte' {
@@ -165,6 +194,13 @@ Describe 'the VS Code state store' {
             $back = (Read-VSCodeState).Entries['Code'].record
             @($back.CreatedParents).Count | Should -Be 1
             (Invoke-VSCodeStyleReset -Text $a.Text -Record $back).Text | Should -BeExactly $bare
+        }
+
+        It 'reads no file as an empty string, not as null' {
+            # The function's own promise: the file's text, or '' when there is no
+            # file yet. Test-VSCodeSettingsReadable calls blank text readable, so
+            # a settings.json that does not exist reads as blank settings.
+            Read-VSCodeSettingsText -Path (Join-Path $TestDrive 'nope.json') | Should -BeExactly ''
         }
     }
 }
