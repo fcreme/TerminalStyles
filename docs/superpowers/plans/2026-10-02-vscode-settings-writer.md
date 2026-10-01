@@ -803,6 +803,7 @@ git commit -m "Ask once per editor before writing VS Code's settings.json"
     `@{ Status; Variant; Path; Kept = [string[]]; Replaced = [string[]]; Overrides = @(@{Scope;Ids}); Backup; FailedPath; Detail }`
     - Status: `written|declined|undecided|unknownvariant|nodir|statecorrupt|wontparse|writefailed`.
     - Kept and Replaced name keys as `'workbench.colorCustomizations/terminal.background'` or `'terminal.integrated.fontFamily'`.
+    - A settings.json that exists but cannot be read is `wontparse` with Detail `'it could not be read'` (`Read-VSCodeSettingsText` throws on a failed read since Task 1's fix round), never `writefailed` and never treated as empty.
   - `Show-VSCodeWriteResult -Result` prints the result. It is a no-op on `$null` and prints a leading blank line.
 - **Session contract,** used by Task 7. A session is a hashtable with at least `OnDiskRecord` and `Backup`. When `-Session` is passed, the publisher undoes by `$Session.OnDiskRecord` instead of the stored record, and reports `$Session.Backup`.
 
@@ -885,6 +886,19 @@ Describe 'Publish-StyleVSCodeConfig' {
             $r.Status | Should -Be 'wontparse'
             $r.Detail | Should -Match 'does not parse'
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly '{ "a": 1 '
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a file it cannot read, rather than treating it as empty' {
+            # Held open with no sharing: ReadAllText fails on every platform
+            # the suite runs on. Writing over it would replace the user's file.
+            $fs = [System.IO.File]::Open($script:sPath, 'Open', 'ReadWrite', 'None')
+            try {
+                $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            } finally { $fs.Dispose() }
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -Match 'could not be read'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
             (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
         }
 
@@ -1065,7 +1079,9 @@ function Publish-StyleVSCodeConfig {
     try {
         $text = Read-VSCodeSettingsText -Path $w.Path
     } catch {
-        $result.Status = 'writefailed'; $result.FailedPath = $w.Path
+        # Refused, not guessed: a file that exists and cannot be read is not
+        # "no settings yet", and writing over it would replace it outright.
+        $result.Status = 'wontparse'; $result.Detail = 'it could not be read'
         return $result
     }
     if (-not (Test-VSCodeSettingsReadable -Text $text)) {
@@ -1215,7 +1231,7 @@ git commit -m "Write a style into VS Code's settings.json, record first"
 **Interfaces:**
 - Consumes: Tasks 1–3, plus `Invoke-VSCodeStyleReset -Text -Record` → `@{ Text; Restored; Removed; Kept; Status }`.
 - Produces:
-  - `Reset-StyleVSCodeConfig [-Variant]` → `@{ Status = 'reset'|'norecord'|'unknownvariant'|'statecorrupt'|'wontparse'|'writefailed'; Variant; Path; Kept; Restored; Removed }`. It works from the **recorded** settings path. Without `-Variant` it detects the editor.
+  - `Reset-StyleVSCodeConfig [-Variant]` → `@{ Status = 'reset'|'norecord'|'unknownvariant'|'statecorrupt'|'wontparse'|'writefailed'; Variant; Path; Kept; Restored; Removed; Detail }`. Detail says why for `wontparse`: `'it could not be read'` or `'it does not parse as a JSON object'`. It works from the **recorded** settings path. Without `-Variant` it detects the editor.
   - `Show-VSCodeResetResult -Result` prints the result, prints nothing for `norecord` or `$null`, and has no leading blank line.
 
 - [ ] **Step 1: Write the failing tests**
@@ -1279,6 +1295,17 @@ Describe 'Reset-StyleVSCodeConfig' {
             [System.IO.File]::WriteAllText($script:sPath, $t.Substring(0, $t.Length - 3), [System.Text.UTF8Encoding]::new($false))
             (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'wontparse'
             (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty -Because 'a later reset still needs it'
+        }
+
+        It 'keeps the record when the file cannot be read' {
+            script:Publish 'koholint'
+            $fs = [System.IO.File]::Open($script:sPath, 'Open', 'ReadWrite', 'None')
+            try {
+                $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            } finally { $fs.Dispose() }
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -Match 'could not be read'
+            (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty
         }
 
         It 'keeps the record when the write fails' {
@@ -1351,11 +1378,11 @@ Describe 'Show-VSCodeResetResult' {
             @{ status = 'reset';          pattern = "Took the style back out of Code's settings\.json" }
             @{ status = 'unknownvariant'; pattern = "Couldn't tell which editor" }
             @{ status = 'statecorrupt';   pattern = 'Could not read' }
-            @{ status = 'wontparse';      pattern = 'Could not parse' }
+            @{ status = 'wontparse';      pattern = 'Could not edit .* safely: it could not be read' }
             @{ status = 'writefailed';    pattern = 'Could not write' }
         ) {
             Show-VSCodeResetResult -Result @{ Status = $status; Variant = 'Code'; Path = '/x/settings.json'
-                                              Kept = @(); Restored = @(); Removed = @() }
+                                              Kept = @(); Restored = @(); Removed = @(); Detail = 'it could not be read' }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match $pattern }
         }
 
@@ -1398,13 +1425,15 @@ function Reset-StyleVSCodeConfig {
     to. Works off the RECORDED settings path, so uninstall and `tstyles vscode
     off` can run it from any terminal.
 
-    Returns @{ Status; Variant; Path; Kept; Restored; Removed }, Status one of
-    reset, norecord, unknownvariant, statecorrupt, wontparse, writefailed.
+    Returns @{ Status; Variant; Path; Kept; Restored; Removed; Detail }, Status
+    one of reset, norecord, unknownvariant, statecorrupt, wontparse,
+    writefailed. Detail says why for wontparse: the file could not be read, or
+    does not parse.
     #>
     [CmdletBinding()]
     param([string]$Variant)
 
-    $result = @{ Status = 'norecord'; Variant = $Variant; Path = $null; Kept = @(); Restored = @(); Removed = @() }
+    $result = @{ Status = 'norecord'; Variant = $Variant; Path = $null; Kept = @(); Restored = @(); Removed = @(); Detail = $null }
 
     if (-not $Variant) {
         $t = Resolve-VSCodeTarget
@@ -1422,11 +1451,11 @@ function Reset-StyleVSCodeConfig {
     try {
         $text = Read-VSCodeSettingsText -Path $entry.settingsPath
     } catch {
-        $result.Status = 'writefailed'
+        $result.Status = 'wontparse'; $result.Detail = 'it could not be read'
         return $result
     }
     if (-not (Test-VSCodeSettingsReadable -Text $text)) {
-        $result.Status = 'wontparse'
+        $result.Status = 'wontparse'; $result.Detail = 'it does not parse as a JSON object'
         return $result
     }
 
@@ -1473,7 +1502,7 @@ function Show-VSCodeResetResult {
             Write-Host "  so nothing was taken out of it. Fix or delete that file, then reset again." -ForegroundColor Yellow
         }
         'wontparse' {
-            Write-Host ("  Could not parse {0}, so the style was left in it." -f $Result.Path) -ForegroundColor Yellow
+            Write-Host ("  Could not edit {0} safely: {1}, so the style was left in it." -f $Result.Path, $Result.Detail) -ForegroundColor Yellow
             Write-Host "  Fix the file and reset again -- the record of what to take out is kept." -ForegroundColor Yellow
         }
         'writefailed' {
@@ -2040,6 +2069,14 @@ Describe 'the picker''s VS Code preview session' {
             New-VSCodePreviewSession | Should -BeNullOrEmpty
         }
 
+        It 'gives no session for a file it cannot read, so nothing is previewed over it' {
+            $fs = [System.IO.File]::Open($script:sPath, 'Open', 'ReadWrite', 'None')
+            try {
+                New-VSCodePreviewSession | Should -BeNullOrEmpty
+            } finally { $fs.Dispose() }
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
         It 'asks first when nobody has been asked' {
             Remove-Item -LiteralPath (Get-VSCodeStatePath) -Force
             Mock Test-InteractiveConsole { $true }
@@ -2209,7 +2246,10 @@ function New-VSCodePreviewSession {
     if ($w.Status -ne 'active') { return $null }
 
     $existed = [System.IO.File]::Exists($w.Path)
-    $text = Read-VSCodeSettingsText -Path $w.Path
+    # A file that cannot be read gets no session: there would be nothing exact
+    # to put back on Esc, and a preview written over it would replace it. Enter
+    # still reaches the publisher, which says why it wrote nothing.
+    try { $text = Read-VSCodeSettingsText -Path $w.Path } catch { return $null }
     if (-not (Test-VSCodeSettingsReadable -Text $text)) { return $null }
 
     $start = $null
