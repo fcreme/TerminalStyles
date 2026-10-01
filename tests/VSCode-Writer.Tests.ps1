@@ -122,8 +122,24 @@ Describe 'the VS Code state store' {
             # record is saved first and settings.json only after, which works only
             # if a state write that fails says so. Write-SettingsAtomic is what
             # fails here; everything above it has to let that through.
+            # -ExpectedMessage shows it was this mock that fired, not some other
+            # failure on the way.
             Mock Write-SettingsAtomic { throw 'read-only data root' }
-            { Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' } | Should -Throw
+            { Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' } |
+                Should -Throw -ExpectedMessage '*read-only data root*'
+        }
+
+        It 'stops the caller when the state file really cannot be written' {
+            # A real failure rather than a mock, and the message is part of the
+            # assertion. A mocked throw is already script-terminating, and
+            # Should -Throw is itself a try/catch, so neither can tell our rethrow
+            # from the bare .NET exception Write-SettingsAtomic raises -- which,
+            # under a caller with no try of its own, is printed and then stepped
+            # over, record unsaved. Only our own words prove the conversion ran.
+            # A directory cannot be written as a file, which is how this fails.
+            New-Item -ItemType Directory -Path (Get-VSCodeStatePath) -Force | Out-Null
+            { Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' } |
+                Should -Throw -ExpectedMessage 'Could not write*'
         }
 
         It 'changes one editor and leaves the others as they were' {
@@ -201,6 +217,21 @@ Describe 'the VS Code state store' {
             # file yet. Test-VSCodeSettingsReadable calls blank text readable, so
             # a settings.json that does not exist reads as blank settings.
             Read-VSCodeSettingsText -Path (Join-Path $TestDrive 'nope.json') | Should -BeExactly ''
+        }
+
+        It 'stops the caller when settings.json really cannot be read' {
+            # The same reasoning as the write above. Held open with no sharing, the
+            # file exists but ReadAllText cannot read it: natively on Windows, and
+            # on Unix through .NET's advisory lock. A bare .NET failure would leave
+            # the caller holding $null, which Test-VSCodeSettingsReadable calls
+            # blank -- an unreadable file passing for "no settings yet".
+            $p = Join-Path $TestDrive 'held.json'
+            [System.IO.File]::WriteAllText($p, '{}', [System.Text.UTF8Encoding]::new($false))
+            $fs = [System.IO.File]::Open($p, [System.IO.FileMode]::Open,
+                [System.IO.FileAccess]::ReadWrite, [System.IO.FileShare]::None)
+            try {
+                { Read-VSCodeSettingsText -Path $p } | Should -Throw -ExpectedMessage 'Could not read*'
+            } finally { $fs.Dispose() }
         }
     }
 }

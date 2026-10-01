@@ -119,6 +119,11 @@ function Write-VSCodeState {
     # Throws on failure, on purpose: a caller about to touch settings.json has
     # to know its record did not land first. Through Write-SettingsAtomic, so a
     # crash mid-write leaves the old file or the new one, never half of either.
+    #
+    # A .NET exception from inside Write-SettingsAtomic is only
+    # statement-terminating -- with no try/catch around the call it is printed
+    # and the caller's next line still runs, record unsaved -- so any failure is
+    # rethrown here as an error of our own, which stops the caller.
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable]$Entries)
 
@@ -131,7 +136,12 @@ function Write-VSCodeState {
             record       = $e.record
         }
     }
-    Write-SettingsAtomic -Path (Get-VSCodeStatePath) -Json ($out | ConvertTo-Json -Depth 10)
+    $path = Get-VSCodeStatePath
+    try {
+        Write-SettingsAtomic -Path $path -Json ($out | ConvertTo-Json -Depth 10)
+    } catch {
+        throw ("Could not write {0}: {1}" -f $path, $_.Exception.GetBaseException().Message)
+    }
 }
 
 function Set-VSCodeStateEntry {
@@ -228,10 +238,20 @@ function Resolve-VSCodeTarget {
 function Read-VSCodeSettingsText {
     # The file's text, or '' when there is no file yet. ReadAllText drops a
     # BOM; Write-SettingsAtomic puts it back, from the live file.
+    #
+    # A file that is there and cannot be read THROWS, as an error of our own that
+    # names it. A bare .NET exception would only be printed, the caller's next
+    # line would run on $null, and Test-VSCodeSettingsReadable calls that blank:
+    # an unreadable settings.json would pass for "no settings yet". Refuse
+    # rather than guess.
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
     if (-not [System.IO.File]::Exists($Path)) { return '' }
-    return [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    try {
+        return [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    } catch {
+        throw ("Could not read {0}: {1}" -f $Path, $_.Exception.GetBaseException().Message)
+    }
 }
 
 function Test-VSCodeSettingsReadable {
