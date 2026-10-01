@@ -280,3 +280,57 @@ literals.
   reset, `vscode off`, uninstall — `settings.json` byte-compared at each step.
 - A visual check in a real VS Code terminal by the maintainer, after their
   `settings.json` has been copied aside.
+
+## Revisions during planning (2026-10-02)
+
+Found while writing the implementation plan against the code. Where these
+disagree with a section above, these win.
+
+1. **Backup is first-touch, not rolling.** `Save-FirstTouchBackup` writes
+   `settings.json.bak-<timestamp>` only while none of our keys are in the file
+   (no record for that editor). CLAUDE.md requires it for user-owned files: a
+   copy taken before a later write captures a file that already carries a
+   style. The CI lint cited above (`Contributing-MatchesCI`) covers only
+   Windows Terminal's rolling `.bak`, so it does not apply here; the README
+   recovery section still documents the VS Code copy.
+2. **The real-state guard fingerprints, it does not stat.** VS Code rewrites
+   `settings.json` itself (settings UI, Settings Sync), which is exactly why
+   `Zz-RealStateUntouched` leaves Windows Terminal's file unwatched. The guard
+   instead records, per editor file, the source text of the top-level keys the
+   style plans write (`workbench.colorCustomizations` and the four
+   `terminal.integrated.*` keys), derived from the plans and the variant list
+   rather than typed out.
+3. **Consent checks the console itself.** `Confirm-Action` returns `$false`
+   both for "no" and for "nobody could be asked", so
+   `Request-VSCodeWriterConsent` asks `Test-InteractiveConsole` first and
+   returns `undecided` without calling it. An answer that cannot be stored is
+   reported and leaves the editor `undecided`.
+4. **Blank or missing files start from `{}`.** `Invoke-VSCodeStyleApply`
+   refuses empty text (`rootnotobject`). A reset then leaves `{}`, which VS
+   Code reads the same as an empty file; picker Esc deletes a file the picker
+   created.
+5. **Statuses.** The writer adds `undecided` (distinct from `declined`) and
+   `statecorrupt`; `wontparse` carries a `Detail`. Switching styles splits the
+   apply's `Kept` into **left** (the new style does not set the key) and
+   **replaced** (it does, so the hand edit is overwritten and kept as the value
+   reset restores). Measured: koholint, hand-edit fontFamily, apply eva →
+   Kept names it and the file holds eva's font; reset restores the hand edit.
+6. **Both directions check readability first** (`Test-VSCodeSettingsReadable`:
+   a root object that closes). Measured: `Invoke-VSCodeStyleReset` on a
+   truncated file reports `reset`, removes 24 keys and keeps one, splicing
+   against offsets that no longer mean what the record says.
+7. **Picker logic is a testable session** in `lib/vscodewriter.ps1`
+   (`New-VSCodePreviewSession`, `Invoke-VSCodePreview`,
+   `Restore-VSCodePreview`); the picker only wires it. Its result is computed
+   before the confirm `Clear-Host` and shown after it.
+8. **`tstyles font`** says "the applied style sets the font" on VS Code once
+   the writer is on (`Get-FontOwner` → `style`), and names WezTerm's
+   `config.font` route only on WezTerm.
+9. **Measured cost.** One apply takes ~0.2-1.3 s depending on file size (388 B
+   → 166 ms, 4.7 KB → 1.3 s, macOS, pwsh 7.7), so picker previews are cached
+   per style and the font and cursor land a moment after the OSC colours.
+
+Found, not fixed here (pre-existing, reported separately): the picker's
+confirm on non-Windows-Terminal terminals prints the "can't show" notice
+twice, and `Publish-StyleWezTermConfig`'s notices in the picker are printed
+above a `Clear-Host` that wipes them.
