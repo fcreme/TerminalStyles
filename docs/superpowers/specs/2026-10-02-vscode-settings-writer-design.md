@@ -1,0 +1,282 @@
+# VS Code settings writer — design
+
+**Date:** 2026-10-02
+**Status:** Approved in conversation (pending spec review)
+**Component:** `lib/vscode.ps1` (unchanged), new `lib/vscodewriter.ps1`, and the
+apply / picker / reset / uninstall paths that call it
+
+## Context
+
+PRs #101, #105, #106, #108, #110 and #112 built `lib/vscode.ps1`: a pure,
+text-in/text-out engine that merges a style into VS Code's `settings.json`
+(`Invoke-VSCodeStyleApply`), undoes it from a **record** of what it wrote
+(`Invoke-VSCodeStyleReset`), switches style-to-style without leaving residue,
+identifies which VS Code-family editor a terminal belongs to
+(`Get-VSCodeVariant`), and finds theme-scoped blocks that would hide the
+written colours (`Get-VSCodeColorOverride`).
+
+**Nothing outside the tests calls any of it.** `Get-TerminalCapability`'s
+`VSCode` arm (`terminals.ps1:280`) still claims `OscPalette` only, with a comment
+calling the file "not ours to rewrite". A style applied in VS Code's integrated
+terminal dies with the tab, and none of that work reaches a user.
+
+## Goal
+
+When `tstyles` runs in a VS Code-family integrated terminal (Code, Code -
+Insiders, VSCodium, Cursor, Windsurf), the style **persists**: new terminals and
+restarts keep its colours, font and cursor. Every way of taking a style off —
+Esc in the picker, switching styles, `reset`, `delete`, `uninstall`,
+`tstyles vscode off` — puts `settings.json` back exactly as it was, except for
+keys the user changed after we wrote them, which are kept and reported.
+
+## Decisions (made with the maintainer, 2026-10-01/02)
+
+| Question | Decision |
+|---|---|
+| Write automatically, or opt in? | **Ask once per editor, remember the answer.** Not asked when nobody can answer; nothing written then. |
+| Picker preview | **Full preview** (font and cursor too), written per settled style, like Windows Terminal. |
+| Does `uninstall` undo it? | **Yes**, record-based, every editor, listed in the consent prompt. |
+| Structure | **Approach A**: a VS Code publisher beside WezTerm's. Rejected: B (route VS Code through the WT `$useSettingsFile` path — WT-specific profiles, schemes and a backup that throws without a WT target); C (one writer interface for all four writers first — rewrites two working writers in the same change). |
+| Way to change your mind | **`tstyles vscode [on\|off]`**. |
+
+## Non-goals
+
+- Background images, opacity, padding, tab colour/title: VS Code has no setting
+  for any of them. Those flags stay `$false` and keep being named in the
+  "can't show" notice.
+- Live font preview in `tstyles tune` (stays colours-only in VS Code; its final
+  save does go through the new writer, because it ends in `Apply-StyleDirect`).
+- Workspace `.vscode/settings.json` overriding user settings: not detected;
+  the README says so.
+- The existing gap where `Reset-StyleNonWT` never undoes WezTerm's module
+  (`lib/applystyle.ps1:1018-1074`). Out of scope here, and **not to be copied**:
+  VS Code reset is wired in this change.
+
+## Components
+
+### `lib/vscode.ps1` — unchanged
+
+Stays pure. Everything below calls it; nothing below is added to it.
+
+### `lib/vscodewriter.ps1` — new, the only file I/O for VS Code
+
+1. **`Resolve-VSCodeTarget`** → `@{ Status; Variant; Path }`.
+   `Status` is `ok`, `unknownvariant` (`Get-VSCodeVariant` returned `$null` —
+   zero or several candidates; **never** defaulted to `Code`), or `nodir` (the
+   editor's `User` folder does not exist; nothing is created). A missing
+   `settings.json` inside an existing `User` folder is `ok`: VS Code creates the
+   file lazily, so we may too. Forwards `-HomeDir` / `-AppData` /
+   `-XdgConfigHome` to `Get-VSCodeSettingsPath` **by what the caller bound**
+   (CLAUDE.md's splat rule; every splat variable assigned in its own scope).
+
+2. **State store**, `<DataRoot>/vscode-state.json`, keyed by the exact variant
+   names `Get-VSCodeVariant` returns:
+
+   ```json
+   {
+     "Cursor": {
+       "consent": "yes",
+       "settingsPath": "/Users/u/Library/Application Support/Cursor/User/settings.json",
+       "record": { "Style": "koholint", "Wrote": [ { "Path": ["..."], "Literal": "...", "Had": null } ], "CreatedParents": [] }
+     }
+   }
+   ```
+
+   - Per editor because each has its own file; Cursor's record must never be
+     replayed against Code's.
+   - `consent` absent = undecided. `record` `null` = nothing of ours is in the file.
+   - Reset and uninstall use the **recorded** `settingsPath`, not a re-resolved
+     one, so they work from any terminal.
+   - **Not best-effort** (unlike `current-style.json`): see *Write order*.
+   - Serialised with an explicit `-Depth` (5.1 defaults to 2) and read back so
+     that one-element and empty arrays keep their shape.
+
+3. **Consent**, `Request-VSCodeWriterConsent -Variant`. Returns the stored
+   answer if there is one. Otherwise asks through `Confirm-Action` (which
+   refuses when nobody can answer) and **stores the answer only if the user
+   actually answered**. A refusal-for-no-console stores nothing, so the next
+   interactive run asks. Prompt (ASCII only):
+
+   ```
+   Save styles to Cursor's settings.json, so new terminals keep them?
+   This sets the terminal's colors, font and cursor there; `tstyles reset`
+   puts back whatever was there before. Change this any time with
+   `tstyles vscode on` or `tstyles vscode off`. [y/N]
+   ```
+
+4. **`Test-VSCodeWriterActive`** — the single decider: target resolves `ok`
+   **and** consent is `yes`. `Get-TerminalCapability` and the publisher both
+   read it, so they cannot disagree (CLAUDE.md: two implementations of one rule
+   diverge).
+
+5. **`Publish-StyleVSCodeConfig`** — the writer (see *Flows*). Returns a status;
+   prints its own message. It never asks: callers request consent first, and it
+   reads `Test-VSCodeWriterActive` (`declined` / `unknownvariant` / `nodir` come
+   from that answer).
+
+6. **`Reset-StyleVSCodeConfig -Variant`** — record-based undo for one editor.
+
+### Capabilities (`terminals.ps1`)
+
+The `VSCode` arm claims `OscPalette` always, and `Persist`, `Font`,
+`CursorShape` **only when `Test-VSCodeWriterActive`**. Off (declined,
+unknown editor, no folder), `Get-UnsupportedStyleField` names font and cursor
+shape, which is the honest notice. A cursor shape `Get-VSCodeCursorStyle`
+cannot map (writes nothing) is named too, so the claim stays true per field.
+
+## Flows
+
+### Write order (every write to `settings.json`)
+
+1. Read the file (`[File]::ReadAllText`; missing → `''`).
+2. Compute with `Invoke-VSCodeStyleApply` / `-Reset`. A non-`applied` status
+   (`rootnotobject`, `unterminated`, …) → outcome **wontparse**, nothing written.
+3. First write of this command or picker session: rolling byte copy to
+   `settings.json.tstyles.bak` beside it (`Copy-Item`, keeps a BOM).
+4. **Save the new record to the state file.**
+5. `Write-SettingsAtomic` (keeps the file's BOM, writes through a symlink,
+   temp + replace).
+6. If 5 throws: put the previous record back, outcome **writefailed**.
+
+Record before file means a crash can leave a record that names keys not yet
+written (reset then reports them as kept — harmless), and never a key in the
+file that no record can name.
+
+### Direct apply — `tstyles <name>`, `random`, `tune` save, `delete` revealing another style
+
+`Apply-StyleNonWT` calls `Publish-StyleVSCodeConfig` right after
+`Publish-StyleWezTermConfig` (`lib/applystyle.ps1:~799`). When the kind is
+`VSCode`, `Apply-StyleNonWT` calls `Request-VSCodeWriterConsent` near its top,
+**before** `Show-UnsupportedStyleField` runs, so the notice reflects the answer.
+The publisher applies to the current file with
+`-PreviousRecord <stored record>`.
+
+### Picker
+
+- **Open** (`$termKind -eq 'VSCode'`): request consent before the picker draws.
+  If active: keep `$originalVSCodeText` (exact), `$startRecord` (stored), and
+  `$onDiskRecord = $startRecord`.
+- **Each settled preview `i`** (beside `$previewWezTerm`, called from
+  `$applyTheme`): `Invoke-VSCodeStyleApply -Text $originalVSCodeText
+  -PreviousRecord $startRecord` — always from the original, never chained.
+  Cache text **and** record per index. Write the text; set `$lastWrittenText`
+  and `$onDiskRecord` to the preview's. The state file is **not** touched.
+- **Enter** (beside the picker's `Publish-StyleWezTermConfig`,
+  `tstyles.ps1:~1923`): `Publish-StyleVSCodeConfig -OnDiskRecord $onDiskRecord`
+  — apply the chosen style **to the file as it is on disk**, undoing what is on
+  disk by the record that describes it. With no edits this is byte-identical to
+  a direct apply from the starting point (undo is an exact inverse — pinned by
+  existing tests); with a mid-picker edit to a key we wrote, that edit is kept
+  and reported instead of overwritten.
+- **Esc / Ctrl+C / exception** (`$restoreOriginalLook`, and the `finally` at
+  `tstyles.ps1:~2053`): if a preview was written **and** the file still equals
+  `$lastWrittenText`, write `$originalVSCodeText` back (byte-exact). If the
+  file changed under us: undo the preview by `$onDiskRecord` from the current
+  file, re-apply the starting style (`$startRecord.Style`) if there was one and
+  it still exists, save that record, and say the file was edited during the
+  picker so it was merged rather than restored.
+
+### Reset — `tstyles reset` in a VS Code terminal
+
+`Reset-StyleNonWT` calls `Reset-StyleVSCodeConfig -Variant <this editor>`:
+undo from the record, write, clear the record, list kept keys. From any other
+terminal, reset leaves VS Code alone (reset is per terminal today).
+
+### Delete
+
+No new code. `delete` already applies or resets when the deleted style was
+active (`lib/deletestyle.ps1:1008-1014`), and the record does not need the
+style to exist.
+
+### Uninstall (`lib/update.ps1`)
+
+For **every** editor in the state file with a non-null record: the consent
+listing gains `- Take the TerminalStyles style back out of <settingsPath>`,
+and the line `Will NOT modify Windows Terminal's settings.json` stays true as
+written. After confirmation, each is undone via `Reset-StyleVSCodeConfig` and
+kept keys are reported. Then the state file is removed with the rest of the
+data root only under `-DeleteData`, as today.
+
+### `tstyles vscode [on|off]`
+
+- no argument: this editor's variant, settings path, consent, applied style
+  (or the reason the target does not resolve); outside a VS Code terminal,
+  every editor in the state file.
+- `on`: consent `yes`; says it takes effect from the next apply (applies
+  nothing itself).
+- `off`: undo as reset does, then consent `no`.
+- `on`/`off` outside an identifiable VS Code terminal: refuse and say why.
+
+## Outcomes and messages
+
+Statuses, never collapsed to a boolean (CLAUDE.md: every message is a claim).
+
+| Status | Message | State |
+|---|---|---|
+| `written` | `Saved to Cursor's settings.json -- new terminals keep it.` plus each kept key: `Left <key> as you set it (changed since the last style wrote it).` | record updated |
+| `declined` | none extra; the can't-show notice names font and cursor and mentions `tstyles vscode on` | unchanged |
+| `unknownvariant` | `Couldn't tell which editor this terminal belongs to, so nothing was saved -- the colors apply to this terminal only.` | unchanged |
+| `nodir` | names the expected folder; nothing created | unchanged |
+| `wontparse` | names the file (the #107 wording); nothing written | unchanged |
+| `writefailed` | `Could not write <path>. This terminal keeps the colors; new terminals won't.` | record rolled back |
+
+After `written`, `Get-VSCodeColorOverride` runs on the new text; each hit
+prints which theme block (`"[Monokai]"`) sets which IDs and that it wins while
+that theme is active.
+
+All new source strings are **ASCII** (`--`, not em dashes): Windows PowerShell
+5.1 reads BOM-less `.ps1` in the system codepage and fails on non-ASCII string
+literals.
+
+## Documentation, same change
+
+- `CLAUDE.md` and `terminals.ps1:26-28`: "three config writers" → four.
+- README: VS Code in the supported-terminals list (persists colours, font,
+  cursor; no background), the opt-in, workspace-settings caveat, the `.bak` in
+  the recovery recipe (required by `tests/Contributing-MatchesCI.Tests.ps1`),
+  and the uninstall section.
+- `lib/help.ps1`: `tstyles help vscode`, and `reset` / `uninstall` help.
+- `CHANGELOG.md` `[Unreleased]`: this, plus the unrecorded #105–#112.
+
+## Testing
+
+**`tests/VSCode-Writer.Tests.ps1` (unit)**
+- `Resolve-VSCodeTarget`: all five variants; `unknownvariant`; `nodir`;
+  missing file in existing folder is `ok`.
+- **State round trip**: apply → save record → read back → reset ⇒ the original
+  text, byte-identical. Includes one-element `Path`, empty `CreatedParents`,
+  `Had = $null`. Must pass on both Windows CI engines.
+- Consent: asked once; stored only when answered; not stored when
+  `Confirm-Action` (mocked) refuses for no console; `on`/`off` change it.
+- Every outcome row above, its message, and its state effect; record rollback
+  when `Write-SettingsAtomic` throws; BOM preserved.
+
+**Wiring**
+- The "both paths reach every publisher" assertion
+  (`tests/WezTerm-Writer.Tests.ps1:639-664`) covers `Publish-StyleVSCodeConfig`.
+- Picker, mirroring `WezTerm-LivePreview`: previews computed from the original;
+  Esc and Ctrl+C restore exact bytes; Esc after a mid-picker edit keeps the
+  edit and restores the starting style; Enter's record equals a direct apply's
+  from the same start.
+- Reset touches only this editor; uninstall undoes every editor and its prompt
+  names each path; delete-then-reset undoes cleanly.
+- `Get-TerminalCapability` VSCode arm with the writer on and off; update
+  `tests/Get-TerminalCapability.Tests.ps1` writer list (`:130`) and map
+  (`:144-148`).
+
+**Sandboxing**
+- Every test points home / AppData / XDG at `$TestDrive` and sandboxes the data
+  root; the splat lint stays green.
+- `tests/Aa-RealStateBaseline.Tests.ps1` watch list gains the real
+  `settings.json` of all five editors on macOS, Linux and Windows, so a leak
+  fails CI.
+
+## Definition of done
+
+- Both Windows CI jobs (pwsh 7 and Windows PowerShell 5.1) green. A local macOS
+  pass alone does not count.
+- End-to-end run with VS Code's environment faked (`TERM_PROGRAM=vscode`, an
+  askpass path) against a temporary home: apply, switch, picker Esc and Enter,
+  reset, `vscode off`, uninstall — `settings.json` byte-compared at each step.
+- A visual check in a real VS Code terminal by the maintainer, after their
+  `settings.json` has been copied aside.
