@@ -470,8 +470,15 @@ function Publish-StyleVSCodeConfig {
         try {
             Write-SettingsAtomic -Path $w.Path -Json $a.Text
         } catch {
-            try { Set-VSCodeStateEntry -Variant $w.Variant -SettingsPath $w.Path -Record $stored } catch { }
             $result.Status = 'writefailed'; $result.FailedPath = $w.Path
+            try {
+                Set-VSCodeStateEntry -Variant $w.Variant -SettingsPath $w.Path -Record $stored
+            } catch {
+                # Both writes failed. The record now describes keys that never
+                # landed, and the keys still in the file are named by no record --
+                # say so, rather than let a later reset leave them without a word.
+                $result.Detail = 'its undo record could not be restored either'
+            }
             return $result
         }
     }
@@ -546,6 +553,9 @@ function Show-VSCodeWriteResult {
         'writefailed' {
             Write-Host ("  Could not write {0}." -f $Result.FailedPath) -ForegroundColor Yellow
             Write-Host "  This terminal keeps the colors; new terminals won't." -ForegroundColor Yellow
+            if ($Result.Detail) {
+                Write-Host ("  And {0}, so a reset may leave some of the previous style's settings in place." -f $Result.Detail) -ForegroundColor Yellow
+            }
         }
         'statecorrupt' {
             Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow

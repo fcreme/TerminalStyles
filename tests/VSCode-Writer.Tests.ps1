@@ -452,6 +452,31 @@ Describe 'Publish-StyleVSCodeConfig' {
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
+        It 'keeps the previous style''s record when switching fails' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $styled = [System.IO.File]::ReadAllText($script:sPath)
+            # Default first, for the reason the test above gives.
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            $r = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode'
+            $r.Status | Should -Be 'writefailed'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'the file still holds koholint, so its record must still name it'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $styled
+        }
+
+        It 'says so when the record cannot be put back either' {
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic {
+                $script:stateWrites++
+                if ($script:stateWrites -gt 1) { throw 'disk full' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be 'writefailed'
+            $r.Detail | Should -Match 'undo record could not be restored'
+        }
+
         It 'does not touch settings.json when its record cannot be saved' {
             Mock Set-VSCodeStateEntry { throw 'read-only data root' }
             $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
@@ -533,6 +558,12 @@ Describe 'Show-VSCodeWriteResult' {
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Left terminal\.integrated\.fontFamily' }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Replaced workbench\.colorCustomizations/terminal\.background' }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match '\[Monokai\]' }
+        }
+
+        It 'says what a failed rollback means' {
+            $r = $script:base.Clone(); $r.Status = 'writefailed'; $r.Detail = 'its undo record could not be restored either'
+            Show-VSCodeWriteResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'reset may leave' }
         }
 
         It 'prints nothing for no result' {
