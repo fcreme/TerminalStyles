@@ -919,6 +919,9 @@ Describe 'Publish-StyleVSCodeConfig' {
         }
 
         It 'puts the record back when the settings write fails' {
+            # Pester 6 throws on a call no filter matches (Pester 5 called the
+            # real command), so the state write needs a default mock to land on.
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
             Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
             $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
             $r.Status     | Should -Be 'writefailed'
@@ -995,7 +998,8 @@ Describe 'Show-VSCodeWriteResult' {
                 $r = $script:base.Clone(); $r.Status = $s
                 Show-VSCodeWriteResult -Result $r
             }
-            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Saved to' }
+            # -cmatch: -match is case-insensitive, and 'Not saved to' contains 'saved to'.
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -cmatch '\bSaved to' }
         }
 
         It 'names kept and replaced keys, and an overriding theme block' {
