@@ -190,6 +190,10 @@ Describe 'README says the same thing the command does' {
 
 Describe 'the font messages name whoever really decides the font' {
     InModuleScope TerminalStyles {
+        # VS Code's answer depends on whether its writer is on here; pinned off
+        # so the developer's own state cannot decide it. The on-state is tested
+        # in VSCode-Writer.Tests.ps1.
+        BeforeAll { Mock Test-VSCodeWriterActive { $false } }
 
         It 'gives three answers, because there are three' {
             # `tstyles font` used to ask only "can I write it?" and tell every

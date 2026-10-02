@@ -763,3 +763,72 @@ Describe 'Show-VSCodeResetResult' {
         }
     }
 }
+
+Describe 'what VS Code claims, and the notice that reads it' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            Mock Get-StyleBundledBackground { $null }
+            $script:theme = [pscustomobject]@{
+                font = [pscustomobject]@{ face = 'Cascadia Code'; size = 11 }; cursorShape = 'bar'
+            }
+        }
+
+        It 'names font and cursor shape while the writer is off' {
+            Mock Test-VSCodeWriterActive { $false }
+            $f = Get-UnsupportedStyleField -Theme $script:theme -StyleDir $TestDrive -Kind 'VSCode'
+            $f | Should -Contain 'font'
+            $f | Should -Contain 'cursor shape'
+        }
+
+        It 'names neither once it is on' {
+            Mock Test-VSCodeWriterActive { $true }
+            $f = @(Get-UnsupportedStyleField -Theme $script:theme -StyleDir $TestDrive -Kind 'VSCode')
+            $f | Should -Not -Contain 'font'
+            $f | Should -Not -Contain 'cursor shape'
+        }
+
+        It 'still names a cursor shape VS Code has no answer for' {
+            Mock Test-VSCodeWriterActive { $true }
+            $odd = [pscustomobject]@{ cursorShape = 'doubleUnderscore' }
+            Get-UnsupportedStyleField -Theme $odd -StyleDir $TestDrive -Kind 'VSCode' | Should -Contain 'cursor shape'
+        }
+
+        It 'never claims what settings.json cannot carry, even when on' {
+            Mock Test-VSCodeWriterActive { $true }
+            $caps = Get-TerminalCapability -Kind 'VSCode'
+            $caps.Persist     | Should -BeTrue
+            $caps.Font        | Should -BeTrue
+            $caps.CursorShape | Should -BeTrue
+            foreach ($n in 'Opacity', 'BackgroundImage', 'Padding', 'TabColor', 'TabTitle') {
+                $caps[$n] | Should -BeFalse -Because "VS Code has no setting that delivers $n"
+            }
+        }
+    }
+}
+
+Describe 'tstyles font in a VS Code terminal' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:cat = @([pscustomobject]@{
+                name = 'JetBrains Mono'; family = 'JetBrains Mono'; license = 'OFL-1.1'
+                url = 'https://example.invalid/x.zip'; sha256 = 'deadbeef' })
+            Mock Get-FontCatalog     { $script:cat }
+            Mock Test-FontInstalled  { $true }
+            Mock Find-WTSettingsPath { $null }
+            Mock Get-TerminalKind    { 'VSCode' }
+        }
+
+        It 'says the style owns the font once the writer is on, and gives no WezTerm advice' {
+            Mock Test-VSCodeWriterActive { $true }
+            Get-FontOwner -Kind 'VSCode' | Should -Be 'style'
+            $out = Invoke-TerminalStyleFont -Name 'JetBrains Mono' 6>&1 | Out-String
+            $out | Should -Match 'tstyles tune'
+            $out | Should -Not -Match 'config\.font' -Because 'that route exists on WezTerm only'
+        }
+
+        It 'leaves the font to VS Code while the writer is off' {
+            Mock Test-VSCodeWriterActive { $false }
+            Get-FontOwner -Kind 'VSCode' | Should -Be 'terminal'
+        }
+    }
+}

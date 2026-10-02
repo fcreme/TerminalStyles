@@ -933,8 +933,14 @@ function Invoke-TerminalStyleFont {
             # setting config.font after the require line wins, and a tuned
             # style carries `font` into its theme.json, which the writer emits.
             Write-Host ("  '{0}' is installed. The applied style sets {1}'s font." -f $font.family, $fontName) -ForegroundColor DarkGray
-            Write-Host "  To use it: tstyles tune <style> and save, which keeps the font with the style --" -ForegroundColor DarkGray
-            Write-Host "  or set config.font AFTER the terminalstyles require line in your own config." -ForegroundColor DarkGray
+            Write-Host "  To use it: tstyles tune <style> and save, which keeps the font with the style." -ForegroundColor DarkGray
+            # The second route is WezTerm's alone. In VS Code the style's font is
+            # a key in settings.json, and the next apply writes over a hand edit
+            # there (keeping it as the value a reset puts back), so there is no
+            # "set it after" that sticks.
+            if ($fontKind -eq 'WezTerm') {
+                Write-Host "  Or set config.font AFTER the terminalstyles require line in your own config." -ForegroundColor DarkGray
+            }
         } else {
             Write-Host ("  {0} takes its font from its own settings, so tstyles font cannot apply it for you." -f $fontName) -ForegroundColor DarkGray
             Write-Host ("  '{0}' is installed and will be listed there." -f $font.family) -ForegroundColor DarkGray

@@ -25,7 +25,8 @@ $script:TStylesCapabilityNames = @(
     'OscPalette',      # OSC 4/10/11/12 dynamic colors -- live retint, no config write
     # Can THIS MODULE write a config the terminal reads on startup? True only
     # where a writer exists: Windows Terminal's settings.json, Terminal.app's
-    # .terminal profile, and WezTerm's generated Lua module. Not to be confused with a style surviving a new tab,
+    # .terminal profile, WezTerm's generated Lua module, and -- once its owner
+    # has said yes -- a VS Code-family editor's settings.json. Not to be confused with a style surviving a new tab,
     # which works on every terminal and owes nothing to this flag -- that is
     # current-style.json plus the OSC re-emit in the startup block, and it
     # carries colors only. Reading Persist as "styles stick here" is what led
@@ -278,10 +279,25 @@ function Get-TerminalCapability {
             $caps.OscPalette = $true
         }
         'VSCode' {
-            # The integrated terminal honours OSC colors for the session but its
-            # settings live in VS Code's own settings.json, which is not ours to
-            # rewrite. Live-only.
+            # The integrated terminal honours OSC colors for the session, and
+            # lib/vscodewriter.ps1 writes the rest into the editor's own
+            # settings.json -- but only for an editor it can identify, whose
+            # owner has said yes (asked once; see Request-VSCodeWriterConsent).
+            # So the claim is CONDITIONAL, and Test-VSCodeWriterActive is the
+            # same answer the writer itself acts on: the "can't show" notice and
+            # the write cannot disagree about one apply.
+            #
+            # Font and CursorShape are terminal.integrated.fontFamily/fontSize/
+            # fontWeight and terminal.integrated.cursorStyle. Opacity, Padding,
+            # TabColor, TabTitle and BackgroundImage have no VS Code setting --
+            # terminal.background is a solid colour -- so they stay off and
+            # stay named.
             $caps.OscPalette = $true
+            if (Test-VSCodeWriterActive) {
+                $caps.Persist     = $true
+                $caps.Font        = $true
+                $caps.CursorShape = $true
+            }
         }
         default {
             # Unknown terminal: assume only the lowest common denominator. Nearly
@@ -819,7 +835,15 @@ function Get-UnsupportedStyleField {
         if ((& $declares 'useAcrylic') -and $Theme.useAcrylic) { $wantsTransparency = $true }
         if ($wantsTransparency) { $unsupported += 'opacity' }
     }
-    if ((& $declares 'cursorShape') -and -not $caps.CursorShape) { $unsupported += 'cursor shape' }
+    if ((& $declares 'cursorShape') -and -not $caps.CursorShape) {
+        $unsupported += 'cursor shape'
+    } elseif ($Kind -eq 'VSCode' -and (& $declares 'cursorShape') -and
+              -not (Get-VSCodeCursorStyle -CursorShape "$($Theme.cursorShape)")) {
+        # VS Code takes three shapes, and Get-VSCodeStylePlan writes nothing for
+        # one it cannot map -- so the flag being on does not cover THIS style's
+        # cursor.
+        $unsupported += 'cursor shape'
+    }
     if ((& $declares 'padding')     -and -not $caps.Padding)     { $unsupported += 'padding' }
     if ((& $declares 'tabColor')    -and -not $caps.TabColor)    { $unsupported += 'tab color' }
 

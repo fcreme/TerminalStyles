@@ -23,6 +23,11 @@ BeforeAll {
 Describe 'Get-TerminalCapability' {
     InModuleScope TerminalStyles {
 
+        # VS Code's flags depend on whether its writer is on for the editor
+        # this runs in. Off by default here, so the developer's own answer
+        # cannot decide these tests; the on-state has its own test below.
+        BeforeAll { Mock Test-VSCodeWriterActive { $false } }
+
         $script:AllKinds = @('WindowsTerminal','AppleTerminal','ITerm2','Ghostty',
                              'WezTerm','Kitty','Alacritty','VSCode','Unknown')
 
@@ -116,9 +121,11 @@ Describe 'Get-TerminalCapability' {
         }
 
         It 'claims a capability only where a writer exists' {
-            # THREE writers now: Merge-StyleIntoSettings (Windows Terminal's
+            # FOUR writers now: Merge-StyleIntoSettings (Windows Terminal's
             # settings.json), New-AppleTerminalProfile (Terminal.app's .terminal
-            # plist) and Get-WezTermStyleLua (WezTerm's generated Lua module).
+            # plist), Get-WezTermStyleLua (WezTerm's generated Lua module) and
+            # Invoke-VSCodeStyleApply (VS Code's settings.json, written once the
+            # user has said yes -- see the conditional test below).
             # No other terminal has anything that writes a config, so no other
             # terminal may claim a stored visual -- however capable the emulator
             # itself is. iTerm2 would honour a Dynamic Profile; nothing writes
@@ -127,7 +134,7 @@ Describe 'Get-TerminalCapability' {
             # This list is the point of the test. Adding a terminal to it is a
             # claim that a writer exists for it, and the assertion below this one
             # is what holds that claim to the code.
-            $writers = @('WindowsTerminal', 'AppleTerminal', 'WezTerm')
+            $writers = @('WindowsTerminal', 'AppleTerminal', 'WezTerm', 'VSCode')
             $stored  = @('Font', 'Opacity', 'CursorShape', 'BackgroundImage', 'TabColor')
             foreach ($k in ($script:AllKinds | Where-Object { $_ -notin $writers })) {
                 $caps = Get-TerminalCapability -Kind $k
@@ -145,10 +152,25 @@ Describe 'Get-TerminalCapability' {
                 WindowsTerminal = 'Merge-StyleIntoSettings'
                 AppleTerminal   = 'New-AppleTerminalProfile'
                 WezTerm         = 'Get-WezTermStyleLua'
+                VSCode          = 'Invoke-VSCodeStyleApply'
             }
             foreach ($k in $writerFor.Keys) {
                 Get-Command $writerFor[$k] -ErrorAction SilentlyContinue |
                     Should -Not -BeNullOrEmpty -Because "$k claims stored visuals, so $($writerFor[$k]) must exist"
+            }
+        }
+
+        It 'claims VS Code''s stored visuals only while its writer is on' {
+            Mock Test-VSCodeWriterActive { $true }
+            $on = Get-TerminalCapability -Kind 'VSCode'
+            $on.Persist     | Should -BeTrue
+            $on.Font        | Should -BeTrue
+            $on.CursorShape | Should -BeTrue
+
+            Mock Test-VSCodeWriterActive { $false }
+            $off = Get-TerminalCapability -Kind 'VSCode'
+            foreach ($n in ($script:TStylesCapabilityNames | Where-Object { $_ -ne 'OscPalette' })) {
+                $off[$n] | Should -BeFalse -Because "with the writer off nothing delivers $n"
             }
         }
 
