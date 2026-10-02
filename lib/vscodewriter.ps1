@@ -559,7 +559,8 @@ function Show-VSCodeWriteResult {
         }
         'statecorrupt' {
             Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
-            Write-Host "  Nothing was written, so nothing became impossible to undo. Fix or delete that file." -ForegroundColor Yellow
+            Write-Host "  Nothing was written. Fix that file: deleting it lets tstyles write again, but loses" -ForegroundColor Yellow
+            Write-Host "  its record of any style already in settings.json." -ForegroundColor Yellow
         }
     }
 }
@@ -622,7 +623,14 @@ function Reset-StyleVSCodeConfig {
             return $result
         }
     }
-    try { Set-VSCodeStateEntry -Variant $Variant -Record $null } catch { }
+    try {
+        Set-VSCodeStateEntry -Variant $Variant -Record $null
+    } catch {
+        # The file is clean, but the record still names the style's values, so
+        # the next reset or apply would take the user's own settings for hand
+        # edits. Say so rather than leave it to be misread later.
+        $result.Detail = 'its record could not be cleared'
+    }
 
     $result.Status   = 'reset'
     $result.Kept     = @($r.Kept)
@@ -646,6 +654,9 @@ function Show-VSCodeResetResult {
             foreach ($k in @($Result.Kept)) {
                 Write-Host ("  Left {0} as you set it (you changed it after the style wrote it)." -f $k) -ForegroundColor DarkGray
             }
+            if ($Result.Detail) {
+                Write-Host ("  But {0}, so the next apply or reset may wrongly call some of your settings hand edits." -f $Result.Detail) -ForegroundColor Yellow
+            }
         }
         'unknownvariant' {
             Write-Host "  Couldn't tell which editor this terminal belongs to, so no settings.json" -ForegroundColor Yellow
@@ -653,7 +664,8 @@ function Show-VSCodeResetResult {
         }
         'statecorrupt' {
             Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json," -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
-            Write-Host "  so nothing was taken out of it. Fix or delete that file, then reset again." -ForegroundColor Yellow
+            Write-Host "  so nothing was taken out of it. Fix that file and reset again -- deleting it would" -ForegroundColor Yellow
+            Write-Host "  leave the style in settings.json with no record to take it out by." -ForegroundColor Yellow
         }
         'wontparse' {
             Write-Host ("  Could not edit {0} safely: {1}, so the style was left in it." -f $Result.Path, $Result.Detail) -ForegroundColor Yellow

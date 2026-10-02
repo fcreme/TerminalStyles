@@ -570,6 +570,13 @@ Describe 'Show-VSCodeWriteResult' {
             Show-VSCodeWriteResult -Result $null
             Should -Invoke Write-Host -Times 0 -Scope It
         }
+
+        It 'never advises deleting the record file without saying what that costs' {
+            $r = $script:base.Clone(); $r.Status = 'statecorrupt'
+            Show-VSCodeWriteResult -Result $r
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Fix or delete' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'loses' }
+        }
     }
 }
 
@@ -644,6 +651,9 @@ Describe 'Reset-StyleVSCodeConfig' {
 
         It 'keeps the record when the write fails' {
             script:Publish 'koholint'
+            # Pester 6 throws on a call no filter matches (Pester 5 called the
+            # real command), so the state write needs a default mock to land on.
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
             Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
             (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'writefailed'
             (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty
@@ -701,6 +711,15 @@ Describe 'Reset-StyleVSCodeConfig' {
             Get-JsoncValueLiteral -Text $after -Path @('terminal.integrated.fontFamily') | Should -BeNullOrEmpty
             Get-JsoncValueLiteral -Text $after -Path @('editor.fontSize') | Should -Be '13'
         }
+
+        It 'says so when the record cannot be cleared' {
+            script:Publish 'koholint'
+            Mock Set-VSCodeStateEntry { throw 'Could not write state: read-only' }
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'reset' -Because 'the file itself was put back'
+            $r.Detail | Should -Match 'record could not be cleared'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
     }
 }
 
@@ -730,6 +749,17 @@ Describe 'Show-VSCodeResetResult' {
             Show-VSCodeResetResult -Result @{ Status = 'reset'; Variant = 'Code'; Path = '/x'
                                               Kept = @('terminal.integrated.fontFamily'); Restored = @(); Removed = @() }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Left terminal\.integrated\.fontFamily' }
+        }
+
+        It 'says what an uncleared record means' {
+            Show-VSCodeResetResult -Result @{ Status = 'reset'; Variant = 'Code'; Path = '/x'; Kept = @(); Restored = @(); Removed = @(); Detail = 'its record could not be cleared' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'wrongly call some of your settings hand edits' }
+        }
+
+        It 'never advises deleting the record file without saying what that costs' {
+            Show-VSCodeResetResult -Result @{ Status = 'statecorrupt'; Variant = 'Code'; Path = '/x'; Kept = @(); Restored = @(); Removed = @(); Detail = $null }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Fix or delete' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'no record to take it out by' }
         }
     }
 }
