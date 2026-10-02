@@ -330,6 +330,15 @@ disagree with a section above, these win.
    → 166 ms, 4.7 KB → 1.3 s, macOS, pwsh 7.7), so picker previews are cached
    per style and the font and cursor land a moment after the OSC colours.
 
+10. **Two more refinements found in review.** Both I/O helpers throw their own
+    message ("Could not write/read <path>: ..."), because a .NET exception is
+    only statement-terminating without a caller's try. A file that exists but
+    cannot be read is `wontparse` with Detail "it could not be read" (publisher,
+    reset) and gets no picker session. When the settings write fails AND the
+    record cannot be put back, `writefailed` carries Detail "its undo record
+    could not be restored either" and says a reset may leave some of the
+    previous style's settings in place.
+
 Found, not fixed here (pre-existing, reported separately): the picker's
 confirm on non-Windows-Terminal terminals prints the "can't show" notice
 twice, and `Publish-StyleWezTermConfig`'s notices in the picker are printed
