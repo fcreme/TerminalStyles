@@ -525,10 +525,10 @@ function Show-VSCodeWriteResult {
             }
         }
         'declined' {
-            Write-Host ("  Did not write to {0}'s settings.json, as you chose. tstyles vscode on changes that." -f $Result.Variant) -ForegroundColor DarkGray
+            Write-Host ("  Not saved to {0}'s settings.json, as you chose. tstyles vscode on changes that." -f $Result.Variant) -ForegroundColor DarkGray
         }
         'undecided' {
-            Write-Host ("  Did not write to {0}'s settings.json: there is no answer on record for it yet." -f $Result.Variant) -ForegroundColor DarkGray
+            Write-Host ("  Not saved to {0}'s settings.json: there is no answer on record for it yet." -f $Result.Variant) -ForegroundColor DarkGray
             Write-Host "  tstyles vscode on gives one." -ForegroundColor DarkGray
         }
         'unknownvariant' {
