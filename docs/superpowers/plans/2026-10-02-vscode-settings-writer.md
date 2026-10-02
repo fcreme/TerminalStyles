@@ -1216,7 +1216,8 @@ function Show-VSCodeWriteResult {
         }
         'statecorrupt' {
             Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
-            Write-Host "  Nothing was written, so nothing became impossible to undo. Fix or delete that file." -ForegroundColor Yellow
+            Write-Host "  Nothing was written. Fix that file: deleting it lets tstyles write again, but loses" -ForegroundColor Yellow
+            Write-Host "  its record of any style already in settings.json." -ForegroundColor Yellow
         }
     }
 }
@@ -1324,6 +1325,9 @@ Describe 'Reset-StyleVSCodeConfig' {
 
         It 'keeps the record when the write fails' {
             script:Publish 'koholint'
+            # Pester 6 throws on a call no filter matches (Pester 5 called the
+            # real command), so the state write needs a default mock to land on.
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
             Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
             (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'writefailed'
             (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty
@@ -1482,7 +1486,14 @@ function Reset-StyleVSCodeConfig {
             return $result
         }
     }
-    try { Set-VSCodeStateEntry -Variant $Variant -Record $null } catch { }
+    try {
+        Set-VSCodeStateEntry -Variant $Variant -Record $null
+    } catch {
+        # The file is clean, but the record still names the style's values, so
+        # the next reset or apply would take the user's own settings for hand
+        # edits. Say so rather than leave it to be misread later.
+        $result.Detail = 'its record could not be cleared'
+    }
 
     $result.Status   = 'reset'
     $result.Kept     = @($r.Kept)
@@ -1506,6 +1517,9 @@ function Show-VSCodeResetResult {
             foreach ($k in @($Result.Kept)) {
                 Write-Host ("  Left {0} as you set it (you changed it after the style wrote it)." -f $k) -ForegroundColor DarkGray
             }
+            if ($Result.Detail) {
+                Write-Host ("  But {0}, so the next apply or reset may wrongly call some of your settings hand edits." -f $Result.Detail) -ForegroundColor Yellow
+            }
         }
         'unknownvariant' {
             Write-Host "  Couldn't tell which editor this terminal belongs to, so no settings.json" -ForegroundColor Yellow
@@ -1513,7 +1527,8 @@ function Show-VSCodeResetResult {
         }
         'statecorrupt' {
             Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json," -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
-            Write-Host "  so nothing was taken out of it. Fix or delete that file, then reset again." -ForegroundColor Yellow
+            Write-Host "  so nothing was taken out of it. Fix that file and reset again -- deleting it would" -ForegroundColor Yellow
+            Write-Host "  leave the style in settings.json with no record to take it out by." -ForegroundColor Yellow
         }
         'wontparse' {
             Write-Host ("  Could not edit {0} safely: {1}, so the style was left in it." -f $Result.Path, $Result.Detail) -ForegroundColor Yellow
@@ -2863,7 +2878,8 @@ function Show-VSCodeWriterStatus {
     Write-Host ""
     if (-not $state.Ok) {
         Write-Host ("  Could not read {0}." -f $state.Path) -ForegroundColor Yellow
-        Write-Host "  It records what tstyles wrote to settings.json; fix or delete it." -ForegroundColor Yellow
+        Write-Host "  It records what tstyles wrote to settings.json. Fix it: deleting it lets tstyles" -ForegroundColor Yellow
+        Write-Host "  write again, but loses its record of any style already saved there." -ForegroundColor Yellow
         Write-Host ""
         return
     }
@@ -3132,6 +3148,18 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             $out | Should -Match ([regex]::Escape((Get-VSCodeStatePath)))
         }
 
+        It 'names, in the sign-off, a settings.json it could not take the style out of' {
+            Mock Confirm-Action { $true }
+            $fs = [System.IO.File]::Open($script:files['Code'], 'Open', 'ReadWrite', 'None')
+            try {
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            } finally { $fs.Dispose() }
+            $out | Should -Match 'EXCEPT the style saved in'
+            $out | Should -Match ([regex]::Escape($script:files['Code']))
+            $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$' -Because 'a style is still in a file the user owns'
+            [System.IO.File]::ReadAllText($script:files['Cursor']) | Should -BeExactly $script:user -Because 'the other editor still comes clean'
+        }
+
         It 'the uninstall help says so too' {
             $u = (Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'uninstall' })
             ($u.Detail -join ' ') | Should -Match 'VS Code'
@@ -3217,9 +3245,44 @@ with:
     }
 
     # The saved VS Code styles, from their records -- the same list the prompt
-    # named. Each says what it did; one that could not be undone names its file.
-    foreach ($t in $vscodeTargets) {
-        Show-VSCodeResetResult -Result (Reset-StyleVSCodeConfig -Variant $t.Variant)
+    # named. Each says what it did. One that could not be undone is collected
+    # for the sign-off: its record survives only until -DeleteData, and once
+    # the module is gone no `tstyles reset` can retry it.
+    $vscodeProblems = @(foreach ($t in $vscodeTargets) {
+        $vr = Reset-StyleVSCodeConfig -Variant $t.Variant
+        Show-VSCodeResetResult -Result $vr
+        if ($vr.Status -ne 'reset' -and $vr.Status -ne 'norecord') { $t.Path }
+    })
+```
+
+- [ ] **Step 5b: Do not sign off "uninstalled" over a style still in a settings.json**
+
+Replace:
+
+```powershell
+    } else {
+        Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
+    }
+```
+
+with:
+
+```powershell
+    } elseif ($vscodeProblems.Count -eq 0) {
+        Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
+    }
+    # A VS Code style that could not be taken out. Its record is the only thing
+    # that names those keys, and with the module gone no reset can use it -- so
+    # the user is told where they are, rather than "uninstalled".
+    if ($vscodeProblems.Count -gt 0) {
+        if ($allProblems.Count -gt 0) {
+            Write-Host "...and the style saved in:" -ForegroundColor Yellow
+        } else {
+            Write-Host "TerminalStyles uninstalled, EXCEPT the style saved in:" -ForegroundColor Yellow
+        }
+        foreach ($p in $vscodeProblems) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
+        Write-Host "Take its terminal settings out of those files by hand, or restore the" -ForegroundColor Yellow
+        Write-Host "settings.json.bak-* copy beside each -- the module is gone, so tstyles cannot." -ForegroundColor Yellow
     }
 ```
 
