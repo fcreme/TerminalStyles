@@ -83,6 +83,7 @@ Describe 'tstyles font does not chase a settings.json that cannot exist' {
             # style it writes, and config.font set after the require line wins.
             $out | Should -Match 'tstyles tune|config\.font' `
                 -Because 'a WezTerm user needs somewhere to put it that survives'
+            $out | Should -Match 'config\.font' -Because 'the route WezTerm alone has is still offered on WezTerm'
         }
 
         It 'still applies on Windows Terminal' {

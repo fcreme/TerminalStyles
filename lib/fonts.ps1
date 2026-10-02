@@ -929,9 +929,11 @@ function Invoke-TerminalStyleFont {
             # generated Lua module. Saying it "takes its font from its own
             # settings" was false here: a font set in the user's own config is
             # overridden by the next apply, so that advice sent them to do
-            # something that does not stick. Both routes below are measured:
-            # setting config.font after the require line wins, and a tuned
-            # style carries `font` into its theme.json, which the writer emits.
+            # something that does not stick. On WezTerm both routes below are
+            # measured: setting config.font after the require line wins, and a
+            # tuned style carries `font` into its theme.json, which the writer
+            # emits. In VS Code only the tune route applies; the config.font
+            # one is WezTerm's alone (see the gate below).
             Write-Host ("  '{0}' is installed. The applied style sets {1}'s font." -f $font.family, $fontName) -ForegroundColor DarkGray
             Write-Host "  To use it: tstyles tune <style> and save, which keeps the font with the style." -ForegroundColor DarkGray
             # The second route is WezTerm's alone. In VS Code the style's font is
