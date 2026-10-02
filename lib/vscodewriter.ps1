@@ -563,3 +563,105 @@ function Show-VSCodeWriteResult {
         }
     }
 }
+
+function Reset-StyleVSCodeConfig {
+    <#
+    .SYNOPSIS
+    Take a style back out of one editor's settings.json, by its record.
+
+    .DESCRIPTION
+    The record says what to undo, and Invoke-VSCodeStyleReset decides per key:
+    restored, removed, or kept because the user changed it since. The record
+    is cleared only AFTER the file is written: clearing it first and then
+    failing the write would leave keys in the file that no command could name.
+
+    -Variant names the editor; omitted, it is the one this terminal belongs
+    to. Works off the RECORDED settings path, so uninstall and `tstyles vscode
+    off` can run it from any terminal.
+
+    Returns @{ Status; Variant; Path; Kept; Restored; Removed; Detail }, Status
+    one of reset, norecord, unknownvariant, statecorrupt, wontparse,
+    writefailed. Detail says why for wontparse: the file could not be read, or
+    does not parse.
+    #>
+    [CmdletBinding()]
+    param([string]$Variant)
+
+    $result = @{ Status = 'norecord'; Variant = $Variant; Path = $null; Kept = @(); Restored = @(); Removed = @(); Detail = $null }
+
+    if (-not $Variant) {
+        $t = Resolve-VSCodeTarget
+        if (-not $t.Variant) { $result.Status = 'unknownvariant'; return $result }
+        $Variant = $t.Variant
+        $result.Variant = $Variant
+    }
+
+    $state = Read-VSCodeState
+    if (-not $state.Ok) { $result.Status = 'statecorrupt'; return $result }
+    $entry = $state.Entries[$Variant]
+    if (-not $entry -or -not $entry.record) { return $result }
+    $result.Path = $entry.settingsPath
+
+    try {
+        $text = Read-VSCodeSettingsText -Path $entry.settingsPath
+    } catch {
+        $result.Status = 'wontparse'; $result.Detail = 'it could not be read'
+        return $result
+    }
+    if (-not (Test-VSCodeSettingsReadable -Text $text)) {
+        $result.Status = 'wontparse'; $result.Detail = 'it does not parse as a JSON object'
+        return $result
+    }
+
+    $r = Invoke-VSCodeStyleReset -Text $text -Record $entry.record
+    if ($r.Text -cne $text) {
+        try {
+            Write-SettingsAtomic -Path $entry.settingsPath -Json $r.Text
+        } catch {
+            $result.Status = 'writefailed'
+            return $result
+        }
+    }
+    try { Set-VSCodeStateEntry -Variant $Variant -Record $null } catch { }
+
+    $result.Status   = 'reset'
+    $result.Kept     = @($r.Kept)
+    $result.Restored = @($r.Restored)
+    $result.Removed  = @($r.Removed)
+    return $result
+}
+
+function Show-VSCodeResetResult {
+    # Say what Reset-StyleVSCodeConfig did. Quiet on 'norecord': nothing of
+    # ours was there, and saying so on every reset in every VS Code terminal
+    # would be noise. No leading blank line: it is printed inside other
+    # commands' blocks (reset, uninstall, `tstyles vscode off`).
+    [CmdletBinding()]
+    param([AllowNull()][hashtable]$Result)
+
+    if (-not $Result) { return }
+    switch ($Result.Status) {
+        'reset' {
+            Write-Host ("  Took the style back out of {0}'s settings.json." -f $Result.Variant) -ForegroundColor DarkGray
+            foreach ($k in @($Result.Kept)) {
+                Write-Host ("  Left {0} as you set it (you changed it after the style wrote it)." -f $k) -ForegroundColor DarkGray
+            }
+        }
+        'unknownvariant' {
+            Write-Host "  Couldn't tell which editor this terminal belongs to, so no settings.json" -ForegroundColor Yellow
+            Write-Host "  was touched." -ForegroundColor Yellow
+        }
+        'statecorrupt' {
+            Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json," -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+            Write-Host "  so nothing was taken out of it. Fix or delete that file, then reset again." -ForegroundColor Yellow
+        }
+        'wontparse' {
+            Write-Host ("  Could not edit {0} safely: {1}, so the style was left in it." -f $Result.Path, $Result.Detail) -ForegroundColor Yellow
+            Write-Host "  Fix the file and reset again -- the record of what to take out is kept." -ForegroundColor Yellow
+        }
+        'writefailed' {
+            Write-Host ("  Could not write {0}, so the style is still in it." -f $Result.Path) -ForegroundColor Yellow
+            Write-Host "  The record of what to take out is kept; reset again once it can be written." -ForegroundColor Yellow
+        }
+    }
+}

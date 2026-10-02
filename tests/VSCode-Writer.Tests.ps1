@@ -572,3 +572,164 @@ Describe 'Show-VSCodeWriteResult' {
         }
     }
 }
+
+Describe 'Reset-StyleVSCodeConfig' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            $script:user = "{`n  // mine`n  `"editor.fontSize`": 13`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+
+            function script:Publish([string]$Name) {
+                Publish-StyleVSCodeConfig -StyleName $Name -StyleDir (Get-StyleDir -StyleName $Name) -Kind 'VSCode' | Out-Null
+            }
+        }
+
+        It 'puts the file back byte for byte, and clears the record' {
+            script:Publish 'koholint'
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'reset'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'still does, after a chain of styles' {
+            script:Publish 'koholint'; script:Publish 'eva'; script:Publish 'sober'
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'leaves a key you changed since, and names it' {
+            script:Publish 'koholint'
+            $t = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath,
+                (Set-JsoncLiteral -Text $t -Path @('terminal.integrated.fontFamily') -Literal '"Mine Mono"').Text,
+                [System.Text.UTF8Encoding]::new($false))
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Kept | Should -Contain 'terminal.integrated.fontFamily'
+            Get-JsoncValueLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) -Path @('terminal.integrated.fontFamily') |
+                Should -Be '"Mine Mono"'
+        }
+
+        It 'says norecord, and touches nothing, when no style was saved' {
+            $stamp = [System.IO.File]::GetLastWriteTimeUtc($script:sPath)
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'norecord'
+            [System.IO.File]::GetLastWriteTimeUtc($script:sPath) | Should -Be $stamp
+        }
+
+        It 'keeps the record when the file no longer parses' {
+            script:Publish 'koholint'
+            $t = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath, $t.Substring(0, $t.Length - 3), [System.Text.UTF8Encoding]::new($false))
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'wontparse'
+            (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty -Because 'a later reset still needs it'
+        }
+
+        It 'keeps the record when the file cannot be read' {
+            script:Publish 'koholint'
+            $fs = [System.IO.File]::Open($script:sPath, 'Open', 'ReadWrite', 'None')
+            try {
+                $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            } finally { $fs.Dispose() }
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -Match 'could not be read'
+            (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty
+        }
+
+        It 'keeps the record when the write fails' {
+            script:Publish 'koholint'
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'writefailed'
+            (Read-VSCodeState).Entries['Code'].record | Should -Not -BeNullOrEmpty
+        }
+
+        It 'works from any terminal, off the recorded path' {
+            script:Publish 'koholint'
+            Mock Resolve-VSCodeTarget { @{ Status = 'unknownvariant'; Variant = $null; Path = $null } }
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'refuses to guess when it has to find the editor itself' {
+            Mock Resolve-VSCodeTarget { @{ Status = 'unknownvariant'; Variant = $null; Path = $null } }
+            (Reset-StyleVSCodeConfig).Status | Should -Be 'unknownvariant'
+        }
+
+        It 'does not bring back a settings.json deleted since' {
+            script:Publish 'koholint'
+            Remove-Item -LiteralPath $script:sPath -Force
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            [System.IO.File]::Exists($script:sPath) | Should -BeFalse
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        # Review Focus 1-3.
+        It 'returns a CRLF file with its CRLF' {
+            $crlf = "{`r`n  // mine`r`n  `"editor.fontSize`": 13`r`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $crlf, [System.Text.UTF8Encoding]::new($false))
+            script:Publish 'koholint'
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $crlf
+        }
+
+        It 'keeps a byte-order mark through apply and reset' {
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($true))
+            $before = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath))
+            script:Publish 'koholint'
+            $mid = [System.IO.File]::ReadAllBytes($script:sPath)
+            ($mid[0] -eq 0xEF -and $mid[1] -eq 0xBB -and $mid[2] -eq 0xBF) | Should -BeTrue -Because 'the apply keeps the BOM'
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath)) | Should -BeExactly $before
+        }
+
+        It 'still takes everything out after the file was re-indented' {
+            # VS Code's settings UI and Settings Sync both rewrite the file.
+            # What the reset compares is each value's text, not its position.
+            script:Publish 'koholint'
+            $t = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath, ($t -replace "`n  ", "`n    "), [System.Text.UTF8Encoding]::new($false))
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            @($r.Kept).Count | Should -Be 0 -Because 'no value changed, only the whitespace around it'
+            $after = [System.IO.File]::ReadAllText($script:sPath)
+            Get-JsoncValueLiteral -Text $after -Path @('workbench.colorCustomizations') | Should -BeNullOrEmpty
+            Get-JsoncValueLiteral -Text $after -Path @('terminal.integrated.fontFamily') | Should -BeNullOrEmpty
+            Get-JsoncValueLiteral -Text $after -Path @('editor.fontSize') | Should -Be '13'
+        }
+    }
+}
+
+Describe 'Show-VSCodeResetResult' {
+    InModuleScope TerminalStyles {
+        BeforeEach { Mock Write-Host { } }
+
+        It 'says <status> in its own words' -ForEach @(
+            @{ status = 'reset';          pattern = "Took the style back out of Code's settings\.json" }
+            @{ status = 'unknownvariant'; pattern = "Couldn't tell which editor" }
+            @{ status = 'statecorrupt';   pattern = 'Could not read' }
+            @{ status = 'wontparse';      pattern = 'Could not edit .* safely: it could not be read' }
+            @{ status = 'writefailed';    pattern = 'Could not write' }
+        ) {
+            Show-VSCodeResetResult -Result @{ Status = $status; Variant = 'Code'; Path = '/x/settings.json'
+                                              Kept = @(); Restored = @(); Removed = @(); Detail = 'it could not be read' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match $pattern }
+        }
+
+        It 'stays quiet when there was nothing of ours to take out' {
+            Show-VSCodeResetResult -Result @{ Status = 'norecord'; Variant = 'Code'; Path = $null
+                                              Kept = @(); Restored = @(); Removed = @() }
+            Should -Invoke Write-Host -Times 0 -Scope It
+        }
+
+        It 'names a key it left' {
+            Show-VSCodeResetResult -Result @{ Status = 'reset'; Variant = 'Code'; Path = '/x'
+                                              Kept = @('terminal.integrated.fontFamily'); Restored = @(); Removed = @() }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Left terminal\.integrated\.fontFamily' }
+        }
+    }
+}
