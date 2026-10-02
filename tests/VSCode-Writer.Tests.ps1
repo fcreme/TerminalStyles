@@ -832,3 +832,72 @@ Describe 'tstyles font in a VS Code terminal' {
         }
     }
 }
+
+Describe 'tstyles <name> and tstyles reset in a VS Code terminal' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            $script:user = "{`n  // mine`n  `"editor.fontSize`": 13`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+
+            Mock Get-TerminalKind { 'VSCode' }
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-HostOscPacket { $true }
+            Mock Get-StyleBundledBackground { $null }
+            Mock Write-Host { }
+        }
+
+        It 'asks once, and asks before the notice is built' {
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $true }
+            Apply-StyleNonWT -StyleName 'koholint' -StyleDir $script:koholint -KeepPrompt
+            Get-JsoncValueLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) `
+                -Path @('workbench.colorCustomizations', 'terminal.background') | Should -Not -BeNullOrEmpty
+            # Had the question come after the notice, the notice would have
+            # named the font this very apply then wrote.
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match "can't show:.*\bfont\b" }
+            Apply-StyleNonWT -StyleName 'koholint' -StyleDir $script:koholint -KeepPrompt
+            Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It
+        }
+
+        It 'says Saved, once' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Apply-StyleNonWT -StyleName 'koholint' -StyleDir $script:koholint -KeepPrompt
+            Should -Invoke Write-Host -Times 1 -Exactly -Scope It -ParameterFilter { "$Object" -match "Saved to Code's settings\.json" }
+        }
+
+        It 'writes nothing, and says why, when nobody is there to ask' {
+            Mock Test-InteractiveConsole { $false }
+            Apply-StyleNonWT -StyleName 'koholint' -StyleDir $script:koholint -KeepPrompt
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'no answer on record' }
+        }
+
+        It 'tstyles reset takes it back out, byte for byte' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Apply-StyleNonWT -StyleName 'koholint' -StyleDir $script:koholint -KeepPrompt
+            Reset-StyleNonWT -OutputRedirected $false
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match "Took the style back out of Code's settings\.json" }
+        }
+
+        It 'a reset in another terminal leaves VS Code alone' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Apply-StyleNonWT -StyleName 'koholint' -StyleDir $script:koholint -KeepPrompt
+            $styled = [System.IO.File]::ReadAllText($script:sPath)
+            Mock Get-TerminalKind { 'AppleTerminal' }
+            Reset-StyleNonWT -OutputRedirected $false
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $styled
+        }
+
+        It 'the reset help no longer says there is no settings file off Windows Terminal' {
+            $reset = (Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'reset' })
+            ($reset.Detail -join ' ') | Should -Match 'VS Code'
+        }
+    }
+}

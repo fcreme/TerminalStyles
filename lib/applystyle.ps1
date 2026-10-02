@@ -677,6 +677,11 @@ function Apply-StyleNonWT {
     # mattered.
     $kind = Get-TerminalKind
 
+    # VS Code: ask (once per editor) whether its settings.json may be written,
+    # BEFORE anything below reads the capability table. The "can't show"
+    # notice is built from it, and has to reflect the answer.
+    if ($kind -eq 'VSCode') { [void](Request-VSCodeWriterConsent) }
+
     $schemePath = Join-Path $StyleDir 'scheme.json'
     if (-not (Test-Path -LiteralPath $schemePath)) {
         Write-Error "Style '$StyleName' has no scheme.json."
@@ -798,6 +803,9 @@ function Apply-StyleNonWT {
         -Scheme $scheme -Kind $kind -NewWindow:$NewWindow | Out-Null
     Publish-StyleWezTermConfig -StyleName $StyleName -StyleDir $StyleDir `
         -Scheme $scheme -Theme $theme -Kind $kind | Out-Null
+    # The fourth writer, called beside the third for the reason the picker's
+    # confirm gives: every publisher the direct path calls, the picker calls.
+    Show-VSCodeWriteResult -Result (Publish-StyleVSCodeConfig -StyleName $StyleName -StyleDir $StyleDir -Kind $kind)
     Write-Host ""
 
     # Live reload of the prompt in THIS shell (matches the WT confirm path).
@@ -1018,7 +1026,8 @@ function Test-InWindowsTerminal {
 function Reset-StyleNonWT {
     # `tstyles reset` off Windows Terminal.
     #
-    # Nothing was written to a settings file, so there is nothing to strip --
+    # Nothing was written to a settings file -- VS Code's aside, which keeps a
+    # record of what it wrote and is undone from it below -- so there is nothing to strip --
     # the applied colors live entirely in the terminal's dynamic-color state.
     # OSC 104/110/111/112/117 hands that state back to the terminal's own
     # configured profile, which is exactly what "unstyled default" means here.
@@ -1067,6 +1076,11 @@ function Reset-StyleNonWT {
     } else {
         Write-Host "  This terminal did not accept the color reset, so this session keeps the" -ForegroundColor Yellow
         Write-Host "  colors it has. The style is cleared -- a new tab comes up unstyled." -ForegroundColor Yellow
+    }
+    # VS Code's settings.json, when a style was saved there. From its record,
+    # so it does not matter whether the style still exists.
+    if ($kind -eq 'VSCode') {
+        Show-VSCodeResetResult -Result (Reset-StyleVSCodeConfig)
     }
     # True on all three paths: the loader target is removed either way.
     Write-Host "  Open a new tab to restore your default prompt."
