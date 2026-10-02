@@ -333,3 +333,207 @@ Describe 'Get-VSCodeWriterState and the question it asks' {
         }
     }
 }
+
+Describe 'Publish-StyleVSCodeConfig' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            $script:user = "{`n  // mine`n  `"editor.fontSize`": 13`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            $script:eva      = Get-StyleDir -StyleName 'eva'
+
+            # A style with a scheme and no theme.json: it writes colours only,
+            # never a font or a cursor.
+            $script:plain = Join-Path $script:TStylesDataRoot 'styles/plain'
+            New-Item -ItemType Directory -Path $script:plain -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:plain 'scheme.json'),
+                '{"name":"plain","background":"#101010","foreground":"#f0f0f0"}',
+                [System.Text.UTF8Encoding]::new($false))
+
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+        }
+
+        It 'returns nothing off VS Code' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'WezTerm' |
+                Should -BeNullOrEmpty
+        }
+
+        It 'writes the style, keeps the comments, and saves the record' {
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be 'written'
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            Get-JsoncValueLiteral -Text $text -Path @('workbench.colorCustomizations', 'terminal.background') |
+                Should -Not -BeNullOrEmpty
+            Test-JsoncCommentsIntact -Before $script:user -After $text | Should -BeTrue
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+        }
+
+        It 'takes a first-touch copy before the first write, and only then' {
+            $r1 = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r1.Backup | Should -Not -BeNullOrEmpty
+            [System.IO.File]::ReadAllText($r1.Backup) | Should -BeExactly $script:user
+            $r2 = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode'
+            $r2.Backup | Should -BeNullOrEmpty -Because 'a later copy would capture a file that already carries a style'
+        }
+
+        It 'writes nothing while <consent>' -ForEach @(
+            @{ consent = 'declined';  expected = 'declined' }
+            @{ consent = 'undecided'; expected = 'undecided' }
+        ) {
+            if ($consent -eq 'declined') {
+                Set-VSCodeStateEntry -Variant 'Code' -Consent 'no'
+            } else {
+                Remove-Item -LiteralPath (Get-VSCodeStatePath) -Force
+            }
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be $expected
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'passes an editor it cannot name straight through, reading nothing' {
+            Mock Resolve-VSCodeTarget { @{ Status = 'unknownvariant'; Variant = $null; Path = $null } }
+            Mock Read-VSCodeSettingsText { throw 'must not read' }
+            (Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode').Status |
+                Should -Be 'unknownvariant'
+        }
+
+        It 'refuses a file that does not parse, and keeps no record' {
+            [System.IO.File]::WriteAllText($script:sPath, '{ "a": 1 ', [System.Text.UTF8Encoding]::new($false))
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -Match 'does not parse'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly '{ "a": 1 '
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'refuses a file it cannot read, rather than treating it as empty' {
+            # Held open with no sharing: ReadAllText fails on every platform
+            # the suite runs on. Writing over it would replace the user's file.
+            $fs = [System.IO.File]::Open($script:sPath, 'Open', 'ReadWrite', 'None')
+            try {
+                $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            } finally { $fs.Dispose() }
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -Match 'could not be read'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'says what is wrong when the colour block is not an object' {
+            [System.IO.File]::WriteAllText($script:sPath, '{ "workbench.colorCustomizations": null }',
+                [System.Text.UTF8Encoding]::new($false))
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -Match 'colorCustomizations'
+        }
+
+        It 'starts a missing settings.json from {}' {
+            Remove-Item -LiteralPath $script:sPath -Force
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be 'written'
+            Test-VSCodeSettingsReadable -Text ([System.IO.File]::ReadAllText($script:sPath)) | Should -BeTrue
+            $r.Backup | Should -BeNullOrEmpty -Because 'there was no file to copy'
+        }
+
+        It 'puts the record back when the settings write fails' {
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status     | Should -Be 'writefailed'
+            $r.FailedPath | Should -Be $script:sPath
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty -Because 'no key landed, so no record may claim one'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'does not touch settings.json when its record cannot be saved' {
+            Mock Set-VSCodeStateEntry { throw 'read-only data root' }
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status     | Should -Be 'writefailed'
+            $r.FailedPath | Should -Be (Get-VSCodeStatePath)
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'names a theme block that will hide the colours' {
+            $scoped = "{`n  `"workbench.colorCustomizations`": {`n    `"[Monokai]`": { `"terminal.background`": `"#000000`" }`n  }`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $scoped, [System.Text.UTF8Encoding]::new($false))
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            $r.Status | Should -Be 'written'
+            @($r.Overrides).Count | Should -Be 1
+            $r.Overrides[0].Scope | Should -Be '[Monokai]'
+            $r.Overrides[0].Ids   | Should -Contain 'terminal.background'
+        }
+
+        It 'says which hand edits it left, and which the next style wrote over' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            # Two keys changed by hand while koholint is on: one the next style
+            # also sets (the background), one it does not (the font).
+            $t = [System.IO.File]::ReadAllText($script:sPath)
+            $t = (Set-JsoncLiteral -Text $t -Path @('workbench.colorCustomizations', 'terminal.background') -Literal '"#000000"').Text
+            $t = (Set-JsoncLiteral -Text $t -Path @('terminal.integrated.fontFamily') -Literal '"Mine Mono"').Text
+            [System.IO.File]::WriteAllText($script:sPath, $t, [System.Text.UTF8Encoding]::new($false))
+
+            $r = Publish-StyleVSCodeConfig -StyleName 'plain' -StyleDir $script:plain -Kind 'VSCode'
+            $r.Status   | Should -Be 'written'
+            $r.Replaced | Should -Contain 'workbench.colorCustomizations/terminal.background'
+            $r.Kept     | Should -Contain 'terminal.integrated.fontFamily'
+            Get-JsoncValueLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) -Path @('terminal.integrated.fontFamily') |
+                Should -Be '"Mine Mono"'
+        }
+    }
+}
+
+Describe 'Show-VSCodeWriteResult' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            Mock Write-Host { }
+            $script:base = @{
+                Variant = 'Code'; Path = '/x/Code/User/settings.json'; Kept = @(); Replaced = @()
+                Overrides = @(); Backup = $null; FailedPath = '/x/Code/User/settings.json'
+                Detail = 'it does not parse as a JSON object'
+            }
+        }
+
+        It 'says <status> in its own words' -ForEach @(
+            @{ status = 'written';        pattern = "Saved to Code's settings\.json" }
+            @{ status = 'declined';       pattern = 'tstyles vscode on' }
+            @{ status = 'undecided';      pattern = 'no answer on record' }
+            @{ status = 'unknownvariant'; pattern = "Couldn't tell which editor" }
+            @{ status = 'nodir';          pattern = 'no settings folder' }
+            @{ status = 'wontparse';      pattern = 'does not parse' }
+            @{ status = 'writefailed';    pattern = 'Could not write' }
+            @{ status = 'statecorrupt';   pattern = 'Could not read' }
+        ) {
+            $r = $script:base.Clone(); $r.Status = $status
+            Show-VSCodeWriteResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match $pattern }
+        }
+
+        It 'never says Saved unless it was written' {
+            foreach ($s in 'declined', 'undecided', 'unknownvariant', 'nodir', 'wontparse', 'writefailed', 'statecorrupt') {
+                $r = $script:base.Clone(); $r.Status = $s
+                Show-VSCodeWriteResult -Result $r
+            }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Saved to' }
+        }
+
+        It 'names kept and replaced keys, and an overriding theme block' {
+            $r = $script:base.Clone(); $r.Status = 'written'
+            $r.Kept = @('terminal.integrated.fontFamily')
+            $r.Replaced = @('workbench.colorCustomizations/terminal.background')
+            $r.Overrides = @(@{ Scope = '[Monokai]'; Ids = @('terminal.background') })
+            Show-VSCodeWriteResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Left terminal\.integrated\.fontFamily' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Replaced workbench\.colorCustomizations/terminal\.background' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match '\[Monokai\]' }
+        }
+
+        It 'prints nothing for no result' {
+            Show-VSCodeWriteResult -Result $null
+            Should -Invoke Write-Host -Times 0 -Scope It
+        }
+    }
+}

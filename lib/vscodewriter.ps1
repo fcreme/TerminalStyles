@@ -372,3 +372,184 @@ function Request-VSCodeWriterConsent {
     if ($answer -eq 'yes') { return 'active' }
     return 'declined'
 }
+
+function Publish-StyleVSCodeConfig {
+    <#
+    .SYNOPSIS
+    Write a style into this editor's settings.json, with its undo record.
+    Returns a result for Show-VSCodeWriteResult, or $null off VS Code.
+
+    .DESCRIPTION
+    The fourth config writer's door, beside Publish-StyleWezTermConfig and
+    called from the same places: Apply-StyleNonWT, and the picker's Enter.
+    It never asks -- callers ask first, so the "can't show" notice printed
+    before it already reflects the answer -- and it never prints: the picker
+    computes it above a Clear-Host and shows it below one.
+
+    -Session is the picker's preview session. While the picker runs, the file
+    holds a PREVIEW, described by the session's record rather than the stored
+    one; undoing it by the stored record would miss the preview's keys and
+    take them for the user's own edits.
+
+    Kept is split in two on the way out. The apply's Kept names keys the
+    outgoing style's undo left alone because the user had changed them; the
+    incoming style then writes over any of those it sets itself, keeping the
+    user's value as the one a reset restores. "Left as you set it" is only
+    true of the others.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)][string]$StyleDir,
+        [Parameter(Mandatory)][string]$Kind,
+        [AllowNull()][hashtable]$Session
+    )
+
+    if ($Kind -ne 'VSCode') { return $null }
+
+    $w = Get-VSCodeWriterState
+    $result = @{
+        Status = $w.Status; Variant = $w.Variant; Path = $w.Path
+        Kept = @(); Replaced = @(); Overrides = @()
+        Backup = $null; FailedPath = $null; Detail = $null
+    }
+    if ($w.Status -ne 'active') { return $result }
+
+    $stored = $null
+    if ($w.Entry) { $stored = $w.Entry.record }
+    $onDisk = $stored
+    if ($Session) {
+        $onDisk = $Session.OnDiskRecord
+        $result.Backup = $Session.Backup
+    }
+
+    try {
+        $text = Read-VSCodeSettingsText -Path $w.Path
+    } catch {
+        # Refused, not guessed: a file that exists and cannot be read is not
+        # "no settings yet", and writing over it would replace it outright.
+        $result.Status = 'wontparse'; $result.Detail = 'it could not be read'
+        return $result
+    }
+    if (-not (Test-VSCodeSettingsReadable -Text $text)) {
+        $result.Status = 'wontparse'; $result.Detail = 'it does not parse as a JSON object'
+        return $result
+    }
+
+    # VS Code's own empty settings file is "{}"; a blank or missing one means
+    # the same, and is the one case a reset does not return byte for byte --
+    # it leaves "{}", which VS Code reads identically.
+    $base = $text
+    if (-not $base.Trim()) { $base = '{}' }
+
+    $a = Invoke-VSCodeStyleApply -Text $base -StyleDir $StyleDir -StyleName $StyleName -PreviousRecord $onDisk
+    if ($a.Status -ne 'applied') {
+        $result.Status = 'wontparse'
+        $result.Detail = switch ($a.Status) {
+            'parentnotobject' { 'workbench.colorCustomizations in it is not an object' }
+            default           { 'it does not parse as a JSON object' }
+        }
+        return $result
+    }
+
+    # FIRST touch: only while none of our keys are in the file. A copy taken
+    # later would capture a file that already carries a style (CLAUDE.md,
+    # "Encoding and culture, on files the user owns").
+    if (-not $onDisk -and $text -and -not $result.Backup) {
+        $result.Backup = Save-FirstTouchBackup -Path $w.Path -Content $text
+    }
+
+    try {
+        Set-VSCodeStateEntry -Variant $w.Variant -SettingsPath $w.Path -Record $a.Record
+    } catch {
+        $result.Status = 'writefailed'; $result.FailedPath = (Get-VSCodeStatePath)
+        return $result
+    }
+
+    if ($a.Text -cne $text) {
+        try {
+            Write-SettingsAtomic -Path $w.Path -Json $a.Text
+        } catch {
+            try { Set-VSCodeStateEntry -Variant $w.Variant -SettingsPath $w.Path -Record $stored } catch { }
+            $result.Status = 'writefailed'; $result.FailedPath = $w.Path
+            return $result
+        }
+    }
+
+    $writtenNames = @(@($a.Record.Wrote) | ForEach-Object { @($_.Path) -join '/' })
+    $kept = @($a.Kept)
+    $ids = @(@($a.Record.Wrote) |
+             Where-Object { @($_.Path).Count -eq 2 -and $_.Path[0] -eq 'workbench.colorCustomizations' } |
+             ForEach-Object { $_.Path[1] })
+    # Assigned, not wrapped: Get-VSCodeColorOverride returns ,$arr.
+    $overrides = Get-VSCodeColorOverride -Text $a.Text -Ids $ids
+
+    $result.Status    = 'written'
+    $result.Kept      = @($kept | Where-Object { $writtenNames -notcontains $_ })
+    $result.Replaced  = @($kept | Where-Object { $writtenNames -contains $_ })
+    $result.Overrides = $overrides
+    return $result
+}
+
+function Show-VSCodeWriteResult {
+    <#
+    .SYNOPSIS
+    Say what Publish-StyleVSCodeConfig did, in the words for that outcome.
+
+    .DESCRIPTION
+    One arm per status and no shared "success" line: "Saved" is printed on the
+    written path and nowhere else (CLAUDE.md: every message is a claim, and a
+    status is not a boolean). Leading blank line, no trailing one -- the
+    callers own their spacing, as with Show-UnsupportedStyleField.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()][hashtable]$Result)
+
+    if (-not $Result) { return }
+    Write-Host ""
+    switch ($Result.Status) {
+        'written' {
+            Write-Host ("  Saved to {0}'s settings.json -- new terminals keep it." -f $Result.Variant) -ForegroundColor DarkGray
+            if ($Result.Backup) {
+                Write-Host ("  The file as it was before is kept at {0}" -f $Result.Backup) -ForegroundColor DarkGray
+            }
+            foreach ($k in @($Result.Kept)) {
+                Write-Host ("  Left {0} as you set it (you changed it after the last style wrote it)." -f $k) -ForegroundColor DarkGray
+            }
+            foreach ($k in @($Result.Replaced)) {
+                Write-Host ("  Replaced {0}, which you had changed by hand; tstyles reset puts yours back." -f $k) -ForegroundColor DarkGray
+            }
+            foreach ($o in @($Result.Overrides)) {
+                Write-Host ("  {0} in workbench.colorCustomizations also sets {1}," -f $o.Scope, (@($o.Ids) -join ', ')) -ForegroundColor Yellow
+                Write-Host "  and wins over this style while that color theme is active." -ForegroundColor Yellow
+            }
+        }
+        'declined' {
+            Write-Host ("  Did not write to {0}'s settings.json, as you chose. tstyles vscode on changes that." -f $Result.Variant) -ForegroundColor DarkGray
+        }
+        'undecided' {
+            Write-Host ("  Did not write to {0}'s settings.json: there is no answer on record for it yet." -f $Result.Variant) -ForegroundColor DarkGray
+            Write-Host "  tstyles vscode on gives one." -ForegroundColor DarkGray
+        }
+        'unknownvariant' {
+            Write-Host "  Couldn't tell which editor this terminal belongs to, so nothing was saved" -ForegroundColor Yellow
+            Write-Host "  -- the colors apply to this terminal only." -ForegroundColor Yellow
+        }
+        'nodir' {
+            Write-Host ("  Found no settings folder for {0} at {1}, so nothing was saved." -f
+                        $Result.Variant, [System.IO.Path]::GetDirectoryName($Result.Path)) -ForegroundColor Yellow
+        }
+        'wontparse' {
+            Write-Host ("  Could not edit {0} safely: {1}." -f $Result.Path, $Result.Detail) -ForegroundColor Yellow
+            Write-Host "  Nothing was written to it. Fix the file and apply the style again." -ForegroundColor Yellow
+        }
+        'writefailed' {
+            Write-Host ("  Could not write {0}." -f $Result.FailedPath) -ForegroundColor Yellow
+            Write-Host "  This terminal keeps the colors; new terminals won't." -ForegroundColor Yellow
+        }
+        'statecorrupt' {
+            Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+            Write-Host "  Nothing was written, so nothing became impossible to undo. Fix or delete that file." -ForegroundColor Yellow
+        }
+    }
+}
