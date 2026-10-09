@@ -948,7 +948,7 @@ function Invoke-TerminalStyle {
     # scriptblock's own child scope and never be seen out here. The finally
     # block needs to know whether the revert already happened, and the revert
     # needs to know whether there is anything to revert.
-    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false }
+    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false; VSCodeRestore = $null; VSCodeDone = $false }
 
     # Single choke point for every settings.json write in the picker. Off
     # Windows Terminal this is a no-op, so the loop below reads the same in
@@ -1075,6 +1075,29 @@ function Invoke-TerminalStyle {
             }
             $pickerState.WezWritten = $false
         } catch { }
+    }
+
+    # VS Code: the same full preview, through the session vscodewriter.ps1
+    # owns -- the picker body cannot be driven by a test, so the logic lives
+    # where one can reach it. Opened below the console guard; $null until then,
+    # and $null for good when the writer is off, which both blocks no-op on.
+    $vscodeSession = $null
+    $previewVSCode = {
+        param([int]$i)
+        if (-not $vscodeSession) { return }
+        try {
+            [void](Invoke-VSCodePreview -Session $vscodeSession -StyleName $styles[$i].Name `
+                                        -StyleDir $styles[$i].FullName)
+        } catch {
+            # Same bargain as the WezTerm preview above: a preview that cannot
+            # be written is not worth taking the picker down for, and the OSC
+            # retint has already carried the colours.
+        }
+    }
+    $restoreVSCode = {
+        if (-not $vscodeSession) { return }
+        $vr = Restore-VSCodePreview -Session $vscodeSession
+        if ($vr.Status -ne 'none') { $pickerState.VSCodeRestore = $vr }
     }
 
     $restoreOriginalSettings = {
@@ -1418,6 +1441,11 @@ function Invoke-TerminalStyle {
         catch { $backupNote = Get-BackupFailureNote -Reason "$_" -InFrame }
     }
 
+    # VS Code: ask (once per editor) before the menu takes the screen, and keep
+    # the exact text every preview starts from. Below the console guard, so the
+    # question is never put to a pipe.
+    if ($termKind -eq 'VSCode') { $vscodeSession = New-VSCodePreviewSession }
+
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
     # May the preview move the title at all? Asked ONCE, of the same snapshot
@@ -1706,6 +1734,7 @@ function Invoke-TerminalStyle {
                 # the style has -- background, font, padding, cursor, opacity --
                 # lives in the generated module, so previewing means rewriting it.
                 & $previewWezTerm $i
+                & $previewVSCode $i
                 if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
                 return
             }
@@ -1757,6 +1786,7 @@ function Invoke-TerminalStyle {
         $restoreOriginalLook = {
             & $restoreOriginalSettings
             & $restoreWezTerm
+            & $restoreVSCode
             Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$useSettingsFile `
                 -HadStartingStyle:$hadCurrentStyle -StartingScheme $schemes[$startIdx]) | Out-Null
             $pickerState.Reverted = $true
@@ -1812,6 +1842,7 @@ function Invoke-TerminalStyle {
         if ($result.Outcome -eq 'cancelled') {
             Clear-Host
             Write-Host "Reverted." -ForegroundColor Yellow
+            Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
             # On THIS exit too. The check above was paid and its 24-hour stamp
             # written whichever key ends the picker, so printing the notice only
             # on confirm meant an Esc silently spent the day's check -- and
@@ -1845,6 +1876,9 @@ function Invoke-TerminalStyle {
         # test and shown the user nothing -- Clear-Host wipes everything this
         # block writes.
         $unsupportedFields = @()
+        # What Enter did to VS Code's settings.json. Computed with the other
+        # publishers, shown below the Clear-Host for the reason above.
+        $vscodeResult = $null
         if ($useSettingsFile) {
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
@@ -1925,6 +1959,21 @@ function Invoke-TerminalStyle {
                                        -Scheme $schemes[$idx] `
                                        -Theme $wtTheme -Kind $termKind | Out-Null
 
+            # ...and VS Code's settings.json, the fourth writer. With the
+            # session, so the commit undoes the PREVIEW on disk rather than the
+            # style that was on when the picker opened.
+            $vscodeResult = Publish-StyleVSCodeConfig -StyleName $selectedStyle.Name `
+                                -StyleDir $selectedStyle.FullName -Kind $termKind `
+                                -Session $vscodeSession
+            if ($vscodeSession -and $vscodeResult -and $vscodeResult.Status -ne 'written') {
+                # The commit did not land, but a preview may have. Put the file
+                # back rather than leave a style in it that no record describes.
+                $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
+            }
+            # Settled either way from here: the finally must not take back a
+            # commit that landed.
+            $pickerState.VSCodeDone = $true
+
             # ...and which fields this terminal cannot show, which is the third
             # thing `tstyles <name>` says on this door and the picker said
             # nowhere: `tstyles` + Enter on Terminal.app printed "Style applied"
@@ -1979,6 +2028,14 @@ function Invoke-TerminalStyle {
         # reason. Below the Clear-Host on purpose -- see where the list is built.
         if (@($unsupportedFields).Count -gt 0) {
             Show-UnsupportedStyleField -Field $unsupportedFields -Kind $termKind
+            Write-Host ""
+        }
+
+        # VS Code's settings.json: what Enter did to it, or why not -- and, if
+        # the commit failed after a preview, what putting the file back did.
+        if ($vscodeResult) {
+            Show-VSCodeWriteResult -Result $vscodeResult
+            Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
             Write-Host ""
         }
 
@@ -2063,7 +2120,16 @@ function Invoke-TerminalStyle {
             # Escape already did it.
             if (-not $pickerState.Reverted -and $restoreOriginalLook) {
                 try { & $restoreOriginalLook } catch { }
+                Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
             }
+        }
+        # Enter sets $confirmed before the VS Code commit runs, so an error in
+        # between skips both the Esc revert and the block above, and would leave
+        # the preview in settings.json with no record naming it. Restore never
+        # throws, and VSCodeDone keeps it away from a commit that landed.
+        if ($confirmed -and $vscodeSession -and -not $pickerState.VSCodeDone) {
+            $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
+            Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
         }
         # Clean up the background prefetch job. If it's still mid-fetch (user
         # picked quickly) the transfer is cut off, and the next

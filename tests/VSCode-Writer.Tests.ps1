@@ -1190,3 +1190,46 @@ Describe 'Show-VSCodeRestoreResult' {
         }
     }
 }
+
+Describe 'the picker wires the VS Code session in' {
+    InModuleScope TerminalStyles {
+        BeforeAll { $script:picker = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString() }
+
+        It 'previews beside WezTerm, on the branch with no settings.json of its own' {
+            $script:picker | Should -Match '& \$previewWezTerm \$i\s+& \$previewVSCode \$i'
+        }
+
+        It 'reverts through the one revert block Esc and the finally share' {
+            $script:picker | Should -Match '(?s)\$restoreOriginalLook = \{\s*& \$restoreOriginalSettings\s*& \$restoreWezTerm\s*& \$restoreVSCode'
+        }
+
+        It 'opens the session below the console guard, so nobody is asked into a pipe' {
+            $guard = $script:picker.IndexOf('The style picker needs an interactive terminal')
+            $open  = $script:picker.IndexOf('$vscodeSession = New-VSCodePreviewSession')
+            $guard | Should -BeGreaterThan 0
+            $open  | Should -BeGreaterThan $guard
+        }
+
+        It 'commits with the session, and shows the result below the Clear-Host' {
+            $publish = $script:picker.IndexOf('Publish-StyleVSCodeConfig')
+            $publish | Should -BeGreaterThan 0
+            $script:picker | Should -Match '-Session \$vscodeSession'
+            $clear = $script:picker.IndexOf('Clear-Host', $publish)
+            $show  = $script:picker.IndexOf('Show-VSCodeWriteResult -Result $vscodeResult')
+            $clear | Should -BeGreaterThan $publish
+            $show  | Should -BeGreaterThan $clear
+        }
+
+        It 'says what Esc did after it says Reverted' {
+            $script:picker | Should -Match '(?s)Write-Host "Reverted\." -ForegroundColor Yellow\s*Show-VSCodeRestoreResult'
+        }
+
+        It 'takes the preview back out when an error after Enter skips the commit' {
+            $publish = $script:picker.IndexOf('$vscodeResult = Publish-StyleVSCodeConfig')
+            $done    = $script:picker.IndexOf('$pickerState.VSCodeDone = $true')
+            $publish | Should -BeGreaterThan 0
+            $done | Should -BeGreaterThan $publish -Because 'the session is settled only once the commit has run'
+            $script:picker | Should -Match '(?s)if \(\$confirmed -and \$vscodeSession -and -not \$pickerState\.VSCodeDone\) \{\s*\$pickerState\.VSCodeRestore = Restore-VSCodePreview -Session \$vscodeSession'
+        }
+    }
+}
