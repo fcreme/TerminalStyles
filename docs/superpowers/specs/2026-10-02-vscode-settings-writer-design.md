@@ -339,6 +339,36 @@ disagree with a section above, these win.
     could not be restored either" and says a reset may leave some of the
     previous style's settings in place.
 
+11. **Found in the final review.**
+    - **Previews keep a record.** Each preview's record is saved to the state
+      file before the preview is written, and put back if the write fails; a
+      record that cannot be saved writes no preview. Esc saves the starting
+      record back before it writes the original text back (or removes a file
+      the picker created). This replaces "The state file is **not** touched"
+      under *Picker*. The reason for that sentence still holds: a preview is
+      not an apply, and after Esc the stored record is the one the picker
+      found — put back now, rather than never moved. What it missed is a
+      picker that never reaches Esc or its `finally`: closing the terminal
+      tab, Kill Terminal and quitting VS Code all end pwsh on SIGHUP, and the
+      preview left behind was named by no record. `reset` then said
+      `norecord`, or, with a style on before, stranded the preview's keys
+      behind false "Left ... as you set it" lines. A failed Esc puts the
+      preview's record back only if it had moved it, so its message promises
+      a reset only while a record that can do it is on file.
+    - **`lib/vscode.ps1` changed after all**, in `Get-VSCodeVariant` only, and
+      is still pure. A trailing `.exe` is stripped as `.app` is, and
+      `Microsoft VS Code` and `Microsoft VS Code Insiders`, the Windows
+      install folders, name Code and Code - Insiders. No Windows install of
+      either was identified before.
+    - **`unknownvariant` says** "Couldn't tell which editor this terminal
+      belongs to, so nothing was saved to its settings.json." The Outcomes
+      table's "-- the colors apply to this terminal only" is false wherever
+      the shell loader is registered.
+    - **`Request-VSCodeWriterConsent` takes no parameters.** §Components.3
+      showed `-Variant` and the stored answer coming back; the shipped
+      function resolves the editor itself and returns the writer status,
+      read from `Get-VSCodeWriterState`.
+
 Found, not fixed here (pre-existing, reported separately): the picker's
 confirm on non-Windows-Terminal terminals prints the "can't show" notice
 twice, and `Publish-StyleWezTermConfig`'s notices in the picker are printed

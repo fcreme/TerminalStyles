@@ -18,7 +18,9 @@ path AND sandbox the data root, which holds the consent and undo records in
 `vscode-state.json`. `tstyles uninstall` and `tstyles vscode off` do not go
 through that seam: they edit the absolute `settings.json` paths recorded in
 `vscode-state.json`. So a test that takes uninstall past its consent prompt
-must point the data root at `$TestDrive` as well as bind `-HomeDir`, or the
+must point the data root at `$TestDrive` as well as bind `-HomeDir`, and a
+test that runs `vscode off` at all must point it there too — `off` has no
+`Confirm-Action` to refuse, and edits the recorded paths directly — or the
 real records, and the real editors' files they name, are in reach. The
 real-state guard fingerprints the keys TerminalStyles writes in every VS
 Code-family `settings.json` rather than watching mtimes, because VS Code
@@ -44,9 +46,10 @@ path. It has happened once already, to `$wezSplat`, dropped resolving a merge wh
 survived. `tests/Splat-Variables-Defined.Tests.ps1` walks the AST of every source file and
 fails if anything splats a variable its own scope never assigns; keep it passing.
 
-Never run `uninstall`, `delete`, `reset`, `register` or `shell-init` against the real
-environment to check something. Drive the underlying function in a sandbox instead,
-and mock `Confirm-Action` to refuse rather than relying on console detection.
+Never run `uninstall`, `delete`, `reset`, `register`, `shell-init` or `vscode off`
+against the real environment to check something. Drive the underlying function in
+a sandbox instead, and mock `Confirm-Action` to refuse rather than relying on
+console detection.
 
 ## Capabilities are promises, not possibilities
 

@@ -34,6 +34,8 @@ lib/                  the rest of the library, one file per subsystem:
   picker.ps1            the picker's testable pieces
   help.ps1              `tstyles help`
   update.ps1            install kind, update check, register / uninstall
+  vscode.ps1            VS Code's settings.json as text: merge, undo, which editor
+  vscodewriter.ps1      VS Code's file I/O: consent, undo records, the picker session
 ```
 
 Everything under `lib/` is **dot-sourced** into one shared scope, so a function
