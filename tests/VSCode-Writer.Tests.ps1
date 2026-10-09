@@ -1332,3 +1332,85 @@ Describe 'tstyles vscode' {
         }
     }
 }
+
+Describe 'tstyles uninstall and VS Code''s settings.json' {
+    # Driven through the real command, past consent, with every path it can
+    # reach inside TestDrive -- the setup Uninstall-ReversesShellInit uses:
+    # -HomeDir for the rc half, a mocked data root, the Bootstrap branch so
+    # Uninstall-PSResource is never reached, and no $PROFILE target.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $script:data
+            Mock Get-TStylesDataRoot { $script:data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            Mock Get-PowerShellProfileTarget { @() }
+
+            # Two editors with a saved style, as an uninstall run from a plain
+            # terminal finds them.
+            $script:user = "{`n  `"editor.fontSize`": 13`n}"
+            $script:files = @{}
+            foreach ($v in 'Code', 'Cursor') {
+                $p = Join-Path $script:h "$v/User/settings.json"
+                New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($p)) -Force | Out-Null
+                $a = Invoke-VSCodeStyleApply -Text $script:user -StyleDir (Get-StyleDir -StyleName 'koholint') -StyleName 'koholint'
+                [System.IO.File]::WriteAllText($p, $a.Text, [System.Text.UTF8Encoding]::new($false))
+                Set-VSCodeStateEntry -Variant $v -SettingsPath $p -Consent 'yes' -Record $a.Record
+                $script:files[$v] = $p
+            }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'names every settings.json it will change, and changes none when refused' {
+            Mock Confirm-Action { $false }
+            $before = @{}
+            foreach ($v in $script:files.Keys) { $before[$v] = [System.IO.File]::ReadAllText($script:files[$v]) }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
+            foreach ($v in $script:files.Keys) {
+                $out | Should -Match ([regex]::Escape($script:files[$v])) -Because 'the prompt must name the file it is about to edit'
+                [System.IO.File]::ReadAllText($script:files[$v]) | Should -BeExactly $before[$v]
+            }
+            $out | Should -Match 'Cancelled'
+        }
+
+        It 'takes the style out of every editor once confirmed' {
+            Mock Confirm-Action { $true }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            foreach ($v in $script:files.Keys) {
+                [System.IO.File]::ReadAllText($script:files[$v]) | Should -BeExactly $script:user
+                $out | Should -Match ("Took the style back out of {0}'s settings\.json" -f $v)
+            }
+            $out | Should -Match "Windows Terminal's settings\.json was NOT modified" `
+                -Because 'the sign-off must not deny the edit it just made'
+        }
+
+        It 'says it will leave VS Code alone when the record cannot be read' {
+            Mock Confirm-Action { $false }
+            [System.IO.File]::WriteAllText((Get-VSCodeStatePath), '{broken', [System.Text.UTF8Encoding]::new($false))
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Match "Leave VS Code's settings alone"
+            $out | Should -Match ([regex]::Escape((Get-VSCodeStatePath)))
+        }
+
+        It 'names, in the sign-off, a settings.json it could not take the style out of' {
+            Mock Confirm-Action { $true }
+            $fs = [System.IO.File]::Open($script:files['Code'], 'Open', 'ReadWrite', 'None')
+            try {
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            } finally { $fs.Dispose() }
+            $out | Should -Match 'EXCEPT the style saved in'
+            $out | Should -Match ([regex]::Escape($script:files['Code']))
+            $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$' -Because 'a style is still in a file the user owns'
+            [System.IO.File]::ReadAllText($script:files['Cursor']) | Should -BeExactly $script:user -Because 'the other editor still comes clean'
+        }
+
+        It 'the uninstall help says so too' {
+            $u = (Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'uninstall' })
+            ($u.Detail -join ' ') | Should -Match 'VS Code'
+        }
+    }
+}

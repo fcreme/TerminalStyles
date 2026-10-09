@@ -337,6 +337,10 @@ function Get-TerminalStyleHelpData {
                        "-- so an uninstall does not leave a shell sourcing a runtime it just",
                        "deleted.",
                        "",
+                       "A style saved to a VS Code-family editor's settings.json (VS Code,",
+                       "Insiders, VSCodium, Cursor, Windsurf) is taken back out of it, from",
+                       "its record; a key you changed by hand since is left alone.",
+                       "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
                        "The confirmation names every file it is about to change, `$PROFILE and",
                        "rc alike, and the sign-off names any it could not.")

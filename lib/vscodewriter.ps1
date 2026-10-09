@@ -1045,3 +1045,17 @@ function Invoke-TerminalStyleVSCode {
     Write-Host "  tstyles vscode on turns it back on."
     Write-Host ""
 }
+
+function Get-VSCodeUninstallTarget {
+    # The editors whose settings.json holds a saved style: one object per
+    # editor, @{ Variant; Path }, from the RECORD rather than from detection --
+    # uninstall runs from any terminal, and has to reach every editor.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$State)
+
+    if (-not $State.Ok) { return }
+    foreach ($name in @($State.Entries.Keys | Sort-Object)) {
+        $e = $State.Entries[$name]
+        if ($e.record) { [pscustomobject]@{ Variant = $name; Path = $e.settingsPath } }
+    }
+}

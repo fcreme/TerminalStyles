@@ -911,6 +911,21 @@ function Invoke-TerminalStylesUninstall {
         Write-Host "      (your wezterm.lua is NOT edited; its require line is pcall-guarded" -ForegroundColor DarkGray
         Write-Host "       and becomes a no-op once this file is gone)" -ForegroundColor DarkGray
     }
+    # VS Code-family settings.json files a style was saved into. Every editor
+    # on record, not just the one this terminal belongs to: uninstall can run
+    # from anywhere, and once the module is gone nothing can take those keys
+    # out again. Named by path, like every other file this prompt lists.
+    $vscodeState   = Read-VSCodeState
+    $vscodeTargets = @(Get-VSCodeUninstallTarget -State $vscodeState)
+    if ($vscodeTargets.Count -gt 0) {
+        Write-Host "  - Take the saved style back out of:" -ForegroundColor Yellow
+        foreach ($t in $vscodeTargets) {
+            Write-Host ("      {0}: {1}" -f $t.Variant, $t.Path) -ForegroundColor Yellow
+        }
+    }
+    if (-not $vscodeState.Ok) {
+        Write-Host ("  - Leave VS Code's settings alone: {0} could not be read" -f $vscodeState.Path) -ForegroundColor Yellow
+    }
     if ($DeleteData) {
         # The parenthetical is a bounded listing, so it has to be complete: the
         # styles the user made and the ones waiting in .deleted are the two
@@ -1016,6 +1031,16 @@ function Invoke-TerminalStylesUninstall {
         }
     }
 
+    # The saved VS Code styles, from their records -- the same list the prompt
+    # named. Each says what it did. One that could not be undone is collected
+    # for the sign-off: its record survives only until -DeleteData, and once
+    # the module is gone no `tstyles reset` can retry it.
+    $vscodeProblems = @(foreach ($t in $vscodeTargets) {
+        $vr = Reset-StyleVSCodeConfig -Variant $t.Variant
+        Show-VSCodeResetResult -Result $vr
+        if ($vr.Status -ne 'reset' -and $vr.Status -ne 'norecord') { $t.Path }
+    })
+
     if ($shellRemoved) {
         Write-Host "  Open a new zsh/bash tab to get your original prompt back." -ForegroundColor Gray
     }
@@ -1076,8 +1101,21 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "A PowerShell profile is not inert like that: the block there imports a module" -ForegroundColor Gray
             Write-Host "step 1 has just removed, so every new tab opens on a red error until you delete it." -ForegroundColor Gray
         }
-    } else {
+    } elseif ($vscodeProblems.Count -eq 0) {
         Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
+    }
+    # A VS Code style that could not be taken out. Its record is the only thing
+    # that names those keys, and with the module gone no reset can use it -- so
+    # the user is told where they are, rather than "uninstalled".
+    if ($vscodeProblems.Count -gt 0) {
+        if ($allProblems.Count -gt 0) {
+            Write-Host "...and the style saved in:" -ForegroundColor Yellow
+        } else {
+            Write-Host "TerminalStyles uninstalled, EXCEPT the style saved in:" -ForegroundColor Yellow
+        }
+        foreach ($p in $vscodeProblems) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
+        Write-Host "Take its terminal settings out of those files by hand, or restore the" -ForegroundColor Yellow
+        Write-Host "settings.json.bak-* copy beside each -- the module is gone, so tstyles cannot." -ForegroundColor Yellow
     }
     # Only when the $PROFILE side really did come out clean. This was printed
     # unconditionally, directly under a warning that the loader is still in a
@@ -1085,7 +1123,7 @@ function Invoke-TerminalStylesUninstall {
     if ($profileProblems.Count -eq 0) {
         Write-Host "Open a new pwsh tab to confirm the loader is gone." -ForegroundColor Gray
     }
-    Write-Host "Your settings.json was NOT modified. If you want a default look back," -ForegroundColor Gray
-    Write-Host "restore a settings.json.bak-* backup or edit it via WT Settings -> Open JSON file." -ForegroundColor Gray
+    Write-Host "Windows Terminal's settings.json was NOT modified. If you want its default look" -ForegroundColor Gray
+    Write-Host "back, restore a settings.json.bak-* backup or edit it via WT Settings -> Open JSON file." -ForegroundColor Gray
     Write-Host ""
 }
