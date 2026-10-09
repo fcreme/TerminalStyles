@@ -901,3 +901,252 @@ Describe 'tstyles <name> and tstyles reset in a VS Code terminal' {
         }
     }
 }
+
+Describe 'the picker''s VS Code preview session' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            $script:user = "{`n  // mine`n  `"editor.fontSize`": 13`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            $script:eva      = Get-StyleDir -StyleName 'eva'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+        }
+
+        It 'is $null while the writer is off, so the picker stays colors-only' {
+            Set-VSCodeStateEntry -Variant 'Code' -Consent 'no'
+            New-VSCodePreviewSession | Should -BeNullOrEmpty
+        }
+
+        It 'gives no session for a file it cannot read, so nothing is previewed over it' {
+            $fs = [System.IO.File]::Open($script:sPath, 'Open', 'ReadWrite', 'None')
+            try {
+                New-VSCodePreviewSession | Should -BeNullOrEmpty
+            } finally { $fs.Dispose() }
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'asks first when nobody has been asked' {
+            Remove-Item -LiteralPath (Get-VSCodeStatePath) -Force
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $true }
+            New-VSCodePreviewSession | Should -Not -BeNullOrEmpty
+            Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It
+        }
+
+        It 'previews from the original every time, never from the last preview' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            [System.IO.File]::ReadAllText($script:sPath) |
+                Should -BeExactly (Invoke-VSCodeStyleApply -Text $script:user -StyleDir $script:eva -StyleName 'eva').Text
+        }
+
+        It 'leaves the saved record alone while it previews' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty -Because 'a preview is not an apply'
+        }
+
+        It 'Esc puts the exact bytes back, BOM included' {
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($true))
+            $before = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath))
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Out-Null
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath)) | Should -BeExactly $before
+        }
+
+        It 'Esc removes a settings.json the picker created' {
+            Remove-Item -LiteralPath $script:sPath -Force
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            [System.IO.File]::Exists($script:sPath) | Should -BeTrue
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            [System.IO.File]::Exists($script:sPath) | Should -BeFalse
+        }
+
+        # Review Focus 5.
+        It 'Esc with nothing previewed writes nothing' {
+            $stamp = [System.IO.File]::GetLastWriteTimeUtc($script:sPath)
+            $s = New-VSCodePreviewSession
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'none'
+            [System.IO.File]::GetLastWriteTimeUtc($script:sPath) | Should -Be $stamp
+        }
+
+        It 'a second Esc finds nothing to do' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'none'
+        }
+
+        It 'Esc after an edit keeps the edit and puts the starting style back' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $start = [System.IO.File]::ReadAllText($script:sPath)
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Out-Null
+
+            # Somebody edits settings.json in VS Code while the picker is open.
+            $now = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath,
+                (Set-JsoncLiteral -Text $now -Path @('editor.fontSize') -Literal '15').Text,
+                [System.Text.UTF8Encoding]::new($false))
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'merged'
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            Get-JsoncValueLiteral -Text $text -Path @('editor.fontSize') | Should -Be '15' -Because 'the edit is theirs'
+            # eva writes fontWeight 600 and koholint "normal": which one is in
+            # the file says which style came back.
+            Get-JsoncValueLiteral -Text $text -Path @('terminal.integrated.fontWeight') |
+                Should -Be (Get-JsoncValueLiteral -Text $start -Path @('terminal.integrated.fontWeight'))
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) |
+                Should -BeExactly (Set-JsoncLiteral -Text $script:user -Path @('editor.fontSize') -Literal '15').Text
+        }
+
+        It 'Esc names a key the starting style sets again as replaced, not left' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Out-Null
+
+            # The edit is to a key both styles write (eva 600, koholint "normal").
+            $now = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath,
+                (Set-JsoncLiteral -Text $now -Path @('terminal.integrated.fontWeight') -Literal '"bold"').Text,
+                [System.Text.UTF8Encoding]::new($false))
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'merged'
+            @($r.Replaced) | Should -Contain 'terminal.integrated.fontWeight'
+            @($r.Kept) | Should -Not -Contain 'terminal.integrated.fontWeight'
+        }
+
+        It 'Esc will not undo into a file that no longer parses, and keeps the preview''s record' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+
+            # Saved half-way through an edit: the root object never closes.
+            $broken = ([System.IO.File]::ReadAllText($script:sPath)).TrimEnd().TrimEnd('}')
+            [System.IO.File]::WriteAllText($script:sPath, $broken, [System.Text.UTF8Encoding]::new($false))
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Reason | Should -Match 'no longer parses'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $broken
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'the preview is what the file still holds'
+        }
+
+        It 'Esc that cannot write keeps the preview''s record, so reset can take it out' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            # Pester 6 throws on a call no filter matches, so the default mock
+            # lets the state file's own write through.
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Reason | Should -Match 'locked'
+            $r.Detail | Should -BeNullOrEmpty
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+        }
+
+        It 'Esc says so when the preview''s record cannot be saved either' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            Mock Write-SettingsAtomic { throw 'locked' }
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Detail | Should -Be 'its undo record could not be saved either'
+        }
+
+        It 'stops previewing into a file somebody else changed, and Esc keeps the edit' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+
+            # Somebody edits settings.json in VS Code while the picker is open.
+            $edited = (Set-JsoncLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) `
+                           -Path @('editor.fontSize') -Literal '15').Text
+            [System.IO.File]::WriteAllText($script:sPath, $edited, [System.Text.UTF8Encoding]::new($false))
+
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'changed'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $edited
+
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'merged'
+            [System.IO.File]::ReadAllText($script:sPath) |
+                Should -BeExactly (Set-JsoncLiteral -Text $script:user -Path @('editor.fontSize') -Literal '15').Text
+        }
+
+        It 'Enter commits what is on disk, with a record that undoes it to the original' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Out-Null
+            $r = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s
+            $r.Status | Should -Be 'written'
+            [System.IO.File]::ReadAllText($script:sPath) |
+                Should -BeExactly (Invoke-VSCodeStyleApply -Text $script:user -StyleDir $script:eva -StyleName 'eva').Text
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        # Review Focus 5.
+        It 'Enter with nothing previewed is a plain apply' {
+            $s = New-VSCodePreviewSession
+            Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) |
+                Should -BeExactly (Invoke-VSCodeStyleApply -Text $script:user -StyleDir $script:eva -StyleName 'eva').Text
+        }
+
+        It 'reports the first-touch copy it took during the preview' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' -Session $s
+            $r.Backup | Should -Not -BeNullOrEmpty
+            [System.IO.File]::ReadAllText($r.Backup) | Should -BeExactly $script:user
+        }
+    }
+}
+
+Describe 'Show-VSCodeRestoreResult' {
+    InModuleScope TerminalStyles {
+        BeforeEach { Mock Write-Host { } }
+
+        It 'says the edit survived when it merged' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = $null }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+        }
+
+        It 'names a key the starting style set again, and does not call that edit still there' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Replaced = @('terminal.integrated.fontWeight'); Reason = $null; Detail = $null }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Replaced terminal\.integrated\.fontWeight' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+        }
+
+        It 'says how to get out when it failed' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'failed'; Path = '/x'; Kept = @(); Replaced = @(); Reason = 'locked'; Detail = $null }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'tstyles reset takes it out' }
+        }
+
+        It 'does not promise a reset that has no record to work from' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'failed'; Path = '/x'; Kept = @(); Replaced = @(); Reason = 'locked'; Detail = 'its undo record could not be saved either' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'tstyles reset cannot take it out' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'tstyles reset takes it out' }
+        }
+
+        It 'stays quiet for <status>' -ForEach @(@{ status = 'none' }, @{ status = 'restored' }) {
+            Show-VSCodeRestoreResult -Result @{ Status = $status; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = $null }
+            Should -Invoke Write-Host -Times 0 -Scope It
+        }
+    }
+}
