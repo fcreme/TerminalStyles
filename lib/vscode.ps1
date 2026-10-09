@@ -131,9 +131,11 @@ function Get-VSCodeVariant {
     Matching is by PATH SEGMENT, not substring, and an ambiguous answer is no
     answer:
 
-      - each segment is compared whole (with a trailing .app removed) against
-        the known names. A substring match would read /Users/cursor/... as
-        Cursor for somebody whose username is cursor.
+      - each segment is compared whole (with a trailing .app or .exe removed)
+        against the known names. A substring match would read /Users/cursor/...
+        as Cursor for somebody whose username is cursor. The names include
+        Windows' install folders, "Microsoft VS Code" and "Microsoft VS Code
+        Insiders", where the askpass node is the editor's own .exe.
       - if the segments name exactly one variant, that is the answer.
       - if they name none, or more than one, the answer is $null. A caller
         that cannot tell which editor it is in must refuse, not guess: writing
@@ -158,6 +160,8 @@ function Get-VSCodeVariant {
         'visual studio code - insiders' = 'Code - Insiders'
         'code-insiders'              = 'Code - Insiders'
         'visual studio code'         = 'Code'
+        'microsoft vs code'          = 'Code'
+        'microsoft vs code insiders' = 'Code - Insiders'
         'code'                       = 'Code'
     }
 
@@ -167,8 +171,10 @@ function Get-VSCodeVariant {
         foreach ($segment in ($candidate -split '[\\/]')) {
             if (-not $segment) { continue }
             $name = $segment
-            if ($name.Length -gt 4 -and $name.Substring($name.Length - 4) -eq '.app') {
-                $name = $name.Substring(0, $name.Length - 4)
+            # -eq is case-insensitive, so Code.EXE and Cursor.App strip too.
+            if ($name.Length -gt 4) {
+                $ext = $name.Substring($name.Length - 4)
+                if ($ext -eq '.app' -or $ext -eq '.exe') { $name = $name.Substring(0, $name.Length - 4) }
             }
             $name = $name.ToLowerInvariant()
             if ($known.ContainsKey($name)) {

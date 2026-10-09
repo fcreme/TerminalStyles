@@ -125,16 +125,48 @@ Describe 'Get-VSCodeVariant' {
             @{ Variant = 'Code - Insiders'
                Path = '/Applications/Visual Studio Code - Insiders.app/Contents/Resources/app/extensions/git/dist/askpass-main.js' }
         ) {
-            Get-VSCodeVariant -AskpassNode $Path | Should -Be $Variant
+            Get-VSCodeVariant -AskpassNode $Path -GitAskpass '' | Should -Be $Variant
         }
 
         It 'reads a Windows install path' {
-            Get-VSCodeVariant -AskpassNode 'C:\Users\x\AppData\Local\Programs\cursor\resources\app\out\node.exe' |
+            Get-VSCodeVariant -AskpassNode 'C:\Users\x\AppData\Local\Programs\cursor\resources\app\out\node.exe' -GitAskpass '' |
                 Should -Be 'Cursor'
         }
 
+        It 'reads <Variant> out of a Windows install: <Label>' -ForEach @(
+            # Windows installs into "Microsoft VS Code" (or "... Insiders"), and
+            # the askpass node is the editor's own .exe -- neither of which the
+            # macOS names in the table, nor a segment ending in .exe, matched.
+            @{ Variant = 'Code'; Label = 'the user install''s askpass node'
+               Node = 'C:\Users\x\AppData\Local\Programs\Microsoft VS Code\Code.exe'; Askpass = '' }
+            @{ Variant = 'Code'; Label = 'the user install''s askpass script'
+               Node = ''; Askpass = 'C:\Users\x\AppData\Local\Programs\Microsoft VS Code\resources\app\extensions\git\dist\askpass.sh' }
+            @{ Variant = 'Code'; Label = 'a system install, both variables'
+               Node = 'C:\Program Files\Microsoft VS Code\Code.exe'
+               Askpass = 'C:\Program Files\Microsoft VS Code\resources\app\extensions\git\dist\askpass.sh' }
+            @{ Variant = 'Code - Insiders'; Label = 'the user install''s askpass node'
+               Node = 'C:\Users\x\AppData\Local\Programs\Microsoft VS Code Insiders\Code - Insiders.exe'; Askpass = '' }
+            @{ Variant = 'Code - Insiders'; Label = 'the user install''s askpass script'
+               Node = ''; Askpass = 'C:\Users\x\AppData\Local\Programs\Microsoft VS Code Insiders\resources\app\extensions\git\dist\askpass.sh' }
+            @{ Variant = 'Code - Insiders'; Label = 'a system install, both variables'
+               Node = 'C:\Program Files\Microsoft VS Code Insiders\Code - Insiders.exe'
+               Askpass = 'C:\Program Files\Microsoft VS Code Insiders\resources\app\extensions\git\dist\askpass.sh' }
+        ) {
+            Get-VSCodeVariant -AskpassNode $Node -GitAskpass $Askpass | Should -Be $Variant
+        }
+
+        It 'still names no editor from a Remote-SSH server''s path' {
+            # A remote terminal (SSH, WSL, a dev container) runs on the server,
+            # and VS Code exports the server's node and askpass script there:
+            # paths that name no application. The editor's own settings.json is
+            # on the other side, so naming no editor is the right answer.
+            Get-VSCodeVariant -AskpassNode '/home/x/.vscode-server/cli/servers/Stable-0123456789abcdef/server/node' `
+                -GitAskpass '/home/x/.vscode-server/cli/servers/Stable-0123456789abcdef/server/extensions/git/dist/askpass.sh' |
+                Should -BeNullOrEmpty
+        }
+
         It 'reads a Linux install path' {
-            Get-VSCodeVariant -AskpassNode '/usr/share/code/resources/app/extensions/git/dist/askpass-main.js' |
+            Get-VSCodeVariant -AskpassNode '/usr/share/code/resources/app/extensions/git/dist/askpass-main.js' -GitAskpass '' |
                 Should -Be 'Code'
         }
 
@@ -148,7 +180,7 @@ Describe 'Get-VSCodeVariant' {
             # Substring matching reads this as Cursor. Segment matching sees
             # both 'cursor' (the home directory) and 'Visual Studio Code', which
             # is two answers, which is no answer.
-            Get-VSCodeVariant -AskpassNode '/Users/cursor/Applications/Visual Studio Code.app/Contents/x.js' |
+            Get-VSCodeVariant -AskpassNode '/Users/cursor/Applications/Visual Studio Code.app/Contents/x.js' -GitAskpass '' |
                 Should -BeNullOrEmpty
         }
 
@@ -167,7 +199,7 @@ Describe 'Get-VSCodeVariant' {
                 '/Applications/Visual Studio Code - Insiders.app/x'
             )
             foreach ($p in $paths) {
-                $v = Get-VSCodeVariant -AskpassNode $p
+                $v = Get-VSCodeVariant -AskpassNode $p -GitAskpass ''
                 $v | Should -Not -BeNullOrEmpty
                 { Get-VSCodeSettingsPath -Platform 'MacOS' -HomeDir '/Users/x' -Variant $v } | Should -Not -Throw
             }
