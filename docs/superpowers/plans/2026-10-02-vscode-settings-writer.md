@@ -3535,6 +3535,16 @@ git add lib/vscodewriter.ps1 lib/update.ps1 lib/help.ps1 tests/VSCode-Writer.Tes
 git commit -m "Take saved VS Code styles back out on uninstall"
 ```
 
+- [ ] **Step 10: Added in review (commits `1c364c6`, `161b574`)**
+
+These were found while the task was reviewed, and shipped with it:
+
+- `Get-VSCodeUninstallTarget` has its own unit tests: record filter, sort and the not-Ok guard. Their `[ordered]` fixtures are inserted out of order, because a plain hashtable's key order is random per process. One consent-yes, record-null entry must be absent from the result.
+- The `-DeleteData` bullet is a bounded listing, so it now names "the VS Code consent answers and undo records".
+- When `vscode-state.json` cannot be read, the sign-off is "TerminalStyles uninstalled, EXCEPT any style saved to a VS Code-family settings.json: <state path> could not be read, so none was taken out." It is not the bare "TerminalStyles uninstalled.".
+- `Show-VSCodeResetResult -Uninstalling` drops the "reset again / the record is kept" advice from its failure arms. By then uninstall has removed the module, and `-DeleteData` deletes the record.
+- `tests/Uninstall-ConsentNamesShellRc.Tests.ps1` redirects `$script:TStylesDataRoot`, because uninstall now reads `vscode-state.json`.
+
 ---
 
 ### Task 11: Fingerprint the real `settings.json` in the real-state guard
@@ -3824,7 +3834,10 @@ last set to.
 VS Code is the exception. A style saved into a VS Code-family
 editor's `settings.json` is taken back out, from its record, for
 every editor that has one — the confirmation names each file first,
-and a key you changed by hand since is left alone.
+and a key you changed by hand since is left alone. If a style cannot
+be taken out, or the record of what was saved cannot be read,
+uninstall says so at the end rather than reporting a clean
+uninstall.
 ```
 
 - [ ] **Step 5: README known limitations**
@@ -3894,7 +3907,7 @@ with:
 
   It **asks first**, once per editor, and remembers the answer in `vscode-state.json` under the data root; `tstyles vscode on|off` changes it. A file people annotate by hand and sync between machines is not one to start writing on the strength of an apply, and nobody at the terminal to answer is not taken as a no.
 
-  Every apply keeps a **record** of what it set and what was there before, saved before the file is written and rolled back if the write fails. `tstyles reset`, `tstyles vscode off` and `tstyles uninstall` undo from it: earlier values come back byte for byte, a key changed by hand since is left alone and named, and a style deleted in the meantime can still be taken out. Switching styles takes the previous one off first, so a reset after several switches still returns the file it started from. Comments and formatting survive, because the file is spliced as text rather than parsed and re-serialised. An edit made while the picker is open survives it: no preview is written over the changed file, and Esc takes its preview out by record instead of putting back the copy it took when it opened. The first write to a file keeps a `settings.json.bak-<timestamp>` copy beside it.
+  Every apply keeps a **record** of what it set and what was there before, saved before the file is written and rolled back if the write fails. `tstyles reset`, `tstyles vscode off` and `tstyles uninstall` undo from it (an uninstall that cannot take a style out, or cannot read the record, names that at the end instead of signing off as uninstalled, and its old "Your settings.json was NOT modified" now says Windows Terminal's): earlier values come back byte for byte, a key changed by hand since is left alone and named, and a style deleted in the meantime can still be taken out. Switching styles takes the previous one off first, so a reset after several switches still returns the file it started from. Comments and formatting survive, because the file is spliced as text rather than parsed and re-serialised. An edit made while the picker is open survives it: no preview is written over the changed file, and Esc takes its preview out by record instead of putting back the copy it took when it opened. The first write to a file keeps a `settings.json.bak-<timestamp>` copy beside it.
 
   It **refuses rather than guesses**: an editor it cannot identify (it reads the install path VS Code's git integration exports as `VSCODE_GIT_ASKPASS_NODE`), a settings folder that does not exist, and a file that does not parse all stop the write and say which -- the alternative was a Cursor user's style landing in VS Code's file and reporting success. A theme-scoped block (`"[Monokai]": { "terminal.background": ... }`) that would win over the written colours is named after the apply. Font sizes are converted from points to pixels, so a style is not drawn a quarter smaller than it asks.
 
@@ -3931,9 +3944,14 @@ VS Code's path comes from `Resolve-VSCodeTarget`, which takes `-HomeDir` /
 `-AppData` / `-XdgConfigHome`; a bound `-HomeDir` suppresses the ambient `APPDATA`
 and `XDG_CONFIG_HOME`. Writer tests mock `Resolve-VSCodeTarget` to a `$TestDrive`
 path AND sandbox the data root, which holds the consent and undo records in
-`vscode-state.json`. The real-state guard fingerprints the keys TerminalStyles
-writes in every VS Code-family `settings.json` rather than watching mtimes,
-because VS Code rewrites that file itself.
+`vscode-state.json`. `tstyles uninstall` and `tstyles vscode off` do not go
+through that seam: they edit the absolute `settings.json` paths recorded in
+`vscode-state.json`. So a test that takes uninstall past its consent prompt
+must point the data root at `$TestDrive` as well as bind `-HomeDir`, or the
+real records, and the real editors' files they name, are in reach. The
+real-state guard fingerprints the keys TerminalStyles writes in every VS
+Code-family `settings.json` rather than watching mtimes, because VS Code
+rewrites that file itself.
 ```
 
 Replace:
