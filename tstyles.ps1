@@ -1967,8 +1967,9 @@ function Invoke-TerminalStyle {
                                 -StyleDir $selectedStyle.FullName -Kind $termKind `
                                 -Session $vscodeSession
             if ($vscodeSession -and $vscodeResult -and $vscodeResult.Status -ne 'written') {
-                # The commit did not land, but a preview may have. Put the file
-                # back rather than leave a style in it that no record describes.
+                # The commit did not land, but a preview may have. Put the file,
+                # and the record with it, back as the picker found them, rather
+                # than leave in it a style nobody committed.
                 $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
             }
             # Settled either way from here: the finally must not take back a
@@ -2126,8 +2127,8 @@ function Invoke-TerminalStyle {
         }
         # Enter sets $confirmed before the VS Code commit runs, so an error in
         # between skips both the Esc revert and the block above, and would leave
-        # the preview in settings.json with no record naming it. Restore never
-        # throws, and VSCodeDone keeps it away from a commit that landed.
+        # the preview in settings.json, recorded but never committed. Restore
+        # never throws, and VSCodeDone keeps it away from a commit that landed.
         if ($confirmed -and $vscodeSession -and -not $pickerState.VSCodeDone) {
             $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
             Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore

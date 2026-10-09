@@ -957,10 +957,89 @@ Describe 'the picker''s VS Code preview session' {
                 Should -BeExactly (Invoke-VSCodeStyleApply -Text $script:user -StyleDir $script:eva -StyleName 'eva').Text
         }
 
-        It 'leaves the saved record alone while it previews' {
+        It 'records each preview before it writes it, so the record names what the file holds' {
+            # Order, not just outcome: the record has to be on file at the moment
+            # the preview lands, or a picker killed between the two leaves a
+            # style no record names. Pester 6 throws on a call no filter
+            # matches, so the state write needs a default mock to land on.
+            $script:atWrite = 'never written'
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                $script:atWrite = (Read-VSCodeState).Entries['Code'].record.Style
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:sPath }
             $s = New-VSCodePreviewSession
-            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
-            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty -Because 'a preview is not an apply'
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            $script:atWrite | Should -Be 'koholint' -Because 'the record lands before the file it describes'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'the record names what the file holds'
+        }
+
+        It 'a picker that dies mid-preview leaves nothing reset cannot take out (<label>)' -ForEach @(
+            @{ label = 'no style on'; start = $null }
+            @{ label = 'koholint on'; start = 'koholint' }
+        ) {
+            if ($start) {
+                Publish-StyleVSCodeConfig -StyleName $start -StyleDir (Get-StyleDir -StyleName $start) -Kind 'VSCode' | Out-Null
+            }
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            # The terminal closes here. Closing the tab, Kill Terminal and
+            # quitting VS Code all end pwsh on SIGHUP, so neither Esc nor the
+            # picker's finally runs: the session is simply abandoned.
+            $s = $null
+
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'reset' -Because 'norecord would leave the preview in the file with nothing to take it out by'
+            @($r.Kept).Count | Should -Be 0 -Because 'nothing in the file was changed by hand'
+            Show-VSCodeResetResult -Result $r
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match '\bLeft\b' }
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'a preview whose file write fails puts the record back' {
+            $s = New-VSCodePreviewSession
+            # The record at the moment the write fails shows it had moved, so the
+            # empty record afterwards is a rollback and not a record never saved.
+            $script:atWrite = 'never written'
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                $script:atWrite = (Read-VSCodeState).Entries['Code'].record.Style
+                throw 'locked'
+            } -ParameterFilter { $Path -eq $script:sPath }
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'failed'
+            $script:atWrite | Should -Be 'koholint' -Because 'the record goes first'
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty -Because 'the file never got the preview'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'writes no preview whose record cannot be saved' {
+            $s = New-VSCodePreviewSession
+            Mock Set-VSCodeStateEntry { throw 'read-only data root' }
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'failed'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user -Because 'a preview no record names is what a closed terminal would strand'
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'none' -Because 'nothing was written, so Esc has nothing to take out'
+        }
+
+        It 'Esc puts the starting record back (<label>)' -ForEach @(
+            @{ label = 'no style on'; start = $null }
+            @{ label = 'koholint on'; start = 'koholint' }
+        ) {
+            if ($start) {
+                Publish-StyleVSCodeConfig -StyleName $start -StyleDir (Get-StyleDir -StyleName $start) -Kind 'VSCode' | Out-Null
+            }
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva' -Because 'the preview is what the file holds'
+
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            $back = (Read-VSCodeState).Entries['Code'].record
+            if ($start) {
+                $back.Style | Should -Be $start -Because 'the file holds the starting style again'
+            } else {
+                $back | Should -BeNullOrEmpty -Because 'no style was on when the picker opened'
+            }
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
         It 'Esc puts the exact bytes back, BOM included' {
@@ -1093,14 +1172,39 @@ Describe 'the picker''s VS Code preview session' {
             (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
         }
 
-        It 'Esc says so when the preview''s record cannot be saved either' {
+        It 'Esc says so when the preview''s record cannot be put back either' {
             $s = New-VSCodePreviewSession
             Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
-            Mock Write-SettingsAtomic { throw 'locked' }
+            # A counting mock, so the double fault is still reached: the starting
+            # record lands, the settings write fails, and putting the preview's
+            # record back fails too.
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic {
+                $script:stateWrites++
+                if ($script:stateWrites -gt 1) { throw 'disk full' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
 
             $r = Restore-VSCodePreview -Session $s
             $r.Status | Should -Be 'failed'
             $r.Detail | Should -Be 'its undo record could not be saved either'
+            $script:stateWrites | Should -Be 2 -Because 'the starting record landed, and putting the preview''s back is what failed'
+        }
+
+        It 'Esc that cannot even move the record still leaves one reset can use' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            # Nothing can be written at all: not the starting record, not the file.
+            Mock Write-SettingsAtomic { throw 'locked' }
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Detail | Should -BeNullOrEmpty -Because 'the preview''s own record is still the one on file, so the message may promise the reset'
+            $left = (Read-VSCodeState).Entries['Code'].record
+            $left.Style | Should -Be 'koholint'
+            (Invoke-VSCodeStyleReset -Text ([System.IO.File]::ReadAllText($script:sPath)) -Record $left).Text |
+                Should -BeExactly $script:user -Because 'that record is one a reset takes the preview out by'
         }
 
         It 'stops previewing into a file somebody else changed, and Esc keeps the edit' {
@@ -1238,7 +1342,7 @@ Describe 'the picker wires the VS Code session in' {
         # what the session does is pinned in the preview-session tests above.
         It 'puts the file back when the commit did not land' {
             $script:picker | Should -Match '(?s)if \(\$vscodeSession -and \$vscodeResult -and \$vscodeResult\.Status -ne ''written''\) \{[^}]*Restore-VSCodePreview -Session \$vscodeSession' `
-                -Because 'a failed commit leaves the preview in the file while Publish rolls the stored record back; only this Restore puts the two back in agreement'
+                -Because 'a failed commit leaves the uncommitted preview in the file, and its record on file; only this Restore puts both back as the picker found them'
         }
 
         It 'commits through the session, so the preview is undone by its own record' {

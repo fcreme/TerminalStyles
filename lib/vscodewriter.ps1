@@ -387,9 +387,10 @@ function Publish-StyleVSCodeConfig {
     computes it above a Clear-Host and shows it below one.
 
     -Session is the picker's preview session. While the picker runs, the file
-    holds a PREVIEW, described by the session's record rather than the stored
-    one; undoing it by the stored record would miss the preview's keys and
-    take them for the user's own edits.
+    holds a PREVIEW, and the apply undoes it by the session's record of what
+    is on disk. Each preview also saves that record before it is written, so
+    the stored record is the same one: a write that fails here rolls the
+    stored record back to one that still matches the file.
 
     Kept is split in two on the way out. The apply's Kept names keys the
     outgoing style's undo left alone because the user had changed them; the
@@ -699,6 +700,12 @@ function New-VSCodePreviewSession {
     the file's exact original text, the record of the style that was on when
     the picker opened, and the record of whatever preview is on disk now.
 
+    The stored record follows the file: each preview saves its record before
+    it writes (Invoke-VSCodePreview), and Esc saves the record of what it
+    puts back before it writes that (Restore-VSCodePreview). So a picker
+    killed outright -- the terminal closed, no Esc and no finally -- leaves a
+    preview the stored record names, and tstyles reset takes it out.
+
     Asks first (once per editor) when nobody has answered -- the picker calls
     this below its console guard, so there is someone to ask. $null when the
     writer is off, or when the file does not parse: previews would refuse
@@ -746,8 +753,14 @@ function Invoke-VSCodePreview {
     build on each other. Cached per style: one apply costs 0.2-1.3 s depending
     on the file (measured), and arrowing back to a style should not pay twice.
 
-    The state file is not touched. A preview is not an apply; Enter is, and
-    Esc must find the stored record exactly as the picker found it.
+    The preview's record is saved BEFORE the preview is written, as for every
+    write in this file, and put back if the write fails; a record that cannot
+    be saved writes no preview. A picker can end without its finally: closing
+    the terminal tab, Kill Terminal and quitting VS Code all send SIGHUP, which
+    ends pwsh outright. The preview left behind is then one the stored record
+    names, and tstyles reset takes it out. A preview is still not an apply --
+    Enter is -- and Esc still leaves the stored record as the picker found it,
+    by writing the starting record back first (see Restore-VSCodePreview).
 
     'changed': the file no longer holds what the session last left in it, so
     somebody else wrote it while the picker was open. Nothing is written over
@@ -788,8 +801,22 @@ function Invoke-VSCodePreview {
             }
             $Session.BackedUp = $true
         }
+        # Record first, as everywhere in this file. A picker can die without
+        # its finally -- closing the terminal ends pwsh on SIGHUP -- and the
+        # preview left behind must still be one a reset can take out.
+        Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $p.Record
+    } catch {
+        return 'failed'
+    }
+    try {
         Write-SettingsAtomic -Path $Session.Path -Json $p.Text
     } catch {
+        # The file still holds what OnDiskRecord describes, so the record must
+        # too. If putting it back fails as well there is nothing left to try;
+        # the preview says 'failed' either way.
+        try {
+            Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $Session.OnDiskRecord
+        } catch { }
         return 'failed'
     }
     $Session.LastWrittenText = $p.Text
@@ -806,10 +833,12 @@ function Restore-VSCodePreview {
 
     .DESCRIPTION
     Two cases, decided by whether the file still holds what the picker last
-    wrote.
+    wrote. Either way the record is saved before the file, as everywhere in
+    this file.
 
-      It does    -> the original text goes back, byte for byte -- or the file
-                    goes away again, if there was none.
+      It does    -> the starting record goes back first, then the original
+                    text, byte for byte -- or the file goes away again, if
+                    there was none.
       It doesn't -> somebody edited settings.json while the picker was open,
                     most likely in VS Code itself. Writing the original back
                     would throw that edit away. Instead the preview is undone
@@ -822,10 +851,12 @@ function Restore-VSCodePreview {
     A file that no longer parses is not undone at all. The record's offsets no
     longer mean what the record thinks, so this fails rather than splices.
 
-    On failure the stored record is set to the preview's, because the preview
-    is what the file still holds: `tstyles reset` can then take it out. If
-    that record cannot be saved either, Detail says so, and the message does
-    not promise the reset.
+    On failure the stored record is left naming the preview, because the
+    preview is what the file still holds: `tstyles reset` can then take it
+    out. Every preview saved its own record before it was written, so a
+    failure before this has moved the record leaves that one on file, and a
+    failure after puts it back. If putting it back fails too, Detail says so,
+    and the message does not promise the reset.
 
     After either success nothing is left written, so a second call returns
     'none' -- which is what the picker's finally needs after an Esc.
@@ -836,9 +867,15 @@ function Restore-VSCodePreview {
     $out = @{ Status = 'none'; Path = $Session.Path; Kept = @(); Replaced = @(); Reason = $null; Detail = $null }
     if ($null -eq $Session.LastWrittenText) { return $out }
 
+    # Set once a record save below has landed. Until then the preview's own
+    # record, saved before the preview was written, is the one on file.
+    $recordMoved = $false
     try {
         $now = Read-VSCodeSettingsText -Path $Session.Path
         if ($now -ceq $Session.LastWrittenText) {
+            # Record first: the starting record is what describes the original.
+            Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $Session.StartRecord
+            $recordMoved = $true
             if ($Session.OriginalExisted) {
                 Write-SettingsAtomic -Path $Session.Path -Json $Session.OriginalText
             } elseif ([System.IO.File]::Exists($Session.Path)) {
@@ -864,6 +901,7 @@ function Restore-VSCodePreview {
             }
             # Record first, as everywhere in this file.
             Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $record
+            $recordMoved = $true
             Write-SettingsAtomic -Path $Session.Path -Json $text
             $Session.OnDiskRecord = $record
             $rewritten = @()
@@ -877,10 +915,14 @@ function Restore-VSCodePreview {
         # Reason first, before the try below can replace $_.
         $out.Status = 'failed'
         $out.Reason = "$_"
-        try {
-            Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $Session.OnDiskRecord
-        } catch {
-            $out.Detail = 'its undo record could not be saved either'
+        # Only a record this call moved needs putting back; one it never
+        # reached is still the preview's, which is what the file holds.
+        if ($recordMoved) {
+            try {
+                Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $Session.OnDiskRecord
+            } catch {
+                $out.Detail = 'its undo record could not be saved either'
+            }
         }
     }
     return $out

@@ -630,12 +630,14 @@ named. The first time a style goes into the file, a copy of it is kept beside
 it as `settings.json.bak-<timestamp>`.
 
 The picker previews the whole style as you arrow, font and cursor too, and Esc
-puts the file back exactly as it was. If `settings.json` changes while the
-picker is open (you edit it, or Settings Sync does), no further preview is
-written into it, and Enter and Esc both work from the file as it is now. Esc
-takes the preview out by its record instead of putting the old file back.
-Either way your change stays, except for a key the incoming style also sets.
-That key is named, and `tstyles reset` puts your value back.
+puts the file back exactly as it was. If the picker is closed without Enter or
+Esc (the terminal closed), the preview it left is recorded, so `tstyles reset`
+takes it out. If `settings.json` changes while the picker is open (you edit
+it, or Settings Sync does), no further preview is written into it, and Enter
+and Esc both work from the file as it is now. Esc takes the preview out by its
+record instead of putting the old file back. Either way your change stays,
+except for a key the incoming style also sets. That key is named, and
+`tstyles reset` puts your value back.
 
 - **No background image.** VS Code has no setting for one.
 - **The editor has to be identifiable.** All five set `TERM_PROGRAM=vscode`, so
