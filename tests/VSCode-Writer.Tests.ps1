@@ -1405,6 +1405,8 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             $out | Should -Match 'EXCEPT the style saved in'
             $out | Should -Match ([regex]::Escape($script:files['Code']))
             $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$' -Because 'a style is still in a file the user owns'
+            $out | Should -Not -Match 'reset again' -Because 'the module is gone by then, so no reset can run'
+            $out | Should -Not -Match 'record of what to take out is kept'
             [System.IO.File]::ReadAllText($script:files['Cursor']) | Should -BeExactly $script:user -Because 'the other editor still comes clean'
         }
 
@@ -1436,10 +1438,13 @@ Describe 'Get-VSCodeUninstallTarget' {
             # [ordered], and inserted out of order: a plain hashtable enumerates
             # in an order .NET Core randomizes per process, so with one the sort
             # being removed would go unnoticed in about half of all runs.
+            # Windsurf said yes and has nothing saved: without it, consent and
+            # record agree on every entry, and a filter on either would pass.
             $state = @{ Ok = $true; Path = '/x'; Entries = [ordered]@{
                 'Cursor'   = @{ consent = 'yes'; settingsPath = '/c/settings.json'; record = @{ Style = 'eva' } }
                 'Code'     = @{ consent = 'yes'; settingsPath = '/a/settings.json'; record = @{ Style = 'koholint' } }
                 'VSCodium' = @{ consent = 'no';  settingsPath = '/v/settings.json'; record = $null }
+                'Windsurf' = @{ consent = 'yes'; settingsPath = '/w/settings.json'; record = $null }
             } }
             $t = @(Get-VSCodeUninstallTarget -State $state)
             (@($t | ForEach-Object { $_.Variant }) -join ',') | Should -Be 'Code,Cursor'
@@ -1453,6 +1458,24 @@ Describe 'Get-VSCodeUninstallTarget' {
                 'Code' = @{ consent = 'yes'; settingsPath = '/a/settings.json'; record = @{ Style = 'koholint' } }
             } }
             @(Get-VSCodeUninstallTarget -State $state).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'Show-VSCodeResetResult during uninstall' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            Mock Write-Host { }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'still says what failed, and never tells the user to reset again, on <status>' -ForEach @(@{ status = 'wontparse' }, @{ status = 'writefailed' }, @{ status = 'statecorrupt' }) {
+            Show-VSCodeResetResult -Result @{ Status = $status; Variant = 'Code'; Path = '/x/settings.json'; Kept = @(); Restored = @(); Removed = @(); Detail = 'it does not parse as a JSON object' } -Uninstalling
+            Should -Invoke Write-Host -Times 0 -Exactly -Scope It -ParameterFilter { "$Object" -match 'reset again|record of what to take out is kept' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Could not' }
         }
     }
 }

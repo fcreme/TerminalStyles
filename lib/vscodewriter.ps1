@@ -644,8 +644,9 @@ function Show-VSCodeResetResult {
     # ours was there, and saying so on every reset in every VS Code terminal
     # would be noise. No leading blank line: it is printed inside other
     # commands' blocks (reset, uninstall, `tstyles vscode off`).
+    # -Uninstalling: uninstall has removed the module by then; its sign-off says what to do instead.
     [CmdletBinding()]
-    param([AllowNull()][hashtable]$Result)
+    param([AllowNull()][hashtable]$Result, [switch]$Uninstalling)
 
     if (-not $Result) { return }
     switch ($Result.Status) {
@@ -664,16 +665,24 @@ function Show-VSCodeResetResult {
         }
         'statecorrupt' {
             Write-Host ("  Could not read {0}, which records what tstyles wrote to settings.json," -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
-            Write-Host "  so nothing was taken out of it. Fix that file and reset again -- deleting it would" -ForegroundColor Yellow
-            Write-Host "  leave the style in settings.json with no record to take it out by." -ForegroundColor Yellow
+            if ($Uninstalling) {
+                Write-Host "  so nothing was taken out of it." -ForegroundColor Yellow
+            } else {
+                Write-Host "  so nothing was taken out of it. Fix that file and reset again -- deleting it would" -ForegroundColor Yellow
+                Write-Host "  leave the style in settings.json with no record to take it out by." -ForegroundColor Yellow
+            }
         }
         'wontparse' {
             Write-Host ("  Could not edit {0} safely: {1}, so the style was left in it." -f $Result.Path, $Result.Detail) -ForegroundColor Yellow
-            Write-Host "  Fix the file and reset again -- the record of what to take out is kept." -ForegroundColor Yellow
+            if (-not $Uninstalling) {
+                Write-Host "  Fix the file and reset again -- the record of what to take out is kept." -ForegroundColor Yellow
+            }
         }
         'writefailed' {
             Write-Host ("  Could not write {0}, so the style is still in it." -f $Result.Path) -ForegroundColor Yellow
-            Write-Host "  The record of what to take out is kept; reset again once it can be written." -ForegroundColor Yellow
+            if (-not $Uninstalling) {
+                Write-Host "  The record of what to take out is kept; reset again once it can be written." -ForegroundColor Yellow
+            }
         }
     }
 }

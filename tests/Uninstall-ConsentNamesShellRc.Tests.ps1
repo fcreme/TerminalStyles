@@ -146,6 +146,12 @@ Describe 'the uninstall consent listing names what it will change' {
         BeforeEach {
             $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            # Uninstall reads vscode-state.json out of the data root to list the
+            # settings.json files it will edit. Left alone, every listing test
+            # below would read the machine's own; so that root is TestDrive too.
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
             # Refuse, always. Nothing past the prompt may run on this machine.
             Mock Confirm-Action { $false }
             # The $PROFILE half is resolved by RUNNING each engine, so an
@@ -166,6 +172,7 @@ Describe 'the uninstall consent listing names what it will change' {
                 Labels      = @('PowerShell 7')
             }
         }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
 
         It 'names the rc file carrying the loader, and cancels' {
             $rc = script:New-Rc $script:h '.zshrc' -WithBlock

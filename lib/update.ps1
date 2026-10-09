@@ -1038,7 +1038,7 @@ function Invoke-TerminalStylesUninstall {
     # the module is gone no `tstyles reset` can retry it.
     $vscodeProblems = @(foreach ($t in $vscodeTargets) {
         $vr = Reset-StyleVSCodeConfig -Variant $t.Variant
-        Show-VSCodeResetResult -Result $vr
+        Show-VSCodeResetResult -Result $vr -Uninstalling
         if ($vr.Status -ne 'reset' -and $vr.Status -ne 'norecord') { $t.Path }
     })
 
