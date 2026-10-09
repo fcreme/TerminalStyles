@@ -39,7 +39,11 @@
 # ~/Library/Preferences/com.apple.Terminal.plist are rewritten by the terminal
 # itself whenever it feels like it, on a schedule no test controls. Watching
 # them would fail runs for something no test did, and a guard that cries wolf
-# gets deleted. They stay covered by the -Path/-Targets seams alone.
+# gets deleted. They stay covered by the -Path/-Targets seams alone. VS Code's
+# settings.json is the same kind of file and is NOT left alone: it is
+# fingerprinted by the keys this module writes rather than by its metadata (see
+# Aa-RealStateBaseline), so VS Code's own rewrites cannot fail a run and a
+# leaked style still does.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -100,6 +104,39 @@ Describe 'the suite leaves the operator''s own state alone' {
         $after.Contains((Join-Path $dir 'created')) | Should -BeTrue -Because 'a new file must be visible'
         $before.Contains($dot) | Should -BeTrue -Because 'a dotfile must be visible, which is what -Force buys'
         $after[$dot] | Should -Not -Be $before[$dot] -Because 'a rewritten file must not compare equal'
+    }
+
+    It 'the VS Code fingerprint sees a style written in, and nothing else' {
+        $p = Join-Path $TestDrive ('vs-' + [guid]::NewGuid().ToString('n') + '.json')
+        [System.IO.File]::WriteAllText($p, "{`n  `"editor.fontSize`": 13`n}")
+        $before = & $global:TStylesVSCodeProbe -Path @($p)
+
+        # Not ours, and exactly the kind of write VS Code makes by itself.
+        [System.IO.File]::WriteAllText($p, "{`n  `"editor.fontSize`": 14`n}")
+        (& $global:TStylesVSCodeProbe -Path @($p))[$p] | Should -Be $before[$p] `
+            -Because 'a change TerminalStyles did not make must not fail the run'
+
+        $m = Get-Module TerminalStyles
+        $styled = & $m {
+            param($Text)
+            (Invoke-VSCodeStyleApply -Text $Text -StyleDir (Get-StyleDir -StyleName 'koholint') -StyleName 'koholint').Text
+        } ([System.IO.File]::ReadAllText($p))
+        [System.IO.File]::WriteAllText($p, $styled)
+        (& $global:TStylesVSCodeProbe -Path @($p))[$p] | Should -Not -Be $before[$p] `
+            -Because 'a style leaking into the file is what this exists to catch'
+    }
+
+    It 'has written no style into any VS Code-family settings.json' {
+        $before = $global:TStylesVSCodeBefore
+        $before | Should -Not -BeNullOrEmpty -Because 'the baseline is taken in Aa-RealStateBaseline'
+        $after = & $global:TStylesVSCodeProbe -Path $global:TStylesVSCodeWatch
+        $changes = @(foreach ($k in $before.Keys) {
+            if ($after[$k] -cne $before[$k]) { "CHANGED  $k" }
+        })
+        $changes.Count | Should -Be 0 -Because (
+            "a test wrote a style into a real editor's settings.json. Mock Resolve-VSCodeTarget " +
+            "to a `$TestDrive path, or bind -HomeDir/-AppData/-XdgConfigHome. Changed:`n    " +
+            ($changes -join "`n    ") + "`n")
     }
 
     It 'has created, changed or removed nothing under the data root, the rc files or $PROFILE' {

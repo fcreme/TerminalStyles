@@ -82,6 +82,45 @@ BeforeDiscovery {
         @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
 
     $global:TStylesRealStateBefore = & $global:TStylesRealStateProbe -Path $global:TStylesRealStateWatch
+
+    # VS Code's settings.json is written by this module too, and is NOT watched
+    # by metadata like the paths above: VS Code rewrites it itself -- the
+    # settings UI, Settings Sync -- on no schedule a test controls, which is the
+    # reason the guard file gives for leaving Windows Terminal's out. So it is
+    # fingerprinted by the keys TerminalStyles writes and nothing else: the
+    # top-level keys every available style's plan touches, each read back as
+    # source text. A sync that changes editor.fontSize is invisible here; a test
+    # that leaks a style into the real file is not. The key list and the editor
+    # list are both asked of the module, so neither is a second copy.
+    $global:TStylesVSCodeKeys = @(& $m {
+        $keys = @{}
+        foreach ($s in @(Get-AvailableStyles)) {
+            try {
+                foreach ($e in (Get-VSCodeStylePlan -StyleDir $s.FullName)) { $keys[$e.Path[0]] = $true }
+            } catch { }
+        }
+        @($keys.Keys | Sort-Object)
+    })
+    $global:TStylesVSCodeProbe = {
+        param([string[]]$Path)
+        $mod = Get-Module TerminalStyles
+        $state = [ordered]@{}
+        foreach ($p in $Path) {
+            if (-not [System.IO.File]::Exists($p)) { $state[$p] = 'absent'; continue }
+            $text = [System.IO.File]::ReadAllText($p)
+            $state[$p] = & $mod {
+                param($Text, $Keys)
+                @($Keys | ForEach-Object { '{0}={1}' -f $_, (Get-JsoncValueLiteral -Text $Text -Path @($_)) }) -join "`n"
+            } $text $global:TStylesVSCodeKeys
+        }
+        $state
+    }
+    $global:TStylesVSCodeWatch = @(& $m {
+        $set = (Get-Command Get-VSCodeSettingsPath).Parameters['Variant'].Attributes |
+               Where-Object { $_ -is [System.Management.Automation.ValidateSetAttribute] }
+        foreach ($v in $set.ValidValues) { Get-VSCodeSettingsPath -Variant $v }
+    })
+    $global:TStylesVSCodeBefore = & $global:TStylesVSCodeProbe -Path $global:TStylesVSCodeWatch
 }
 
 Describe 'the real-state baseline' {
@@ -102,5 +141,12 @@ Describe 'the real-state baseline' {
     It 'actually captured something' {
         $global:TStylesRealStateBefore | Should -Not -BeNullOrEmpty
         @($global:TStylesRealStateWatch).Count | Should -BeGreaterThan 0
+    }
+
+    It 'knows which VS Code files and keys to fingerprint' {
+        @($global:TStylesVSCodeWatch).Count | Should -BeGreaterThan 0
+        $global:TStylesVSCodeKeys | Should -Contain 'workbench.colorCustomizations' `
+            -Because 'every bundled style writes its colours there'
+        $global:TStylesVSCodeBefore | Should -Not -BeNullOrEmpty
     }
 }
