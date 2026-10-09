@@ -1412,5 +1412,47 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             $u = (Get-TerminalStyleHelpData | Where-Object { $_.Name -eq 'uninstall' })
             ($u.Detail -join ' ') | Should -Match 'VS Code'
         }
+
+        It 'lists the VS Code records among what -DeleteData deletes' {
+            Mock Confirm-Action { $false }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() -DeleteData 6>&1 | Out-String -Width 500
+            $out | Should -Match 'VS Code consent answers and undo records'
+        }
+
+        It 'does not sign off uninstalled when it could not read what was saved' {
+            Mock Confirm-Action { $true }
+            [System.IO.File]::WriteAllText((Get-VSCodeStatePath), '{broken', [System.Text.UTF8Encoding]::new($false))
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$'
+            $out | Should -Match 'EXCEPT any style saved to a VS Code-family settings\.json'
+            $out | Should -Match ([regex]::Escape((Get-VSCodeStatePath)))
+        }
+    }
+}
+
+Describe 'Get-VSCodeUninstallTarget' {
+    InModuleScope TerminalStyles {
+        It 'names only editors with a saved style, sorted by editor' {
+            # [ordered], and inserted out of order: a plain hashtable enumerates
+            # in an order .NET Core randomizes per process, so with one the sort
+            # being removed would go unnoticed in about half of all runs.
+            $state = @{ Ok = $true; Path = '/x'; Entries = [ordered]@{
+                'Cursor'   = @{ consent = 'yes'; settingsPath = '/c/settings.json'; record = @{ Style = 'eva' } }
+                'Code'     = @{ consent = 'yes'; settingsPath = '/a/settings.json'; record = @{ Style = 'koholint' } }
+                'VSCodium' = @{ consent = 'no';  settingsPath = '/v/settings.json'; record = $null }
+            } }
+            $t = @(Get-VSCodeUninstallTarget -State $state)
+            (@($t | ForEach-Object { $_.Variant }) -join ',') | Should -Be 'Code,Cursor'
+            $t[0].Path | Should -Be '/a/settings.json'
+        }
+
+        It 'names nothing when the state could not be read' {
+            # With an entry in it: Read-VSCodeState hands back no entries when it
+            # fails, which would make this pass with or without the guard.
+            $state = @{ Ok = $false; Path = '/x'; Entries = @{
+                'Code' = @{ consent = 'yes'; settingsPath = '/a/settings.json'; record = @{ Style = 'koholint' } }
+            } }
+            @(Get-VSCodeUninstallTarget -State $state).Count | Should -Be 0
+        }
     }
 }

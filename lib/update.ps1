@@ -933,7 +933,8 @@ function Invoke-TerminalStylesUninstall {
         # makes the trash look like a safety net, and this is the one command
         # that empties it without naming it.
         Write-Host "  - DELETE the entire $dataDir (user state: active style, cached GIFs, throttle stamp," -ForegroundColor Red
-        Write-Host "      the styles you made, and every style in the trash awaiting tstyles restore)" -ForegroundColor Red
+        Write-Host "      the styles you made, every style in the trash awaiting tstyles restore, and the" -ForegroundColor Red
+        Write-Host "      VS Code consent answers and undo records)" -ForegroundColor Red
     } else {
         Write-Host "  - PRESERVE user state ($dataDir contents -- pass -DeleteData to wipe)" -ForegroundColor Gray
     }
@@ -1101,7 +1102,7 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "A PowerShell profile is not inert like that: the block there imports a module" -ForegroundColor Gray
             Write-Host "step 1 has just removed, so every new tab opens on a red error until you delete it." -ForegroundColor Gray
         }
-    } elseif ($vscodeProblems.Count -eq 0) {
+    } elseif ($vscodeProblems.Count -eq 0 -and $vscodeState.Ok) {
         Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
     }
     # A VS Code style that could not be taken out. Its record is the only thing
@@ -1116,6 +1117,17 @@ function Invoke-TerminalStylesUninstall {
         foreach ($p in $vscodeProblems) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
         Write-Host "Take its terminal settings out of those files by hand, or restore the" -ForegroundColor Yellow
         Write-Host "settings.json.bak-* copy beside each -- the module is gone, so tstyles cannot." -ForegroundColor Yellow
+    }
+    # The record of what was saved could not be read, so no editor's
+    # settings.json was touched and nothing here can say which of them holds a
+    # style. Said again at the end: the consent screen has scrolled away.
+    if (-not $vscodeState.Ok) {
+        if ($allProblems.Count -gt 0) {
+            Write-Host "...and any style saved to a VS Code-family settings.json:" -ForegroundColor Yellow
+        } else {
+            Write-Host "TerminalStyles uninstalled, EXCEPT any style saved to a VS Code-family settings.json:" -ForegroundColor Yellow
+        }
+        Write-Host ("{0} could not be read, so none was taken out. Check those files by hand." -f $vscodeState.Path) -ForegroundColor Yellow
     }
     # Only when the $PROFILE side really did come out clean. This was printed
     # unconditionally, directly under a warning that the loader is still in a
