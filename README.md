@@ -286,11 +286,14 @@ tstyles reset -Target defaults # the block every profile inherits from
 This strips the colors, cursor, font, opacity, and background a style added,
 removes the now-unused color scheme, and restores your own prompt (open a new
 tab to see it). It's the inverse of applying a style, and writes a
-`settings.json.bak` first — that last part is Windows Terminal only. Elsewhere
-there is no `settings.json` to strip: the reset is an escape sequence handing
-color control back to the terminal's own profile, so there is nothing to back
-up and no `.bak` is written. Fields you set on the profile by hand are left
-alone.
+`settings.json.bak` first — that last part is Windows Terminal only. In a VS
+Code-family terminal whose editor you let TerminalStyles save styles to, the
+reset also takes the style back out of that editor's `settings.json`, from its
+record: earlier values come back, and a key you changed by hand since is left
+alone and named. No `.bak` is written for that. Elsewhere there is no
+`settings.json` to strip: the reset is an escape sequence handing color control
+back to the terminal's own profile, so there is nothing to back up and no
+`.bak` is written. Fields you set on the profile by hand are left alone.
 
 If you styled `profiles.defaults` (`tstyles eva -Target defaults`), a reset of
 one profile also has to deal with what that profile *inherits* — Windows

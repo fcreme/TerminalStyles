@@ -215,8 +215,16 @@ real tool, not a mock), but it means `settings.json` is not covered by the
 snapshot above: the protection there is the rolling `settings.json.bak` the
 module writes for any user, not anything demo-specific.
 
-Off Windows Terminal — Terminal.app, VS Code, kitty, plain pwsh — there is no
+Off Windows Terminal — Terminal.app, kitty, plain pwsh — there is no
 `settings.json` to write, and the demo touches nothing outside the data root.
+
+In a **VS Code-family terminal** it can write that editor's `settings.json`.
+The first apply or picker there asks, once per editor, whether to save styles
+to it. Answer before recording (`tstyles vscode on` or `tstyles vscode off`), or
+the question lands in the take. With saving on, the picker previews and the
+take's `tstyles reset` go through the same code a normal run does — the reset
+takes the style back out from its record — and that file is not covered by the
+snapshot above either.
 
 ## If a take goes wrong
 
