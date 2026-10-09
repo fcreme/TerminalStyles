@@ -2599,7 +2599,7 @@ git commit -m "Preview VS Code styles from a session that can put the file back"
 
 **Interfaces:**
 - Consumes: `New-VSCodePreviewSession`, `Invoke-VSCodePreview`, `Restore-VSCodePreview`, `Show-VSCodeRestoreResult`, `Publish-StyleVSCodeConfig -Session`, `Show-VSCodeWriteResult`.
-- Produces: no functions. The picker previews, reverts and commits through the session, and shows results below the `Clear-Host` that would wipe them.
+- Produces: no functions. The picker previews, reverts and commits through the session, and shows results below the `Clear-Host` that would wipe them. An error after Enter that skips the commit takes the preview back out, in the `finally`.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2638,6 +2638,14 @@ Describe 'the picker wires the VS Code session in' {
         It 'says what Esc did after it says Reverted' {
             $script:picker | Should -Match '(?s)Write-Host "Reverted\." -ForegroundColor Yellow\s*Show-VSCodeRestoreResult'
         }
+
+        It 'takes the preview back out when an error after Enter skips the commit' {
+            $publish = $script:picker.IndexOf('$vscodeResult = Publish-StyleVSCodeConfig')
+            $done    = $script:picker.IndexOf('$pickerState.VSCodeDone = $true')
+            $publish | Should -BeGreaterThan 0
+            $done | Should -BeGreaterThan $publish -Because 'the session is settled only once the commit has run'
+            $script:picker | Should -Match '(?s)if \(\$confirmed -and \$vscodeSession -and -not \$pickerState\.VSCodeDone\) \{\s*\$pickerState\.VSCodeRestore = Restore-VSCodePreview -Session \$vscodeSession'
+        }
     }
 }
 ```
@@ -2645,14 +2653,14 @@ Describe 'the picker wires the VS Code session in' {
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `pwsh -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0.0; Invoke-Pester -Path tests/VSCode-Writer.Tests.ps1 -Output Detailed"`
-Expected: the five new tests FAIL. Everything else passes.
+Expected: the six new tests FAIL. Everything else passes.
 
 - [ ] **Step 3: Add the picker state flag**
 
 Replace `    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false }` with:
 
 ```powershell
-    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false; VSCodeRestore = $null }
+    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false; VSCodeRestore = $null; VSCodeDone = $false }
 ```
 
 - [ ] **Step 4: Add the VS Code preview and restore blocks before `$restoreOriginalSettings`**
@@ -2827,6 +2835,9 @@ with:
                 # back rather than leave a style in it that no record describes.
                 $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
             }
+            # Settled either way from here: the finally must not take back a
+            # commit that landed.
+            $pickerState.VSCodeDone = $true
 ```
 
 - [ ] **Step 11: Show it below the Clear-Host**
@@ -2874,6 +2885,30 @@ with:
                 try { & $restoreOriginalLook } catch { }
                 Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
             }
+```
+
+- [ ] **Step 12b: Take the preview back out when an error skips the commit**
+
+Enter sets `$confirmed` before the commit runs, and the `finally` reverts only while `$confirmed` is false. An exception in between, from `Set-CurrentStyleRecord`, `Set-ShellStyleState` or anything else on the confirm path, would leave the preview in `settings.json` with no record naming it. The spec's Esc / Ctrl+C / exception flow says to restore on an exception.
+
+Replace:
+
+```powershell
+        # Clean up the background prefetch job. If it's still mid-fetch (user
+```
+
+with:
+
+```powershell
+        # Enter sets $confirmed before the VS Code commit runs, so an error in
+        # between skips both the Esc revert and the block above, and would leave
+        # the preview in settings.json with no record naming it. Restore never
+        # throws, and VSCodeDone keeps it away from a commit that landed.
+        if ($confirmed -and $vscodeSession -and -not $pickerState.VSCodeDone) {
+            $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
+            Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
+        }
+        # Clean up the background prefetch job. If it's still mid-fetch (user
 ```
 
 - [ ] **Step 13: Run the picker tests to verify they pass**
@@ -3670,15 +3705,19 @@ style back out first).
 What is written: the terminal's 20 colors under `workbench.colorCustomizations`,
 and `terminal.integrated.fontFamily`, `fontSize`, `fontWeight` and
 `cursorStyle`. Nothing else in the file is touched, comments and formatting
-included. Each write keeps a record of what was there before, so `tstyles reset`
+included. Each apply keeps a record of what was there before, so `tstyles reset`
 (in that editor's terminal), `tstyles vscode off` and `tstyles uninstall` put
 your own values back; a key you change by hand afterwards is left alone and
 named. The first time a style goes into the file, a copy of it is kept beside
 it as `settings.json.bak-<timestamp>`.
 
 The picker previews the whole style as you arrow, font and cursor too, and Esc
-puts the file back exactly as it was. If you edit `settings.json` while the
-picker is open, Esc takes the preview out instead and your edit stays.
+puts the file back exactly as it was. If `settings.json` changes while the
+picker is open (you edit it, or Settings Sync does), no further preview is
+written into it, and Enter and Esc both work from the file as it is now. Esc
+takes the preview out by its record instead of putting the old file back.
+Either way your change stays, except for a key the incoming style also sets.
+That key is named, and `tstyles reset` puts your value back.
 
 - **No background image.** VS Code has no setting for one.
 - **The editor has to be identifiable.** All five set `TERM_PROGRAM=vscode`, so
@@ -3815,7 +3854,7 @@ with:
 
   It **asks first**, once per editor, and remembers the answer in `vscode-state.json` under the data root; `tstyles vscode on|off` changes it. A file people annotate by hand and sync between machines is not one to start writing on the strength of an apply, and nobody at the terminal to answer is not taken as a no.
 
-  Every write keeps a **record** of what it set and what was there before, saved before the file is written and rolled back if the write fails. `tstyles reset`, `tstyles vscode off` and `tstyles uninstall` undo from it: earlier values come back byte for byte, a key changed by hand since is left alone and named, and a style deleted in the meantime can still be taken out. Switching styles takes the previous one off first, so a reset after several switches still returns the file it started from. Comments and formatting survive, because the file is spliced as text rather than parsed and re-serialised. The first write to a file keeps a `settings.json.bak-<timestamp>` copy beside it.
+  Every apply keeps a **record** of what it set and what was there before, saved before the file is written and rolled back if the write fails. `tstyles reset`, `tstyles vscode off` and `tstyles uninstall` undo from it: earlier values come back byte for byte, a key changed by hand since is left alone and named, and a style deleted in the meantime can still be taken out. Switching styles takes the previous one off first, so a reset after several switches still returns the file it started from. Comments and formatting survive, because the file is spliced as text rather than parsed and re-serialised. An edit made while the picker is open survives it: no preview is written over the changed file, and Esc takes its preview out by record instead of putting back the copy it took when it opened. The first write to a file keeps a `settings.json.bak-<timestamp>` copy beside it.
 
   It **refuses rather than guesses**: an editor it cannot identify (it reads the install path VS Code's git integration exports as `VSCODE_GIT_ASKPASS_NODE`), a settings folder that does not exist, and a file that does not parse all stop the write and say which -- the alternative was a Cursor user's style landing in VS Code's file and reporting success. A theme-scoped block (`"[Monokai]": { "terminal.background": ... }`) that would win over the written colours is named after the apply. Font sizes are converted from points to pixels, so a style is not drawn a quarter smaller than it asks.
 
@@ -3872,9 +3911,10 @@ with:
 There are exactly four config writers in the repo: `Merge-StyleIntoSettings` (Windows
 Terminal `settings.json`), `New-AppleTerminalProfile` (Terminal.app `.terminal` plist),
 `Get-WezTermStyleLua` (WezTerm's generated Lua module) and `Invoke-VSCodeStyleApply`
-(a VS Code-family editor's `settings.json`, written by `Publish-StyleVSCodeConfig` only
-after the user has said yes for that editor — so its capability flags are conditional
-too, on `Test-VSCodeWriterActive`). Everything else is escape sequences.
+(a VS Code-family editor's `settings.json`, written from `lib/vscodewriter.ps1` —
+`Publish-StyleVSCodeConfig` and the picker's preview session — only after the user has
+said yes for that editor, so its capability flags are conditional too, on
+`Test-VSCodeWriterActive`). Everything else is escape sequences.
 ```
 
 - [ ] **Step 8: Run the doc guards**
