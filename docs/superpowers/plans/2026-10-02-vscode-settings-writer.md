@@ -2955,6 +2955,7 @@ git commit -m "Preview the full style in the picker on VS Code"
 - Modify: `lib/vscodewriter.ps1` (append)
 - Modify: `tstyles.ps1` (`$script:TStylesSubcommands`, dispatcher)
 - Modify: `lib/help.ps1` (new `vscode` entry)
+- Modify: `README.md` (the `### Subcommands` command list)
 - Test: `tests/VSCode-Writer.Tests.ps1` (append)
 
 **Interfaces:**
@@ -3241,15 +3242,30 @@ Insert immediately before the entry that begins `            Name = 'uninstall';
         }
 ```
 
+- [ ] **Step 5b: List it in the README's command list**
+
+`tests/Contributing-MatchesCI.Tests.ps1` requires every dispatched help topic to have a line in the README's `### Subcommands` fence. Replace:
+
+```
+tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
+```
+
+with:
+
+```
+tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
+tstyles vscode [on|off]           # VS Code: show, allow (on) or undo and stop (off) saving styles to settings.json
+```
+
 - [ ] **Step 6: Run the affected tests to verify they pass**
 
-Run: `pwsh -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0.0; Invoke-Pester -Path tests/VSCode-Writer.Tests.ps1, tests/Get-TerminalStyleHelpData.Tests.ps1, tests/Show-TerminalStyleHelp.Tests.ps1, tests/Subcommand-Robustness.Tests.ps1, tests/Invoke-TerminalStyle-HelpDispatch.Tests.ps1 -Output Detailed"`
+Run: `pwsh -NoProfile -Command "Import-Module Pester -MinimumVersion 5.0.0; Invoke-Pester -Path tests/VSCode-Writer.Tests.ps1, tests/Contributing-MatchesCI.Tests.ps1, tests/Get-TerminalStyleHelpData.Tests.ps1, tests/Show-TerminalStyleHelp.Tests.ps1, tests/Subcommand-Robustness.Tests.ps1, tests/Invoke-TerminalStyle-HelpDispatch.Tests.ps1 -Output Detailed"`
 Expected: all PASS. The help drift guard requires the new subcommand to have a topic, and it now does.
 
 - [ ] **Step 7: Commit**
 
 ```bash
-git add lib/vscodewriter.ps1 tstyles.ps1 lib/help.ps1 tests/VSCode-Writer.Tests.ps1
+git add lib/vscodewriter.ps1 tstyles.ps1 lib/help.ps1 tests/VSCode-Writer.Tests.ps1 README.md
 git commit -m "Add tstyles vscode [on|off]"
 ```
 
