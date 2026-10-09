@@ -107,7 +107,7 @@ Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
             # Setting expectations matters more here than usual: two of the five
             # knobs move on screen and three do not, and a user who does not know
             # that will read the stillness as the tuner being broken.
-            (script:Get-TunerWriteHostText) -match 'cannot show them' | Should -Not -BeNullOrEmpty
+            (script:Get-TunerWriteHostText) -match 'saved with the style; they do not preview here' | Should -Not -BeNullOrEmpty
         }
 
         It 'does not promise a new window will show opacity or font' {

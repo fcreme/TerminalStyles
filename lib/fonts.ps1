@@ -926,8 +926,9 @@ function Invoke-TerminalStyleFont {
     if ($owner -ne 'command') {
         if ($owner -eq 'style') {
             # A terminal whose font a STYLE APPLY writes -- WezTerm, through the
-            # generated Lua module. Saying it "takes its font from its own
-            # settings" was false here: a font set in the user's own config is
+            # generated Lua module, and VS Code with saving on, through
+            # settings.json. Saying it "takes its font from its own settings"
+            # was false here: a font set in the user's own config is
             # overridden by the next apply, so that advice sent them to do
             # something that does not stick. On WezTerm both routes below are
             # measured: setting config.font after the require line wins, and a

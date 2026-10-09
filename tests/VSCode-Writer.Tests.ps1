@@ -527,9 +527,9 @@ Describe 'Show-VSCodeWriteResult' {
 
         It 'says <status> in its own words' -ForEach @(
             @{ status = 'written';        pattern = "Saved to Code's settings\.json" }
-            @{ status = 'declined';       pattern = 'tstyles vscode on' }
+            @{ status = 'declined';       pattern = 'as you chose' }
             @{ status = 'undecided';      pattern = 'no answer on record' }
-            @{ status = 'unknownvariant'; pattern = "Couldn't tell which editor" }
+            @{ status = 'unknownvariant'; pattern = 'nothing was saved to its settings\.json' }
             @{ status = 'nodir';          pattern = 'no settings folder' }
             @{ status = 'wontparse';      pattern = 'does not parse' }
             @{ status = 'writefailed';    pattern = 'Could not write' }
@@ -720,6 +720,41 @@ Describe 'Reset-StyleVSCodeConfig' {
             $r.Detail | Should -Match 'record could not be cleared'
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
+
+        It 'round-trips a file that already has a colour block, through the state file' {
+            # The shape most at risk on Windows PowerShell 5.1: the apply creates
+            # no parent, so CreatedParents is EMPTY, and an empty list is what a
+            # JSON round trip is least careful with. Coming back naming the
+            # block would let a reset take the user's own colour block with it.
+            $own = "{`n  `"workbench.colorCustomizations`": {`n    // mine`n    `"editor.background`": `"#202020`"`n  },`n  `"editor.fontSize`": 13`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $own, [System.Text.UTF8Encoding]::new($false))
+            $a = Invoke-VSCodeStyleApply -Text $own -StyleDir $script:koholint -StyleName 'koholint'
+            @($a.Record.CreatedParents).Count | Should -Be 0 -Because 'the colour block was already there'
+
+            script:Publish 'koholint'
+            $back = (Read-VSCodeState).Entries['Code'].record
+            $back.Style | Should -Be 'koholint'
+            @($back.CreatedParents).Count | Should -Be 0 -Because 'an empty list has to come back empty'
+
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $own
+        }
+
+        It 'takes out a style deleted since, from its record alone' {
+            # tstyles delete moves the style away; a reset afterwards has the
+            # record and nothing else, which is all it needs.
+            $mine = Join-Path $script:TStylesDataRoot 'styles/mine'
+            New-Item -ItemType Directory -Path $mine -Force | Out-Null
+            Copy-Item -Path (Join-Path $script:koholint '*') -Destination $mine -Recurse
+            script:Publish 'mine'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'mine'
+            Remove-Item -LiteralPath $mine -Recurse -Force
+            Get-StyleDir -StyleName 'mine' | Should -BeNullOrEmpty -Because 'the style is gone'
+
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
     }
 }
 
@@ -735,8 +770,19 @@ Describe 'Show-VSCodeResetResult' {
             @{ status = 'writefailed';    pattern = 'Could not write' }
         ) {
             Show-VSCodeResetResult -Result @{ Status = $status; Variant = 'Code'; Path = '/x/settings.json'
-                                              Kept = @(); Restored = @(); Removed = @(); Detail = 'it could not be read' }
+                                              Kept = @(); Restored = @(); Removed = @('x'); Detail = 'it could not be read' }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match $pattern }
+        }
+
+        It 'does not say it took the style out when the reset found none of it (<label>)' -ForEach @(
+            # Missing members as well as empty ones: @() around a missing member
+            # is one $null, whose Count of 1 would claim a key was taken out.
+            @{ label = 'empty lists';     result = @{ Status = 'reset'; Variant = 'Code'; Path = '/x'; Kept = @(); Restored = @(); Removed = @() } }
+            @{ label = 'missing members'; result = @{ Status = 'reset'; Variant = 'Code'; Path = '/x' } }
+        ) {
+            Show-VSCodeResetResult -Result $result
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Took the style back out' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match "Found none of the style left in Code's settings\.json to take out" }
         }
 
         It 'stays quiet when there was nothing of ours to take out' {
@@ -850,6 +896,24 @@ Describe 'tstyles <name> and tstyles reset in a VS Code terminal' {
             Mock Write-HostOscPacket { $true }
             Mock Get-StyleBundledBackground { $null }
             Mock Write-Host { }
+            # Nobody at the console, and nothing answered: a test that needs
+            # another answer overrides these. Without them a run from a real
+            # terminal could reach the real prompt.
+            Mock Test-InteractiveConsole { $false }
+            Mock Confirm-Action { throw 'mocked, never answered' }
+        }
+
+        It 'asks nobody about a style that has no scheme.json' {
+            # The apply stops on the missing scheme, so a question asked first
+            # would be answered for nothing -- and a yes stored for good.
+            Mock Test-InteractiveConsole { $true }
+            Mock Confirm-Action { $true }
+            $broken = Join-Path $script:TStylesDataRoot 'styles/noscheme'
+            New-Item -ItemType Directory -Path $broken -Force | Out-Null
+            $err = Apply-StyleNonWT -StyleName 'noscheme' -StyleDir $broken -KeepPrompt 2>&1
+            "$err" | Should -Match 'has no scheme\.json'
+            Should -Invoke Confirm-Action -Times 0 -Scope It
+            [System.IO.File]::Exists((Get-VSCodeStatePath)) | Should -BeFalse -Because 'no answer was asked for, so none was stored'
         }
 
         It 'asks once, and asks before the notice is built' {
@@ -1362,6 +1426,40 @@ Describe 'the picker wires the VS Code session in' {
     }
 }
 
+Describe 'every door that calls the WezTerm publisher calls the VS Code one too' {
+    # The duplication guard tests/WezTerm-Writer.Tests.ps1 keeps for its own
+    # publishers, carried to the fourth writer. Not a list of doors: any
+    # function that calls Publish-StyleWezTermConfig is one, so a door added
+    # later is held to this without editing it. Read off the AST, so a comment
+    # that names a publisher is not a call to it.
+    BeforeAll {
+        $repo = Split-Path $PSScriptRoot -Parent
+        $files = @((Join-Path $repo 'tstyles.ps1'), (Join-Path $repo 'terminals.ps1')) +
+                 @(Get-ChildItem -Path (Join-Path $repo 'lib') -Filter '*.ps1' | ForEach-Object { $_.FullName })
+        $script:doors = @{}
+        foreach ($f in $files) {
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null)
+            $fns = $ast.FindAll({ param($n) $n -is [System.Management.Automation.Language.FunctionDefinitionAst] }, $true)
+            foreach ($fn in $fns) {
+                $calls = @($fn.Body.FindAll({ param($n) $n -is [System.Management.Automation.Language.CommandAst] }, $true) |
+                           ForEach-Object { $_.GetCommandName() })
+                if ($calls -contains 'Publish-StyleWezTermConfig') { $script:doors[$fn.Name] = $calls }
+            }
+        }
+    }
+
+    It 'finds the two doors it knows of, so the check below has something to check' {
+        $script:doors.Keys | Should -Contain 'Apply-StyleNonWT'
+        $script:doors.Keys | Should -Contain 'Invoke-TerminalStyle' -Because 'the picker is the other door'
+    }
+
+    It 'has every one of them call Publish-StyleVSCodeConfig' {
+        foreach ($name in @($script:doors.Keys)) {
+            $script:doors[$name] | Should -Contain 'Publish-StyleVSCodeConfig' -Because "$name publishes to WezTerm, so it has to publish to VS Code too"
+        }
+    }
+}
+
 Describe 'tstyles vscode' {
     InModuleScope TerminalStyles {
         BeforeEach {
@@ -1412,7 +1510,51 @@ Describe 'tstyles vscode' {
             [System.IO.File]::WriteAllText($script:sPath, '{ "broken": ', [System.Text.UTF8Encoding]::new($false))
             $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String
             (Read-VSCodeState).Entries['Code'].consent | Should -Be 'yes'
-            $out | Should -Match 'Saving stays on'
+            $out | Should -Match 'Saving was not changed; the style has to come out of settings\.json first'
+        }
+
+        It 'off clears a record the reset could not, when it records the no' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            # The reset's own clearing write fails once; the no written after it lands.
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic {
+                if ($Path -ne $script:sPath) {
+                    $script:stateWrites++
+                    if ($script:stateWrites -eq 1) { throw 'busy' }
+                }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            }
+            Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            $e = (Read-VSCodeState).Entries['Code']
+            $e.consent | Should -Be 'no'
+            $e.record  | Should -BeNullOrEmpty -Because 'the style is out of the file, so no record may still name it'
+        }
+
+        It 'off says saving is still on only when it was, if the no cannot be saved (<label>)' -ForEach @(
+            @{ label = 'saving on';   consent = 'yes'; still = $true }
+            @{ label = 'never asked'; consent = $null; still = $false }
+        ) {
+            if ($consent) { Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent $consent }
+            Mock Write-SettingsAtomic { throw 'read-only data root' }
+            $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String
+            $out | Should -Match 'Could not save that to'
+            if ($still) {
+                $out | Should -Match 'so saving is still on'
+            } else {
+                $out | Should -Not -Match 'still on' -Because 'saving was never on'
+            }
+        }
+
+        It 'says when this editor has no settings folder yet, and names the folder' {
+            $script:missing = Join-Path $script:TStylesDataRoot 'Nope/User/settings.json'
+            Mock Resolve-VSCodeTarget { @{ Status = 'nodir'; Variant = 'Code'; Path = $script:missing } }
+            $out = Invoke-TerminalStyleVSCode 6>&1 | Out-String -Width 500
+            $out | Should -Match 'settings folder does not exist'
+            # On a line of its own: the settings.json path below it contains the
+            # folder too, and would match on its own.
+            $out | Should -Match ('(?m)' + [regex]::Escape([System.IO.Path]::GetDirectoryName($script:missing)) + '\s*$')
         }
 
         It 'refuses on and off where it cannot tell which editor this is' {
@@ -1512,6 +1654,26 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             $out | Should -Not -Match 'reset again' -Because 'the module is gone by then, so no reset can run'
             $out | Should -Not -Match 'record of what to take out is kept'
             [System.IO.File]::ReadAllText($script:files['Cursor']) | Should -BeExactly $script:user -Because 'the other editor still comes clean'
+            # The advice names what to take out, and what the copy costs.
+            $out | Should -Match 'terminal\.integrated\.fontFamily'
+            $out | Should -Match 'restoring it also undoes your edits since'
+        }
+
+        It 'says what it would do to VS Code''s settings.json only when a style is saved there (<label>)' -ForEach @(
+            @{ label = 'styles saved'; saved = $true }
+            @{ label = 'none saved';   saved = $false }
+        ) {
+            # The consequence is what a run that cannot ask prints instead of
+            # asking, so it is held to the same standard as the listing.
+            if (-not $saved) { Remove-Item -LiteralPath (Get-VSCodeStatePath) -Force }
+            Mock Confirm-Action { $false }
+            Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-Null
+            if ($saved) {
+                Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It -ParameterFilter {
+                    $Consequence -match "takes the saved style out of VS Code's settings\.json" }
+            } else {
+                Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It -ParameterFilter { $Consequence -notmatch 'VS Code' }
+            }
         }
 
         It 'the uninstall help says so too' {

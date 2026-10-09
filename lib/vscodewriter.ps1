@@ -369,8 +369,41 @@ function Request-VSCodeWriterConsent {
         Write-Host "  settings.json this time, and you will be asked again." -ForegroundColor Yellow
         return 'undecided'
     }
-    if ($answer -eq 'yes') { return 'active' }
-    return 'declined'
+    # The one decider says what the stored answer means, rather than a second
+    # copy of its switch here.
+    return (Get-VSCodeWriterState).Status
+}
+
+function Split-VSCodeKept {
+    <#
+    .SYNOPSIS
+    Split the keys an undo kept by whether the style written next sets them
+    again: @{ Left; Replaced }.
+
+    .DESCRIPTION
+    An undo keeps a key the user changed after the outgoing style wrote it.
+    When the style written next sets that key too, the user's value is
+    written over -- and kept in the new record, as the value a reset puts
+    back: Replaced. Only the rest are still as the user set them: Left.
+
+    The publisher and Esc's merge both report this split, and both get it
+    from here, so the two cannot come to name the same key differently
+    (CLAUDE.md: two implementations of one rule diverge). Keys are named the
+    way the undo names them, Path joined with '/'. -Record is the next
+    style's record; with none, every kept key is Left.
+    #>
+    [CmdletBinding()]
+    param(
+        [AllowNull()]$Kept,
+        [AllowNull()]$Record
+    )
+
+    $written = @()
+    if ($Record) { $written = @(@($Record.Wrote) | ForEach-Object { @($_.Path) -join '/' }) }
+    return @{
+        Left     = @(@($Kept) | Where-Object { $written -notcontains $_ })
+        Replaced = @(@($Kept) | Where-Object { $written -contains $_ })
+    }
 }
 
 function Publish-StyleVSCodeConfig {
@@ -396,7 +429,7 @@ function Publish-StyleVSCodeConfig {
     outgoing style's undo left alone because the user had changed them; the
     incoming style then writes over any of those it sets itself, keeping the
     user's value as the one a reset restores. "Left as you set it" is only
-    true of the others.
+    true of the others. Split-VSCodeKept draws that line.
     #>
     [CmdletBinding()]
     param(
@@ -484,8 +517,7 @@ function Publish-StyleVSCodeConfig {
         }
     }
 
-    $writtenNames = @(@($a.Record.Wrote) | ForEach-Object { @($_.Path) -join '/' })
-    $kept = @($a.Kept)
+    $split = Split-VSCodeKept -Kept $a.Kept -Record $a.Record
     $ids = @(@($a.Record.Wrote) |
              Where-Object { @($_.Path).Count -eq 2 -and $_.Path[0] -eq 'workbench.colorCustomizations' } |
              ForEach-Object { $_.Path[1] })
@@ -493,8 +525,8 @@ function Publish-StyleVSCodeConfig {
     $overrides = Get-VSCodeColorOverride -Text $a.Text -Ids $ids
 
     $result.Status    = 'written'
-    $result.Kept      = @($kept | Where-Object { $writtenNames -notcontains $_ })
-    $result.Replaced  = @($kept | Where-Object { $writtenNames -contains $_ })
+    $result.Kept      = $split.Left
+    $result.Replaced  = $split.Replaced
     $result.Overrides = $overrides
     return $result
 }
@@ -540,8 +572,10 @@ function Show-VSCodeWriteResult {
             Write-Host "  tstyles vscode on gives one." -ForegroundColor DarkGray
         }
         'unknownvariant' {
-            Write-Host "  Couldn't tell which editor this terminal belongs to, so nothing was saved" -ForegroundColor Yellow
-            Write-Host "  -- the colors apply to this terminal only." -ForegroundColor Yellow
+            # Not "the colors apply to this terminal only": wherever the shell
+            # loader is registered, new terminals take the colors too.
+            Write-Host "  Couldn't tell which editor this terminal belongs to," -ForegroundColor Yellow
+            Write-Host "  so nothing was saved to its settings.json." -ForegroundColor Yellow
         }
         'nodir' {
             Write-Host ("  Found no settings folder for {0} at {1}, so nothing was saved." -f
@@ -578,13 +612,15 @@ function Reset-StyleVSCodeConfig {
     failing the write would leave keys in the file that no command could name.
 
     -Variant names the editor; omitted, it is the one this terminal belongs
-    to. Works off the RECORDED settings path, so uninstall and `tstyles vscode
-    off` can run it from any terminal.
+    to. Works off the RECORDED settings path, so uninstall can run it from any
+    terminal. (`tstyles vscode off` calls it too, but refuses outside an
+    editor terminal it can identify.)
 
     Returns @{ Status; Variant; Path; Kept; Restored; Removed; Detail }, Status
     one of reset, norecord, unknownvariant, statecorrupt, wontparse,
     writefailed. Detail says why for wontparse: the file could not be read, or
-    does not parse.
+    does not parse. On reset it is set when the file was put back but the
+    record could not be cleared afterwards.
     #>
     [CmdletBinding()]
     param([string]$Variant)
@@ -652,7 +688,14 @@ function Show-VSCodeResetResult {
     if (-not $Result) { return }
     switch ($Result.Status) {
         'reset' {
-            Write-Host ("  Took the style back out of {0}'s settings.json." -f $Result.Variant) -ForegroundColor DarkGray
+            # Filtered, not counted: @() around a missing member is one $null,
+            # which would claim a key was taken out when none was.
+            $undone = @(@($Result.Restored) + @($Result.Removed) | Where-Object { $_ })
+            if ($undone.Count -gt 0) {
+                Write-Host ("  Took the style back out of {0}'s settings.json." -f $Result.Variant) -ForegroundColor DarkGray
+            } else {
+                Write-Host ("  Found none of the style left in {0}'s settings.json to take out." -f $Result.Variant) -ForegroundColor DarkGray
+            }
             foreach ($k in @($Result.Kept)) {
                 Write-Host ("  Left {0} as you set it (you changed it after the style wrote it)." -f $k) -ForegroundColor DarkGray
             }
@@ -844,9 +887,10 @@ function Restore-VSCodePreview {
                     would throw that edit away. Instead the preview is undone
                     by its own record, which leaves the edit standing, and the
                     style that was on before is put back over it. Kept and
-                    Replaced split the way the publisher's do: when the
-                    starting style sets a key the user edited, that key is
-                    replaced, and the edited value is what a reset restores.
+                    Replaced split the way the publisher's do, through the
+                    same Split-VSCodeKept: when the starting style sets a key
+                    the user edited, that key is replaced, and the edited
+                    value is what a reset restores.
 
     A file that no longer parses is not undone at all. The record's offsets no
     longer mean what the record thinks, so this fails rather than splices.
@@ -904,11 +948,10 @@ function Restore-VSCodePreview {
             $recordMoved = $true
             Write-SettingsAtomic -Path $Session.Path -Json $text
             $Session.OnDiskRecord = $record
-            $rewritten = @()
-            if ($record) { $rewritten = @(@($record.Wrote) | ForEach-Object { @($_.Path) -join '/' }) }
+            $split = Split-VSCodeKept -Kept $undo.Kept -Record $record
             $out.Status   = 'merged'
-            $out.Kept     = @(@($undo.Kept) | Where-Object { $rewritten -notcontains $_ })
-            $out.Replaced = @(@($undo.Kept) | Where-Object { $rewritten -contains $_ })
+            $out.Kept     = $split.Left
+            $out.Replaced = $split.Replaced
         }
         $Session.LastWrittenText = $null
     } catch {
@@ -963,7 +1006,8 @@ function Show-VSCodeRestoreResult {
             if ($Result.Detail) {
                 Write-Host ("  The preview is still in it, and {0}, so tstyles reset cannot take it out." -f $Result.Detail) -ForegroundColor Red
             } else {
-                Write-Host "  The preview is still in it; tstyles reset takes it out." -ForegroundColor Red
+                Write-Host "  The preview is still in it; tstyles reset takes it out once the file" -ForegroundColor Red
+                Write-Host "  parses and can be written." -ForegroundColor Red
             }
         }
     }
@@ -988,6 +1032,10 @@ function Show-VSCodeWriterStatus {
 
     if ($t.Variant) {
         Write-Host ("  This terminal belongs to {0}." -f $t.Variant)
+        if ($t.Status -eq 'nodir') {
+            Write-Host "  Its settings folder does not exist yet, so nothing is saved there:" -ForegroundColor Yellow
+            Write-Host ("    {0}" -f [System.IO.Path]::GetDirectoryName($t.Path)) -ForegroundColor DarkGray
+        }
     } elseif ((Get-TerminalKind) -eq 'VSCode') {
         Write-Host "  This looks like a VS Code-family terminal, but tstyles can't tell which" -ForegroundColor Yellow
         Write-Host "  editor it is, so it will not write any settings.json from here." -ForegroundColor Yellow
@@ -1033,10 +1081,11 @@ function Invoke-TerminalStyleVSCode {
     on   records a yes for this editor. It writes nothing now -- the next apply
          does, and saying otherwise would be a claim about a write that has
          not happened.
-    off  takes the saved style back out FIRST, then records a no. If the style
-         cannot be taken out, saving is left on and the command says so: a no
-         on record beside keys still in the file would leave the user believing
-         they had been removed.
+    off  takes the saved style back out FIRST, then records a no (and clears
+         the record, should the reset have left it). If the style cannot be
+         taken out, the answer on record is not changed and the command says
+         so: a no on record beside keys still in the file would leave the user
+         believing they had been removed.
     #>
     [CmdletBinding()]
     param([string]$Action)
@@ -1081,14 +1130,24 @@ function Invoke-TerminalStyleVSCode {
     $r = Reset-StyleVSCodeConfig -Variant $t.Variant
     Show-VSCodeResetResult -Result $r
     if ($r.Status -ne 'reset' -and $r.Status -ne 'norecord') {
-        Write-Host "  Saving stays on until the style can be taken out first." -ForegroundColor Yellow
+        Write-Host "  Saving was not changed; the style has to come out of settings.json first." -ForegroundColor Yellow
         Write-Host ""
         return
     }
     try {
-        Set-VSCodeStateEntry -Variant $t.Variant -SettingsPath $t.Path -Consent 'no'
+        # -Record $null too: a reset that put the file back but could not clear
+        # its record gets a second chance here, so the no is not left beside a
+        # record of keys the file no longer holds.
+        Set-VSCodeStateEntry -Variant $t.Variant -SettingsPath $t.Path -Consent 'no' -Record $null
     } catch {
-        Write-Host ("  Could not save that to {0}." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+        # Read back, not assumed: "still on" is only true of an editor that had
+        # said yes. One never asked, or already off, is simply left as it was.
+        $now = Read-VSCodeState
+        if ($now.Ok -and $now.Entries[$t.Variant] -and $now.Entries[$t.Variant].consent -eq 'yes') {
+            Write-Host ("  Could not save that to {0}, so saving is still on." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+        } else {
+            Write-Host ("  Could not save that to {0}." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+        }
         Write-Host ""
         return
     }

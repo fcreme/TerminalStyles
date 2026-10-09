@@ -129,7 +129,7 @@ function Get-TerminalStyleHelpData {
                        "style that was saved to the editor's own settings.json is taken",
                        "back out of it, from the record kept when it was written: your",
                        "earlier values come back, and any you changed since are left",
-                       "alone and named. Elsewhere there is no settings file to strip:",
+                       "alone and named. Elsewhere there is no settings.json to strip:",
                        "the reset is an escape sequence handing color control back to",
                        "the terminal's own profile, so there is nothing to back up and",
                        "no .bak is written.",
@@ -342,8 +342,9 @@ function Get-TerminalStyleHelpData {
                        "its record; a key you changed by hand since is left alone.",
                        "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
-                       "The confirmation names every file it is about to change, `$PROFILE and",
-                       "rc alike, and the sign-off names any it could not.")
+                       "The confirmation names every file it is about to change, `$PROFILE,",
+                       "rc and VS Code's settings.json alike, and the sign-off names any it",
+                       "could not.")
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
         }
         [pscustomobject]@{

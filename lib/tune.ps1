@@ -1201,7 +1201,7 @@ function Invoke-TerminalStyleTune {
         # compare an unchanged font against the screenshot.
         Write-Host ""
         Write-Host ("  Tuning on {0}: brightness and saturation preview live." -f (Get-TerminalDisplayName -Kind $tuneKind)) -ForegroundColor DarkGray
-        Write-Host "  Opacity and font are saved with the style, but this terminal cannot show them." -ForegroundColor DarkGray
+        Write-Host "  Opacity and font are saved with the style; they do not preview here." -ForegroundColor DarkGray
         Write-Host ""
         Start-Sleep -Milliseconds 900
     }

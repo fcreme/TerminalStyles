@@ -948,6 +948,7 @@ function Invoke-TerminalStylesUninstall {
     # user's own authored and tuned styles with it.
     $consequence = if ($DeleteData) { "DELETES $dataDir entirely, including your own styles" }
                    else             { "removes install-managed files and the shell loader" }
+    if ($vscodeTargets.Count -gt 0) { $consequence += ", and takes the saved style out of VS Code's settings.json" }
     if (-not (Confirm-Action -Question 'Continue? [y/N]' -Yes:$Yes -Consequence $consequence)) {
         Write-Host "Cancelled." -ForegroundColor Gray
         return
@@ -1115,8 +1116,11 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "TerminalStyles uninstalled, EXCEPT the style saved in:" -ForegroundColor Yellow
         }
         foreach ($p in $vscodeProblems) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
-        Write-Host "Take its terminal settings out of those files by hand, or restore the" -ForegroundColor Yellow
-        Write-Host "settings.json.bak-* copy beside each -- the module is gone, so tstyles cannot." -ForegroundColor Yellow
+        Write-Host "Take its keys out of those files by hand: the terminal colors in" -ForegroundColor Yellow
+        Write-Host "workbench.colorCustomizations, and terminal.integrated.fontFamily, fontSize," -ForegroundColor Yellow
+        Write-Host "fontWeight and cursorStyle. Or restore a settings.json.bak-* copy beside one," -ForegroundColor Yellow
+        Write-Host "if there is one -- restoring it also undoes your edits since. The module is" -ForegroundColor Yellow
+        Write-Host "gone, so tstyles cannot." -ForegroundColor Yellow
     }
     # The record of what was saved could not be read, so no editor's
     # settings.json was touched and nothing here can say which of them holds a

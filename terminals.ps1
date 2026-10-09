@@ -125,9 +125,11 @@ function Get-TerminalCapability {
     # theme.json against this record and every $false flag whose field the style
     # declares becomes a word in the apply's "can't show" line. So turning a flag
     # on next to a new writer also stops the field being named, with nothing in
-    # the notice to edit. Several arms below justify a $false by naming that
-    # notice; the notice used to ask two hardcoded questions and mention none of
-    # them, which made the justification circular.
+    # the notice to edit -- the one exception being VS Code's cursor branch
+    # there, which still names a shape its writer cannot map while CursorShape
+    # is on. Several arms below justify a $false by naming that notice; the
+    # notice used to ask two hardcoded questions and mention none of them,
+    # which made the justification circular.
     param([string]$Kind = (Get-TerminalKind))
 
     # Baseline: nothing. Each block below turns on only what it can prove.
@@ -290,8 +292,10 @@ function Get-TerminalCapability {
             # Font and CursorShape are terminal.integrated.fontFamily/fontSize/
             # fontWeight and terminal.integrated.cursorStyle. Opacity, Padding,
             # TabColor, TabTitle and BackgroundImage have no VS Code setting --
-            # terminal.background is a solid colour -- so they stay off and
-            # stay named.
+            # terminal.background is a solid colour -- so they stay off. The
+            # notice names them as it does everywhere: Opacity only when a style
+            # asks for transparency, and TabTitle never, because the style's
+            # prompt sets the title on every terminal.
             $caps.OscPalette = $true
             if (Test-VSCodeWriterActive) {
                 $caps.Persist     = $true
@@ -770,6 +774,9 @@ function Get-UnsupportedStyleField {
 
     Driven off the capability record so a flag is load-bearing: flip one on next
     to a new writer and the field stops being named, with nothing here to edit.
+    The one exception is VS Code's cursor branch below: settings.json takes
+    three cursor shapes, so a shape outside them is still named while the
+    CursorShape flag is on.
 
     Two fields are deliberately NOT asked about:
 

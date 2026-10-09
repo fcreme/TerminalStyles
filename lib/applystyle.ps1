@@ -641,7 +641,9 @@ function Publish-StyleWezTermConfig {
 function Apply-StyleNonWT {
     # Apply a style on a terminal that is not Windows Terminal.
     #
-    # There is no settings.json to merge into, so the work splits in two:
+    # There is no Windows Terminal settings.json to merge into (the one
+    # settings.json written off it is a VS Code-family editor's, by
+    # Publish-StyleVSCodeConfig below), so the work splits in two:
     #   * colors    -- emitted as an OSC packet, which retints the CURRENT tab
     #                  instantly. Recorded in current-style.json so the startup
     #                  block at the bottom of this file can re-emit it into
@@ -677,17 +679,18 @@ function Apply-StyleNonWT {
     # mattered.
     $kind = Get-TerminalKind
 
-    # VS Code: ask (once per editor) whether its settings.json may be written,
-    # BEFORE anything below reads the capability table. The "can't show"
-    # notice is built from it, and has to reflect the answer.
-    if ($kind -eq 'VSCode') { [void](Request-VSCodeWriterConsent) }
-
     $schemePath = Join-Path $StyleDir 'scheme.json'
     if (-not (Test-Path -LiteralPath $schemePath)) {
         Write-Error "Style '$StyleName' has no scheme.json."
         return
     }
     $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+
+    # VS Code: ask (once per editor) whether its settings.json may be written,
+    # BEFORE anything below reads the capability table. The "can't show"
+    # notice is built from it, and has to reflect the answer. After the scheme
+    # read, so a style that cannot be applied asks nobody anything.
+    if ($kind -eq 'VSCode') { [void](Request-VSCodeWriterConsent) }
 
     $applied = Invoke-TerminalStyleOscApply -Scheme $scheme -Kind $kind
     Set-CurrentStyleRecord -StyleName $StyleName -Kind $kind
@@ -840,8 +843,9 @@ function Apply-StyleDirect {
     # settings.json, copy profile.ps1 to current-style.ps1, dot-source for
     # live reload.
     #
-    # Off Windows Terminal the settings.json half does not exist; Apply-StyleNonWT
-    # takes over with the OSC + current-style.json path instead.
+    # Off Windows Terminal there is no Windows Terminal settings.json to merge
+    # into; Apply-StyleNonWT takes over with the OSC + current-style.json path
+    # instead, and the one settings.json it writes is a VS Code-family editor's.
     param(
         [Parameter(Mandatory)][string]$StyleName,
         [string]$Target,
@@ -1026,11 +1030,12 @@ function Test-InWindowsTerminal {
 function Reset-StyleNonWT {
     # `tstyles reset` off Windows Terminal.
     #
-    # Nothing was written to a settings file -- VS Code's aside, which keeps a
-    # record of what it wrote and is undone from it below -- so there is nothing to strip --
-    # the applied colors live entirely in the terminal's dynamic-color state.
-    # OSC 104/110/111/112/117 hands that state back to the terminal's own
-    # configured profile, which is exactly what "unstyled default" means here.
+    # There is no Windows Terminal settings.json to strip. The one settings.json
+    # an apply writes off it is a VS Code-family editor's, which keeps a record
+    # of what it wrote and is undone from that record below. The applied colors
+    # live in the terminal's dynamic-color state: OSC 104/110/111/112/117 hands
+    # that state back to the terminal's own configured profile, which is
+    # exactly what "unstyled default" means here.
     param(
         # The seam its apply sibling has carried since 0.8.27, and for the same
         # reason: the .NET statics cannot be mocked and every CI leg runs
@@ -1114,9 +1119,11 @@ function Reset-StyleDirect {
     # color scheme, and clear current-style.ps1 (restore the user's prompt).
     # Inverse of Apply-StyleDirect. Writes a rolling .bak first.
     #
-    # Off Windows Terminal there is no settings.json to strip: the reset is an
-    # OSC 104/110-117 packet that hands color control back to the terminal's own
-    # profile, plus dropping the style record and current-style.ps1.
+    # Off Windows Terminal there is no Windows Terminal settings.json to strip:
+    # the reset is an OSC 104/110-117 packet that hands color control back to
+    # the terminal's own profile, plus dropping the style record and
+    # current-style.ps1 -- and, in a VS Code-family terminal, taking the style
+    # back out of the one settings.json written there, the editor's own.
     #
     # -KnownStyleName is one name the CALLER has already proved is ours, for the
     # ownership marker below. `tstyles delete` is the only user: it proves
