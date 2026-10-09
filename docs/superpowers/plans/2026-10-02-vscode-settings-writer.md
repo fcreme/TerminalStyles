@@ -2067,8 +2067,8 @@ git commit -m "Write and reset VS Code's settings.json from tstyles <name> and r
 - Produces:
   - `New-VSCodePreviewSession` → `$null` when the writer is off (it asks first if the editor is undecided). Otherwise a session hashtable:
     `@{ Variant; Path; OriginalText; OriginalExisted; StartRecord; OnDiskRecord; LastWrittenText; Cache; BackedUp; Backup }`.
-  - `Invoke-VSCodePreview -Session -StyleName -StyleDir` → `'written'|'current'|'wontparse'|'failed'`. Every preview is computed from `OriginalText` with `-PreviousRecord StartRecord`, cached per style name, and never touches the state file.
-  - `Restore-VSCodePreview -Session` → `@{ Status = 'none'|'restored'|'merged'|'failed'; Path; Kept; Reason }`. It never throws and is idempotent.
+  - `Invoke-VSCodePreview -Session -StyleName -StyleDir` → `'written'|'current'|'changed'|'wontparse'|'failed'`. Every preview is computed from `OriginalText` with `-PreviousRecord StartRecord`, cached per style name, and never touches the state file. `changed` means the file no longer holds what the session last left in it, because somebody edited it, so no preview is written over that edit.
+  - `Restore-VSCodePreview -Session` → `@{ Status = 'none'|'restored'|'merged'|'failed'; Path; Kept; Replaced; Reason; Detail }`. It never throws, and after a success a second call returns `none`. `Kept` and `Replaced` split the same way the publisher's do (spec revision 5). `Detail` is set only on `failed`, when the preview's record could not be saved either.
   - `Show-VSCodeRestoreResult -Result` prints for `merged` and `failed` only.
   - `Publish-StyleVSCodeConfig -Session` from Task 3 already commits a session.
 
@@ -2189,6 +2189,80 @@ Describe 'the picker''s VS Code preview session' {
                 Should -BeExactly (Set-JsoncLiteral -Text $script:user -Path @('editor.fontSize') -Literal '15').Text
         }
 
+        It 'Esc names a key the starting style sets again as replaced, not left' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Out-Null
+
+            # The edit is to a key both styles write (eva 600, koholint "normal").
+            $now = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath,
+                (Set-JsoncLiteral -Text $now -Path @('terminal.integrated.fontWeight') -Literal '"bold"').Text,
+                [System.Text.UTF8Encoding]::new($false))
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'merged'
+            @($r.Replaced) | Should -Contain 'terminal.integrated.fontWeight'
+            @($r.Kept) | Should -Not -Contain 'terminal.integrated.fontWeight'
+        }
+
+        It 'Esc will not undo into a file that no longer parses, and keeps the preview''s record' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+
+            # Saved half-way through an edit: the root object never closes.
+            $broken = ([System.IO.File]::ReadAllText($script:sPath)).TrimEnd().TrimEnd('}')
+            [System.IO.File]::WriteAllText($script:sPath, $broken, [System.Text.UTF8Encoding]::new($false))
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Reason | Should -Match 'no longer parses'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $broken
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'the preview is what the file still holds'
+        }
+
+        It 'Esc that cannot write keeps the preview''s record, so reset can take it out' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            # Pester 6 throws on a call no filter matches, so the default mock
+            # lets the state file's own write through.
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Reason | Should -Match 'locked'
+            $r.Detail | Should -BeNullOrEmpty
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+        }
+
+        It 'Esc says so when the preview''s record cannot be saved either' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            Mock Write-SettingsAtomic { throw 'locked' }
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Detail | Should -Be 'its undo record could not be saved either'
+        }
+
+        It 'stops previewing into a file somebody else changed, and Esc keeps the edit' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+
+            # Somebody edits settings.json in VS Code while the picker is open.
+            $edited = (Set-JsoncLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) `
+                           -Path @('editor.fontSize') -Literal '15').Text
+            [System.IO.File]::WriteAllText($script:sPath, $edited, [System.Text.UTF8Encoding]::new($false))
+
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'changed'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $edited
+
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'merged'
+            [System.IO.File]::ReadAllText($script:sPath) |
+                Should -BeExactly (Set-JsoncLiteral -Text $script:user -Path @('editor.fontSize') -Literal '15').Text
+        }
+
         It 'Enter commits what is on disk, with a record that undoes it to the original' {
             $s = New-VSCodePreviewSession
             Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
@@ -2224,17 +2298,29 @@ Describe 'Show-VSCodeRestoreResult' {
         BeforeEach { Mock Write-Host { } }
 
         It 'says the edit survived when it merged' {
-            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Reason = $null }
+            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = $null }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
         }
 
+        It 'names a key the starting style set again, and does not call that edit still there' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Replaced = @('terminal.integrated.fontWeight'); Reason = $null; Detail = $null }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Replaced terminal\.integrated\.fontWeight' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+        }
+
         It 'says how to get out when it failed' {
-            Show-VSCodeRestoreResult -Result @{ Status = 'failed'; Path = '/x'; Kept = @(); Reason = 'locked' }
+            Show-VSCodeRestoreResult -Result @{ Status = 'failed'; Path = '/x'; Kept = @(); Replaced = @(); Reason = 'locked'; Detail = $null }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'tstyles reset takes it out' }
         }
 
+        It 'does not promise a reset that has no record to work from' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'failed'; Path = '/x'; Kept = @(); Replaced = @(); Reason = 'locked'; Detail = 'its undo record could not be saved either' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'tstyles reset cannot take it out' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'tstyles reset takes it out' }
+        }
+
         It 'stays quiet for <status>' -ForEach @(@{ status = 'none' }, @{ status = 'restored' }) {
-            Show-VSCodeRestoreResult -Result @{ Status = $status; Path = '/x'; Kept = @(); Reason = $null }
+            Show-VSCodeRestoreResult -Result @{ Status = $status; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = $null }
             Should -Invoke Write-Host -Times 0 -Scope It
         }
     }
@@ -2301,7 +2387,7 @@ function Invoke-VSCodePreview {
     <#
     .SYNOPSIS
     Put one style's preview into settings.json. Returns written, current,
-    wontparse or failed.
+    changed, wontparse or failed.
 
     .DESCRIPTION
     Always computed from the ORIGINAL text, undoing the style that was on when
@@ -2311,6 +2397,11 @@ function Invoke-VSCodePreview {
 
     The state file is not touched. A preview is not an apply; Enter is, and
     Esc must find the stored record exactly as the picker found it.
+
+    'changed': the file no longer holds what the session last left in it, so
+    somebody else wrote it while the picker was open. Nothing is written over
+    that edit. Esc and Enter both start from the file as it is now, so both
+    keep the edit.
     #>
     [CmdletBinding()]
     param(
@@ -2336,6 +2427,10 @@ function Invoke-VSCodePreview {
     }
 
     try {
+        # VS Code's settings UI, Settings Sync or a hand edit can write the
+        # file while the picker is open. A preview computed from the original
+        # would throw that edit away.
+        if ((Read-VSCodeSettingsText -Path $Session.Path) -cne $onDiskText) { return 'changed' }
         if (-not $Session.BackedUp) {
             if (-not $Session.StartRecord -and $Session.OriginalExisted -and $Session.OriginalText) {
                 $Session.Backup = Save-FirstTouchBackup -Path $Session.Path -Content $Session.OriginalText
@@ -2355,8 +2450,8 @@ function Restore-VSCodePreview {
     <#
     .SYNOPSIS
     Esc, Ctrl+C or an error in the picker: take the preview back out.
-    Returns @{ Status; Path; Kept; Reason }, Status none, restored, merged or
-    failed. Never throws.
+    Returns @{ Status; Path; Kept; Replaced; Reason; Detail }, Status none,
+    restored, merged or failed. Never throws.
 
     .DESCRIPTION
     Two cases, decided by whether the file still holds what the picker last
@@ -2368,18 +2463,26 @@ function Restore-VSCodePreview {
                     most likely in VS Code itself. Writing the original back
                     would throw that edit away. Instead the preview is undone
                     by its own record, which leaves the edit standing, and the
-                    style that was on before is put back over it.
+                    style that was on before is put back over it. Kept and
+                    Replaced split the way the publisher's do: when the
+                    starting style sets a key the user edited, that key is
+                    replaced, and the edited value is what a reset restores.
+
+    A file that no longer parses is not undone at all. The record's offsets no
+    longer mean what the record thinks, so this fails rather than splices.
 
     On failure the stored record is set to the preview's, because the preview
-    is what the file still holds: `tstyles reset` can then take it out.
+    is what the file still holds: `tstyles reset` can then take it out. If
+    that record cannot be saved either, Detail says so, and the message does
+    not promise the reset.
 
-    Idempotent: after either case nothing is left written, so a second call
-    returns 'none' -- which is what the picker's finally needs after an Esc.
+    After either success nothing is left written, so a second call returns
+    'none' -- which is what the picker's finally needs after an Esc.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable]$Session)
 
-    $out = @{ Status = 'none'; Path = $Session.Path; Kept = @(); Reason = $null }
+    $out = @{ Status = 'none'; Path = $Session.Path; Kept = @(); Replaced = @(); Reason = $null; Detail = $null }
     if ($null -eq $Session.LastWrittenText) { return $out }
 
     try {
@@ -2393,6 +2496,9 @@ function Restore-VSCodePreview {
             $Session.OnDiskRecord = $Session.StartRecord
             $out.Status = 'restored'
         } else {
+            if (-not (Test-VSCodeSettingsReadable -Text $now)) {
+                throw 'it changed while the picker was open and no longer parses as a JSON object'
+            }
             $undo = Invoke-VSCodeStyleReset -Text $now -Record $Session.OnDiskRecord
             $text = $undo.Text
             $record = $null
@@ -2409,16 +2515,22 @@ function Restore-VSCodePreview {
             Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $record
             Write-SettingsAtomic -Path $Session.Path -Json $text
             $Session.OnDiskRecord = $record
-            $out.Status = 'merged'
-            $out.Kept = @($undo.Kept)
+            $rewritten = @()
+            if ($record) { $rewritten = @(@($record.Wrote) | ForEach-Object { @($_.Path) -join '/' }) }
+            $out.Status   = 'merged'
+            $out.Kept     = @(@($undo.Kept) | Where-Object { $rewritten -notcontains $_ })
+            $out.Replaced = @(@($undo.Kept) | Where-Object { $rewritten -contains $_ })
         }
         $Session.LastWrittenText = $null
     } catch {
-        try {
-            Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $Session.OnDiskRecord
-        } catch { }
+        # Reason first, before the try below can replace $_.
         $out.Status = 'failed'
         $out.Reason = "$_"
+        try {
+            Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $Session.OnDiskRecord
+        } catch {
+            $out.Detail = 'its undo record could not be saved either'
+        }
     }
     return $out
 }
@@ -2430,20 +2542,36 @@ function Show-VSCodeRestoreResult {
     param([AllowNull()][hashtable]$Result)
 
     if (-not $Result) { return }
+    # Filtered, not just wrapped: @() around a missing member is one $null,
+    # which would print a line naming nothing.
+    $replaced = @($Result.Replaced | Where-Object { $_ })
+    $kept     = @($Result.Kept | Where-Object { $_ })
     switch ($Result.Status) {
         'merged' {
             Write-Host ""
             Write-Host "  settings.json changed while the picker was open, so the preview was taken" -ForegroundColor Yellow
             Write-Host "  back out of it instead of the file being put back as it was." -ForegroundColor Yellow
-            Write-Host "  Your edit is still there." -ForegroundColor Yellow
-            foreach ($k in @($Result.Kept)) {
+            if ($replaced.Count -eq 0) {
+                Write-Host "  Your edit is still there." -ForegroundColor Yellow
+            } else {
+                Write-Host "  What you changed is still there, except where the style you started with" -ForegroundColor Yellow
+                Write-Host "  sets a key again:" -ForegroundColor Yellow
+                foreach ($k in $replaced) {
+                    Write-Host ("  Replaced {0}, which you had changed by hand; tstyles reset puts yours back." -f $k) -ForegroundColor DarkGray
+                }
+            }
+            foreach ($k in $kept) {
                 Write-Host ("  Left {0} as you set it." -f $k) -ForegroundColor DarkGray
             }
         }
         'failed' {
             Write-Host ""
             Write-Host ("  Could not put {0} back: {1}" -f $Result.Path, $Result.Reason) -ForegroundColor Red
-            Write-Host "  The preview is still in it; tstyles reset takes it out." -ForegroundColor Red
+            if ($Result.Detail) {
+                Write-Host ("  The preview is still in it, and {0}, so tstyles reset cannot take it out." -f $Result.Detail) -ForegroundColor Red
+            } else {
+                Write-Host "  The preview is still in it; tstyles reset takes it out." -ForegroundColor Red
+            }
         }
     }
 }
