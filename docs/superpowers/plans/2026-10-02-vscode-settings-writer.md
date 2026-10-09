@@ -4036,7 +4036,7 @@ SB="$(mktemp -d)" && env -i HOME="$SB" PATH="$PATH" TERM_PROGRAM=vscode \
   pwsh -NoProfile -File "$SCRATCH/e2e-vscode.ps1"; echo "exit=$?"; rm -rf "$SB"
 ```
 
-Expected: eight `PASS` lines, then `ALL PASS`, `exit=0`. The first apply may pause on the throttled update check (there is no switch to skip it). That check fails quietly when offline.
+Expected: seven `PASS` lines, then `ALL PASS`, `exit=0`. The first apply may pause on the throttled update check (there is no switch to skip it). That check fails quietly when offline.
 
 The picker is not driven here, because it needs a real keyboard; Task 7 pins its behaviour. If a `FAIL` appears, stop and debug with superpowers:systematic-debugging. Do not edit the script to pass.
 
