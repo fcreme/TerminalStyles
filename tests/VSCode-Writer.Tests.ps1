@@ -1231,5 +1231,29 @@ Describe 'the picker wires the VS Code session in' {
             $done | Should -BeGreaterThan $publish -Because 'the session is settled only once the commit has run'
             $script:picker | Should -Match '(?s)if \(\$confirmed -and \$vscodeSession -and -not \$pickerState\.VSCodeDone\) \{\s*\$pickerState\.VSCodeRestore = Restore-VSCodePreview -Session \$vscodeSession'
         }
+
+        # The six above pin WHERE the wiring sits. These four pin lines whose loss
+        # changes what is left on disk, each found by deleting that line in a copy
+        # of the picker and watching the six stay green. Text pins, like the six:
+        # what the session does is pinned in the preview-session tests above.
+        It 'puts the file back when the commit did not land' {
+            $script:picker | Should -Match '(?s)if \(\$vscodeSession -and \$vscodeResult -and \$vscodeResult\.Status -ne ''written''\) \{[^}]*Restore-VSCodePreview -Session \$vscodeSession' `
+                -Because 'a failed commit leaves the preview in the file while Publish rolls the stored record back; only this Restore puts the two back in agreement'
+        }
+
+        It 'commits through the session, so the preview is undone by its own record' {
+            $script:picker | Should -Match '(?s)\$vscodeResult = Publish-StyleVSCodeConfig[^{]*?-Session \$vscodeSession' `
+                -Because 'without the session the publisher undoes the style that was on when the picker opened, not the preview on disk, and a later reset leaves the preview in the file'
+        }
+
+        It 'says what putting the file back did, below the commit result' {
+            $script:picker | Should -Match '(?s)Show-VSCodeWriteResult -Result \$vscodeResult\s*Show-VSCodeRestoreResult -Result \$pickerState\.VSCodeRestore' `
+                -Because 'when the commit failed after a preview, what putting the file back did is told right after the commit result, below the Clear-Host'
+        }
+
+        It 'says what Ctrl+C put back' {
+            $script:picker | Should -Match '(?s)try \{ & \$restoreOriginalLook \} catch \{ \}\s*Show-VSCodeRestoreResult' `
+                -Because 'Ctrl+C and errors leave through the finally, which would otherwise say nothing about a merged or failed restore'
+        }
     }
 }
