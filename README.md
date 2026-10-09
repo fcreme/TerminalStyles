@@ -143,6 +143,7 @@ tstyles register                  # Auto-add `Import-Module TerminalStyles ...` 
 tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zshrc, ~/.bashrc, ~/.bash_profile
 tstyles shell-remove              # Remove that zsh/bash loader again
 tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
+tstyles vscode [on|off]           # In VS Code: save your style to settings.json or turn saving off
 tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
 tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\TerminalStyles\ entirely.

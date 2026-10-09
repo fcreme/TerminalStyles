@@ -917,3 +917,131 @@ function Show-VSCodeRestoreResult {
         }
     }
 }
+
+function Show-VSCodeWriterStatus {
+    # `tstyles vscode` with no action: what is on record, for this editor and
+    # every other one that has been asked.
+    [CmdletBinding()]
+    param()
+
+    $t = Resolve-VSCodeTarget
+    $state = Read-VSCodeState
+    Write-Host ""
+    if (-not $state.Ok) {
+        Write-Host ("  Could not read {0}." -f $state.Path) -ForegroundColor Yellow
+        Write-Host "  It records what tstyles wrote to settings.json. Fix it: deleting it lets tstyles" -ForegroundColor Yellow
+        Write-Host "  write again, but loses its record of any style already saved there." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    if ($t.Variant) {
+        Write-Host ("  This terminal belongs to {0}." -f $t.Variant)
+    } elseif ((Get-TerminalKind) -eq 'VSCode') {
+        Write-Host "  This looks like a VS Code-family terminal, but tstyles can't tell which" -ForegroundColor Yellow
+        Write-Host "  editor it is, so it will not write any settings.json from here." -ForegroundColor Yellow
+    }
+
+    $names = @($state.Entries.Keys | Sort-Object)
+    if ($t.Variant -and $names -notcontains $t.Variant) { $names = @($t.Variant) + $names }
+    if ($names.Count -eq 0) {
+        Write-Host "  No VS Code editor has been asked yet." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    foreach ($n in $names) {
+        $e = $state.Entries[$n]
+        $consent = ''; $style = $null; $path = $null
+        if ($e) {
+            $consent = $e.consent
+            $path = $e.settingsPath
+            if ($e.record) { $style = $e.record.Style }
+        }
+        if (-not $path -and $n -eq $t.Variant) { $path = $t.Path }
+        $saving = switch ($consent) {
+            'yes'   { 'saving: on' }
+            'no'    { 'saving: off' }
+            default { 'saving: not asked yet' }
+        }
+        $saved = 'no style saved'
+        if ($style) { $saved = "style saved: $style" }
+        Write-Host ("  {0,-16}{1}, {2}" -f $n, $saving, $saved)
+        if ($path) { Write-Host ("  {0,-16}{1}" -f '', $path) -ForegroundColor DarkGray }
+    }
+    Write-Host ""
+}
+
+function Invoke-TerminalStyleVSCode {
+    <#
+    .SYNOPSIS
+    `tstyles vscode [on|off]`: the way to change an answer an apply asks for
+    only once.
+
+    .DESCRIPTION
+    on   records a yes for this editor. It writes nothing now -- the next apply
+         does, and saying otherwise would be a claim about a write that has
+         not happened.
+    off  takes the saved style back out FIRST, then records a no. If the style
+         cannot be taken out, saving is left on and the command says so: a no
+         on record beside keys still in the file would leave the user believing
+         they had been removed.
+    #>
+    [CmdletBinding()]
+    param([string]$Action)
+
+    if (-not $Action) { Show-VSCodeWriterStatus; return }
+    if ($Action -ne 'on' -and $Action -ne 'off') {
+        Write-Host ""
+        Write-Host ("  Unknown vscode action '{0}'. Use: tstyles vscode [on|off]" -f $Action) -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    $t = Resolve-VSCodeTarget
+    Write-Host ""
+    if (-not $t.Variant) {
+        Write-Host "  Can't tell which editor this terminal belongs to -- VS Code, Insiders," -ForegroundColor Yellow
+        Write-Host "  VSCodium, Cursor or Windsurf -- so there is no settings.json to turn this" -ForegroundColor Yellow
+        Write-Host ("  {0} for. Run it from that editor's own terminal." -f $Action) -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+
+    if ($Action -eq 'on') {
+        try {
+            Set-VSCodeStateEntry -Variant $t.Variant -SettingsPath $t.Path -Consent 'yes'
+        } catch {
+            Write-Host ("  Could not save that to {0}." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+            Write-Host ""
+            return
+        }
+        Write-Host ("  From the next apply, tstyles saves styles to {0}'s settings.json:" -f $t.Variant)
+        Write-Host ("    {0}" -f $t.Path) -ForegroundColor DarkGray
+        Write-Host "  Nothing was written now." -ForegroundColor DarkGray
+        if ($t.Status -eq 'nodir') {
+            Write-Host "  That folder does not exist yet, so an apply will say so until the editor" -ForegroundColor Yellow
+            Write-Host "  has created it." -ForegroundColor Yellow
+        }
+        Write-Host ""
+        return
+    }
+
+    $r = Reset-StyleVSCodeConfig -Variant $t.Variant
+    Show-VSCodeResetResult -Result $r
+    if ($r.Status -ne 'reset' -and $r.Status -ne 'norecord') {
+        Write-Host "  Saving stays on until the style can be taken out first." -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+    try {
+        Set-VSCodeStateEntry -Variant $t.Variant -SettingsPath $t.Path -Consent 'no'
+    } catch {
+        Write-Host ("  Could not save that to {0}." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
+        Write-Host ""
+        return
+    }
+    Write-Host ("  tstyles will not write {0}'s settings.json again." -f $t.Variant)
+    Write-Host "  tstyles vscode on turns it back on."
+    Write-Host ""
+}

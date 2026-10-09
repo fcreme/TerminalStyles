@@ -306,6 +306,30 @@ function Get-TerminalStyleHelpData {
             Keys = @(); Examples = @('tstyles profiles', 'tstyles profiles -Clean')
         }
         [pscustomobject]@{
+            Name = 'vscode'; Usage = 'vscode [on|off]'
+            Summary = "Whether styles are saved to VS Code's settings.json"
+            Detail = @("In a VS Code terminal (or Insiders, VSCodium, Cursor, Windsurf),",
+                       "colors apply live like anywhere else. Saving a style -- so new",
+                       "terminals and restarts keep its colors, font and cursor -- means",
+                       "writing that editor's settings.json, and tstyles asks once per",
+                       "editor before it does.",
+                       "",
+                       "  vscode       Show what is on record: which editor, its",
+                       "               settings.json, whether saving is on, and the",
+                       "               style saved there.",
+                       "  vscode on    Turn saving on for this editor. Takes effect from",
+                       "               the next apply; nothing is written now.",
+                       "  vscode off   Take the saved style back out of settings.json,",
+                       "               then turn saving off.",
+                       "",
+                       "Only the keys a style sets are written, each with a record of what",
+                       "was there before, so a reset puts your own values back; a key you",
+                       "change by hand afterwards is left alone. The first write keeps a",
+                       "copy of the file beside it as settings.json.bak-<timestamp>.",
+                       "There is no background image: VS Code has no setting for one.")
+            Keys = @(); Examples = @('tstyles vscode', 'tstyles vscode on', 'tstyles vscode off')
+        }
+        [pscustomobject]@{
             Name = 'uninstall'; Usage = 'uninstall'; Summary = 'Remove the module (keeps your styles)'
             Detail = @("Removes the module and strips the loader from the `$PROFILE of every",
                        "PowerShell engine on this machine. It also strips the zsh/bash loader",

@@ -360,7 +360,7 @@ function Invoke-TerminalStylesStateMigration {
 $script:TStylesSubcommands = @(
     'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
     'reset', 'restore', 'shell-init', 'shell-remove', 'show', 'trash', 'tune',
-    'update', 'uninstall', 'profiles')
+    'update', 'uninstall', 'profiles', 'vscode')
 
 function Test-StyleNameIsSingleSegment {
     <#
@@ -813,6 +813,7 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'restore')              { [void](Invoke-TerminalStyleRestore -Name $SubArg); return }
     if ($Arg -eq 'uninstall')            { Invoke-TerminalStylesUninstall -DeleteData:$DeleteData -Yes:$Yes; return }
     if ($Arg -eq 'profiles')             { Invoke-TerminalStyleProfiles -Clean:$Clean -Yes:$Yes; return }
+    if ($Arg -eq 'vscode')               { Invoke-TerminalStyleVSCode -Action $SubArg; return }
 
     # If $Arg matches a bundled style, apply it directly (no picker).
     if ($Arg) {

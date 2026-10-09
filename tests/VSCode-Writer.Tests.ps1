@@ -1257,3 +1257,78 @@ Describe 'the picker wires the VS Code session in' {
         }
     }
 }
+
+Describe 'tstyles vscode' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            $script:user = "{`n  // mine`n  `"editor.fontSize`": 13`n}"
+            [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+        }
+
+        It 'is dispatched, with its action' {
+            Mock Invoke-TerminalStyleVSCode { }
+            Invoke-TerminalStyle -Arg 'vscode' -SubArg 'off'
+            Should -Invoke Invoke-TerminalStyleVSCode -Times 1 -Exactly -Scope It -ParameterFilter { $Action -eq 'off' }
+        }
+
+        It 'is a reserved word, so no style can shadow it' {
+            $script:TStylesSubcommands | Should -Contain 'vscode'
+        }
+
+        It 'has a help topic' {
+            (Get-TerminalStyleHelpData).Name | Should -Contain 'vscode'
+        }
+
+        It 'on records a yes and writes nothing' {
+            $out = Invoke-TerminalStyleVSCode -Action 'on' 6>&1 | Out-String
+            (Read-VSCodeState).Entries['Code'].consent | Should -Be 'yes'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            $out | Should -Match 'Nothing was written now'
+        }
+
+        It 'off takes the saved style out, then records a no' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+            $e = (Read-VSCodeState).Entries['Code']
+            $e.consent | Should -Be 'no'
+            $e.record  | Should -BeNullOrEmpty
+        }
+
+        It 'off leaves saving on when the style could not be taken out first' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            [System.IO.File]::WriteAllText($script:sPath, '{ "broken": ', [System.Text.UTF8Encoding]::new($false))
+            $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String
+            (Read-VSCodeState).Entries['Code'].consent | Should -Be 'yes'
+            $out | Should -Match 'Saving stays on'
+        }
+
+        It 'refuses on and off where it cannot tell which editor this is' {
+            Mock Resolve-VSCodeTarget { @{ Status = 'unknownvariant'; Variant = $null; Path = $null } }
+            $out = Invoke-TerminalStyleVSCode -Action 'on' 6>&1 | Out-String
+            $out | Should -Match "Can't tell which editor"
+            [System.IO.File]::Exists((Get-VSCodeStatePath)) | Should -BeFalse
+        }
+
+        It 'shows what is recorded' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $out = Invoke-TerminalStyleVSCode 6>&1 | Out-String -Width 500
+            $out | Should -Match 'saving: on'
+            $out | Should -Match 'style saved: koholint'
+            $out | Should -Match ([regex]::Escape($script:sPath))
+        }
+
+        It 'answers an action it does not know with how to use it' {
+            (Invoke-TerminalStyleVSCode -Action 'sideways' 6>&1 | Out-String) | Should -Match 'tstyles vscode \[on\|off\]'
+        }
+    }
+}
