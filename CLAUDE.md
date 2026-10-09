@@ -8,7 +8,21 @@ the things that are non-obvious and have actually cost this project a release.
 
 The most important rule in this file. This codebase edits files the user owns and
 that predate it — `~/.zshrc`, `~/.bashrc`, `~/.profile`, `~/.bash_profile`, the
-PowerShell `$PROFILE`, Windows Terminal's `settings.json`.
+PowerShell `$PROFILE`, Windows Terminal's `settings.json`, and a VS Code-family
+editor's `settings.json`.
+
+VS Code's path comes from `Resolve-VSCodeTarget`, which takes `-HomeDir` /
+`-AppData` / `-XdgConfigHome`; a bound `-HomeDir` suppresses the ambient `APPDATA`
+and `XDG_CONFIG_HOME`. Writer tests mock `Resolve-VSCodeTarget` to a `$TestDrive`
+path AND sandbox the data root, which holds the consent and undo records in
+`vscode-state.json`. `tstyles uninstall` and `tstyles vscode off` do not go
+through that seam: they edit the absolute `settings.json` paths recorded in
+`vscode-state.json`. So a test that takes uninstall past its consent prompt
+must point the data root at `$TestDrive` as well as bind `-HomeDir`, or the
+real records, and the real editors' files they name, are in reach. The
+real-state guard fingerprints the keys TerminalStyles writes in every VS
+Code-family `settings.json` rather than watching mtimes, because VS Code
+rewrites that file itself.
 
 **Several code paths resolve rc paths from the live `$HOME` independently of the data
 root**, so pointing `$script:TStylesDataRoot` at `$TestDrive` does not contain them.
@@ -43,10 +57,13 @@ capability no code delivers makes a style report success, paint nothing, and *su
 the notice that would have explained why*. If you add a writer, turn the flag on next to
 the code that delivers it.
 
-There are exactly three config writers in the repo: `Merge-StyleIntoSettings` (Windows
-Terminal `settings.json`), `New-AppleTerminalProfile` (Terminal.app `.terminal` plist)
-and `Get-WezTermStyleLua` (WezTerm's generated Lua module). Everything else is escape
-sequences.
+There are exactly four config writers in the repo: `Merge-StyleIntoSettings` (Windows
+Terminal `settings.json`), `New-AppleTerminalProfile` (Terminal.app `.terminal` plist),
+`Get-WezTermStyleLua` (WezTerm's generated Lua module) and `Invoke-VSCodeStyleApply`
+(a VS Code-family editor's `settings.json`, written from `lib/vscodewriter.ps1` —
+`Publish-StyleVSCodeConfig` and the picker's preview session — only after the user has
+said yes for that editor, so its capability flags are conditional too, on
+`Test-VSCodeWriterActive`). Everything else is escape sequences.
 
 Corollary the table cost a release: a flag nothing reads is not a promise, it is a
 rumour. `Get-UnsupportedStyleField` is the reader — it walks theme.json field by field

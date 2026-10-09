@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Styles stick in VS Code's terminal -- and in Insiders, VSCodium, Cursor and Windsurf.** Until now a style applied there was escape sequences only: the colors held for that tab, and the font and cursor never arrived. `tstyles <name>`, the picker, `random`, `tune` and `delete` now write the style into the editor's own `settings.json` -- the terminal's 20 colour ids under `workbench.colorCustomizations`, plus `terminal.integrated.fontFamily`, `fontSize`, `fontWeight` and `cursorStyle` -- so new terminals and restarts keep it, and the picker previews the font and cursor as you arrow, not just the palette.
+
+  It **asks first**, once per editor, and remembers the answer in `vscode-state.json` under the data root; `tstyles vscode on|off` changes it. A file people annotate by hand and sync between machines is not one to start writing on the strength of an apply, and nobody at the terminal to answer is not taken as a no.
+
+  Every apply keeps a **record** of what it set and what was there before, saved before the file is written and rolled back if the write fails. `tstyles reset`, `tstyles vscode off` and `tstyles uninstall` undo from it (an uninstall that cannot take a style out, or cannot read the record, names that at the end instead of signing off as uninstalled, and its old "Your settings.json was NOT modified" now says Windows Terminal's): earlier values come back byte for byte, a key changed by hand since is left alone and named, and a style deleted in the meantime can still be taken out. Switching styles takes the previous one off first, so a reset after several switches still returns the file it started from. Comments and formatting survive, because the file is spliced as text rather than parsed and re-serialised. An edit made while the picker is open survives it: no preview is written over the changed file, and Esc takes its preview out by record instead of putting back the copy it took when it opened. The first write to a file keeps a `settings.json.bak-<timestamp>` copy beside it.
+
+  It **refuses rather than guesses**: an editor it cannot identify (it reads the install path VS Code's git integration exports as `VSCODE_GIT_ASKPASS_NODE`), a settings folder that does not exist, and a file that does not parse all stop the write and say which -- the alternative was a Cursor user's style landing in VS Code's file and reporting success. A theme-scoped block (`"[Monokai]": { "terminal.background": ... }`) that would win over the written colours is named after the apply. Font sizes are converted from points to pixels, so a style is not drawn a quarter smaller than it asks.
+
+  No background image: VS Code has no setting for one. A workspace's own `.vscode/settings.json` can override the user file and is not detected.
+
+### Changed
+
+- **`vscode` is a subcommand**, so a style can no longer be named `vscode` -- the dispatcher matches the word first and such a style could never be applied, the reason `reset` is reserved.
+
+### Fixed
+
+- **A `settings.json` that will not parse is named, rather than always called Windows Terminal's.** The parse error hard-coded "Windows Terminal settings.json" and its remedy ("open WT Settings and Save once"), and added the Windows PowerShell 5.1 comment sentence on every engine. The file and the remedy are now the caller's to name, and the 5.1 sentence appears only on 5.1, where it is the cause.
+
 ## [0.8.48] - 2026-09-27
 
 ### Changed

@@ -531,13 +531,18 @@ unaffected.
 | Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
 | iTerm2 | ✅ | color only | — | — | — | — |
 | Ghostty / kitty / Alacritty | ✅ | color only | — | — | — | — |
-| VS Code terminal | ✅ | color only | — | — | — | — |
+| VS Code terminal ¹ | ✅ | ✅ shape + color | ✅ | — | — | — |
 
 Colors, including the cursor color, arrive as escape sequences and retint the
 window you are already in. Everything else has to be written into a config the
-terminal reads at startup, and TerminalStyles knows how to write three of
+terminal reads at startup, and TerminalStyles knows how to write four of
 those: Windows Terminal's `settings.json`, Terminal.app's `.terminal` profile,
-and WezTerm's generated Lua module.
+WezTerm's generated Lua module, and a VS Code-family editor's `settings.json`.
+
+¹ VS Code, Insiders, VSCodium, Cursor and Windsurf, once you have said yes to
+TerminalStyles saving styles in that editor's `settings.json` — it asks the
+first time. Until then, and in an editor it cannot identify, colors only. See
+[VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf).
 
 So the dashes above describe this tool, not the emulator. iTerm2 would honour a
 Dynamic Profile; nothing here writes one yet. They are marked `—` rather than
@@ -602,6 +607,47 @@ it from Finder or set it as your Terminal.app default.
 > backgrounds are animated GIFs, so the first frame is extracted to a PNG and
 > used instead — Windows Terminal animates, Terminal.app shows a still. Pointing
 > a profile at the GIF directly produces a blank background with no error.
+
+### VS Code, Cursor, VSCodium and Windsurf
+
+The integrated terminal takes the colors live like any other. To make a style
+*stay* — in new terminals and after a restart, font and cursor included —
+TerminalStyles writes it into that editor's own `settings.json`, and asks once
+per editor before it does. `tstyles vscode` shows the answer on record;
+`tstyles vscode on` and `tstyles vscode off` change it (`off` takes the saved
+style back out first).
+
+What is written: the terminal's 20 colors under `workbench.colorCustomizations`,
+and `terminal.integrated.fontFamily`, `fontSize`, `fontWeight` and
+`cursorStyle`. Nothing else in the file is touched, comments and formatting
+included. Each apply keeps a record of what was there before, so `tstyles reset`
+(in that editor's terminal), `tstyles vscode off` and `tstyles uninstall` put
+your own values back; a key you change by hand afterwards is left alone and
+named. The first time a style goes into the file, a copy of it is kept beside
+it as `settings.json.bak-<timestamp>`.
+
+The picker previews the whole style as you arrow, font and cursor too, and Esc
+puts the file back exactly as it was. If `settings.json` changes while the
+picker is open (you edit it, or Settings Sync does), no further preview is
+written into it, and Enter and Esc both work from the file as it is now. Esc
+takes the preview out by its record instead of putting the old file back.
+Either way your change stays, except for a key the incoming style also sets.
+That key is named, and `tstyles reset` puts your value back.
+
+- **No background image.** VS Code has no setting for one.
+- **The editor has to be identifiable.** All five set `TERM_PROGRAM=vscode`, so
+  TerminalStyles tells them apart by the install path VS Code's git integration
+  exports as `VSCODE_GIT_ASKPASS_NODE`. With `git.terminalAuthentication` turned
+  off VS Code does not set it, and TerminalStyles refuses to write rather than
+  guess which editor's file to change.
+- **A color theme can win.** A theme-scoped block such as
+  `"[Monokai]": { "terminal.background": "#000000" }` inside
+  `workbench.colorCustomizations` overrides the style while that theme is
+  active; the apply names any it finds.
+- **Workspace settings win over user settings.** A project's own
+  `.vscode/settings.json` can set the same keys, and that is not detected.
+- **Settings Sync carries it.** If you sync settings, the style goes to your
+  other machines with them.
 
 ## Background image
 
@@ -720,6 +766,18 @@ needing it. If you want a full history of changes rather than just "undo
 the most recent write", use `apply.ps1` — it keeps a timestamped backup
 per run.
 
+**VS Code** keeps its own copy. The first write of a style into a VS
+Code-family `settings.json` copies the file beside it as
+`settings.json.bak-<timestamp>`, taken before any TerminalStyles key was in
+it. Try `tstyles reset` from that editor's terminal first; the copy is the way
+back from anything a reset cannot fix:
+
+```powershell
+# macOS; on Windows the folder is "$env:APPDATA\Code\User", on Linux ~/.config/Code/User
+$vs = "$HOME/Library/Application Support/Code/User/settings.json"
+Copy-Item "$vs.bak-<timestamp>" $vs -Force
+```
+
 ## Updating
 
 ```powershell
@@ -782,6 +840,14 @@ tstyles uninstall -DeleteData
 Neither path modifies Windows Terminal's `settings.json` — your
 current color scheme / cursor / background stays whatever it was
 last set to.
+
+VS Code is the exception. A style saved into a VS Code-family
+editor's `settings.json` is taken back out, from its record, for
+every editor that has one — the confirmation names each file first,
+and a key you changed by hand since is left alone. If a style cannot
+be taken out, or the record of what was saved cannot be read,
+uninstall says so at the end rather than reporting a clean
+uninstall.
 
 If you want a clean default look back, either restore a
 `settings.json.bak-<timestamp>` file from
@@ -886,16 +952,18 @@ overwrites the rendered screenshots too. Check `git status` before adding
   delivered through a generated `.terminal` profile, which means a new window
   (`tstyles <name> -NewWindow`). Tab accent color, font, cursor shape, window
   transparency and interior padding are the same story: they live in a config
-  file, and off Windows Terminal the only config file this tool writes is
-  WezTerm's generated Lua module — which now carries all five, so a WezTerm
+  file. Off Windows Terminal, WezTerm's generated Lua module carries all
+  five, so a WezTerm
   window gets everything the sixteen bundled styles declare except the tab
   title (the style's prompt sets that anyway) and the experimental CRT effect,
-  which WezTerm has no equivalent for. Both doors — `tstyles <name>` and the
+  which WezTerm has no equivalent for. A VS Code-family editor's
+  `settings.json` carries the font and the cursor shape once you have said
+  yes to it being written, and has no setting for the other three. Both
+  doors — `tstyles <name>` and the
   picker — name every field
   the style declares that this terminal cannot show, read off the same
   capability table as the grid above, rather than dropping them silently. Hosts
-  that render nothing (VS Code's integrated terminal, conhost) stay plain by
-  design.
+  that render nothing (conhost) stay plain by design.
 - **The zsh/bash loader is a macOS/Linux feature.** `tstyles shell-init` on
   Windows writes the block into your rc files, but nothing there can read the
   applied style: `shell/tstyles.sh` has no MSYS/MinGW/Cygwin branch, so a Git
