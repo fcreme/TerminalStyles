@@ -931,6 +931,16 @@ Describe 'the picker''s VS Code preview session' {
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
+        It 'gives no session for a file that does not parse, and leaves it as it was' {
+            # The root object never closes, so a preview would splice against
+            # offsets that mean nothing. Enter still reaches the publisher,
+            # which says why it wrote nothing.
+            [System.IO.File]::WriteAllText($script:sPath, '{ "broken": ', [System.Text.UTF8Encoding]::new($false))
+            $before = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath))
+            New-VSCodePreviewSession | Should -BeNullOrEmpty
+            [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath)) | Should -BeExactly $before
+        }
+
         It 'asks first when nobody has been asked' {
             Remove-Item -LiteralPath (Get-VSCodeStatePath) -Force
             Mock Test-InteractiveConsole { $true }
@@ -1029,6 +1039,28 @@ Describe 'the picker''s VS Code preview session' {
             $r.Status | Should -Be 'merged'
             @($r.Replaced) | Should -Contain 'terminal.integrated.fontWeight'
             @($r.Kept) | Should -Not -Contain 'terminal.integrated.fontWeight'
+        }
+
+        It 'Esc over an edit to a key the starting style sets again, and tstyles reset then puts the edit back' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Out-Null
+
+            # The edit is to a key both styles write (eva 600, koholint "normal").
+            $now = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath,
+                (Set-JsoncLiteral -Text $now -Path @('terminal.integrated.fontWeight') -Literal '"bold"').Text,
+                [System.Text.UTF8Encoding]::new($false))
+
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'merged'
+
+            # Esc wrote the starting style's value over that key, and the message
+            # says tstyles reset puts the edit back. It can only if the record Esc
+            # saved remembers the edit as the value that was there before.
+            $reset = Reset-StyleVSCodeConfig -Variant 'Code'
+            $reset.Status | Should -Be 'reset' -Because 'norecord would mean Esc left nothing for the reset to work from'
+            Get-JsoncValueLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) -Path @('terminal.integrated.fontWeight') |
+                Should -BeExactly '"bold"' -Because 'the edit is theirs, and tstyles reset is what puts it back'
         }
 
         It 'Esc will not undo into a file that no longer parses, and keeps the preview''s record' {
@@ -1131,6 +1163,14 @@ Describe 'Show-VSCodeRestoreResult' {
             Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Replaced = @('terminal.integrated.fontWeight'); Reason = $null; Detail = $null }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Replaced terminal\.integrated\.fontWeight' }
             Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+        }
+
+        It 'says the edit survived, and names no key, when the result carries no Kept or Replaced' {
+            # A missing member, not an empty one: @() around a missing member is
+            # one $null, which would print a line naming nothing.
+            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Replaced|Left' }
         }
 
         It 'says how to get out when it failed' {
