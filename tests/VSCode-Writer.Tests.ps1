@@ -910,7 +910,9 @@ Describe 'tstyles <name> and tstyles reset in a VS Code terminal' {
             Mock Confirm-Action { $true }
             $broken = Join-Path $script:TStylesDataRoot 'styles/noscheme'
             New-Item -ItemType Directory -Path $broken -Force | Out-Null
-            $err = Apply-StyleNonWT -StyleName 'noscheme' -StyleDir $broken -KeepPrompt 2>&1
+            # -ErrorAction, not 2>&1: CI's pwsh and powershell steps run with
+            # $ErrorActionPreference = 'Stop', which makes the Write-Error throw.
+            Apply-StyleNonWT -StyleName 'noscheme' -StyleDir $broken -KeepPrompt -ErrorVariable err -ErrorAction SilentlyContinue
             "$err" | Should -Match 'has no scheme\.json'
             Should -Invoke Confirm-Action -Times 0 -Scope It
             [System.IO.File]::Exists((Get-VSCodeStatePath)) | Should -BeFalse -Because 'no answer was asked for, so none was stored'
@@ -1538,7 +1540,9 @@ Describe 'tstyles vscode' {
         ) {
             if ($consent) { Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent $consent }
             Mock Write-SettingsAtomic { throw 'read-only data root' }
-            $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String
+            # -Width: Windows PowerShell 5.1 wraps at the host width, and the
+            # state path in this line is long enough to split the sentence.
+            $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String -Width 500
             $out | Should -Match 'Could not save that to'
             if ($still) {
                 $out | Should -Match 'so saving is still on'
