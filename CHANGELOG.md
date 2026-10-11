@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - **A `settings.json` that will not parse is named, rather than always called Windows Terminal's.** The parse error hard-coded "Windows Terminal settings.json" and its remedy ("open WT Settings and Save once"), and added the Windows PowerShell 5.1 comment sentence on every engine. The file and the remedy are now the caller's to name, and the 5.1 sentence appears only on 5.1, where it is the cause.
 
+- **The picker's "can't show" notice is printed once.** On every terminal but Windows Terminal, `tstyles` + Enter printed it twice in a row: two separate fixes had each added the line to the picker's confirm, one below "Style applied" from the list built when the style was confirmed, and one further down that read theme.json again and built it a second time. The first already covers both branches -- the list is empty on Windows Terminal by construction -- so the second is gone, and the guard that counted the calls now requires exactly one.
+
 ## [0.8.48] - 2026-09-27
 
 ### Changed

@@ -2029,6 +2029,9 @@ function Invoke-TerminalStyle {
 
         # And the same "can't show" line, from the same function, for the same
         # reason. Below the Clear-Host on purpose -- see where the list is built.
+        # The only one: it serves both branches, since the list is empty on
+        # Windows Terminal by construction. A second copy further down, added by
+        # a separate fix, told every other terminal twice.
         if (@($unsupportedFields).Count -gt 0) {
             Show-UnsupportedStyleField -Field $unsupportedFields -Kind $termKind
             Write-Host ""
@@ -2060,29 +2063,6 @@ function Invoke-TerminalStyle {
                             $selectedStyle.Name, $confirmPayload.Missing) -ForegroundColor DarkGray
                 Write-Host ""
             }
-        } else {
-            # The same line `tstyles <name>` prints, from the same function, so
-            # the two doors say the same thing about the same apply. The picker
-            # said nothing at all: on iTerm2 `tstyles eva` named tab color and
-            # the background image while choosing eva in the picker named
-            # neither, and the frame's capability note is about the terminal,
-            # not about the style that was just confirmed.
-            #
-            # Through Get-UnsupportedStyleField, the same reader the WT branch
-            # above and Apply-StyleNonWT use. The narrower note this branch was
-            # written against asked two hardcoded questions -- background image
-            # and tab color -- so it stayed silent about the font, cursor shape
-            # and padding that are $false in the table for the express purpose
-            # of being named here.
-            $confirmTheme = $null
-            $confirmThemePath = Join-Path $selectedStyle.FullName 'theme.json'
-            if (Test-Path -LiteralPath $confirmThemePath) {
-                try {
-                    $confirmTheme = [System.IO.File]::ReadAllText($confirmThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                } catch { $confirmTheme = $null }
-            }
-            Show-UnsupportedStyleField -Kind $termKind -Field @(
-                Get-UnsupportedStyleField -Theme $confirmTheme -StyleDir $selectedStyle.FullName -Kind $termKind)
         }
         & $showPendingUpdate
 

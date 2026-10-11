@@ -269,13 +269,14 @@ Describe 'both apply doors name what the terminal cannot show' {
             $calls = @($fn.FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.CommandAst] -and
                 $n.GetCommandName() -eq 'Show-UnsupportedStyleField' }, $true))
-            # Not pinned to ONE: the picker's confirm has two mutually
-            # exclusive branches, Windows Terminal and everything else, and
-            # each owes the user this line. Pinning the count to one is how
-            # the non-WT branch came to have none -- the guard read green
-            # while half the terminals this tool supports were told nothing.
-            @($calls).Count | Should -BeGreaterThan 0 `
-                -Because 'the picker must say what tstyles <name> says'
+            # Exactly ONE. The picker's confirm has two branches, Windows
+            # Terminal and everything else, and both reach this one call: the
+            # list it prints is empty on Windows Terminal by construction, so it
+            # speaks only where something was dropped. Two calls is how every
+            # other terminal came to be told twice -- two fixes each added the
+            # line to that path. Zero is how the non-WT branch once had none.
+            @($calls).Count | Should -Be 1 `
+                -Because 'the picker must say what tstyles <name> says, and say it once'
         }
 
         It 'and prints it BELOW the Clear-Host, where it can be read' {
