@@ -1078,8 +1078,8 @@ function Invoke-TerminalStylesUninstall {
         }
         # A record held back above that outlived the wipe after all.
         if ($vscodeUncleared.Count -gt 0 -and [System.IO.File]::Exists((Get-VSCodeStatePath))) {
-            $names = (@($vscodeUncleared) | ForEach-Object { "$_'s settings.json" }) -join ', '
-            Write-Host ("  The record of the style taken out of {0} could not be cleared, and is still in" -f $names) -ForegroundColor Yellow
+            $names = (@($vscodeUncleared) | ForEach-Object { "$_'s settings.json" }) -join ' and '
+            Write-Host ("  The record of what was saved to {0} could not be cleared, and is still in" -f $names) -ForegroundColor Yellow
             Write-Host ("  {0}, so a reinstall's next apply or reset may wrongly call some of your settings hand edits." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
         }
     } else {

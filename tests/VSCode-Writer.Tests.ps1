@@ -2031,13 +2031,24 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
             Mock Write-SettingsAtomic { throw 'state locked' } -ParameterFilter { $Path -eq $script:statePath }
             # The wipe fails: whatever kept the record from being cleared can
-            # keep the data root from being removed too.
-            Mock Remove-Item { Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters }
+            # keep the data root from being removed too. No other Remove-Item
+            # reaches here; one that did would fail the test loudly.
+            Mock Remove-Item { throw "unexpected Remove-Item $LiteralPath" }
             Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:data }
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
             $out | Should -Not -Match 'Removed .*full wipe' -Because 'nothing was removed'
             $out | Should -Match 'could not remove'
             $out | Should -Match 'wrongly call' -Because 'the record is still there, so the warning is true after all'
+            $out | Should -Match "saved to Code's settings\.json and Cursor's settings\.json could not be cleared"
+        }
+
+        It 'says nothing of records when the resets cleared them and only the wipe failed' {
+            Mock Confirm-Action { $true }
+            Mock Remove-Item { throw "unexpected Remove-Item $LiteralPath" }
+            Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:data }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Match 'could not remove'
+            $out | Should -Not -Match 'wrongly call' -Because 'every record was cleared, so there is nothing for a reinstall to misread'
         }
 
         It 'keeps the reason a settings.json was left alone, under -DeleteData too' {
