@@ -369,6 +369,31 @@ disagree with a section above, these win.
       function resolves the editor itself and returns the writer status,
       read from `Get-VSCodeWriterState`.
 
+12. **Follow-ups after the merge.**
+    - **Esc's order depends on what it writes.** With a style on before the
+      picker, Esc saves that style's record before the original goes back,
+      as revision 11 says. With none, the write only takes ours out, so the
+      file goes back first and the record is cleared after, as `reset` does.
+      Record-first there left a moment, between the two writes, when the
+      preview was in the file and no record named it: a terminal closed in
+      that moment stranded it. File-first leaves the preview's record beside
+      the user's own file, which a reset reads as keys already gone or the
+      user's own. A record that then cannot be cleared is reported. Switching
+      from one style straight to another keeps a moment like that whichever
+      write goes first.
+    - **After Esc the stored record is the one the picker found** only when
+      the file was unchanged. After an outside edit, Esc saves the record of
+      what it merged, as *Picker* says. Revision 11's sentence holds for the
+      first case.
+    - **A preview whose write failed, and whose record could not be put back
+      either,** leaves the record naming text that never landed. The session
+      notes it, Esc puts the record the file matches back, and says so
+      (`recordstale`) if even that fails. A commit that fails rolls back to
+      the record of what the file holds, not to whatever is stored.
+    - **`tstyles vscode off`** shows the reset's result after saving the no.
+      That save clears a record the reset could not, so the reset's warning
+      about it is dropped when the save lands.
+
 Found, not fixed here (pre-existing, reported separately): the picker's
 confirm on non-Windows-Terminal terminals prints the "can't show" notice
 twice, and `Publish-StyleWezTermConfig`'s notices in the picker are printed

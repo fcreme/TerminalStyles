@@ -1108,6 +1108,111 @@ Describe 'the picker''s VS Code preview session' {
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
+        It 'Esc with no style on puts the file back before it clears the record' {
+            # A terminal closed between the two writes must leave a record that
+            # names what the file holds. Cleared first, it would strand the
+            # preview with no record at all.
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            $script:atWrite = 'never written'
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                $script:atWrite = (Read-VSCodeState).Entries['Code'].record.Style
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:sPath }
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            $script:atWrite | Should -Be 'eva' -Because 'the record is cleared only once the original is back'
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'Esc removes a settings.json the picker created before it clears the record' {
+            Remove-Item -LiteralPath $script:sPath -Force
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            $script:atRemove = 'never removed'
+            Mock Remove-Item { }
+            Mock Remove-Item {
+                $script:atRemove = (Read-VSCodeState).Entries['Code'].record.Style
+                [System.IO.File]::Delete($LiteralPath[0])
+            } -ParameterFilter { $LiteralPath -eq $script:sPath }
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            $script:atRemove | Should -Be 'eva' -Because 'the record is cleared only once the file is gone'
+            [System.IO.File]::Exists($script:sPath) | Should -BeFalse
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'Esc with no style on says so when the file is back but the record could not be cleared' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            Mock Write-VSCodeState { throw 'state locked' }
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'restored' -Because 'the file is back exactly as it was'
+            $r.Detail | Should -Be 'its record could not be cleared'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'Esc puts the record right after a preview whose write and rollback both failed' {
+            $s = New-VSCodePreviewSession
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                # The preview's record lands; putting it back after the failed
+                # settings write does not.
+                $script:stateWrites++
+                if ($script:stateWrites -eq 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'failed'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva' -Because 'the record went first and could not be put back'
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'none' -Because 'nothing of the picker''s reached settings.json'
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty -Because 'the record names what the file holds again'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'Esc says so when it cannot put that record right either' {
+            $s = New-VSCodePreviewSession
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                $script:stateWrites++
+                if ($script:stateWrites -ge 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'failed'
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'recordstale'
+            $r.Reason | Should -Match 'state locked'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user -Because 'settings.json never got the preview'
+        }
+
+        It 'a commit that fails after such a preview rolls back to the record the file matches' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $s = New-VSCodePreviewSession
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                $script:stateWrites++
+                if ($script:stateWrites -eq 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'failed'
+
+            # Enter on eva, and the commit's own settings write fails too.
+            (Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s).Status | Should -Be 'writefailed'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'koholint is what the file still holds'
+        }
+
         It 'Esc puts the exact bytes back, BOM included' {
             [System.IO.File]::WriteAllText($script:sPath, $script:user, [System.Text.UTF8Encoding]::new($true))
             $before = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($script:sPath))
@@ -1239,6 +1344,10 @@ Describe 'the picker''s VS Code preview session' {
         }
 
         It 'Esc says so when the preview''s record cannot be put back either' {
+            # With a style on before the picker, Esc moves the record before the
+            # file, so this double fault exists. With none, the file goes first
+            # and a failed write leaves the preview's record where it was.
+            Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' | Out-Null
             $s = New-VSCodePreviewSession
             Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
             # A counting mock, so the double fault is still reached: the starting
@@ -1352,6 +1461,17 @@ Describe 'Show-VSCodeRestoreResult' {
             Show-VSCodeRestoreResult -Result @{ Status = 'failed'; Path = '/x'; Kept = @(); Replaced = @(); Reason = 'locked'; Detail = 'its undo record could not be saved either' }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'tstyles reset cannot take it out' }
             Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'tstyles reset takes it out' }
+        }
+
+        It 'says when the file is back but its record could not be cleared' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'restored'; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = 'its record could not be cleared' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'back as it was, but its record could not be cleared' }
+        }
+
+        It 'says when the record names a preview that never reached the file' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'recordstale'; Path = '/x'; Kept = @(); Replaced = @(); Reason = 'Could not write /s/vscode-state.json: state locked'; Detail = $null }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'never reached it' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'preview is still in it' } -Because 'nothing of the picker''s is in settings.json'
         }
 
         It 'stays quiet for <status>' -ForEach @(@{ status = 'none' }, @{ status = 'restored' }) {
@@ -1494,6 +1614,32 @@ Describe 'tstyles vscode' {
             (Read-VSCodeState).Entries['Code'].consent | Should -Be 'yes'
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
             $out | Should -Match 'Nothing was written now'
+        }
+
+        It 'off does not warn about a record its own write has cleared' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            # A reset that took the style out but could not clear its record.
+            Mock Reset-StyleVSCodeConfig {
+                @{ Status = 'reset'; Variant = 'Code'; Path = $script:sPath; Kept = @(); Restored = @()
+                   Removed = @('terminal.integrated.fontFamily'); Detail = 'its record could not be cleared' }
+            }
+            $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String -Width 500
+            $out | Should -Match 'Took the style back out'
+            $out | Should -Not -Match 'wrongly call' -Because 'the no was saved with the record cleared, so that warning would be false'
+            $e = (Read-VSCodeState).Entries['Code']
+            $e.consent | Should -Be 'no'
+            $e.record | Should -BeNullOrEmpty
+        }
+
+        It 'off keeps that warning when its own write fails too' {
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            Mock Reset-StyleVSCodeConfig {
+                @{ Status = 'reset'; Variant = 'Code'; Path = $script:sPath; Kept = @(); Restored = @()
+                   Removed = @('terminal.integrated.fontFamily'); Detail = 'its record could not be cleared' }
+            }
+            Mock Write-VSCodeState { throw 'state locked' }
+            $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String -Width 500
+            $out | Should -Match 'wrongly call' -Because 'the record was not cleared after all'
         }
 
         It 'off takes the saved style out, then records a no' {
