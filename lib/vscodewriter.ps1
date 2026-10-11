@@ -798,9 +798,9 @@ function New-VSCodePreviewSession {
         BackedUp        = $false
         Backup          = $null
         # Set while the stored record may name text the file does not hold:
-        # between a preview's record save and its write, and after a failed
-        # write whose record could not be put back. Restore-VSCodePreview puts
-        # the right one back.
+        # between a preview's or a commit's record save and its write, and
+        # after a failed write whose record could not be put back.
+        # Restore-VSCodePreview puts the right one back.
         RecordAhead     = $false
     }
 }
@@ -923,12 +923,13 @@ function Restore-VSCodePreview {
                     same Split-VSCodeKept: when the starting style sets a key
                     the user edited, that key is replaced, and the edited
                     value is what a reset restores. The record is saved
-                    before the file.
+                    before the file when the starting style goes back in;
+                    with none to put back, after it, as above.
 
-    Nothing of the picker's in the file is 'none' -- unless a preview's write
-    failed and its record could not be put back (RecordAhead). Then the record
-    the file matches goes back here, and 'recordstale' says so if even that
-    cannot be written.
+    Nothing of the picker's in the file is 'none' -- unless a preview's or a
+    commit's write failed and its record could not be put back (RecordAhead).
+    Then the record the file matches goes back here, and 'recordstale' says so
+    if even that cannot be written.
 
     A file that no longer parses is not undone at all. The record's offsets no
     longer mean what the record thinks, so this fails rather than splices.
@@ -936,9 +937,11 @@ function Restore-VSCodePreview {
     On failure the stored record is left naming the preview, because the
     preview is what the file still holds: `tstyles reset` can then take it
     out. Every preview saved its own record before it was written, so a
-    failure before this has moved the record leaves that one on file, and a
-    failure after puts it back. If putting it back fails too, Detail says so,
-    and the message does not promise the reset.
+    failure before this has moved the record leaves that one on file. A
+    failure after it moved the record puts it back, and so does a failure
+    while RecordAhead says an earlier write left the record ahead of the file.
+    If putting it back fails too, Detail says so, and the message does not
+    promise the reset.
 
     After either success nothing is left written, so a second call returns
     'none' -- which is what the picker's finally needs after an Esc.
@@ -1090,7 +1093,7 @@ function Show-VSCodeRestoreResult {
         'recordstale' {
             Write-Host ""
             Write-Host ("  {0}" -f $Result.Reason) -ForegroundColor Yellow
-            Write-Host "  settings.json was not changed, but the record in that file still names a preview" -ForegroundColor Yellow
+            Write-Host "  settings.json was not changed, but the record in that file still names a style" -ForegroundColor Yellow
             Write-Host "  that never reached it, so the next apply or reset may wrongly call some of your" -ForegroundColor Yellow
             Write-Host "  settings hand edits." -ForegroundColor Yellow
         }

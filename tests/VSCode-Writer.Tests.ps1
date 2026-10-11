@@ -1152,6 +1152,17 @@ Describe 'the picker''s VS Code preview session' {
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
+        It 'a second Esc after a record that could not be cleared finds nothing to do' {
+            # The record left names keys the file no longer holds -- the harmless
+            # kind -- so a second call has nothing to put right, and nothing it
+            # may say never reached the file.
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            Mock Write-VSCodeState { throw 'state locked' }
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'restored'
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'none'
+        }
+
         It 'Esc puts the record right after a preview whose write and rollback both failed' {
             $s = New-VSCodePreviewSession
             $script:statePath = Get-VSCodeStatePath
