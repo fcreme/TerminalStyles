@@ -1283,6 +1283,54 @@ Describe 'the picker''s VS Code preview session' {
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
+        It 'a failed commit drops its record warning once Esc has put that record right' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            $script:commitTried = $false
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                # The commit's settings write fails; Esc's, after it, lands.
+                if (-not $script:commitTried) { $script:commitTried = $true; throw 'locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                # The commit's record lands, its rollback does not; later ones work.
+                $script:stateWrites++
+                if ($script:stateWrites -eq 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            $w = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s
+            $w.Detail | Should -Be 'its undo record could not be restored either'
+
+            (Undo-VSCodeFailedCommit -Session $s -Result $w).Status | Should -Be 'restored'
+            $w.Detail | Should -BeNullOrEmpty -Because 'the record is right again, so a warning that it could not be put back would be false'
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'a failed commit keeps its record warning while the record is still ahead of the file' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                # Only the commit's own record lands.
+                $script:stateWrites++
+                if ($script:stateWrites -ge 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            $w = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s
+
+            $r = Undo-VSCodeFailedCommit -Session $s -Result $w
+            $r.Status | Should -Be 'failed'
+            $r.Detail | Should -Be 'its undo record could not be saved either'
+            $w.Detail | Should -Be 'its undo record could not be restored either' -Because 'the record still names a commit that never landed'
+        }
+
         It 'a commit that fails after such a preview rolls back to the record the file matches' {
             Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
             $s = New-VSCodePreviewSession
@@ -1621,7 +1669,7 @@ Describe 'the picker wires the VS Code session in' {
         # of the picker and watching the six stay green. Text pins, like the six:
         # what the session does is pinned in the preview-session tests above.
         It 'puts the file back when the commit did not land' {
-            $script:picker | Should -Match '(?s)if \(\$vscodeSession -and \$vscodeResult -and \$vscodeResult\.Status -ne ''written''\) \{[^}]*Restore-VSCodePreview -Session \$vscodeSession' `
+            $script:picker | Should -Match '(?s)if \(\$vscodeSession -and \$vscodeResult -and \$vscodeResult\.Status -ne ''written''\) \{[^}]*Undo-VSCodeFailedCommit -Session \$vscodeSession -Result \$vscodeResult' `
                 -Because 'a failed commit leaves the uncommitted preview in the file, and its record on file; only this Restore puts both back as the picker found them'
         }
 
@@ -1925,6 +1973,27 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             } else {
                 Should -Invoke Confirm-Action -Times 1 -Exactly -Scope It -ParameterFilter { $Consequence -notmatch 'VS Code' }
             }
+        }
+
+        It 'does not warn about a record that -DeleteData is about to delete' {
+            Mock Confirm-Action { $true }
+            # Each reset takes its style out but cannot clear its record.
+            $script:statePath = Get-VSCodeStatePath
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'state locked' } -ParameterFilter { $Path -eq $script:statePath }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Match "Took the style back out of Code's settings\.json"
+            $out | Should -Not -Match 'wrongly call' -Because '-DeleteData deletes that record a moment later'
+            [System.IO.File]::ReadAllText($script:files['Code']) | Should -BeExactly $script:user
+        }
+
+        It 'keeps that warning when the record outlives the uninstall' {
+            Mock Confirm-Action { $true }
+            $script:statePath = Get-VSCodeStatePath
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'state locked' } -ParameterFilter { $Path -eq $script:statePath }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Match 'wrongly call' -Because 'without -DeleteData the record survives, for a reinstall to misread'
         }
 
         It 'the uninstall help says so too' {

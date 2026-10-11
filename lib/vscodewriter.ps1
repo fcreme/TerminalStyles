@@ -1070,6 +1070,31 @@ function Restore-VSCodePreview {
     return $out
 }
 
+function Undo-VSCodeFailedCommit {
+    <#
+    .SYNOPSIS
+    The picker's Enter when Publish-StyleVSCodeConfig did not write: put the
+    file, and the record with it, back as the picker found them. Returns
+    Restore-VSCodePreview's result.
+
+    .DESCRIPTION
+    A commit whose write and rollback both failed says so in -Result's Detail
+    ("its undo record could not be restored either"). The restore here can
+    put that record right, and once it has -- the session no longer marks the
+    record ahead of the file -- that sentence is no longer true, so it is
+    dropped before the picker prints the commit's result.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$Session,
+        [Parameter(Mandatory)][hashtable]$Result
+    )
+
+    $restore = Restore-VSCodePreview -Session $Session
+    if (-not $Session.RecordAhead) { $Result.Detail = $null }
+    return $restore
+}
+
 function Show-VSCodeRestoreResult {
     # What the picker's Esc did to settings.json, when that is worth a line:
     # quiet for 'none' and 'restored', which are the file exactly as it was --

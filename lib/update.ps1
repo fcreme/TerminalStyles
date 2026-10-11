@@ -1039,6 +1039,10 @@ function Invoke-TerminalStylesUninstall {
     # the module is gone no `tstyles reset` can retry it.
     $vscodeProblems = @(foreach ($t in $vscodeTargets) {
         $vr = Reset-StyleVSCodeConfig -Variant $t.Variant
+        # -DeleteData removes the data root, and this record with it, a moment
+        # from now: a warning that the record could not be cleared would be
+        # about one that is gone. On 'reset' that is all Detail ever says.
+        if ($DeleteData -and $vr.Status -eq 'reset') { $vr.Detail = $null }
         Show-VSCodeResetResult -Result $vr -Uninstalling
         if ($vr.Status -ne 'reset' -and $vr.Status -ne 'norecord') { $t.Path }
     })

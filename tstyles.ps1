@@ -1969,8 +1969,9 @@ function Invoke-TerminalStyle {
             if ($vscodeSession -and $vscodeResult -and $vscodeResult.Status -ne 'written') {
                 # The commit did not land, but a preview may have. Put the file,
                 # and the record with it, back as the picker found them, rather
-                # than leave in it a style nobody committed.
-                $pickerState.VSCodeRestore = Restore-VSCodePreview -Session $vscodeSession
+                # than leave in it a style nobody committed -- and drop the
+                # commit's word about its record once that record is right.
+                $pickerState.VSCodeRestore = Undo-VSCodeFailedCommit -Session $vscodeSession -Result $vscodeResult
             }
             # Settled either way from here: the finally must not take back a
             # commit that landed.
