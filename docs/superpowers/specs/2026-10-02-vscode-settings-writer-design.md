@@ -398,6 +398,16 @@ disagree with a section above, these win.
     - **`tstyles vscode off`** shows the reset's result after saving the no.
       That save clears a record the reset could not, so the reset's warning
       about it is dropped when the save lands.
+    - **A picker commit that failed** (`writefailed`) may say its undo
+      record could not be restored either. The picker restores through
+      `Undo-VSCodeFailedCommit`, which drops that sentence once the restore
+      has put the record right, that is, once the session no longer marks it
+      ahead of the file. On `wontparse`, Detail is why the file was refused
+      and stays.
+    - **Uninstall with `-DeleteData`** holds back a reset's "record could not
+      be cleared" warning, since the wipe removes that record. It prints the
+      warning after all if the state file outlives the wipe. "Removed ...
+      (full wipe)" is printed only when the data root is really gone.
 
 Found, not fixed here (pre-existing, reported separately): the picker's
 confirm on non-Windows-Terminal terminals prints the "can't show" notice

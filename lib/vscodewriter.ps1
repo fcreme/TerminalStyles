@@ -1083,6 +1083,11 @@ function Undo-VSCodeFailedCommit {
     put that record right, and once it has -- the session no longer marks the
     record ahead of the file -- that sentence is no longer true, so it is
     dropped before the picker prints the commit's result.
+
+    Only on 'writefailed'. On 'wontparse' Detail is why the file was refused,
+    and that stays true whatever the restore does. A record the restore could
+    not clear also leaves RecordAhead false -- it names keys the file no
+    longer holds -- and the restore's own Detail then says so.
     #>
     [CmdletBinding()]
     param(
@@ -1091,7 +1096,7 @@ function Undo-VSCodeFailedCommit {
     )
 
     $restore = Restore-VSCodePreview -Session $Session
-    if (-not $Session.RecordAhead) { $Result.Detail = $null }
+    if ($Result.Status -eq 'writefailed' -and -not $Session.RecordAhead) { $Result.Detail = $null }
     return $restore
 }
 

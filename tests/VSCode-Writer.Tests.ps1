@@ -1306,8 +1306,45 @@ Describe 'the picker''s VS Code preview session' {
 
             (Undo-VSCodeFailedCommit -Session $s -Result $w).Status | Should -Be 'restored'
             $w.Detail | Should -BeNullOrEmpty -Because 'the record is right again, so a warning that it could not be put back would be false'
-            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+            $e = (Read-VSCodeState).Entries['Code']
+            $e.consent | Should -Be 'yes' -Because 'the entry is there, so the empty record below is a cleared one'
+            $e.record | Should -BeNullOrEmpty
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'a failed commit with nothing previewed drops its record warning once Esc has put that record right' {
+            $s = New-VSCodePreviewSession
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'locked' } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                # The commit's record lands, its rollback does not; Esc's works.
+                $script:stateWrites++
+                if ($script:stateWrites -eq 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            $w = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s
+            $w.Detail | Should -Be 'its undo record could not be restored either'
+
+            (Undo-VSCodeFailedCommit -Session $s -Result $w).Status | Should -Be 'none' -Because 'nothing reached settings.json, only the record needed putting right'
+            $w.Detail | Should -BeNullOrEmpty
+            $e = (Read-VSCodeState).Entries['Code']
+            $e.consent | Should -Be 'yes'
+            $e.record | Should -BeNullOrEmpty
+        }
+
+        It 'a commit refused for a file it cannot edit keeps the reason' {
+            $s = New-VSCodePreviewSession
+            # Changed while the picker was open, so the commit refuses it.
+            [System.IO.File]::WriteAllText($script:sPath, '{ "workbench.colorCustomizations": "oops" }', [System.Text.UTF8Encoding]::new($false))
+            $w = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s
+            $w.Status | Should -Be 'wontparse'
+
+            Undo-VSCodeFailedCommit -Session $s -Result $w | Out-Null
+            $w.Detail | Should -Be 'workbench.colorCustomizations in it is not an object' -Because 'on wontparse Detail is why the file was refused, not a record warning'
+            Show-VSCodeWriteResult -Result $w
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'safely: workbench\.colorCustomizations in it is not an object\.' }
         }
 
         It 'a failed commit keeps its record warning while the record is still ahead of the file' {
@@ -1669,7 +1706,7 @@ Describe 'the picker wires the VS Code session in' {
         # of the picker and watching the six stay green. Text pins, like the six:
         # what the session does is pinned in the preview-session tests above.
         It 'puts the file back when the commit did not land' {
-            $script:picker | Should -Match '(?s)if \(\$vscodeSession -and \$vscodeResult -and \$vscodeResult\.Status -ne ''written''\) \{[^}]*Undo-VSCodeFailedCommit -Session \$vscodeSession -Result \$vscodeResult' `
+            $script:picker | Should -Match '(?s)if \(\$vscodeSession -and \$vscodeResult -and \$vscodeResult\.Status -ne ''written''\) \{[^}]*\$pickerState\.VSCodeRestore = Undo-VSCodeFailedCommit -Session \$vscodeSession -Result \$vscodeResult' `
                 -Because 'a failed commit leaves the uncommitted preview in the file, and its record on file; only this Restore puts both back as the picker found them'
         }
 
@@ -1984,7 +2021,30 @@ Describe 'tstyles uninstall and VS Code''s settings.json' {
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
             $out | Should -Match "Took the style back out of Code's settings\.json"
             $out | Should -Not -Match 'wrongly call' -Because '-DeleteData deletes that record a moment later'
+            Test-Path -LiteralPath $script:data | Should -BeFalse -Because 'the warning is dropped because the data root, record and all, is gone'
             [System.IO.File]::ReadAllText($script:files['Code']) | Should -BeExactly $script:user
+        }
+
+        It 'gives that warning after all when -DeleteData could not remove the record' {
+            Mock Confirm-Action { $true }
+            $script:statePath = Get-VSCodeStatePath
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'state locked' } -ParameterFilter { $Path -eq $script:statePath }
+            # The wipe fails: whatever kept the record from being cleared can
+            # keep the data root from being removed too.
+            Mock Remove-Item { Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters }
+            Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:data }
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Not -Match 'Removed .*full wipe' -Because 'nothing was removed'
+            $out | Should -Match 'could not remove'
+            $out | Should -Match 'wrongly call' -Because 'the record is still there, so the warning is true after all'
+        }
+
+        It 'keeps the reason a settings.json was left alone, under -DeleteData too' {
+            Mock Confirm-Action { $true }
+            [System.IO.File]::WriteAllText($script:files['Code'], '{ "broken": ', [System.Text.UTF8Encoding]::new($false))
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
+            $out | Should -Match 'safely: it does not parse as a JSON object' -Because 'on wontparse Detail is the reason, not a record warning'
         }
 
         It 'keeps that warning when the record outlives the uninstall' {

@@ -1037,12 +1037,17 @@ function Invoke-TerminalStylesUninstall {
     # named. Each says what it did. One that could not be undone is collected
     # for the sign-off: its record survives only until -DeleteData, and once
     # the module is gone no `tstyles reset` can retry it.
+    $vscodeUncleared = @()
     $vscodeProblems = @(foreach ($t in $vscodeTargets) {
         $vr = Reset-StyleVSCodeConfig -Variant $t.Variant
-        # -DeleteData removes the data root, and this record with it, a moment
-        # from now: a warning that the record could not be cleared would be
-        # about one that is gone. On 'reset' that is all Detail ever says.
-        if ($DeleteData -and $vr.Status -eq 'reset') { $vr.Detail = $null }
+        # -DeleteData removes the data root, and this record with it, further
+        # down: a warning that the record could not be cleared would be about
+        # one that is gone. Held back rather than dropped, in case the wipe
+        # fails too. On 'reset' a record left uncleared is all Detail says.
+        if ($DeleteData -and $vr.Status -eq 'reset' -and $vr.Detail) {
+            $vscodeUncleared += $vr.Variant
+            $vr.Detail = $null
+        }
         Show-VSCodeResetResult -Result $vr -Uninstalling
         if ($vr.Status -ne 'reset' -and $vr.Status -ne 'norecord') { $t.Path }
     })
@@ -1063,7 +1068,19 @@ function Invoke-TerminalStylesUninstall {
     if ($DeleteData) {
         if (Test-Path -LiteralPath $dataDir) {
             Remove-Item -LiteralPath $dataDir -Recurse -Force
-            Write-Host "  Removed $dataDir (full wipe via -DeleteData)" -ForegroundColor Green
+            # Said only when it is so: a wipe that fails part-way leaves files
+            # behind, and Remove-Item's own errors scroll past.
+            if (Test-Path -LiteralPath $dataDir) {
+                Write-Host "  ! could not remove all of $dataDir -- delete what is left by hand." -ForegroundColor Red
+            } else {
+                Write-Host "  Removed $dataDir (full wipe via -DeleteData)" -ForegroundColor Green
+            }
+        }
+        # A record held back above that outlived the wipe after all.
+        if ($vscodeUncleared.Count -gt 0 -and [System.IO.File]::Exists((Get-VSCodeStatePath))) {
+            $names = (@($vscodeUncleared) | ForEach-Object { "$_'s settings.json" }) -join ', '
+            Write-Host ("  The record of the style taken out of {0} could not be cleared, and is still in" -f $names) -ForegroundColor Yellow
+            Write-Host ("  {0}, so a reinstall's next apply or reset may wrongly call some of your settings hand edits." -f (Get-VSCodeStatePath)) -ForegroundColor Yellow
         }
     } else {
         Write-Host ""
