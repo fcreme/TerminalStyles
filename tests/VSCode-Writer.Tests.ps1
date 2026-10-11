@@ -1194,6 +1194,84 @@ Describe 'the picker''s VS Code preview session' {
             [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user -Because 'settings.json never got the preview'
         }
 
+        It 'Esc after an outside edit, with no style on, puts the file back before it clears the record' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'written'
+            $now = [System.IO.File]::ReadAllText($script:sPath)
+            [System.IO.File]::WriteAllText($script:sPath,
+                (Set-JsoncLiteral -Text $now -Path @('editor.fontSize') -Literal '15').Text,
+                [System.Text.UTF8Encoding]::new($false))
+            $script:atWrite = 'never written'
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                $script:atWrite = (Read-VSCodeState).Entries['Code'].record.Style
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:sPath }
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'merged'
+            $script:atWrite | Should -Be 'eva' -Because 'with no style to put back, the record is cleared only once the preview is out'
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'a failed Esc after a preview that failed twice leaves a record reset can use' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            $script:statePath = Get-VSCodeStatePath
+            $script:locked = $true
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                if ($script:locked) { throw 'locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                # The eva preview's record lands, its rollback does not; later
+                # state writes work.
+                $script:stateWrites++
+                if ($script:stateWrites -eq 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            Invoke-VSCodePreview -Session $s -StyleName 'eva' -StyleDir $script:eva | Should -Be 'failed'
+
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Detail | Should -BeNullOrEmpty -Because 'the message promises the reset'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'the file still holds the koholint preview'
+            # The lock goes away, and the user runs the reset the message offered.
+            $script:locked = $false
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
+        It 'a failed Esc after a commit that failed twice leaves a record reset can use' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            $script:statePath = Get-VSCodeStatePath
+            $script:locked = $true
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                if ($script:locked) { throw 'locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:sPath }
+            Mock Write-SettingsAtomic {
+                # The commit's record lands, its rollback does not; later state
+                # writes work.
+                $script:stateWrites++
+                if ($script:stateWrites -eq 2) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
+            (Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' -Session $s).Status | Should -Be 'writefailed'
+
+            # The picker follows a commit that did not land with Esc's restore.
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'failed'
+            $r.Detail | Should -BeNullOrEmpty -Because 'the message promises the reset'
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint' -Because 'the file still holds the koholint preview'
+            $script:locked = $false
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
+        }
+
         It 'a commit that fails after such a preview rolls back to the record the file matches' {
             Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
             $s = New-VSCodePreviewSession
@@ -1463,6 +1541,11 @@ Describe 'Show-VSCodeRestoreResult' {
             Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'tstyles reset takes it out' }
         }
 
+        It 'says when it merged but the record could not be cleared' {
+            Show-VSCodeRestoreResult -Result @{ Status = 'merged'; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = 'its record could not be cleared' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'But its record could not be cleared' }
+        }
+
         It 'says when the file is back but its record could not be cleared' {
             Show-VSCodeRestoreResult -Result @{ Status = 'restored'; Path = '/x'; Kept = @(); Replaced = @(); Reason = $null; Detail = 'its record could not be cleared' }
             Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'back as it was, but its record could not be cleared' }
@@ -1618,26 +1701,33 @@ Describe 'tstyles vscode' {
 
         It 'off does not warn about a record its own write has cleared' {
             Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
-            # A reset that took the style out but could not clear its record.
-            Mock Reset-StyleVSCodeConfig {
-                @{ Status = 'reset'; Variant = 'Code'; Path = $script:sPath; Kept = @(); Restored = @()
-                   Removed = @('terminal.integrated.fontFamily'); Detail = 'its record could not be cleared' }
-            }
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            # The real reset takes the style out but cannot clear its record --
+            # the first state write fails -- and off's own save, the next one,
+            # lands.
+            $script:statePath = Get-VSCodeStatePath
+            $script:stateWrites = 0
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic {
+                $script:stateWrites++
+                if ($script:stateWrites -eq 1) { throw 'state locked' }
+                [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+            } -ParameterFilter { $Path -eq $script:statePath }
             $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String -Width 500
             $out | Should -Match 'Took the style back out'
             $out | Should -Not -Match 'wrongly call' -Because 'the no was saved with the record cleared, so that warning would be false'
             $e = (Read-VSCodeState).Entries['Code']
             $e.consent | Should -Be 'no'
             $e.record | Should -BeNullOrEmpty
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $script:user
         }
 
         It 'off keeps that warning when its own write fails too' {
             Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
-            Mock Reset-StyleVSCodeConfig {
-                @{ Status = 'reset'; Variant = 'Code'; Path = $script:sPath; Kept = @(); Restored = @()
-                   Removed = @('terminal.integrated.fontFamily'); Detail = 'its record could not be cleared' }
-            }
-            Mock Write-VSCodeState { throw 'state locked' }
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $script:statePath = Get-VSCodeStatePath
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw 'state locked' } -ParameterFilter { $Path -eq $script:statePath }
             $out = Invoke-TerminalStyleVSCode -Action 'off' 6>&1 | Out-String -Width 500
             $out | Should -Match 'wrongly call' -Because 'the record was not cleared after all'
         }

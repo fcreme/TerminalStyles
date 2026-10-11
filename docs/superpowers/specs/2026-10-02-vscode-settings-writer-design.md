@@ -372,8 +372,10 @@ disagree with a section above, these win.
 12. **Follow-ups after the merge.**
     - **Esc's order depends on what it writes.** With a style on before the
       picker, Esc saves that style's record before the original goes back,
-      as revision 11 says. With none, the write only takes ours out, so the
-      file goes back first and the record is cleared after, as `reset` does.
+      as revision 11 says. With none to put back, the write only takes ours
+      out, so the file goes first and the record is cleared after, as `reset`
+      does. That holds whether the file was unchanged or edited while the
+      picker was open (the merged case).
       Record-first there left a moment, between the two writes, when the
       preview was in the file and no record named it: a terminal closed in
       that moment stranded it. File-first leaves the preview's record beside
@@ -385,11 +387,14 @@ disagree with a section above, these win.
       the file was unchanged. After an outside edit, Esc saves the record of
       what it merged, as *Picker* says. Revision 11's sentence holds for the
       first case.
-    - **A preview whose write failed, and whose record could not be put back
-      either,** leaves the record naming text that never landed. The session
-      notes it, Esc puts the record the file matches back, and says so
-      (`recordstale`) if even that fails. A commit that fails rolls back to
-      the record of what the file holds, not to whatever is stored.
+    - **A preview or a commit whose write failed, and whose record could not
+      be put back either,** leaves the record naming text that never landed.
+      The session notes it (`RecordAhead`), and Esc puts the record the file
+      matches back. It does so even when Esc's own write then fails, so its
+      "tstyles reset takes it out" stays true. When nothing of the picker's
+      reached the file and even that save fails, Esc says so
+      (`recordstale`). A commit that fails rolls back to the record of what
+      the file holds, not to whatever is stored.
     - **`tstyles vscode off`** shows the reset's result after saving the no.
       That save clears a record the reset could not, so the reset's warning
       about it is dropped when the save lands.
