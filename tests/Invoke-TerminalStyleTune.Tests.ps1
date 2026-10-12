@@ -24,14 +24,16 @@ Describe 'Invoke-TerminalStyleTune guards' {
 
         It 'errors when no style name is given and no active style exists' {
             Mock Get-CurrentStyleName { $null }
-            Mock Show-UpdateNoticeIfAvailable {}
+            # The tuner takes the update check itself, through Test-UpdateAvailable --
+            # it never calls Show-UpdateNoticeIfAvailable -- so that is what is mocked.
+            Mock Test-UpdateAvailable { $null }
             Mock Write-Error {}
             Invoke-TerminalStyleTune
             Should -Invoke Write-Error -Times 1 -ParameterFilter { "$Message" -match 'No active style' }
         }
         It 'errors when the named style cannot be resolved' {
             Mock Get-StyleDir { $null }
-            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-UpdateAvailable { $null }
             Mock Write-Error {}
             Invoke-TerminalStyleTune -StyleName 'nope'
             Should -Invoke Write-Error -Times 1 -ParameterFilter { "$Message" -match "not found" }
@@ -43,7 +45,7 @@ Describe 'Invoke-TerminalStyleTune guards' {
             # suite would take the OSC branch whenever it runs on macOS/Linux.
             Mock Find-WTSettingsPath { $null }
             Mock Get-TerminalKind { 'WindowsTerminal' }
-            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-UpdateAvailable { $null }
             Mock Write-Error {}
             # Provide a scheme.json so the base load would succeed past resolution.
             [System.IO.File]::WriteAllText((Join-Path $TestDrive 'scheme.json'), '{"name":"x"}', [System.Text.UTF8Encoding]::new($false))
@@ -62,7 +64,7 @@ Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
             # than the facts warranted: the color knobs preview fine over OSC.
             # What must stay true is that no settings.json is touched.
             Mock Get-TerminalKind { 'AppleTerminal' }
-            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-UpdateAvailable { $null }
             Mock Find-WTSettingsPath { throw 'must not look for a settings.json off Windows Terminal' }
             Mock Write-SettingsAtomic { throw 'must not write a settings.json off Windows Terminal' }
             Mock Write-Host {}
@@ -134,7 +136,7 @@ Describe 'the tuner guards on a non-console session' {
             # its scrollback to the Clear-Host on the way. The picker was fixed
             # for this in 0.8.0; the tuner kept the bug.
             Mock Get-TerminalKind { 'AppleTerminal' }
-            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-UpdateAvailable { $null }
             Mock Write-Host {}
             Mock Start-Sleep { throw 'the tuner must not sleep before bailing out' }
             # Clear-Host must NOT run: the guard returns before the tuner takes

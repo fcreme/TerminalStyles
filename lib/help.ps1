@@ -288,8 +288,9 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'update'; Usage = 'update'; Summary = 'Update to the latest version'
-            Detail = @("Updates TerminalStyles. PSGallery installs run Update-PSResource;",
-                       "bootstrap installs re-run the installer.")
+            Detail = @("Updates TerminalStyles. PSGallery installs run Update-PSResource, or",
+                       "Update-Module where PSResourceGet is not installed; bootstrap installs",
+                       "re-run the installer.")
             Keys = @(); Examples = @('tstyles update')
         }
         [pscustomobject]@{

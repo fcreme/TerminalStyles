@@ -87,9 +87,7 @@ function Test-UpdateAvailable {
 
     $remote = $null
     try {
-        $resp = Invoke-UpdateCheckRequest `
-            -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
-            -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' }
+        $resp = Invoke-UpdateCheckRequest -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main'
         $remote = $resp.sha
     } catch { }
 
@@ -107,39 +105,59 @@ function Test-UpdateAvailable {
     return $null
 }
 
+function Enable-Tls12 {
+    # Adds TLS 1.2 to the session's SecurityProtocol where it is missing, and
+    # returns the value to put back afterwards -- or $null when nothing was
+    # changed. Windows PowerShell 5.1 only: pwsh does not read
+    # ServicePointManager at all.
+    #
+    # Every host the update path talks to -- api.github.com,
+    # raw.githubusercontent.com, the PowerShell Gallery -- refuses anything
+    # older, and on .NET Framework the default SecurityProtocol can leave it
+    # out. install.ps1 opens the same door for its own downloads and shuts it
+    # after; Restore-SecurityProtocol is the other half, so a tstyles command
+    # leaves the session's setting as it found it.
+    #
+    # 0 is SystemDefault, and is left alone: Windows chooses then, and from
+    # Windows 8 on it offers TLS 1.2 by itself, so adding the flag would only
+    # narrow the session to TLS 1.2 -- and take TLS 1.3 away. Compared as a
+    # number because the name exists only from .NET 4.7.
+    [CmdletBinding()]
+    param()
+    if ($PSVersionTable.PSEdition -ne 'Desktop') { return $null }
+    try {
+        $current = [Net.ServicePointManager]::SecurityProtocol
+        if ([int]$current -eq 0 -or $current.HasFlag([Net.SecurityProtocolType]::Tls12)) { return $null }
+        [Net.ServicePointManager]::SecurityProtocol = $current -bor [Net.SecurityProtocolType]::Tls12
+        return $current
+    } catch { return $null }
+}
+
+function Restore-SecurityProtocol {
+    # Puts back what Enable-Tls12 returned. $null means it changed nothing.
+    [CmdletBinding()]
+    param([AllowNull()]$Previous)
+    if ($null -eq $Previous) { return }
+    try { [Net.ServicePointManager]::SecurityProtocol = $Previous } catch { }
+}
+
 function Invoke-UpdateCheckRequest {
     # The update check's one GET, for either install kind. Two seconds and no
     # more: it runs inside an ordinary tstyles command, and an unreachable host
-    # may cost the user that and nothing else.
+    # may cost the user that and nothing else. Without TLS 1.2 on a 5.1 session
+    # that lacks it, the request failed into the caller's silent catch and the
+    # notice could never appear.
     #
-    # TLS 1.2 is allowed for the length of the call. Both hosts the check asks
-    # refuse anything older, and on .NET Framework -- Windows PowerShell 5.1 --
-    # the default SecurityProtocol can leave it out; on such a machine the
-    # request fails into the caller's silent catch, and the notice can never
-    # appear. install.ps1 opens the same door for its own downloads and shuts it
-    # after, and so does this, so a `tstyles list` leaves the session's setting
-    # as it found it. pwsh does not read ServicePointManager at all.
+    # Our own User-Agent: GitHub's API requires one, and PowerShell's default
+    # names the OS, its own version and the locale, which README's "no payload
+    # sent" does not cover.
     [CmdletBinding()]
-    param(
-        [Parameter(Mandatory)][string]$Uri,
-        [hashtable]$Headers = @{}
-    )
-    $restoreTls = $null
-    if ($PSVersionTable.PSEdition -eq 'Desktop') {
-        try {
-            $current = [Net.ServicePointManager]::SecurityProtocol
-            if (-not $current.HasFlag([Net.SecurityProtocolType]::Tls12)) {
-                [Net.ServicePointManager]::SecurityProtocol = $current -bor [Net.SecurityProtocolType]::Tls12
-                $restoreTls = $current
-            }
-        } catch { }
-    }
+    param([Parameter(Mandatory)][string]$Uri)
+    $restoreTls = Enable-Tls12
     try {
-        Invoke-RestMethod -Uri $Uri -Headers $Headers -TimeoutSec 2 -ErrorAction Stop
+        Invoke-RestMethod -Uri $Uri -UserAgent 'TerminalStyles-UpdateCheck' -TimeoutSec 2 -ErrorAction Stop
     } finally {
-        if ($null -ne $restoreTls) {
-            try { [Net.ServicePointManager]::SecurityProtocol = $restoreTls } catch { }
-        }
+        Restore-SecurityProtocol -Previous $restoreTls
     }
 }
 
@@ -185,10 +203,26 @@ function Write-UpdateCheckStamp {
 function Show-UpdateNoticeIfAvailable {
     # Prints the one-line yellow update notice if something newer is out: a
     # commit on origin/main for a bootstrap install, a release on the
-    # PowerShell Gallery for a Gallery one. Called from every non-updating
-    # tstyles invocation (picker, direct apply, list, current, random), but
-    # Test-UpdateAvailable short-circuits inside the 24h throttle window, so
-    # the notice displays at most once per day while an update is pending.
+    # PowerShell Gallery for a Gallery one. Called by list, current, random, a
+    # direct apply and reset; the picker and the tuner call
+    # Test-UpdateAvailable themselves and hold the notice until they give the
+    # screen back. Test-UpdateAvailable short-circuits inside the 24h throttle
+    # window, so the notice displays at most once per day while an update is
+    # pending.
+    #
+    # Not when stdout is redirected. zsh and bash run tstyles as a child pwsh,
+    # where Write-Host goes to stdout, so `x=$(tstyles current)` captured the
+    # notice ahead of the name `current` promises to print alone -- and spent
+    # the day's check on output nobody would read, so no later command showed
+    # it either. The picker and the tuner hold their check back from a
+    # redirected run for the same reason. Nothing is asked and no stamp is
+    # written, so the next command a person sees still gets to show it.
+    param(
+        # A parameter for the reason Show-CurrentStyle has the same one: the
+        # .NET static cannot be mocked, and every CI leg runs redirected.
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
+    )
+    if ($OutputRedirected) { return }
     $pending = Test-UpdateAvailable
     if ($pending) {
         Write-Host ("Update available ({0} -> {1}). Run: tstyles update" -f $pending.Installed, $pending.Remote) -ForegroundColor Yellow
@@ -264,98 +298,129 @@ function Get-UpdateOutcome {
 
 function Invoke-TerminalStylesUpdate {
     [CmdletBinding()]
-    param([switch]$Force)
+    param(
+        [switch]$Force,
+        # Whether this engine has PSResourceGet's Update-PSResource. A parameter
+        # so both answers can be driven on every CI leg: Windows PowerShell 5.1
+        # has no PSResourceGet, and pwsh 7.4+ always does.
+        [bool]$HasPSResourceGet = [bool](Get-Command Update-PSResource -ErrorAction SilentlyContinue)
+    )
 
     Write-Host ""
     Write-Host "Updating TerminalStyles..." -ForegroundColor Cyan
 
-    switch (Get-TerminalStylesInstallKind) {
-        'PSResourceGet' {
-            try {
-                # What was here BEFORE, so the report afterwards can be true.
-                # Update-PSResource is a no-op when the newest version is already
-                # installed and says nothing either way, so this arm reported
-                # "Update complete" for work it had not done -- while the
-                # Bootstrap arm below already distinguished the two. One command,
-                # two install kinds, two different answers to "did anything
-                # happen?".
-                $before = Get-NewestInstalledVersion
-                Update-PSResource -Name TerminalStyles -TrustRepository -ErrorAction Stop
-                $after  = Get-NewestInstalledVersion
-
-                Write-Host ""
-                switch (Get-UpdateOutcome -Before $before -After $after) {
-                    'current' {
-                        Write-Host "  Already the latest ($after). Nothing to do." -ForegroundColor Green
-                    }
-                    'updated' {
-                        Write-Host ("  Updated {0} -> {1}" -f $before, $after) -ForegroundColor Green
-                        $notes = Get-SentenceSummary -Notes (Get-InstalledReleaseNotes -Version $after)
-                        if ($notes) {
-                            Write-Host ""
-                            Write-Host "  $notes" -ForegroundColor Gray
-                        }
-                        Write-Host ""
-                        Write-Host "  Open a new tab to use it, or run:" -ForegroundColor Yellow
-                        Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
-                    }
-                    default {
-                        # The version could not be read on one side or the other.
-                        # Say what happened and what was not established, rather
-                        # than picking the cheerful branch.
-                        Write-Host "  Update ran. Could not read the installed version, so this cannot say" -ForegroundColor Yellow
-                        Write-Host "  whether anything changed. Check with: tstyles help" -ForegroundColor Yellow
-                        Write-Host "  Open a new tab, or run:" -ForegroundColor Yellow
-                        Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
-                    }
-                }
-            } catch {
-                Write-Host "Update failed: $_" -ForegroundColor Red
-                Write-Host "You can retry manually:" -ForegroundColor Yellow
-                Write-Host "  Update-PSResource -Name TerminalStyles -TrustRepository" -ForegroundColor Cyan
-            }
-        }
-        'Bootstrap' {
-            # Re-run the iwr installer one-liner. Existing behavior, preserved
-            # so users who installed via iwr|iex keep updating that way.
-
-            # Cheap check first: if we already have the current main SHA, skip
-            # the ~10MB ZIP download entirely. -Force overrides.
-            $shaFile = Join-Path $script:TStylesDataRoot '.installed-sha'
-            if (-not $Force -and (Test-Path -LiteralPath $shaFile)) {
+    # TLS 1.2 for every request below, put back on the way out. The update
+    # notice allows it for its own request, so on a 5.1 session whose default
+    # leaves it out the notice now appears -- and sends the user here, where the
+    # Gallery, api.github.com and raw.githubusercontent.com need it just as
+    # much. Without it the command the notice recommends failed, and so did the
+    # retry hint printed beneath the failure.
+    $restoreTls = Enable-Tls12
+    try {
+        switch (Get-TerminalStylesInstallKind) {
+            'PSResourceGet' {
+                # Update-PSResource where PSResourceGet is present, and
+                # Update-Module where it is not. Windows PowerShell 5.1 ships
+                # PowerShellGet but not PSResourceGet, and the Gallery's own
+                # page leads with Install-Module, so a copy installed that way
+                # could only fail here -- "The term 'Update-PSResource' is not
+                # recognized" -- above a retry hint naming the same command.
+                # The update notice, which now reaches Gallery installs, would
+                # have sent them here once a day.
+                $retry = if ($HasPSResourceGet) { 'Update-PSResource -Name TerminalStyles -TrustRepository' }
+                         else                   { 'Update-Module -Name TerminalStyles' }
                 try {
-                    $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
-                    $resp = Invoke-RestMethod `
-                        -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
-                        -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
-                        -TimeoutSec 5 -ErrorAction Stop
-                    if ($resp.sha -and $resp.sha -eq $installed) {
-                        Write-Host "Already up to date ($($installed.Substring(0,7))). Use -Force to reinstall anyway." -ForegroundColor Green
-                        return
+                    # What was here BEFORE, so the report afterwards can be true.
+                    # Update-PSResource is a no-op when the newest version is already
+                    # installed and says nothing either way, so this arm reported
+                    # "Update complete" for work it had not done -- while the
+                    # Bootstrap arm below already distinguished the two. One command,
+                    # two install kinds, two different answers to "did anything
+                    # happen?".
+                    $before = Get-NewestInstalledVersion
+                    if ($HasPSResourceGet) {
+                        Update-PSResource -Name TerminalStyles -TrustRepository -ErrorAction Stop
+                    } else {
+                        Update-Module -Name TerminalStyles -ErrorAction Stop
+                    }
+                    $after  = Get-NewestInstalledVersion
+
+                    Write-Host ""
+                    switch (Get-UpdateOutcome -Before $before -After $after) {
+                        'current' {
+                            Write-Host "  Already the latest ($after). Nothing to do." -ForegroundColor Green
+                        }
+                        'updated' {
+                            Write-Host ("  Updated {0} -> {1}" -f $before, $after) -ForegroundColor Green
+                            $notes = Get-SentenceSummary -Notes (Get-InstalledReleaseNotes -Version $after)
+                            if ($notes) {
+                                Write-Host ""
+                                Write-Host "  $notes" -ForegroundColor Gray
+                            }
+                            Write-Host ""
+                            Write-Host "  Open a new tab to use it, or run:" -ForegroundColor Yellow
+                            Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                        }
+                        default {
+                            # The version could not be read on one side or the other.
+                            # Say what happened and what was not established, rather
+                            # than picking the cheerful branch.
+                            Write-Host "  Update ran. Could not read the installed version, so this cannot say" -ForegroundColor Yellow
+                            Write-Host "  whether anything changed. Check with: tstyles help" -ForegroundColor Yellow
+                            Write-Host "  Open a new tab, or run:" -ForegroundColor Yellow
+                            Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                        }
                     }
                 } catch {
-                    # Network failure -- fall through to full download.
+                    Write-Host "Update failed: $_" -ForegroundColor Red
+                    Write-Host "You can retry manually:" -ForegroundColor Yellow
+                    Write-Host "  $retry" -ForegroundColor Cyan
                 }
             }
+            'Bootstrap' {
+                # Re-run the iwr installer one-liner. Existing behavior, preserved
+                # so users who installed via iwr|iex keep updating that way.
 
-            # Suppress IWR progress bar (dominant cost on WinPS 5.1).
-            $prevProgress = $ProgressPreference
-            $ProgressPreference = 'SilentlyContinue'
-            try {
-                $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
-                Invoke-Expression $installerScript
-                Write-Host ""
-                Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
-                Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
-                Write-Host "  . `$PROFILE" -ForegroundColor Cyan
-            } catch {
-                Write-Host "Update failed: $_" -ForegroundColor Red
-                Write-Host "You can retry manually:" -ForegroundColor Yellow
-                Write-Host "  iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex" -ForegroundColor Cyan
-            } finally {
-                $ProgressPreference = $prevProgress
+                # Cheap check first: if we already have the current main SHA, skip
+                # the ~10MB ZIP download entirely. -Force overrides.
+                $shaFile = Join-Path $script:TStylesDataRoot '.installed-sha'
+                if (-not $Force -and (Test-Path -LiteralPath $shaFile)) {
+                    try {
+                        $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
+                        $resp = Invoke-RestMethod `
+                            -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
+                            -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
+                            -TimeoutSec 5 -ErrorAction Stop
+                        if ($resp.sha -and $resp.sha -eq $installed) {
+                            Write-Host "Already up to date ($($installed.Substring(0,7))). Use -Force to reinstall anyway." -ForegroundColor Green
+                            return
+                        }
+                    } catch {
+                        # Network failure -- fall through to full download.
+                    }
+                }
+
+                # Suppress IWR progress bar (dominant cost on WinPS 5.1).
+                $prevProgress = $ProgressPreference
+                $ProgressPreference = 'SilentlyContinue'
+                try {
+                    $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
+                    Invoke-Expression $installerScript
+                    Write-Host ""
+                    Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
+                    Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
+                    Write-Host "  . `$PROFILE" -ForegroundColor Cyan
+                } catch {
+                    Write-Host "Update failed: $_" -ForegroundColor Red
+                    Write-Host "You can retry manually:" -ForegroundColor Yellow
+                    Write-Host "  iwr -useb https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1 | iex" -ForegroundColor Cyan
+                } finally {
+                    $ProgressPreference = $prevProgress
+                }
             }
         }
+    } finally {
+        Restore-SecurityProtocol -Previous $restoreTls
     }
 }
 

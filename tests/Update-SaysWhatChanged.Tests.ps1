@@ -115,6 +115,14 @@ Describe 'tstyles update reports what really happened' {
                     param([string]$Name, [switch]$TrustRepository)
                 }
             }
+            # The same for Update-Module, the fallback where PSResourceGet is
+            # absent. PowerShellGet ships it on every engine CI runs, but a
+            # missing command would fail the whole block, as above.
+            if (-not (Get-Command Update-Module -ErrorAction SilentlyContinue)) {
+                Set-Item function:script:Update-Module {
+                    param([string]$Name)
+                }
+            }
         }
 
         BeforeEach {
@@ -163,6 +171,35 @@ Describe 'tstyles update reports what really happened' {
             $out | Should -Not -Match 'Updated .* ->'
         }
 
+        It 'updates with Update-Module where PSResourceGet is not installed' {
+            # Windows PowerShell 5.1 ships PowerShellGet but not PSResourceGet,
+            # and the Gallery's own page leads with Install-Module. A copy
+            # installed that way could only fail here -- "The term
+            # 'Update-PSResource' is not recognized" -- and the update notice
+            # now sends every Gallery install to this command.
+            Mock Update-Module { }
+            $script:calls = 0
+            Mock Get-NewestInstalledVersion { $script:calls++; if ($script:calls -eq 1) { '0.8.30' } else { '0.8.32' } }
+
+            $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$false 6>&1 | Out-String
+
+            Should -Invoke Update-Module -Times 1 -Exactly -ParameterFilter { $Name -eq 'TerminalStyles' }
+            Should -Invoke Update-PSResource -Times 0
+            $out | Should -Match 'Updated 0\.8\.30 -> 0\.8\.32'
+        }
+
+        It 'names the command it used when that fails' {
+            Mock Update-Module { throw 'simulated failure' }
+            Mock Get-NewestInstalledVersion { '0.8.30' }
+
+            $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$false 6>&1 | Out-String
+
+            $out | Should -Match 'Update failed'
+            $out | Should -Match 'Update-Module -Name TerminalStyles'
+            $out | Should -Not -Match 'Update-PSResource' `
+                -Because 'the retry hint has to name a command this engine has'
+        }
+
         It 'answers empty for a version that is not installed' {
             # Driven, not matched in the source: the real function is reached
             # here rather than the mock the other Its in this block install.
@@ -170,6 +207,65 @@ Describe 'tstyles update reports what really happened' {
                 Get-InstalledReleaseNotes -Version '99.99.99' | Should -BeNullOrEmpty
                 { Get-InstalledReleaseNotes -Version 'nonsense' } | Should -Not -Throw
             }
+        }
+    }
+}
+
+Describe 'tstyles update on Windows PowerShell 5.1' {
+    # The update check allows TLS 1.2 for its own request, so on a session
+    # whose default leaves it out the notice now appears -- and sends the user
+    # here, where every request needs TLS 1.2 just as much: the Gallery behind
+    # Update-PSResource or Update-Module, and api.github.com and
+    # raw.githubusercontent.com behind a bootstrap re-install.
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            if (-not (Get-Command Update-PSResource -ErrorAction SilentlyContinue)) {
+                Set-Item function:script:Update-PSResource {
+                    param([string]$Name, [switch]$TrustRepository)
+                }
+            }
+        }
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            Mock Write-Host { }
+            $script:prevTls = [Net.ServicePointManager]::SecurityProtocol
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls
+        }
+        AfterEach {
+            [Net.ServicePointManager]::SecurityProtocol = $script:prevTls
+        }
+
+        It 'allows TLS 1.2 while a Gallery copy updates, and puts the setting back after' -Skip:($PSVersionTable.PSEdition -ne 'Desktop') {
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            Mock Get-NewestInstalledVersion { '0.8.32' }
+            $seen = @{}
+            Mock Update-PSResource { $seen.Protocol = [Net.ServicePointManager]::SecurityProtocol }
+
+            Invoke-TerminalStylesUpdate
+
+            Should -Invoke Update-PSResource -Times 1 -Exactly
+            ($seen.Protocol -band [Net.SecurityProtocolType]::Tls12) | Should -Be ([Net.SecurityProtocolType]::Tls12)
+            [Net.ServicePointManager]::SecurityProtocol | Should -Be ([Net.SecurityProtocolType]::Tls) `
+                -Because 'the command leaves the session''s setting as it found it'
+        }
+
+        It 'allows TLS 1.2 while a bootstrap copy re-installs, and puts the setting back after' -Skip:($PSVersionTable.PSEdition -ne 'Desktop') {
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            [System.IO.File]::WriteAllText((Join-Path $TestDrive '.installed-sha'), ('1' * 40), [System.Text.UTF8Encoding]::new($false))
+            $seen = @{}
+            Mock Invoke-RestMethod { $seen.Rest = [Net.ServicePointManager]::SecurityProtocol; [pscustomobject]@{ sha = ('2' * 40) } }
+            Mock Invoke-WebRequest { $seen.Web = [Net.ServicePointManager]::SecurityProtocol; [pscustomobject]@{ Content = '$null' } }
+            # Never the real installer, whatever becomes of the mock above.
+            Mock Invoke-Expression { }
+
+            Invoke-TerminalStylesUpdate
+
+            Should -Invoke Invoke-WebRequest -Times 1 -Exactly
+            ($seen.Rest -band [Net.SecurityProtocolType]::Tls12) | Should -Be ([Net.SecurityProtocolType]::Tls12) `
+                -Because 'the up-to-date check asks api.github.com'
+            ($seen.Web -band [Net.SecurityProtocolType]::Tls12) | Should -Be ([Net.SecurityProtocolType]::Tls12) `
+                -Because 'the installer comes from raw.githubusercontent.com'
+            [Net.ServicePointManager]::SecurityProtocol | Should -Be ([Net.SecurityProtocolType]::Tls)
         }
     }
 }

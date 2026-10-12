@@ -85,7 +85,9 @@ Describe 'the tuner leaves the style it was tuning on disk' {
                 [System.IO.File]::WriteAllText((Join-Path $script:victim $f), '{"name":"eva"}', $script:enc)
             }
             Mock Get-TerminalKind { 'AppleTerminal' }
-            Mock Show-UpdateNoticeIfAvailable {}
+            # The tuner takes the update check itself, through Test-UpdateAvailable --
+            # it never calls Show-UpdateNoticeIfAvailable -- so that is what is mocked.
+            Mock Test-UpdateAvailable { $null }
             Mock Write-Host {}
             Mock Write-Error {}
             Mock Start-Sleep {}

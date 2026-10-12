@@ -144,7 +144,7 @@ tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zsh
 tstyles shell-remove              # Remove that zsh/bash loader again
 tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
 tstyles vscode [on|off]           # VS Code: show, allow (on) or undo and stop (off) saving styles to settings.json
-tstyles update                    # PSGallery: Update-PSResource. Bootstrap: re-run installer.
+tstyles update                    # PSGallery: Update-PSResource (Update-Module without it). Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.
 tstyles uninstall -DeleteData     # As above, plus delete %LOCALAPPDATA%\TerminalStyles\ entirely.
 tstyles help [command]            # Show all commands, or details for one
@@ -805,7 +805,9 @@ tstyles update
 
 `tstyles update` detects how the module was installed and delegates:
 
-- **PSGallery (`Install-PSResource`)** → runs `Update-PSResource -Name TerminalStyles`.
+- **PSGallery (`Install-PSResource` or `Install-Module`)** → runs
+  `Update-PSResource -Name TerminalStyles`, or `Update-Module -Name TerminalStyles`
+  where PSResourceGet is not installed (Windows PowerShell 5.1 ships without it).
 - **Bootstrap (`iwr | iex`)** → re-runs the bootstrap one-liner.
 
 After update, open a new tab (or run `Import-Module TerminalStyles -Force -DisableNameChecking`) for the new version to take effect.
@@ -813,7 +815,7 @@ After update, open a new tab (or run `Import-Module TerminalStyles -Force -Disab
 ### How the update check works
 
 `tstyles` issues at most one unauthenticated HTTP GET per 24 hours per
-machine (capped at 2 seconds), asking for whatever `tstyles update`
+machine, with a 2-second timeout, asking for whatever `tstyles update`
 would fetch:
 
 - **PSGallery** → the PowerShell Gallery's feed
@@ -825,12 +827,17 @@ would fetch:
   time in `%LOCALAPPDATA%\TerminalStyles\.installed-sha`.
 
 When something newer is out, the picker, the tuner, `list`, `current`,
-`random`, applying a style and `reset` print
+`random`, applying a style, `reset`, and `delete` when it removes the
+active style print
 `Update available (<installed> -> <latest>). Run: tstyles update`.
-The 24h throttle is tracked in `.last-update-check` in your data dir
-(`%LOCALAPPDATA%\TerminalStyles` on Windows) and applies even on
-failure, so an offline machine pays the timeout once a day rather than
-on every command. No authentication, no payload sent, no analytics.
+A command whose output is redirected — a pipe, a file,
+`x=$(tstyles current)` — neither asks nor prints, and leaves the check
+to the next command you see. The 24h throttle is tracked in
+`.last-update-check` in your data dir (`%LOCALAPPDATA%\TerminalStyles`
+on Windows) and applies even on failure, so an offline machine pays the
+timeout once a day rather than on every command. No authentication, no
+payload sent, no analytics; the request identifies itself only as
+`TerminalStyles-UpdateCheck`.
 
 ## Uninstalling
 

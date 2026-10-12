@@ -211,12 +211,16 @@ Describe 'Test-UpdateAvailable on a PowerShell Gallery install' {
             # query without them answers with an empty feed, which would read
             # as "nothing newer" for good. IsLatestVersion rather than
             # IsAbsoluteLatestVersion, because Update-PSResource skips
-            # prereleases. And a timeout, because this runs inside an ordinary
-            # command and Invoke-RestMethod's own default is 100 seconds.
+            # prereleases. A timeout, because this runs inside an ordinary
+            # command and Invoke-RestMethod's own default is 100 seconds. And
+            # our own User-Agent: PowerShell's default names the OS, its own
+            # version and the locale, which README's "no payload sent" does
+            # not cover.
             Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter {
                 "$Uri" -match "^https://www\.powershellgallery\.com/api/v2/FindPackagesById\(\)\?id=('|%27)TerminalStyles('|%27)&" -and
                 "$Uri" -match '[?&]\$filter=IsLatestVersion(&|$)' -and
-                $TimeoutSec -eq 2
+                $TimeoutSec -eq 2 -and
+                $UserAgent -eq 'TerminalStyles-UpdateCheck'
             }
         }
 
@@ -312,9 +316,51 @@ Describe 'Test-UpdateAvailable on a PowerShell Gallery install' {
             $entry = New-GalleryEntry -Version '0.9.0'
             Mock Invoke-RestMethod { $entry }
 
-            $out = Show-UpdateNoticeIfAvailable 6>&1 | Out-String -Width 500
+            $out = Show-UpdateNoticeIfAvailable -OutputRedirected:$false 6>&1 | Out-String -Width 500
 
             $out | Should -Match 'Update available.*0\.8\.48 -> 0\.9\.0.*tstyles update'
+        }
+    }
+}
+
+Describe 'the update notice stays out of output a script captures' {
+    # zsh and bash run tstyles as a child pwsh, and there Write-Host goes to
+    # stdout. So once a day while an update was pending, `x=$(tstyles current)`
+    # captured "Update available (...)", a blank line and then the name --
+    # against `current`'s own promise of just the name -- and the day's check
+    # was spent on output nobody would read, so no later command showed it
+    # either. The picker and the tuner already hold their check back from a
+    # redirected run for that reason; the commands that print it directly did
+    # not. Bootstrap installs always had this; the Gallery check brought it to
+    # every install.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = $TestDrive
+            $stampFile = Join-Path $TestDrive '.last-update-check'
+            Remove-Item $stampFile -Force -ErrorAction SilentlyContinue
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            Mock Get-NewestInstalledVersion { '0.8.48' }
+        }
+
+        It 'asks nothing, prints nothing and spends nothing when stdout is redirected' {
+            Mock Invoke-RestMethod { throw 'a run whose output nobody sees must not ask' }
+
+            $out = Show-UpdateNoticeIfAvailable -OutputRedirected:$true 6>&1 | Out-String
+
+            $out | Should -BeNullOrEmpty
+            Should -Invoke Invoke-RestMethod -Times 0
+            [System.IO.File]::Exists($stampFile) | Should -BeFalse `
+                -Because 'the next command a person does see has to be able to show it'
+        }
+
+        It 'leaves tstyles current printing just the name, with an update pending' {
+            Mock Test-UpdateAvailable { [pscustomobject]@{ Installed = '0.8.48'; Remote = '0.9.0' } }
+            Mock Get-CurrentStyleName { 'eva' }
+
+            $out = @(Show-CurrentStyle -OutputRedirected:$true 6>&1)
+
+            ($out -join "`n") | Should -BeExactly 'eva' -Because 'README promises just the name, for x=$(tstyles current)'
+            Should -Invoke Test-UpdateAvailable -Times 0
         }
     }
 }
@@ -338,8 +384,8 @@ Describe 'the update check on Windows PowerShell 5.1' {
         }
 
         It 'allows TLS 1.2 for the <Kind> request, and puts the setting back after' -Skip:($PSVersionTable.PSEdition -ne 'Desktop') -ForEach @(
-            @{ Kind = 'PSResourceGet' }
-            @{ Kind = 'Bootstrap' }
+            @{ Kind = 'PSResourceGet'; UriHost = 'www.powershellgallery.com' }
+            @{ Kind = 'Bootstrap';     UriHost = 'api.github.com' }
         ) {
             Mock Get-TerminalStylesInstallKind { $Kind }
             [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls
@@ -348,11 +394,28 @@ Describe 'the update check on Windows PowerShell 5.1' {
 
             Test-UpdateAvailable | Out-Null
 
-            Should -Invoke Invoke-RestMethod -Times 1 -Exactly
+            # The host, so each row proves which arm it drove: were $Kind ever
+            # to stop reaching the mock, both rows would quietly test one.
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly -ParameterFilter { ([uri]"$Uri").Host -eq $UriHost }
             ($seen.Protocol -band [Net.SecurityProtocolType]::Tls12) | Should -Be ([Net.SecurityProtocolType]::Tls12) `
                 -Because 'the request has to be able to offer TLS 1.2'
             [Net.ServicePointManager]::SecurityProtocol | Should -Be ([Net.SecurityProtocolType]::Tls) `
                 -Because 'a tstyles command leaves the session''s setting as it found it'
+        }
+
+        It 'leaves a session that lets Windows choose alone' -Skip:($PSVersionTable.PSEdition -ne 'Desktop') {
+            # 0 is SystemDefault: Windows picks the protocol, and from Windows 8
+            # on it offers TLS 1.2 by itself. Adding the flag would narrow the
+            # session to TLS 1.2 alone -- and take TLS 1.3 away -- for nothing.
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]0
+            $seen = @{}
+            Mock Invoke-RestMethod { $seen.Protocol = [Net.ServicePointManager]::SecurityProtocol }
+
+            Test-UpdateAvailable | Out-Null
+
+            Should -Invoke Invoke-RestMethod -Times 1 -Exactly
+            [int]$seen.Protocol | Should -Be 0
         }
     }
 }

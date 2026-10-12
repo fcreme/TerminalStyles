@@ -177,7 +177,8 @@ function Show-CurrentStyle {
         # branch.
         [bool]$OutputRedirected = [Console]::IsOutputRedirected
     )
-    Show-UpdateNoticeIfAvailable
+    # The same answer, so the notice and the name agree about who is reading.
+    Show-UpdateNoticeIfAvailable -OutputRedirected:$OutputRedirected
     $current = Get-CurrentStyleName
     if ($current) {
         if ($OutputRedirected) {

@@ -133,7 +133,10 @@ Describe 'a failed record really does turn the check off' {
             # The checker's own API call succeeds -- this is the split that made
             # the stale record visible: recording failed while checking works.
             Mock Invoke-RestMethod { [pscustomobject]@{ sha = ('2' * 40) } }
-            Show-UpdateNoticeIfAvailable 6>&1 | Out-String
+            # As a console would see it. Test runs are redirected, and a
+            # redirected run skips the check altogether -- which would make the
+            # assertion below pass without measuring the record at all.
+            Show-UpdateNoticeIfAvailable -OutputRedirected:$false 6>&1 | Out-String
         }
 
         $notice | Should -Not -Match 'Update available' `
