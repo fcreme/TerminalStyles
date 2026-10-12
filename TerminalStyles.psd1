@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.8.48'
+    ModuleVersion     = '0.9.0'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.8.48: eva and skyline fill the window again. Both declared a native-size background, so Windows Terminal drew eva as a 480px square in the middle of the window and skyline as a 270px strip along the bottom with the top half flat indigo. eva now scales to the window''s height, whole -- covering would still cut her off at the chin and lose the EXT3 label, and the GIF''s near-black edges blend into the bars either side. skyline now covers, anchored bottom-right: its 1052x270 source is short, so a centred cover kept the mirrored city and lost the girl, and anchored right it keeps her, the pole and the moon. The screenshot renderer centre-cropped anything that covered its canvas and ignored left and right alignment, so it would have drawn skyline without her; it now follows the style''s alignment, and both screenshots are redrawn.'
+            ReleaseNotes = 'v0.9.0: Styles stick in VS Code''s terminal -- and in Insiders, VSCodium, Cursor and Windsurf. Until now a style there was escape sequences only: the colors held for that tab, and the font and cursor never arrived. tstyles <name>, the picker, random, tune and delete now write the style into the editor''s own settings.json -- the terminal''s 20 colors, fontFamily, fontSize, fontWeight and cursorStyle -- after asking once per editor; tstyles vscode on|off changes the answer. Every apply keeps a record of what was there before, so tstyles reset, tstyles vscode off and tstyles uninstall put your own values back and leave alone a key you changed by hand since. The picker previews the font and cursor too, and Esc puts the file back exactly as it was. It refuses rather than guesses: an editor it cannot identify, a missing settings folder and a file that does not parse each stop the write and say why. Also fixed: a settings.json that will not parse is named, rather than always called Windows Terminal''s, and the picker prints its can''t-show notice once instead of twice.'
         }
     }
 }

@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-12
+
 ### Added
 
 - **Styles stick in VS Code's terminal -- and in Insiders, VSCodium, Cursor and Windsurf.** Until now a style applied there was escape sequences only: the colors held for that tab, and the font and cursor never arrived. `tstyles <name>`, the picker, `random` and `tune` now write the style into the editor's own `settings.json` -- the terminal's 20 colour ids under `workbench.colorCustomizations`, plus `terminal.integrated.fontFamily`, `fontSize`, `fontWeight` and `cursorStyle` -- so new terminals and restarts keep it, and the picker previews the font and cursor as you arrow, not just the palette. `delete` writes there only when deleting the active style reveals a bundled style of the same name; deleting the active style otherwise resets, which takes it back out.
@@ -1553,7 +1555,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.8.48...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/fcreme/TerminalStyles/compare/v0.8.48...v0.9.0
 [0.8.48]: https://github.com/fcreme/TerminalStyles/compare/v0.8.47...v0.8.48
 [0.8.47]: https://github.com/fcreme/TerminalStyles/compare/v0.8.46...v0.8.47
 [0.8.46]: https://github.com/fcreme/TerminalStyles/compare/v0.8.45...v0.8.46

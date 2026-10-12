@@ -4,7 +4,7 @@
 
 | Version                | Supported                              |
 | ---------------------- | -------------------------------------- |
-| 0.8.x (latest release) | ✅                                      |
+| 0.9.x (latest release) | ✅                                      |
 | older                  | ❌ — update first (`tstyles update`)    |
 
 Only the latest release is supported. Fixes ship forward in a new version
