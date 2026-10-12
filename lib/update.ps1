@@ -142,9 +142,10 @@ function Restore-SecurityProtocol {
 }
 
 function Invoke-UpdateCheckRequest {
-    # The update check's one GET, for either install kind. Two seconds and no
-    # more: it runs inside an ordinary tstyles command, and an unreachable host
-    # may cost the user that and nothing else. Without TLS 1.2 on a 5.1 session
+    # The update check's one GET, for either install kind, with a two-second
+    # timeout: it runs inside an ordinary tstyles command, and an unreachable
+    # host should cost the user about that and nothing else (on 5.1 a stalled
+    # DNS lookup is not covered by it). Without TLS 1.2 on a 5.1 session
     # that lacks it, the request failed into the caller's silent catch and the
     # notice could never appear.
     #
@@ -302,7 +303,9 @@ function Invoke-TerminalStylesUpdate {
         [switch]$Force,
         # Whether this engine has PSResourceGet's Update-PSResource. A parameter
         # so both answers can be driven on every CI leg: Windows PowerShell 5.1
-        # has no PSResourceGet, and pwsh 7.4+ always does.
+        # has no PSResourceGet, and pwsh 7.4+ always does. DontShow because
+        # this command is exported, and a test seam is not part of its surface.
+        [Parameter(DontShow)]
         [bool]$HasPSResourceGet = [bool](Get-Command Update-PSResource -ErrorAction SilentlyContinue)
     )
 
@@ -327,8 +330,17 @@ function Invoke-TerminalStylesUpdate {
                 # recognized" -- above a retry hint naming the same command.
                 # The update notice, which now reaches Gallery installs, would
                 # have sent them here once a day.
+                #
+                # -Force is the answer -TrustRepository gives Update-PSResource.
+                # Update-Module has no such switch, and PSGallery is untrusted
+                # unless the user said otherwise, so it asks -- default No --
+                # and a No installs nothing while raising no error: the version
+                # would not move, and this arm would print "Already the latest"
+                # over an update that never happened. -Force also reinstalls a
+                # copy that is already current, which costs a download and
+                # claims nothing false.
                 $retry = if ($HasPSResourceGet) { 'Update-PSResource -Name TerminalStyles -TrustRepository' }
-                         else                   { 'Update-Module -Name TerminalStyles' }
+                         else                   { 'Update-Module -Name TerminalStyles -Force' }
                 try {
                     # What was here BEFORE, so the report afterwards can be true.
                     # Update-PSResource is a no-op when the newest version is already
@@ -341,7 +353,7 @@ function Invoke-TerminalStylesUpdate {
                     if ($HasPSResourceGet) {
                         Update-PSResource -Name TerminalStyles -TrustRepository -ErrorAction Stop
                     } else {
-                        Update-Module -Name TerminalStyles -ErrorAction Stop
+                        Update-Module -Name TerminalStyles -Force -ErrorAction Stop
                     }
                     $after  = Get-NewestInstalledVersion
 

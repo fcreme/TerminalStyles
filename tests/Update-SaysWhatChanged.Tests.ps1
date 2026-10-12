@@ -120,7 +120,7 @@ Describe 'tstyles update reports what really happened' {
             # missing command would fail the whole block, as above.
             if (-not (Get-Command Update-Module -ErrorAction SilentlyContinue)) {
                 Set-Item function:script:Update-Module {
-                    param([string]$Name)
+                    param([string]$Name, [switch]$Force)
                 }
             }
         }
@@ -188,6 +188,22 @@ Describe 'tstyles update reports what really happened' {
             $out | Should -Match 'Updated 0\.8\.30 -> 0\.8\.32'
         }
 
+        It 'answers PSGallery''s trust prompt, so a declined install cannot pass for "Already the latest"' {
+            # Update-Module has no -TrustRepository, and PSGallery is untrusted
+            # unless the user said otherwise, so it asks -- and its default is
+            # No. A No is reported as a warning with nothing installed:
+            # -ErrorAction Stop does not fire, the version does not move, and
+            # this arm would print "Already the latest" over an update that
+            # never happened. -Force is the answer -TrustRepository gives
+            # Update-PSResource.
+            Mock Update-Module { }
+            Mock Get-NewestInstalledVersion { '0.8.30' }
+
+            Invoke-TerminalStylesUpdate -HasPSResourceGet:$false 6>&1 | Out-Null
+
+            Should -Invoke Update-Module -Times 1 -Exactly -ParameterFilter { $Force }
+        }
+
         It 'names the command it used when that fails' {
             Mock Update-Module { throw 'simulated failure' }
             Mock Get-NewestInstalledVersion { '0.8.30' }
@@ -195,7 +211,7 @@ Describe 'tstyles update reports what really happened' {
             $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$false 6>&1 | Out-String
 
             $out | Should -Match 'Update failed'
-            $out | Should -Match 'Update-Module -Name TerminalStyles'
+            $out | Should -Match 'Update-Module -Name TerminalStyles -Force'
             $out | Should -Not -Match 'Update-PSResource' `
                 -Because 'the retry hint has to name a command this engine has'
         }

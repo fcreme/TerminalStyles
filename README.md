@@ -806,8 +806,9 @@ tstyles update
 `tstyles update` detects how the module was installed and delegates:
 
 - **PSGallery (`Install-PSResource` or `Install-Module`)** → runs
-  `Update-PSResource -Name TerminalStyles`, or `Update-Module -Name TerminalStyles`
-  where PSResourceGet is not installed (Windows PowerShell 5.1 ships without it).
+  `Update-PSResource -Name TerminalStyles -TrustRepository`, or
+  `Update-Module -Name TerminalStyles -Force` where PSResourceGet is not
+  installed (Windows PowerShell 5.1 ships without it).
 - **Bootstrap (`iwr | iex`)** → re-runs the bootstrap one-liner.
 
 After update, open a new tab (or run `Import-Module TerminalStyles -Force -DisableNameChecking`) for the new version to take effect.
@@ -830,14 +831,17 @@ When something newer is out, the picker, the tuner, `list`, `current`,
 `random`, applying a style, `reset`, and `delete` when it removes the
 active style print
 `Update available (<installed> -> <latest>). Run: tstyles update`.
-A command whose output is redirected — a pipe, a file,
-`x=$(tstyles current)` — neither asks nor prints, and leaves the check
-to the next command you see. The 24h throttle is tracked in
-`.last-update-check` in your data dir (`%LOCALAPPDATA%\TerminalStyles`
-on Windows) and applies even on failure, so an offline machine pays the
-timeout once a day rather than on every command. No authentication, no
-payload sent, no analytics; the request identifies itself only as
-`TerminalStyles-UpdateCheck`.
+When the shell or program running `tstyles` captures its output —
+`x=$(tstyles current)`, a pipe or redirect in zsh or bash, a script
+running `pwsh -c` — it neither asks nor prints, and leaves the check to
+the next command you see. Inside PowerShell the notice goes to the
+screen, never into a pipe or a `>` redirect.
+
+The 24h throttle is tracked in `.last-update-check` in your data dir
+(`%LOCALAPPDATA%\TerminalStyles` on Windows) and applies even on
+failure, so an offline machine pays the timeout once a day rather than
+on every command. No authentication, no payload sent, no analytics; the
+request identifies itself only as `TerminalStyles-UpdateCheck`.
 
 ## Uninstalling
 
