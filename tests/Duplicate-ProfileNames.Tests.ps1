@@ -106,6 +106,12 @@ Describe 'Resolve-WTProfileTarget breaks a name tie with the session GUID' {
 
 Describe 'an ambiguous profile name is reported, not resolved in silence' {
     InModuleScope TerminalStyles {
+        BeforeEach {
+            # apply and reset end on the update check, and on a machine with
+            # TerminalStyles installed from the Gallery that is a real request.
+            Mock Show-UpdateNoticeIfAvailable {}
+        }
+
         It 'tells the user when more than one profile carries the target name' {
             # Ambiguous existed as a computed-but-unread field until this. The
             # tie-break is almost always right, and "almost always" is worth a

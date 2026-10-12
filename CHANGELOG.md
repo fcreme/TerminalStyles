@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **A PowerShell Gallery install is told when a new release is out.** The update check returned nothing for one, on purpose: it compares the commit on GitHub's `main` with the one the bootstrap installer recorded, a Gallery copy records none, and the reasoning was that its user would run `tstyles update` whenever they chose. Nothing ever told them to. 0.9.0 was published and no Gallery install -- the install the README leads with -- printed a word about it. The check now asks the Gallery for its newest stable version, which is what `Update-PSResource` installs, and compares it with the newest version installed rather than the one the open tab loaded, so a tab left open across `tstyles update` is not told to update again: `Update available (0.8.48 -> 0.9.0). Run: tstyles update`. The bootstrap check's limits carry over -- one request a day at most, abandoned after two seconds, nothing said when offline or already current -- and nothing is asked at all when no installed copy can be found.
+
+  On Windows PowerShell 5.1, both checks now allow TLS 1.2 for the length of their request and put the session's setting back after it. GitHub and the Gallery both refuse anything older, and .NET Framework's default can leave it out -- on such a machine the request failed into the check's silent catch, and no notice could ever appear.
+
 ## [0.9.0] - 2026-10-12
 
 ### Added

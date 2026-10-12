@@ -812,18 +812,25 @@ After update, open a new tab (or run `Import-Module TerminalStyles -Force -Disab
 
 ### How the update check works
 
-For **bootstrap** installs only, `tstyles` issues at most one
-unauthenticated HTTP GET per 24 hours per machine to
-`api.github.com/repos/fcreme/TerminalStyles/commits/main` (capped at
-2 seconds), comparing the returned commit SHA against the one
-recorded at install time in
-`%LOCALAPPDATA%\TerminalStyles\.installed-sha`. The 24h throttle is
-tracked in `%LOCALAPPDATA%\TerminalStyles\.last-update-check` and
-applies even on failure. No authentication, no payload sent, no
-analytics.
+`tstyles` issues at most one unauthenticated HTTP GET per 24 hours per
+machine (capped at 2 seconds), asking for whatever `tstyles update`
+would fetch:
 
-PSGallery-installed copies skip this check entirely — `Update-PSResource`
-handles version comparison internally when you run `tstyles update`.
+- **PSGallery** → the PowerShell Gallery's feed
+  (`www.powershellgallery.com/api/v2`) for the newest stable
+  TerminalStyles, compared with the newest version installed on your
+  module path. Nothing is asked when no installed copy can be found.
+- **Bootstrap** → `api.github.com/repos/fcreme/TerminalStyles/commits/main`,
+  comparing the returned commit SHA against the one recorded at install
+  time in `%LOCALAPPDATA%\TerminalStyles\.installed-sha`.
+
+When something newer is out, the picker, the tuner, `list`, `current`,
+`random`, applying a style and `reset` print
+`Update available (<installed> -> <latest>). Run: tstyles update`.
+The 24h throttle is tracked in `.last-update-check` in your data dir
+(`%LOCALAPPDATA%\TerminalStyles` on Windows) and applies even on
+failure, so an offline machine pays the timeout once a day rather than
+on every command. No authentication, no payload sent, no analytics.
 
 ## Uninstalling
 

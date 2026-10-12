@@ -128,6 +128,11 @@ Describe 'every hint in the project adapts, not just the picker' {
             # against whatever style they already have applied -- so on gitbash
             # every parenthetical and badge in it was at 2.61.
             Mock Get-CurrentStyleName { 'gitbash' }
+            # The listing ends on the update check, and this test runs against
+            # the real data root: unmocked, a machine with TerminalStyles
+            # installed from the Gallery would make a real request, rewrite the
+            # real .last-update-check, and could print a notice into $out.
+            Mock Show-UpdateNoticeIfAvailable {}
 
             # PowerShell 7 strips ANSI from Write-Host once the stream is
             # redirected -- $PSStyle.OutputRendering defaults to Host. Captured

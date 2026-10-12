@@ -57,6 +57,9 @@ Describe 'the rolling backup is not spent on a command that does nothing' {
             Mock Get-TerminalKind    { 'WindowsTerminal' }
             Mock Write-Host          {}
             Mock Write-Error         {}
+            # apply and reset end on the update check, and on a machine with
+            # TerminalStyles installed from the Gallery that is a real request.
+            Mock Show-UpdateNoticeIfAvailable {}
         }
 
         It 'reset with a bad -Target keeps the previous backup' {

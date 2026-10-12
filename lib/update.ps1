@@ -12,8 +12,8 @@ function Get-TerminalStylesInstallKind {
     # Returns 'Bootstrap' if the module loaded from %LOCALAPPDATA%\TerminalStyles\
     # (the iwr-installer path), else 'PSResourceGet' (PSModulePath-based install).
     # Used by Invoke-TerminalStylesUpdate / Invoke-TerminalStylesUninstall to
-    # delegate to the right mechanism, and by Test-UpdateAvailable to skip the
-    # SHA-based check entirely for PSResourceGet installs.
+    # delegate to the right mechanism, and by Test-UpdateAvailable to pick what
+    # "newer" is measured against: a commit on main, or a Gallery release.
     #
     # Note: $script:TStylesModuleRoot is set during module load. For installs
     # made before the dual-root refactor (sub-project C), the variable still
@@ -24,19 +24,22 @@ function Get-TerminalStylesInstallKind {
 }
 
 function Test-UpdateAvailable {
-    # Returns a pscustomobject with short SHAs if a newer commit is available
-    # on origin/main, or $null if local already matches / no .installed-sha /
-    # we're inside the 24h throttle window / the API call fails.
+    # Returns a pscustomobject naming what is installed and what is newer, or
+    # $null when nothing newer is known: already current, nothing on record to
+    # compare, inside the 24h throttle window, or the request failed.
+    #
+    # Newer means whatever `tstyles update` would fetch, so it follows the
+    # install kind:
+    #   Bootstrap      the commit on origin/main against .installed-sha, as
+    #                  7-char SHAs -- the installer tracks main.
+    #   PSResourceGet  the PowerShell Gallery's newest stable version against
+    #                  the newest one installed, as version strings --
+    #                  Update-PSResource installs the Gallery's.
     #
     # Throttled to <= 1 HTTP request per 24 hours per machine via
     # .last-update-check. The timestamp is rewritten on every attempt
     # (success or failure), so an offline machine doesn't retry the
     # 2s timeout on every single tstyles invocation.
-    # PSResourceGet installs update via Update-PSResource, not git. Skip
-    # the SHA-based check entirely; the user runs `tstyles update` whenever.
-    if ((Get-TerminalStylesInstallKind) -eq 'PSResourceGet') { return $null }
-
-    $shaFile   = Join-Path $script:TStylesDataRoot '.installed-sha'
     $stampFile = Join-Path $script:TStylesDataRoot '.last-update-check'
 
     # --- Throttle gate ---
@@ -51,26 +54,49 @@ function Test-UpdateAvailable {
         } catch { }
     }
 
+    if ((Get-TerminalStylesInstallKind) -eq 'PSResourceGet') {
+        # This arm returned $null outright, on the reasoning that a Gallery copy
+        # is updated by Update-PSResource whenever the user runs `tstyles
+        # update`. But this notice is how they learn there is anything to run
+        # it for, and 0.9.0 went out without one Gallery install hearing of it.
+        #
+        # Against the newest version INSTALLED rather than the one this session
+        # loaded: after `tstyles update` an open tab keeps the old copy until it
+        # is reopened, and telling it to update again would ask for what is
+        # already done. Nothing installed to compare against -- a source
+        # checkout imported by path -- gets the answer the bootstrap arm gives a
+        # missing .installed-sha: no request, nothing said.
+        $installed = Get-NewestInstalledVersion
+        if (-not $installed) { return $null }
+        $latest = Get-GalleryLatestVersion
+        Write-UpdateCheckStamp -Path $stampFile
+
+        # As versions: as text, '0.9.9' sorts after '0.9.10'.
+        $have = $null; $offered = $null
+        if ($latest -and [version]::TryParse($installed, [ref]$have) -and
+            [version]::TryParse($latest, [ref]$offered) -and $offered -gt $have) {
+            return [pscustomobject]@{ Installed = $installed; Remote = $latest }
+        }
+        return $null
+    }
+
+    $shaFile = Join-Path $script:TStylesDataRoot '.installed-sha'
     if (-not (Test-Path -LiteralPath $shaFile)) { return $null }
     $installed = ([System.IO.File]::ReadAllText($shaFile, [System.Text.UTF8Encoding]::new($false))).Trim()
     if (-not $installed) { return $null }
 
     $remote = $null
     try {
-        $resp = Invoke-RestMethod `
+        $resp = Invoke-UpdateCheckRequest `
             -Uri 'https://api.github.com/repos/fcreme/TerminalStyles/commits/main' `
-            -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' } `
-            -TimeoutSec 2 -ErrorAction Stop
+            -Headers @{ 'User-Agent' = 'TerminalStyles-UpdateCheck' }
         $remote = $resp.sha
     } catch { }
 
     # --- Throttle write ---
     # Always write the timestamp, even on API failure. Without this, an
     # offline machine would retry the 2s timeout on every invocation.
-    try {
-        $now = (Get-Date).ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
-        [System.IO.File]::WriteAllText($stampFile, $now, [System.Text.UTF8Encoding]::new($false))
-    } catch { }
+    Write-UpdateCheckStamp -Path $stampFile
 
     if ($remote -and $remote -ne $installed) {
         return [pscustomobject]@{
@@ -81,12 +107,88 @@ function Test-UpdateAvailable {
     return $null
 }
 
+function Invoke-UpdateCheckRequest {
+    # The update check's one GET, for either install kind. Two seconds and no
+    # more: it runs inside an ordinary tstyles command, and an unreachable host
+    # may cost the user that and nothing else.
+    #
+    # TLS 1.2 is allowed for the length of the call. Both hosts the check asks
+    # refuse anything older, and on .NET Framework -- Windows PowerShell 5.1 --
+    # the default SecurityProtocol can leave it out; on such a machine the
+    # request fails into the caller's silent catch, and the notice can never
+    # appear. install.ps1 opens the same door for its own downloads and shuts it
+    # after, and so does this, so a `tstyles list` leaves the session's setting
+    # as it found it. pwsh does not read ServicePointManager at all.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Uri,
+        [hashtable]$Headers = @{}
+    )
+    $restoreTls = $null
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        try {
+            $current = [Net.ServicePointManager]::SecurityProtocol
+            if (-not $current.HasFlag([Net.SecurityProtocolType]::Tls12)) {
+                [Net.ServicePointManager]::SecurityProtocol = $current -bor [Net.SecurityProtocolType]::Tls12
+                $restoreTls = $current
+            }
+        } catch { }
+    }
+    try {
+        Invoke-RestMethod -Uri $Uri -Headers $Headers -TimeoutSec 2 -ErrorAction Stop
+    } finally {
+        if ($null -ne $restoreTls) {
+            try { [Net.ServicePointManager]::SecurityProtocol = $restoreTls } catch { }
+        }
+    }
+}
+
+function Get-GalleryLatestVersion {
+    # The newest stable TerminalStyles on the PowerShell Gallery, as a string,
+    # or $null when that could not be read.
+    #
+    # The Gallery's v2 feed rather than Find-PSResource, which takes no
+    # timeout. IsLatestVersion is the newest non-prerelease, which is what
+    # Update-PSResource installs. The quotes around the id are load-bearing:
+    # without them the Gallery answers with an empty feed, not an error.
+    #
+    # Invoke-RestMethod hands an Atom feed back as its <entry> elements, and
+    # through the XML adapter a property that carries an attribute comes back
+    # as the element rather than its text -- the feed's typed flags already do
+    # -- so Version is read for its text either way. Anything else (a captive
+    # portal's HTML page, an empty feed) has no Version, and reads as $null.
+    [CmdletBinding()]
+    param()
+    try {
+        $entry = @(Invoke-UpdateCheckRequest -Uri 'https://www.powershellgallery.com/api/v2/FindPackagesById()?id=''TerminalStyles''&$filter=IsLatestVersion')[0]
+        $version = $entry.properties.Version
+        if ($version -is [System.Xml.XmlNode]) { $version = $version.InnerText }
+        if ($version -is [string] -and $version.Trim()) { return $version.Trim() }
+    } catch { }
+    return $null
+}
+
+function Write-UpdateCheckStamp {
+    # Spends the day's check. Culture-pinned because the throttle gate parses it
+    # back with InvariantCulture, and a current-culture date written under a
+    # non-Gregorian calendar reads back centuries off. Best effort: a stamp
+    # that cannot be written means the next command checks again, not that
+    # this one fails.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        $now = (Get-Date).ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+        [System.IO.File]::WriteAllText($Path, $now, [System.Text.UTF8Encoding]::new($false))
+    } catch { }
+}
+
 function Show-UpdateNoticeIfAvailable {
-    # Prints the one-line yellow update notice if there's a newer commit
-    # on origin/main. Called from every non-updating tstyles invocation
-    # (picker, direct apply, list, current, random), but Test-UpdateAvailable
-    # short-circuits inside the 24h throttle window, so the notice displays
-    # at most once per day while an update is pending.
+    # Prints the one-line yellow update notice if something newer is out: a
+    # commit on origin/main for a bootstrap install, a release on the
+    # PowerShell Gallery for a Gallery one. Called from every non-updating
+    # tstyles invocation (picker, direct apply, list, current, random), but
+    # Test-UpdateAvailable short-circuits inside the 24h throttle window, so
+    # the notice displays at most once per day while an update is pending.
     $pending = Test-UpdateAvailable
     if ($pending) {
         Write-Host ("Update available ({0} -> {1}). Run: tstyles update" -f $pending.Installed, $pending.Remote) -ForegroundColor Yellow

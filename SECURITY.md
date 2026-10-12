@@ -30,7 +30,8 @@ within a few days. There is no bug bounty.
 ## Scope
 
 TerminalStyles writes to your PowerShell `$PROFILE` and Windows Terminal's
-`settings.json`, fetches background images over HTTPS, and (on bootstrap
-installs only) runs an unauthenticated daily update check against the GitHub
-API. Reports about those write/fetch paths — profile injection, settings
-corruption, update-check tampering — are explicitly welcome.
+`settings.json`, fetches background images over HTTPS, and runs an
+unauthenticated daily update check — against the PowerShell Gallery for a
+Gallery install, the GitHub API for a bootstrap one. Reports about those
+write/fetch paths — profile injection, settings corruption, update-check
+tampering — are explicitly welcome.
