@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-13
+
 ### Fixed
 
 - **A PowerShell Gallery install is told when a new release is out.** The update check returned nothing for one, on purpose: it compares the commit on GitHub's `main` with the one the bootstrap installer recorded, a Gallery copy records none, and the reasoning was that its user would run `tstyles update` whenever they chose. Nothing ever told them to. 0.9.0 was published and no Gallery install -- the install the README leads with -- printed a word about it. The check now asks the Gallery for its newest stable version, which is what `Update-PSResource` installs, and compares it with the newest version installed rather than the one the open tab loaded, so a tab left open across `tstyles update` is not told to update again: `Update available (0.8.48 -> 0.9.0). Run: tstyles update`. The bootstrap check's limits carry over -- one request a day at most, a two-second timeout, nothing said when offline or already current -- and nothing is asked at all when no installed copy can be found. The request identifies itself as `TerminalStyles-UpdateCheck` rather than with PowerShell's default User-Agent, which names the OS, the PowerShell version and the locale.
@@ -1565,7 +1567,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.1...HEAD
+[0.9.1]: https://github.com/fcreme/TerminalStyles/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/fcreme/TerminalStyles/compare/v0.8.48...v0.9.0
 [0.8.48]: https://github.com/fcreme/TerminalStyles/compare/v0.8.47...v0.8.48
 [0.8.47]: https://github.com/fcreme/TerminalStyles/compare/v0.8.46...v0.8.47

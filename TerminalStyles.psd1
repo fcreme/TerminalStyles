@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.0'
+    ModuleVersion     = '0.9.1'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.0: Styles stick in VS Code''s terminal -- and in Insiders, VSCodium, Cursor and Windsurf. Until now a style there was escape sequences only: the colors held for that tab, and the font and cursor never arrived. tstyles <name>, the picker, random, tune and delete now write the style into the editor''s own settings.json -- the terminal''s 20 colors, fontFamily, fontSize, fontWeight and cursorStyle -- after asking once per editor; tstyles vscode on|off changes the answer. Every apply keeps a record of what was there before, so tstyles reset, tstyles vscode off and tstyles uninstall put your own values back and leave alone a key you changed by hand since. The picker previews the font and cursor too, and Esc puts the file back exactly as it was. It refuses rather than guesses: an editor it cannot identify, a missing settings folder and a file that does not parse each stop the write and say why. Also fixed: a settings.json that will not parse is named, rather than always called Windows Terminal''s, and the picker prints its can''t-show notice once instead of twice.'
+            ReleaseNotes = 'v0.9.1: tstyles now tells a PowerShell Gallery install when a new release is out. Once a day at most, it compares the Gallery''s newest stable version with the newest one you have installed and prints, for example, Update available (0.9.1 -> 0.9.2). Run: tstyles update. Until now only copies from the bootstrap installer were ever told, so 0.9.0 went out without a word; this is the first version that can tell you about the next one. The check has a 2-second timeout, says nothing when offline or already current, and stays out of output a script captures, so x=$(tstyles current) still gets just the name. tstyles update now also works on a Windows PowerShell 5.1 copy installed with Install-Module, where it falls back to Update-Module, and on 5.1 both the check and the update allow TLS 1.2, which GitHub and the Gallery require.'
         }
     }
 }
