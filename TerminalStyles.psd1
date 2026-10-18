@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.1'
+    ModuleVersion     = '0.9.2'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.1: tstyles now tells a PowerShell Gallery install when a new release is out. Once a day at most, it compares the Gallery''s newest stable version with the newest one you have installed and prints, for example, Update available (0.9.1 -> 0.9.2). Run: tstyles update. Until now only copies from the bootstrap installer were ever told, so 0.9.0 went out without a word; this is the first version that can tell you about the next one. The check has a 2-second timeout, says nothing when offline or already current, and stays out of output a script captures, so x=$(tstyles current) still gets just the name. tstyles update now also works on a Windows PowerShell 5.1 copy installed with Install-Module, where it falls back to Update-Module, and on 5.1 both the check and the update allow TLS 1.2, which GitHub and the Gallery require.'
+            ReleaseNotes = 'v0.9.2: tstyles uninstall now tells you what it could not remove. It used to close on "TerminalStyles uninstalled." even with the module still installed or files left behind. That line now prints only when nothing is left; otherwise the end of the output names each module copy, install file, WezTerm style module or part of the data folder still in place, with what finishes the job. On Windows PowerShell 5.1 without PSResourceGet it now removes a Gallery copy, with Uninstall-Module -AllVersions; before, it called Uninstall-PSResource, which is not there, and left the module installed. On Windows it also looks in the other PowerShell engine''s per-user module folder, since PowerShell 7 and Windows PowerShell 5.1 keep separate ones, and names the command to run there. For a Gallery install, the confirmation screen names the command it will run.'
         }
     }
 }

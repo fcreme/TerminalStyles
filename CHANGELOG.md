@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.2] - 2026-10-18
+
 ### Fixed
 
 - **`tstyles uninstall` removes a Gallery copy on Windows PowerShell 5.1.** It never did where PSResourceGet is not installed -- 5.1 ships only PowerShellGet, and the Gallery's own page leads with `Install-Module`. It called `Uninstall-PSResource`, which is not there ("is not recognized"), went on to strip the loader, and signed off as uninstalled with the module still in place. It now uses `Uninstall-Module -AllVersions` there: `Update-Module` installs side by side, and `Uninstall-Module` alone removes only the newest version, which left the one before it installed. The confirmation names whichever command will run, under "detected: a PowerShell Gallery install" where it used to say "detected: PSResourceGet" on an engine without it. This is the uninstall half of 0.9.1's `Update-Module` fallback.
@@ -1575,7 +1577,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.1...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.2...HEAD
+[0.9.2]: https://github.com/fcreme/TerminalStyles/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/fcreme/TerminalStyles/compare/v0.9.0...v0.9.1
 [0.9.0]: https://github.com/fcreme/TerminalStyles/compare/v0.8.48...v0.9.0
 [0.8.48]: https://github.com/fcreme/TerminalStyles/compare/v0.8.47...v0.8.48
