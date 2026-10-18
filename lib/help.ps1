@@ -344,8 +344,8 @@ function Get-TerminalStyleHelpData {
                        "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
                        "The confirmation names every file it is about to change, `$PROFILE,",
-                       "rc and VS Code's settings.json alike, and the sign-off names any it",
-                       "could not.")
+                       "rc and VS Code's settings.json alike, and the sign-off names anything",
+                       "it could not change or remove, the module itself included.")
             Keys = @(); Examples = @('tstyles uninstall', 'tstyles uninstall -DeleteData')
         }
         [pscustomobject]@{

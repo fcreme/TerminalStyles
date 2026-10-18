@@ -851,8 +851,10 @@ tstyles uninstall
 
 `tstyles uninstall` detects how the module was installed and delegates:
 
-- **PSGallery** → runs `Uninstall-PSResource -Name TerminalStyles` +
-  strips the `Import-Module` loader from your `$PROFILE`.
+- **PSGallery** → runs `Uninstall-PSResource -Name TerminalStyles`, or
+  `Uninstall-Module -Name TerminalStyles -AllVersions` where PSResourceGet
+  is not installed (Windows PowerShell 5.1 ships without it), and strips
+  the `Import-Module` loader from your `$PROFILE`.
 - **Bootstrap** → removes the install-managed files from
   `%LOCALAPPDATA%\TerminalStyles\` (script files, bundled styles) and
   strips the loader.
@@ -863,7 +865,11 @@ each VS Code-family `settings.json` a style was saved to, and the
 generated WezTerm style module, which it deletes. If it cannot strip one
 (a read-only profile, or a block hand-edited down to a stray `BEGIN`), it
 names that file at the end instead of closing on "TerminalStyles
-uninstalled."
+uninstalled." The same goes for anything else it could not remove — a
+copy of the module still installed, an install file, the WezTerm module,
+or what `-DeleteData` could not delete: each is checked after the attempt
+and named at the end, and "TerminalStyles uninstalled." is printed only
+when nothing is left.
 
 **Either path preserves your user state by default** — your active
 style (`current-style.ps1`), update-check throttle, and cached

@@ -141,6 +141,13 @@ Describe 'the destructive commands route their consent through the gate' {
             if (Get-Command Uninstall-PSResource -ErrorAction SilentlyContinue) {
                 Mock Uninstall-PSResource { throw 'uninstall must not touch the module without consent' }
             }
+            # And Uninstall-Module, the remover on an engine without
+            # PSResourceGet -- the very engine where the guard above cannot be
+            # set, so without this one nothing would stop a regression there
+            # from uninstalling the module of whoever runs the suite.
+            if (Get-Command Uninstall-Module -ErrorAction SilentlyContinue) {
+                Mock Uninstall-Module { throw 'uninstall must not touch the module without consent' }
+            }
 
             $saved = $script:TStylesDataRoot
             try {

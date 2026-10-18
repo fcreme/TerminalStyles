@@ -990,6 +990,40 @@ function Remove-PowerShellProfileLoader {
     [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
 }
 
+function Get-InstalledModuleCopy {
+    # The folder of every TerminalStyles copy on the module path -- each one
+    # `Import-Module TerminalStyles` could load -- or nothing.
+    #
+    # How uninstall knows whether the module is gone, because the remover's own
+    # word cannot be taken for it: Uninstall-PSResource that finds nothing it
+    # can remove warns and returns, and -ErrorAction Stop does not fire.
+    # Measured against a copy it did not recognise, which stayed installed
+    # with no error to catch. A folder this user cannot read is passed over
+    # rather than failing the listing: a copy they cannot list is not one they
+    # can import.
+    [CmdletBinding()]
+    param()
+    Get-Module -ListAvailable -Name TerminalStyles -ErrorAction SilentlyContinue |
+        ForEach-Object { $_.ModuleBase }
+}
+
+function Write-UninstallLeftoverLead {
+    # The line that opens one leftover in uninstall's sign-off. The first one
+    # opens the sentence -- "TerminalStyles uninstalled, EXCEPT the loader block
+    # in:" -- and every one after it continues it with "...and". One place,
+    # because that choice was written out at each leftover, against conditions
+    # only some leftovers fed -- and a leftover none of them named never reached
+    # the sign-off at all.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][hashtable]$State,
+        [Parameter(Mandatory)][string]$What
+    )
+    $opening = if ($State.Opened) { '...and' } else { 'TerminalStyles uninstalled, EXCEPT' }
+    $State.Opened = $true
+    Write-Host "$opening $What" -ForegroundColor Yellow
+}
+
 function Invoke-TerminalStylesUninstall {
     [CmdletBinding()]
     param(
@@ -1008,7 +1042,12 @@ function Invoke-TerminalStylesUninstall {
         # The same kind of seam for the $PROFILE half, which resolves its paths
         # by RUNNING each engine and so otherwise reaches only the operator's
         # own profile. Same shape as Invoke-TerminalStylesRegister -Targets.
-        [object[]]$ProfileTarget
+        [object[]]$ProfileTarget,
+        # Whether this engine has PSResourceGet's Uninstall-PSResource. A
+        # parameter so both answers can be driven on every CI leg, as on
+        # Invoke-TerminalStylesUpdate: Windows PowerShell 5.1 has no
+        # PSResourceGet, and pwsh 7.4+ always does.
+        [bool]$HasPSResourceGet = [bool](Get-Command Uninstall-PSResource -ErrorAction SilentlyContinue)
     )
 
     $rcSplat = @{}
@@ -1041,11 +1080,25 @@ function Invoke-TerminalStylesUninstall {
     $dataDir = Get-TStylesDataRoot
     $kind = Get-TerminalStylesInstallKind
 
+    # The command step 1 runs on a Gallery install, named here as it will run.
+    # Windows PowerShell 5.1 ships PowerShellGet but not PSResourceGet, and the
+    # Gallery's own page leads with Install-Module, so a copy installed that
+    # way could only fail at Uninstall-PSResource -- "is not recognized" -- and
+    # stay installed. -AllVersions because Update-Module installs side by side
+    # and Uninstall-Module alone removes only the newest; Uninstall-PSResource
+    # removes every version.
+    $galleryRemove = if ($HasPSResourceGet) { 'Uninstall-PSResource -Name TerminalStyles' }
+                     else                   { 'Uninstall-Module -Name TerminalStyles -AllVersions' }
+
     Write-Host ""
-    Write-Host "This will uninstall TerminalStyles (detected: $kind):" -ForegroundColor Yellow
+    # The install kind by what people call it. 'PSResourceGet' is this code's
+    # name for every Gallery install, and printed as it is, it told an engine
+    # without PSResourceGet that PSResourceGet had been detected.
+    $kindLabel = if ($kind -eq 'PSResourceGet') { 'a PowerShell Gallery install' } else { 'a bootstrap install' }
+    Write-Host "This will uninstall TerminalStyles (detected: $kindLabel):" -ForegroundColor Yellow
     switch ($kind) {
         'PSResourceGet' {
-            Write-Host "  - Uninstall-PSResource -Name TerminalStyles" -ForegroundColor Yellow
+            Write-Host "  - $galleryRemove" -ForegroundColor Yellow
         }
         'Bootstrap' {
             Write-Host "  - Remove install-managed files from $dataDir" -ForegroundColor Yellow
@@ -1134,13 +1187,34 @@ function Invoke-TerminalStylesUninstall {
     }
 
     # 1. Remove the module / install-managed files
+    #
+    # What is left afterwards is read back, not assumed, and handed to the
+    # sign-off: it closed on "TerminalStyles uninstalled." under either arm's
+    # own failure line, because nothing here ever told it about one.
+    $installLeft = @()
     switch ($kind) {
         'PSResourceGet' {
+            $remover = ($galleryRemove -split ' ')[0]
+            $before  = @(Get-InstalledModuleCopy)
+            $failure = $null
             try {
-                Uninstall-PSResource -Name TerminalStyles -ErrorAction Stop
-                Write-Host "  Removed module via Uninstall-PSResource" -ForegroundColor Green
-            } catch {
-                Write-Host "  Uninstall-PSResource failed: $_" -ForegroundColor Red
+                if ($HasPSResourceGet) {
+                    Uninstall-PSResource -Name TerminalStyles -ErrorAction Stop
+                } else {
+                    Uninstall-Module -Name TerminalStyles -AllVersions -ErrorAction Stop
+                }
+            } catch { $failure = $_ }
+            $installLeft = @(Get-InstalledModuleCopy)
+            if ($installLeft.Count -gt 0) {
+                if ($failure) { Write-Host "  $remover failed: $failure" -ForegroundColor Red }
+                Write-Host "  ! TerminalStyles is still installed; the end of this output says where." -ForegroundColor Red
+            } elseif ($before.Count -gt 0) {
+                Write-Host "  Removed module via $remover" -ForegroundColor Green
+            } else {
+                # A module imported from outside the module path, a checkout
+                # say, is a Gallery kind too -- and "Removed module" would claim
+                # a removal there was nothing to make.
+                Write-Host "  No installed copy of the module was found, so there was none to remove." -ForegroundColor Gray
             }
         }
         'Bootstrap' {
@@ -1162,7 +1236,18 @@ function Invoke-TerminalStylesUninstall {
                 -not (Get-ChildItem -LiteralPath $stylesDir -Force)) {
                 Remove-Item -LiteralPath $stylesDir -Recurse -Force -ErrorAction SilentlyContinue
             }
-            Write-Host "  Removed install-managed files from $dataDir" -ForegroundColor Green
+            # Said only when it is so. The loop is silent on failure, so one
+            # locked file cannot stop the rest -- and this line was printed
+            # after it whatever it had managed.
+            $installLeft = @(foreach ($item in $plan.Items) {
+                $path = Join-Path $dataDir $item
+                if (Test-Path -LiteralPath $path) { $path }
+            })
+            if ($installLeft.Count -eq 0) {
+                Write-Host "  Removed install-managed files from $dataDir" -ForegroundColor Green
+            } else {
+                Write-Host "  ! could not remove every install-managed file; the end of this output names them." -ForegroundColor Red
+            }
             if ($plan.Source -eq 'fallback') {
                 Write-Host "  This install predates the file manifest, so the bundled styles were left" -ForegroundColor Gray
                 Write-Host "  in $stylesDir rather than risk deleting your own alongside them." -ForegroundColor Gray
@@ -1202,11 +1287,15 @@ function Invoke-TerminalStylesUninstall {
     # design preferable to a marker block in a Lua program -- see the header of
     # lib/wezterm.ps1.
     $wezPath = Get-WezTermModulePath @wezSplat
+    $wezLeft = $null
     if (Test-Path -LiteralPath $wezPath) {
         try {
             Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop
             Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
         } catch {
+            # Kept for the sign-off as well, which closed on the plain
+            # "TerminalStyles uninstalled." a few lines under these two.
+            $wezLeft = $wezPath
             Write-Host "  ! could not remove $wezPath" -ForegroundColor Red
             Write-Host "    Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Red
         }
@@ -1244,12 +1333,18 @@ function Invoke-TerminalStylesUninstall {
     $profileProblems = @($profileSweep.Problems)
 
     # 4. Optionally remove user state
+    $dataLeft = $false
     if ($DeleteData) {
         if (Test-Path -LiteralPath $dataDir) {
-            Remove-Item -LiteralPath $dataDir -Recurse -Force
+            # -ErrorAction Continue whatever the caller prefers. Under 'Stop'
+            # the first file that would not go was an error out of this
+            # command, before the line below or the sign-off could say what it
+            # had left; its own errors still show.
+            Remove-Item -LiteralPath $dataDir -Recurse -Force -ErrorAction Continue
             # Said only when it is so: a wipe that fails part-way leaves files
             # behind, and Remove-Item's own errors scroll past.
             if (Test-Path -LiteralPath $dataDir) {
+                $dataLeft = $true
                 Write-Host "  ! could not remove all of $dataDir -- delete what is left by hand." -ForegroundColor Red
             } else {
                 Write-Host "  Removed $dataDir (full wipe via -DeleteData)" -ForegroundColor Green
@@ -1277,16 +1372,43 @@ function Invoke-TerminalStylesUninstall {
     # or malformed file and then returned a bare count, so its problems reached
     # nothing: the command closed on the plain "TerminalStyles uninstalled." with
     # the block still in a file it had just said it could not write.
+    #
+    # And every other leftover, not those two alone. Step 1 failing, the WezTerm
+    # module refusing to go and a -DeleteData wipe that stopped part-way each
+    # printed a red line and reached nothing past it, so the command closed on
+    # the plain "TerminalStyles uninstalled." straight beneath them.
     $allProblems = @($shellProblems + $profileProblems)
+    # Read again here: under -DeleteData a bootstrap leftover is in the data
+    # root, and step 4 may have taken it after all.
+    $installLeft = @($installLeft | Where-Object { Test-Path -LiteralPath $_ })
+    # "The module is gone" is what three pieces of advice below rest on, so
+    # they are given as written only when it is so.
+    $moduleGone = $installLeft.Count -eq 0
+    $lead = @{ Opened = $false }
+
+    # The module itself first. "Uninstalled, EXCEPT the module" would contradict
+    # itself, so this one opens with what is true instead.
+    if (-not $moduleGone) {
+        Write-Host "TerminalStyles is NOT fully uninstalled. Still in place:" -ForegroundColor Yellow
+        foreach ($p in $installLeft) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
+        Write-Host "Delete them by hand." -ForegroundColor Yellow
+        # Every leftover after it continues this sentence rather than opening
+        # "uninstalled" under it.
+        $lead.Opened = $true
+    }
     if ($allProblems.Count -gt 0) {
-        Write-Host "TerminalStyles uninstalled, EXCEPT the loader block in:" -ForegroundColor Yellow
+        Write-UninstallLeftoverLead -State $lead -What 'the loader block in:'
         foreach ($p in $allProblems) {
             Write-Host ("  {0}" -f $p) -ForegroundColor Yellow
         }
-        # Single-quoted: a backtick opens an escape in a double-quoted string,
-        # and `t is a tab.
-        Write-Host 'Delete those blocks by hand -- the module is gone, so `tstyles shell-remove`' -ForegroundColor Yellow
-        Write-Host "cannot do it for you now." -ForegroundColor Yellow
+        if ($moduleGone) {
+            # Single-quoted: a backtick opens an escape in a double-quoted
+            # string, and `t is a tab.
+            Write-Host 'Delete those blocks by hand -- the module is gone, so `tstyles shell-remove`' -ForegroundColor Yellow
+            Write-Host "cannot do it for you now." -ForegroundColor Yellow
+        } else {
+            Write-Host "Delete those blocks by hand." -ForegroundColor Yellow
+        }
         # What is safe to promise about the leftovers, and no more: the staged
         # style state has just been cleared, so whatever the block still finds
         # to source has nothing left to paint. Whether the runtime file itself
@@ -1298,40 +1420,48 @@ function Invoke-TerminalStylesUninstall {
         }
         # A leftover $PROFILE block is not inert in that way, and saying so is
         # the difference between "untidy" and "every new tab opens broken": the
-        # block is an Import-Module of the module step 1 has just removed.
-        if ($profileProblems.Count -gt 0) {
+        # block is an Import-Module of the module step 1 has just removed. Not
+        # said when step 1 left it installed -- the import then still works.
+        if ($profileProblems.Count -gt 0 -and $moduleGone) {
             Write-Host "A PowerShell profile is not inert like that: the block there imports a module" -ForegroundColor Gray
             Write-Host "step 1 has just removed, so every new tab opens on a red error until you delete it." -ForegroundColor Gray
         }
-    } elseif ($vscodeProblems.Count -eq 0 -and $vscodeState.Ok) {
-        Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
+    }
+    if ($wezLeft) {
+        Write-UninstallLeftoverLead -State $lead -What 'the WezTerm style module:'
+        Write-Host ("  {0}" -f $wezLeft) -ForegroundColor Yellow
+        Write-Host "Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Yellow
     }
     # A VS Code style that could not be taken out. Its record is the only thing
     # that names those keys, and with the module gone no reset can use it -- so
     # the user is told where they are, rather than "uninstalled".
     if ($vscodeProblems.Count -gt 0) {
-        if ($allProblems.Count -gt 0) {
-            Write-Host "...and the style saved in:" -ForegroundColor Yellow
-        } else {
-            Write-Host "TerminalStyles uninstalled, EXCEPT the style saved in:" -ForegroundColor Yellow
-        }
+        Write-UninstallLeftoverLead -State $lead -What 'the style saved in:'
         foreach ($p in $vscodeProblems) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
         Write-Host "Take its keys out of those files by hand: the terminal colors in" -ForegroundColor Yellow
         Write-Host "workbench.colorCustomizations, and terminal.integrated.fontFamily, fontSize," -ForegroundColor Yellow
         Write-Host "fontWeight and cursorStyle. Or restore a settings.json.bak-* copy beside one," -ForegroundColor Yellow
-        Write-Host "if there is one -- restoring it also undoes your edits since. The module is" -ForegroundColor Yellow
-        Write-Host "gone, so tstyles cannot." -ForegroundColor Yellow
+        if ($moduleGone) {
+            Write-Host "if there is one -- restoring it also undoes your edits since. The module is" -ForegroundColor Yellow
+            Write-Host "gone, so tstyles cannot." -ForegroundColor Yellow
+        } else {
+            Write-Host "if there is one -- restoring it also undoes your edits since." -ForegroundColor Yellow
+        }
     }
     # The record of what was saved could not be read, so no editor's
     # settings.json was touched and nothing here can say which of them holds a
     # style. Said again at the end: the consent screen has scrolled away.
     if (-not $vscodeState.Ok) {
-        if ($allProblems.Count -gt 0) {
-            Write-Host "...and any style saved to a VS Code-family settings.json:" -ForegroundColor Yellow
-        } else {
-            Write-Host "TerminalStyles uninstalled, EXCEPT any style saved to a VS Code-family settings.json:" -ForegroundColor Yellow
-        }
+        Write-UninstallLeftoverLead -State $lead -What 'any style saved to a VS Code-family settings.json:'
         Write-Host ("{0} could not be read, so none was taken out. Check those files by hand." -f $vscodeState.Path) -ForegroundColor Yellow
+    }
+    if ($dataLeft) {
+        Write-UninstallLeftoverLead -State $lead -What 'part of the data folder:'
+        Write-Host ("  {0}" -f $dataDir) -ForegroundColor Yellow
+        Write-Host "-DeleteData could not remove all of it. Delete what is left by hand." -ForegroundColor Yellow
+    }
+    if (-not $lead.Opened) {
+        Write-Host "TerminalStyles uninstalled." -ForegroundColor Cyan
     }
     # Only when the $PROFILE side really did come out clean. This was printed
     # unconditionally, directly under a warning that the loader is still in a
