@@ -1308,7 +1308,7 @@ function Invoke-TerminalStylesUninstall {
             if ($installLeft.Count -eq 0) {
                 Write-Host "  Removed install-managed files from $dataDir" -ForegroundColor Green
             } else {
-                Write-Host "  ! could not remove every install-managed file; the end of this output names any still left." -ForegroundColor Red
+                Write-Host "  ! some install-managed files would not go; any still left are named at the end." -ForegroundColor Red
             }
             if ($plan.Source -eq 'fallback') {
                 Write-Host "  This install predates the file manifest, so the bundled styles were left" -ForegroundColor Gray
@@ -1480,11 +1480,12 @@ function Invoke-TerminalStylesUninstall {
             })
             $ours   = @($installLeft | Where-Object { $theirs -notcontains $_ })
             if ($ours.Count -gt 0) {
-                Write-Host ("To finish, run {0} -- from an elevated shell for a copy" -f $galleryRemove) -ForegroundColor Yellow
-                Write-Host ("installed for all users -- or delete the {0} by hand." -f $(if ($ours.Count -eq 1) { 'folder' } else { 'folders' })) -ForegroundColor Yellow
+                Write-Host ("To finish, run {0} -- elevated, for a" -f $galleryRemove) -ForegroundColor Yellow
+                Write-Host ("copy installed for all users -- or delete the {0} by hand." -f $(if ($ours.Count -eq 1) { 'folder' } else { 'folders' })) -ForegroundColor Yellow
             }
             if ($theirs.Count -gt 0) {
-                Write-Host ("{0}'s own copy is out of this engine's reach: run {1} there." -f $other.Engine, $other.Remover) -ForegroundColor Yellow
+                Write-Host ("{0}'s own copy is out of this engine's reach. To remove it," -f $other.Engine) -ForegroundColor Yellow
+                Write-Host ("run there: {0}" -f $other.Remover) -ForegroundColor Yellow
             }
         }
     }

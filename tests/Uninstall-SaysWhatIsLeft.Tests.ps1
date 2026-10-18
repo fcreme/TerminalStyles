@@ -163,7 +163,7 @@ Describe 'tstyles uninstall' {
                 Mock Uninstall-PSResource { Remove-Item -LiteralPath $script:copy -Recurse -Force }
 
                 $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
-                           -HasPSResourceGet:$true 6>&1 | Out-String
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
 
                 Should -Invoke Uninstall-PSResource -Times 1 -Exactly -ParameterFilter { $Name -eq 'TerminalStyles' }
                 $out | Should -Match 'Removed module via Uninstall-PSResource'
@@ -178,7 +178,7 @@ Describe 'tstyles uninstall' {
                 Mock Uninstall-Module { Remove-Item -LiteralPath $script:copy -Recurse -Force }
 
                 $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
-                           -HasPSResourceGet:$false 6>&1 | Out-String
+                           -HasPSResourceGet:$false 6>&1 | Out-String -Width 500
 
                 Should -Invoke Uninstall-Module -Times 1 -Exactly -ParameterFilter { $Name -eq 'TerminalStyles' -and $AllVersions }
                 Should -Invoke Uninstall-PSResource -Times 0
@@ -194,7 +194,7 @@ Describe 'tstyles uninstall' {
                 Mock Uninstall-PSResource { throw 'Access to the path is denied.' }
 
                 $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
-                           -HasPSResourceGet:$true 6>&1 | Out-String
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
 
                 $out | Should -Match 'Access to the path is denied' -Because 'the reason is the first thing to fix'
                 $out | Should -Match 'TerminalStyles[\\/]9\.9\.9'
@@ -213,7 +213,7 @@ Describe 'tstyles uninstall' {
                 Mock Uninstall-PSResource { }
 
                 $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
-                           -HasPSResourceGet:$true 6>&1 | Out-String
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
 
                 $out | Should -Match 'TerminalStyles[\\/]9\.9\.9'
                 $out | Should -Match 'NOT fully uninstalled'
@@ -235,12 +235,13 @@ Describe 'tstyles uninstall' {
                 Mock Uninstall-PSResource { Remove-Item -LiteralPath $script:copy -Recurse -Force }
 
                 $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
-                           -HasPSResourceGet:$true 6>&1 | Out-String
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
 
                 $out | Should -Match 'Removed module via Uninstall-PSResource' -Because 'this engine''s own copy did go'
                 $out | Should -Match 'NOT fully uninstalled'
                 $out | Should -Match 'TerminalStyles[\\/]9\.9\.8'
-                $out | Should -Match ([regex]::Escape("Windows PowerShell 5.1's own copy is out of this engine's reach: run Uninstall-Module -Name TerminalStyles -AllVersions there."))
+                $out | Should -Match ([regex]::Escape("Windows PowerShell 5.1's own copy is out of this engine's reach."))
+                $out | Should -Match ([regex]::Escape('run there: Uninstall-Module -Name TerminalStyles -AllVersions'))
                 $out | Should -Not -Match 'To finish, run' -Because 'nothing of this engine''s own is left for its remover'
                 $out | Should -Not -Match 'TerminalStyles uninstalled'
             }
@@ -253,7 +254,7 @@ Describe 'tstyles uninstall' {
                 Mock Uninstall-PSResource { }
 
                 $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
-                           -HasPSResourceGet:$true 6>&1 | Out-String
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
 
                 $out | Should -Not -Match 'Removed module via'
                 $out | Should -Match 'No installed copy of the module was found'
@@ -274,7 +275,7 @@ Describe 'tstyles uninstall' {
                 (Get-Item -LiteralPath $prof -Force).IsReadOnly = $true
                 try {
                     $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($target) `
-                               -HasPSResourceGet:$true 6>&1 | Out-String
+                               -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
                 } finally {
                     (Get-Item -LiteralPath $prof -Force).IsReadOnly = $false
                 }
@@ -316,7 +317,7 @@ Describe 'tstyles uninstall' {
                 (Get-Item -LiteralPath $prof -Force).IsReadOnly = $true
                 try {
                     $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($target) `
-                               -HasPSResourceGet:$true 6>&1 | Out-String
+                               -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
                 } finally {
                     (Get-Item -LiteralPath $rc -Force).IsReadOnly = $false
                     (Get-Item -LiteralPath $prof -Force).IsReadOnly = $false
@@ -377,7 +378,7 @@ Describe 'tstyles uninstall' {
             }
 
             It 'says so when every file it placed is gone' {
-                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
 
                 $out | Should -Match 'Removed install-managed files'
                 $out | Should -Match '(?m)^TerminalStyles uninstalled\.\s*$'
@@ -399,7 +400,7 @@ Describe 'tstyles uninstall' {
                 Mock Remove-Item { & (Get-Command -Name Remove-Item -CommandType Cmdlet) @PesterBoundParameters }
                 Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:stuck }
 
-                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
 
                 $out | Should -Not -Match 'Removed install-managed files'
                 $out | Should -Match 'NOT fully uninstalled'
@@ -424,7 +425,7 @@ Describe 'tstyles uninstall' {
 
                 (Get-Item -LiteralPath $prof -Force).IsReadOnly = $true
                 try {
-                    $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($target) 6>&1 | Out-String
+                    $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($target) 6>&1 | Out-String -Width 500
                 } finally {
                     (Get-Item -LiteralPath $prof -Force).IsReadOnly = $false
                 }
@@ -447,7 +448,7 @@ Describe 'tstyles uninstall' {
                 Mock Remove-Item { & (Get-Command -Name Remove-Item -CommandType Cmdlet) @PesterBoundParameters }
                 Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:stuck }
 
-                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
 
                 Test-Path -LiteralPath $script:data | Should -BeFalse -Because 'the fixture needs the wipe to have worked'
                 $out | Should -Not -Match 'NOT fully uninstalled'
@@ -481,7 +482,7 @@ Describe 'tstyles uninstall' {
                 Mock Remove-Item { throw 'The process cannot access the file because it is being used by another process.' } `
                     -ParameterFilter { $LiteralPath -eq $script:wez }
 
-                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
 
                 $out | Should -Match 'could not remove'
                 $out | Should -Match 'EXCEPT the WezTerm style module'
@@ -491,7 +492,7 @@ Describe 'tstyles uninstall' {
             It 'names the data folder when -DeleteData could not remove all of it' {
                 Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:data }
 
-                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
 
                 $out | Should -Match 'could not remove all of'
                 $out | Should -Match 'EXCEPT part of the data folder'
@@ -529,7 +530,7 @@ Describe 'tstyles uninstall' {
                     $ErrorActionPreference = 'Stop'
                     $script:out = $null
                     { $script:out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() `
-                                        2>$null 6>&1 | Out-String } | Should -Not -Throw
+                                        2>$null 6>&1 | Out-String -Width 500 } | Should -Not -Throw
                     $script:out | Should -Match 'could not remove all of'
                     $script:out | Should -Match 'EXCEPT part of the data folder'
                 } finally {
