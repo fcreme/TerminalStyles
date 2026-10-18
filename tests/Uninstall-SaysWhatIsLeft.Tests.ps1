@@ -26,8 +26,9 @@
 # Every case is driven past consent with every path it can reach inside
 # TestDrive, by the rules in CLAUDE.md: -HomeDir for the rc half, a mocked data
 # root for the staged files and the VS Code records, both seams of the $PROFILE
-# half pinned, and both module removers mocked to fail the test if anything
-# reaches them that a case did not plan for.
+# half pinned, and both module removers mocked to throw, so nothing reaches the
+# real ones -- and, where a case has no use for them, asserted uncalled: step 1
+# catches whatever its remover throws, so the throw alone fails nothing.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -86,6 +87,27 @@ Describe 'tstyles uninstall' {
                 $root.Path   | Should -Be (Join-Path (Join-Path $docs $other) 'Modules')
                 $root.Engine | Should -Be $engine
             }
+
+            It 'names the other engine''s own remover' {
+                # On every leg: the Windows branch needs only the platform to say
+                # so, and the edition this run is on decides which engine is the
+                # other one.
+                if (-not [Environment]::GetFolderPath('MyDocuments')) {
+                    Set-ItResult -Skipped -Because 'this machine reports no Documents folder to build the path from'
+                    return
+                }
+                Mock Get-TStylesPlatform { 'Windows' }
+                $root = Get-OtherEngineModuleRoot
+                if ($PSVersionTable.PSEdition -eq 'Desktop') {
+                    $root.Engine  | Should -Be 'PowerShell 7'
+                    $root.Remover | Should -Be 'Uninstall-PSResource -Name TerminalStyles'
+                    $root.Path    | Should -Not -BeLike '*WindowsPowerShell*'
+                } else {
+                    $root.Engine  | Should -Be 'Windows PowerShell 5.1'
+                    $root.Remover | Should -Be 'Uninstall-Module -Name TerminalStyles -AllVersions'
+                    $root.Path    | Should -BeLike '*WindowsPowerShell*'
+                }
+            }
         }
 
         Context 'Get-InstalledModuleCopy' {
@@ -126,6 +148,17 @@ Describe 'tstyles uninstall' {
 
                 @(Get-InstalledModuleCopy) | Should -BeNullOrEmpty
             }
+
+            It 'lists a folder once when this engine''s module path reaches the other''s too' {
+                # Someone who added the other engine's folder to this one's path:
+                # both listings find the same copy.
+                $copy = Join-Path (Join-Path $script:there 'TerminalStyles') '9.9.8'
+                New-Item -ItemType Directory -Path $copy -Force | Out-Null
+                New-ModuleManifest -Path (Join-Path $copy 'TerminalStyles.psd1') -ModuleVersion '9.9.8'
+                $env:PSModulePath = $script:there
+
+                @(Get-InstalledModuleCopy) | Should -Be @($copy)
+            }
         }
 
         Context 'uninstall removes a Gallery install, and says so only once it is gone' {
@@ -133,6 +166,39 @@ Describe 'tstyles uninstall' {
             # and the other engine's folder to none, so "still installed" can only ever
             # see what a case put there -- never one of the machine's, and never the
             # developer's own.
+            BeforeAll {
+                # An rc file and a $PROFILE it cannot strip, and a VS Code style it
+                # cannot take out: the three leftovers whose advice rests on "the
+                # module is gone". Read-only until AfterEach.
+                function New-StuckLeftover {
+                    $rc = Join-Path $script:h '.zshrc'
+                    [System.IO.File]::WriteAllText($rc, "# original`n", [System.Text.UTF8Encoding]::new($false))
+                    Register-ShellLoader -Path $rc | Should -Be 'added' -Because 'the fixture must plant a real block'
+                    $prof = Join-Path $script:h 'profile.ps1'
+                    [System.IO.File]::WriteAllText($prof, "function prompt { 'mine> ' }`n", [System.Text.UTF8Encoding]::new($false))
+                    Register-ShellLoader -Path $prof | Should -Be 'added' -Because 'the fixture must plant a real block'
+                    # The writer's own cases cover how a reset fails; these only
+                    # need the sign-off to hear of one.
+                    $script:settings = Join-Path $script:h 'settings.json'
+                    Mock Get-VSCodeUninstallTarget { [pscustomobject]@{ Variant = 'Code'; Path = $script:settings } }
+                    Mock Reset-StyleVSCodeConfig { @{ Variant = 'Code'; Status = 'failed'; Detail = 'locked' } }
+                    Mock Show-VSCodeResetResult { }
+                    (Get-Item -LiteralPath $rc -Force).IsReadOnly = $true
+                    (Get-Item -LiteralPath $prof -Force).IsReadOnly = $true
+                    [pscustomobject]@{
+                        Rc      = $rc
+                        Profile = $prof
+                        Target  = [pscustomobject]@{ ProfilePath = $prof; Label = 'PowerShell 7'; Labels = @('PowerShell 7') }
+                    }
+                }
+                # The fixture took: both blocks are still where it put them.
+                function Assert-StuckLeftover([object]$Stuck) {
+                    foreach ($p in $Stuck.Rc, $Stuck.Profile) {
+                        [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false)) |
+                            Should -Match 'TerminalStyles BEGIN' -Because "$p must really have been left carrying its block"
+                    }
+                }
+            }
             BeforeEach {
                 $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
                 $script:data = Join-Path $script:h 'data'
@@ -155,6 +221,9 @@ Describe 'tstyles uninstall' {
                 $env:PSModulePath = $script:mods
             }
             AfterEach {
+                foreach ($p in (Join-Path $script:h '.zshrc'), (Join-Path $script:h 'profile.ps1')) {
+                    if ([System.IO.File]::Exists($p)) { (Get-Item -LiteralPath $p -Force).IsReadOnly = $false }
+                }
                 $env:PSModulePath = $script:savedModulePath
                 $script:TStylesDataRoot = $script:savedData
             }
@@ -296,38 +365,12 @@ Describe 'tstyles uninstall' {
                 # second "TerminalStyles uninstalled, EXCEPT" under "NOT fully
                 # uninstalled" would contradict it.
                 Mock Uninstall-PSResource { throw 'Access to the path is denied.' }
+                $stuck = New-StuckLeftover
 
-                # An rc file it cannot strip.
-                $rc = Join-Path $script:h '.zshrc'
-                [System.IO.File]::WriteAllText($rc, "# original`n", [System.Text.UTF8Encoding]::new($false))
-                Register-ShellLoader -Path $rc | Should -Be 'added' -Because 'the fixture must plant a real block'
-                # A $PROFILE it cannot strip.
-                $prof = Join-Path $script:h 'profile.ps1'
-                [System.IO.File]::WriteAllText($prof, "function prompt { 'mine> ' }`n", [System.Text.UTF8Encoding]::new($false))
-                Register-ShellLoader -Path $prof | Should -Be 'added'
-                $target = [pscustomobject]@{ ProfilePath = $prof; Label = 'PowerShell 7'; Labels = @('PowerShell 7') }
-                # A VS Code style it cannot take out. The writer's own cases cover
-                # how a reset fails; this one only needs the sign-off to hear of it.
-                $script:settings = Join-Path $script:h 'settings.json'
-                Mock Get-VSCodeUninstallTarget { [pscustomobject]@{ Variant = 'Code'; Path = $script:settings } }
-                Mock Reset-StyleVSCodeConfig { @{ Variant = 'Code'; Status = 'failed'; Detail = 'locked' } }
-                Mock Show-VSCodeResetResult { }
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($stuck.Target) `
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
 
-                (Get-Item -LiteralPath $rc -Force).IsReadOnly = $true
-                (Get-Item -LiteralPath $prof -Force).IsReadOnly = $true
-                try {
-                    $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($target) `
-                               -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
-                } finally {
-                    (Get-Item -LiteralPath $rc -Force).IsReadOnly = $false
-                    (Get-Item -LiteralPath $prof -Force).IsReadOnly = $false
-                }
-
-                # The fixtures took: both blocks are still there.
-                foreach ($p in $rc, $prof) {
-                    [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false)) |
-                        Should -Match 'TerminalStyles BEGIN' -Because "$p must really have been left carrying its block"
-                }
+                Assert-StuckLeftover $stuck
 
                 # The sign-off itself, not the consent screen above it, which names
                 # the same files: everything from its opening line on.
@@ -336,8 +379,8 @@ Describe 'tstyles uninstall' {
                 $signOff = $out.Substring($at)
                 $signOff | Should -Match 'TerminalStyles[\\/]9\.9\.9'
                 $signOff | Should -Match '\.\.\.and the loader block in:'
-                $signOff | Should -Match ([regex]::Escape($rc))
-                $signOff | Should -Match ([regex]::Escape($prof))
+                $signOff | Should -Match ([regex]::Escape($stuck.Rc))
+                $signOff | Should -Match ([regex]::Escape($stuck.Profile))
                 $signOff | Should -Match 'Delete those blocks by hand'
                 $signOff | Should -Match '\.\.\.and the style saved in:'
                 $signOff | Should -Match ([regex]::Escape($script:settings))
@@ -347,6 +390,66 @@ Describe 'tstyles uninstall' {
                 $out | Should -Not -Match 'the module is gone'
                 $out | Should -Not -Match 'just removed'
                 $out | Should -Not -Match 'module is\s+gone, so tstyles cannot'
+            }
+
+            It 'gives the advice that rests on the module being gone, once it is' {
+                # The other direction of the case above. With the copy removed,
+                # the shell's tstyles really cannot load it to run shell-remove,
+                # the $PROFILE block really does import a module that is gone, and
+                # tstyles really cannot take the VS Code style out -- and each of
+                # those is worth saying.
+                Mock Uninstall-PSResource { Remove-Item -LiteralPath $script:copy -Recurse -Force }
+                $stuck = New-StuckLeftover
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($stuck.Target) `
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
+
+                Assert-StuckLeftover $stuck
+                $out | Should -Match '(?m)^TerminalStyles uninstalled, EXCEPT the loader block in:'
+                $out | Should -Match 'the module is gone, so `tstyles shell-remove`'
+                $out | Should -Match 'step 1 has just removed, so every new tab opens on a red error'
+                $out | Should -Match 'The module is\s+gone, so tstyles cannot\.'
+            }
+
+            It 'withholds that advice while the other engine''s copy is still installed' {
+                # Something was removed, and still not everything: the copy left
+                # in the other engine's folder is one those loaders can import.
+                $script:otherMods = Join-Path $script:h 'OtherModules'
+                $other = Join-Path (Join-Path $script:otherMods 'TerminalStyles') '9.9.8'
+                New-Item -ItemType Directory -Path $other -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $other 'TerminalStyles.psd1'), "@{ ModuleVersion = '9.9.8' }")
+                Mock Get-OtherEngineModuleRoot {
+                    [pscustomobject]@{ Path = $script:otherMods; Engine = 'Windows PowerShell 5.1'
+                                       Remover = 'Uninstall-Module -Name TerminalStyles -AllVersions' }
+                }
+                Mock Uninstall-PSResource { Remove-Item -LiteralPath $script:copy -Recurse -Force }
+                $stuck = New-StuckLeftover
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @($stuck.Target) `
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
+
+                Assert-StuckLeftover $stuck
+                $out | Should -Match 'Removed module via Uninstall-PSResource'
+                $out | Should -Match 'NOT fully uninstalled'
+                $out | Should -Not -Match 'the module is gone'
+                $out | Should -Not -Match 'just removed'
+                $out | Should -Not -Match 'module is\s+gone, so tstyles cannot'
+            }
+
+            It 'shows the remover''s error even when its removal went through' {
+                # Nothing is left, so the sign-off is plain -- but the remover did
+                # report something, and that is not this command's to drop.
+                Mock Uninstall-PSResource {
+                    Remove-Item -LiteralPath $script:copy -Recurse -Force
+                    throw 'Could not update the installed-resource metadata.'
+                }
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() `
+                           -HasPSResourceGet:$true 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'Uninstall-PSResource reported an error: Could not update the installed-resource metadata'
+                $out | Should -Match 'Removed module via Uninstall-PSResource'
+                $out | Should -Match '(?m)^TerminalStyles uninstalled\.\s*$' -Because 'nothing of it is left'
             }
         }
 
@@ -375,6 +478,11 @@ Describe 'tstyles uninstall' {
             }
             AfterEach {
                 $script:TStylesDataRoot = $script:savedData
+                # A bootstrap uninstall has no business with either remover. Their
+                # mocks throw, but step 1 catches what its remover throws, so the
+                # throw alone could never fail a case.
+                Should -Invoke Uninstall-PSResource -Times 0 -Exactly
+                Should -Invoke Uninstall-Module -Times 0 -Exactly
             }
 
             It 'says so when every file it placed is gone' {
@@ -473,6 +581,11 @@ Describe 'tstyles uninstall' {
             }
             AfterEach {
                 $script:TStylesDataRoot = $script:savedData
+                # A bootstrap uninstall has no business with either remover. Their
+                # mocks throw, but step 1 catches what its remover throws, so the
+                # throw alone could never fail a case.
+                Should -Invoke Uninstall-PSResource -Times 0 -Exactly
+                Should -Invoke Uninstall-Module -Times 0 -Exactly
             }
 
             It 'names the WezTerm module when it could not be deleted' {

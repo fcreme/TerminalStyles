@@ -152,7 +152,11 @@ Describe 'the destructive commands route their consent through the gate' {
             $saved = $script:TStylesDataRoot
             try {
                 $script:TStylesDataRoot = $root
-                { Invoke-TerminalStylesUninstall } | Should -Not -Throw
+                # Sandboxed as if consent could fail open, because this is the case
+                # that finds out whether it does: a regression here would strip
+                # rc files and $PROFILEs with .NET writes no Remove-Item mock sees,
+                # before any assertion below could say so.
+                { Invoke-TerminalStylesUninstall -HomeDir $root -ProfileTarget @() } | Should -Not -Throw
             } finally { $script:TStylesDataRoot = $saved }
 
             Should -Not -Invoke Remove-Item
