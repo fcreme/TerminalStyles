@@ -156,6 +156,14 @@ Describe 'the destructive commands route their consent through the gate' {
             } finally { $script:TStylesDataRoot = $saved }
 
             Should -Not -Invoke Remove-Item
+            # Asked of the mocks too: step 1 catches whatever its remover throws,
+            # so the throw above alone could never fail this test.
+            if (Get-Command Uninstall-PSResource -ErrorAction SilentlyContinue) {
+                Should -Not -Invoke Uninstall-PSResource
+            }
+            if (Get-Command Uninstall-Module -ErrorAction SilentlyContinue) {
+                Should -Not -Invoke Uninstall-Module
+            }
             Test-Path -LiteralPath (Join-Path $root 'styles/mine/tune.json') | Should -BeTrue `
                 -Because "a user's tuned style must survive a command nobody confirmed"
         }

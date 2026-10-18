@@ -868,8 +868,13 @@ names that file at the end instead of closing on "TerminalStyles
 uninstalled." The same goes for anything else it could not remove — a
 copy of the module still installed, an install file, the WezTerm module,
 or what `-DeleteData` could not delete: each is checked after the attempt
-and named at the end, and "TerminalStyles uninstalled." is printed only
-when nothing is left.
+and named at the end, with the command that finishes the job, and
+"TerminalStyles uninstalled." is printed only when none of them is left.
+Module copies are looked for on the module path of the PowerShell running
+the uninstall and, on Windows, in the other engine's per-user module folder
+too: PowerShell 7 and Windows PowerShell 5.1 each keep their own, so a copy
+installed from one is out of the other's reach, and is named with the
+command to run in that engine.
 
 **Either path preserves your user state by default** — your active
 style (`current-style.ps1`), update-check throttle, and cached

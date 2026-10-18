@@ -990,9 +990,43 @@ function Remove-PowerShellProfileLoader {
     [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
 }
 
+function Get-OtherEngineModuleRoot {
+    # The other PowerShell engine's per-user module folder, as
+    # { Path; Engine; Remover }, or nothing.
+    #
+    # Windows only. PowerShell 7 keeps its per-user modules in
+    # Documents\PowerShell\Modules and Windows PowerShell 5.1 in
+    # Documents\WindowsPowerShell\Modules, and neither engine's module path has
+    # the other's. `register` writes `Import-Module TerminalStyles` by name into
+    # both engines' $PROFILE, so a user of both installs it twice -- and an
+    # uninstall from one engine removed its own copy, stripped both loaders and
+    # signed off "TerminalStyles uninstalled." over the other. Elsewhere pwsh
+    # and pwsh-preview share one folder, and there is no other to look in.
+    #
+    # MyDocuments is the folder both engines build that path from, so a
+    # Documents folder redirected into OneDrive is followed here as it is there.
+    [CmdletBinding()]
+    param()
+    if ((Get-TStylesPlatform) -ne 'Windows') { return }
+    $docs = [Environment]::GetFolderPath('MyDocuments')
+    if (-not $docs) { return }
+    if ($PSVersionTable.PSEdition -eq 'Desktop') {
+        [pscustomobject]@{ Path    = (Join-Path $docs 'PowerShell\Modules')
+                           Engine  = 'PowerShell 7'
+                           Remover = 'Uninstall-PSResource -Name TerminalStyles' }
+    } else {
+        [pscustomobject]@{ Path    = (Join-Path $docs 'WindowsPowerShell\Modules')
+                           Engine  = 'Windows PowerShell 5.1'
+                           Remover = 'Uninstall-Module -Name TerminalStyles -AllVersions' }
+    }
+}
+
 function Get-InstalledModuleCopy {
-    # The folder of every TerminalStyles copy on the module path -- each one
-    # `Import-Module TerminalStyles` could load -- or nothing.
+    # The folder of every TerminalStyles copy a PowerShell engine here could
+    # load, or nothing: each one on this engine's module path, which
+    # `Import-Module TerminalStyles` searches, and -- on Windows -- each in the
+    # other engine's per-user module folder, which it does not
+    # (Get-OtherEngineModuleRoot).
     #
     # How uninstall knows whether the module is gone, because the remover's own
     # word cannot be taken for it: Uninstall-PSResource that finds nothing it
@@ -1003,8 +1037,21 @@ function Get-InstalledModuleCopy {
     # can import.
     [CmdletBinding()]
     param()
-    Get-Module -ListAvailable -Name TerminalStyles -ErrorAction SilentlyContinue |
-        ForEach-Object { $_.ModuleBase }
+    $copies = @(Get-Module -ListAvailable -Name TerminalStyles -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.ModuleBase })
+    $other = Get-OtherEngineModuleRoot
+    if ($other) {
+        # Both layouts a module folder can have: versioned, and the manifest
+        # directly inside.
+        $dir = Join-Path $other.Path 'TerminalStyles'
+        if ([System.IO.File]::Exists((Join-Path $dir 'TerminalStyles.psd1'))) { $copies += $dir }
+        $copies += @(Get-ChildItem -LiteralPath $dir -Directory -ErrorAction SilentlyContinue |
+                     Where-Object { [System.IO.File]::Exists((Join-Path $_.FullName 'TerminalStyles.psd1')) } |
+                     ForEach-Object { $_.FullName })
+    }
+    # Unique without regard to case: on Windows one folder can come back from
+    # both listings, spelled the same but for case.
+    $copies | Sort-Object -Unique
 }
 
 function Write-UninstallLeftoverLead {
@@ -1014,14 +1061,20 @@ function Write-UninstallLeftoverLead {
     # because that choice was written out at each leftover, against conditions
     # only some leftovers fed -- and a leftover none of them named never reached
     # the sign-off at all.
+    #
+    # -Opening is for the one leftover that cannot open that way: "uninstalled,
+    # EXCEPT the module" contradicts itself. It goes through here all the same,
+    # so whether the sentence has opened is decided in one place and the plain
+    # "TerminalStyles uninstalled." cannot follow it.
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][hashtable]$State,
-        [Parameter(Mandatory)][string]$What
+        [Parameter(Mandatory)][string]$What,
+        [string]$Opening = 'TerminalStyles uninstalled, EXCEPT'
     )
-    $opening = if ($State.Opened) { '...and' } else { 'TerminalStyles uninstalled, EXCEPT' }
+    $lead = if ($State.Opened) { '...and' } else { $Opening }
     $State.Opened = $true
-    Write-Host "$opening $What" -ForegroundColor Yellow
+    Write-Host "$lead $What" -ForegroundColor Yellow
 }
 
 function Invoke-TerminalStylesUninstall {
@@ -1192,6 +1245,7 @@ function Invoke-TerminalStylesUninstall {
     # sign-off: it closed on "TerminalStyles uninstalled." under either arm's
     # own failure line, because nothing here ever told it about one.
     $installLeft = @()
+    $moduleRemoved = $false
     switch ($kind) {
         'PSResourceGet' {
             $remover = ($galleryRemove -split ' ')[0]
@@ -1205,12 +1259,20 @@ function Invoke-TerminalStylesUninstall {
                 }
             } catch { $failure = $_ }
             $installLeft = @(Get-InstalledModuleCopy)
-            if ($installLeft.Count -gt 0) {
-                if ($failure) { Write-Host "  $remover failed: $failure" -ForegroundColor Red }
-                Write-Host "  ! TerminalStyles is still installed; the end of this output says where." -ForegroundColor Red
-            } elseif ($before.Count -gt 0) {
+            # Each line for what happened, and none for what did not. The error
+            # is shown whenever there was something to remove, even when the
+            # listing afterwards finds nothing left: it was the remover's own
+            # report. With nothing installed it is only the remover saying so.
+            if ($failure -and $before.Count -gt 0) {
+                Write-Host "  $remover reported an error: $failure" -ForegroundColor Red
+            }
+            $moduleRemoved = @($before | Where-Object { $installLeft -notcontains $_ }).Count -gt 0
+            if ($moduleRemoved) {
                 Write-Host "  Removed module via $remover" -ForegroundColor Green
-            } else {
+            }
+            if ($installLeft.Count -gt 0) {
+                Write-Host "  ! TerminalStyles is still installed; the end of this output says where." -ForegroundColor Red
+            } elseif ($before.Count -eq 0) {
                 # A module imported from outside the module path, a checkout
                 # say, is a Gallery kind too -- and "Removed module" would claim
                 # a removal there was nothing to make.
@@ -1246,7 +1308,7 @@ function Invoke-TerminalStylesUninstall {
             if ($installLeft.Count -eq 0) {
                 Write-Host "  Removed install-managed files from $dataDir" -ForegroundColor Green
             } else {
-                Write-Host "  ! could not remove every install-managed file; the end of this output names them." -ForegroundColor Red
+                Write-Host "  ! could not remove every install-managed file; the end of this output names any still left." -ForegroundColor Red
             }
             if ($plan.Source -eq 'fallback') {
                 Write-Host "  This install predates the file manifest, so the bundled styles were left" -ForegroundColor Gray
@@ -1289,15 +1351,16 @@ function Invoke-TerminalStylesUninstall {
     $wezPath = Get-WezTermModulePath @wezSplat
     $wezLeft = $null
     if (Test-Path -LiteralPath $wezPath) {
-        try {
-            Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop
-            Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
-        } catch {
-            # Kept for the sign-off as well, which closed on the plain
-            # "TerminalStyles uninstalled." a few lines under these two.
+        try { Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop } catch { }
+        # Read back, like every other removal here, and kept for the sign-off
+        # as well -- which closed on the plain "TerminalStyles uninstalled." a
+        # few lines under the warning.
+        if (Test-Path -LiteralPath $wezPath) {
             $wezLeft = $wezPath
             Write-Host "  ! could not remove $wezPath" -ForegroundColor Red
             Write-Host "    Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Red
+        } else {
+            Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
         }
     }
 
@@ -1373,28 +1436,57 @@ function Invoke-TerminalStylesUninstall {
     # nothing: the command closed on the plain "TerminalStyles uninstalled." with
     # the block still in a file it had just said it could not write.
     #
-    # And every other leftover, not those two alone. Step 1 failing, the WezTerm
-    # module refusing to go and a -DeleteData wipe that stopped part-way each
-    # printed a red line and reached nothing past it, so the command closed on
-    # the plain "TerminalStyles uninstalled." straight beneath them.
+    # And every other leftover, not those two alone. Step 1 failing or quietly
+    # leaving files behind, the WezTerm module refusing to go and a -DeleteData
+    # wipe that stopped part-way each reached nothing past their own step, so
+    # the command closed on the plain "TerminalStyles uninstalled." regardless.
     $allProblems = @($shellProblems + $profileProblems)
     # Read again here: under -DeleteData a bootstrap leftover is in the data
     # root, and step 4 may have taken it after all.
     $installLeft = @($installLeft | Where-Object { Test-Path -LiteralPath $_ })
-    # "The module is gone" is what three pieces of advice below rest on, so
-    # they are given as written only when it is so.
-    $moduleGone = $installLeft.Count -eq 0
+    # Whether the module itself is still installed, which is not the same as
+    # whether anything is left. A Gallery copy anywhere is the module. A
+    # bootstrap install is the module while its manifest is there -- the
+    # $PROFILE loader and the rc shim both import it by path -- and once that
+    # has gone, a leftover docs/ is a file, not an install.
+    $moduleLeft = if ($kind -eq 'Bootstrap') { Test-Path -LiteralPath (Join-Path $dataDir 'TerminalStyles.psd1') }
+                  else                       { $installLeft.Count -gt 0 }
+    # What three pieces of advice below rest on: step 1 removed the module those
+    # loaders import, and none of it is left. Not the same as nothing left
+    # either -- a checkout had no installed copy to remove, and the loaders
+    # still import it.
+    $moduleGone = if ($kind -eq 'Bootstrap') { -not $moduleLeft }
+                  else                       { $moduleRemoved -and -not $moduleLeft }
     $lead = @{ Opened = $false }
 
-    # The module itself first. "Uninstalled, EXCEPT the module" would contradict
-    # itself, so this one opens with what is true instead.
-    if (-not $moduleGone) {
-        Write-Host "TerminalStyles is NOT fully uninstalled. Still in place:" -ForegroundColor Yellow
+    if ($installLeft.Count -gt 0) {
+        $one = $installLeft.Count -eq 1
+        if ($moduleLeft) {
+            Write-UninstallLeftoverLead -State $lead -Opening 'TerminalStyles is NOT fully uninstalled.' -What 'Still in place:'
+        } else {
+            Write-UninstallLeftoverLead -State $lead -What $(if ($one) { 'this file it installed:' } else { 'these files it installed:' })
+        }
         foreach ($p in $installLeft) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
-        Write-Host "Delete them by hand." -ForegroundColor Yellow
-        # Every leftover after it continues this sentence rather than opening
-        # "uninstalled" under it.
-        $lead.Opened = $true
+        if ($kind -eq 'Bootstrap') {
+            Write-Host $(if ($one) { 'Delete it by hand.' } else { 'Delete them by hand.' }) -ForegroundColor Yellow
+        } else {
+            # The remover first, because a copy installed for all users needs an
+            # elevated shell to delete, and "by hand" said nothing of it. A copy
+            # in the other engine's folder is out of this one's reach, so that
+            # engine's own remover is named for it.
+            $other  = Get-OtherEngineModuleRoot
+            $theirs = @(if ($other) {
+                $installLeft | Where-Object { $_.StartsWith($other.Path, [System.StringComparison]::OrdinalIgnoreCase) }
+            })
+            $ours   = @($installLeft | Where-Object { $theirs -notcontains $_ })
+            if ($ours.Count -gt 0) {
+                Write-Host ("To finish, run {0} -- from an elevated shell for a copy" -f $galleryRemove) -ForegroundColor Yellow
+                Write-Host ("installed for all users -- or delete the {0} by hand." -f $(if ($ours.Count -eq 1) { 'folder' } else { 'folders' })) -ForegroundColor Yellow
+            }
+            if ($theirs.Count -gt 0) {
+                Write-Host ("{0}'s own copy is out of this engine's reach: run {1} there." -f $other.Engine, $other.Remover) -ForegroundColor Yellow
+            }
+        }
     }
     if ($allProblems.Count -gt 0) {
         Write-UninstallLeftoverLead -State $lead -What 'the loader block in:'
