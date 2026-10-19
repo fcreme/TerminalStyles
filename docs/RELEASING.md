@@ -72,6 +72,14 @@ How to publish a new version of TerminalStyles.
 8. **Verify** within ~1 minute at
    https://www.powershellgallery.com/packages/TerminalStyles/
 
+   The tag push also starts the **Live Gallery check**
+   (`.github/workflows/live-gallery.yml`). On Windows PowerShell 5.1 and on
+   pwsh 7 it installs the previous release from the Gallery, checks that its
+   update notice offers this one, runs `tstyles update`, then
+   `tstyles uninstall -Yes`; the run's summary lists each step. Both legs
+   should be green within a few minutes. Everything else in CI mocks the
+   Gallery, so a red leg here is what that engine's users are about to meet.
+
 9. **Smoke-test the install** in a clean shell (no module already
    loaded):
 

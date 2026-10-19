@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Every release tag now installs, updates and uninstalls the release for real, from the Gallery.** Everything in `test.yml` mocks the PowerShell Gallery and every remover, so the commands that talk to them had never run against it. 0.9.0 went out with Gallery installs that could never hear of an update, and the Windows PowerShell 5.1 paths that 0.9.1 and 0.9.2 fixed -- `tstyles update` through `Update-Module`, `tstyles uninstall` through `Uninstall-Module -AllVersions` -- both shipped without having run there once. `.github/workflows/live-gallery.yml` runs on each `v*` tag, under Windows PowerShell 5.1, which has no PSResourceGet and so takes those paths, and under pwsh 7. It installs the release before the one tagged, the way each engine's users do, and checks four things. The update notice offers the new release, from a 5.1 session started without TLS 1.2, and leaves the session's setting as it found it. `tstyles update` puts the new version on disk, and a new session loads it. `tstyles uninstall -Yes`, run with both versions installed side by side, ends on the plain "TerminalStyles uninstalled." with no copy left in any folder either engine loads from -- read off the disk, not taken from the command. Each step runs in a new process, as a user's next command would. A run started by hand can begin from another release (`from`), or run an older release's uninstall (`uninstall_with`). `scripts/live-gallery-check.ps1` refuses to run anywhere but a GitHub-hosted runner, because its uninstall removes every installed version.
+
 ## [0.9.2] - 2026-10-18
 
 ### Fixed
