@@ -7,10 +7,8 @@
 
 <p align="center">
   <a href="https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml"><img src="https://github.com/fcreme/TerminalStyles/actions/workflows/test.yml/badge.svg" alt="Tests"></a>
- <a [![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/fcreme/badge.svg)](https://hub.xerj.org/contributors/fcreme.html)></a>
-
-  
-  <a href="https://www.powershellgallery.com/packages/TerminalStyles"><img src="https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery" alt="PowerShell Gallery"></a>
+[![XERJ Corpus Hub contributor](https://hub.xerj.org/contributors/fcreme/badge.svg)](https://hub.xerj.org/contributors/fcreme.html)
+<a href="https://www.powershellgallery.com/packages/TerminalStyles"><img src="https://img.shields.io/powershellgallery/v/TerminalStyles?logo=powershell&label=PSGallery" alt="PowerShell Gallery"></a>
 </p>
 
 **Switch terminal themes live.** Run `tstyles`, arrow through 18 themes
