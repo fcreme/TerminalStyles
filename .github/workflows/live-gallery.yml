@@ -1,0 +1,73 @@
+# TerminalStyles as a user meets it, on a real Windows PowerShell 5.1 and a
+# real pwsh 7: installed from the PowerShell Gallery, told that a newer release
+# is out, updated to it, and uninstalled.
+#
+# WHY THIS EXISTS. test.yml mocks the Gallery and every remover, which is right
+# for a suite that runs on every push, and wrong as the only evidence for the
+# commands that talk to them. 0.9.0 went out with Gallery installs that could
+# never hear of an update. 0.9.1's `tstyles update` and 0.9.2's
+# `tstyles uninstall` each fixed a Windows PowerShell 5.1 path -- 5.1 has no
+# PSResourceGet -- and both shipped without that path having run against the
+# Gallery once. This runs them end to end, on a runner that is thrown away
+# afterwards. The uninstall removes every installed version, so it must never
+# run on a machine anyone uses; scripts/live-gallery-check.ps1 refuses to.
+#
+# WHEN. On a v* tag: docs/RELEASING.md pushes one only once the Gallery serves
+# the version, so the release just tagged is the newest one there, and the
+# default start -- the release before it -- is the update its users are about
+# to make. On demand, to start from another release or to run an older
+# release's uninstall. And on a pull request that changes this check.
+
+name: Live Gallery check
+
+on:
+  push:
+    tags:
+      - 'v*'
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/live-gallery.yml'
+      - 'scripts/live-gallery-check.ps1'
+  workflow_dispatch:
+    inputs:
+      from:
+        description: 'Version to install first. Default: the release before the newest.'
+        required: false
+        default: ''
+      uninstall_with:
+        description: 'Installed version whose tstyles uninstall runs. Default: the newest.'
+        required: false
+        default: ''
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: Live (${{ matrix.name }})
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows PowerShell 5.1
+            engine: powershell
+          - name: pwsh 7
+            engine: pwsh
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install, notice, update, uninstall
+        shell: pwsh
+        env:
+          # Through the environment rather than spliced into the script below:
+          # a dispatch input is text someone typed.
+          LIVE_FROM: ${{ inputs.from }}
+          LIVE_UNINSTALL_WITH: ${{ inputs.uninstall_with }}
+        run: |
+          # The engine under test runs the script, and each step it takes
+          # starts a new process of that same engine. pwsh only launches it.
+          & ${{ matrix.engine }} -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/live-gallery-check.ps1
+          exit $LASTEXITCODE

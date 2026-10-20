@@ -218,8 +218,12 @@ Then run the suite:
 Invoke-Pester -Path .\tests
 ```
 
-CI (`.github/workflows/test.yml`) runs this exact suite on **both**
-pwsh 7 and Windows PowerShell 5.1; Pester is the only CI check.
+CI (`.github/workflows/test.yml`) runs this exact suite on Windows under
+**both** pwsh 7 and Windows PowerShell 5.1, and under pwsh on macOS and
+Linux. It mocks the PowerShell Gallery throughout. The published module is
+installed, updated and uninstalled for real only by
+`.github/workflows/live-gallery.yml`, which runs on each `v*` tag and on a
+pull request that changes it.
 
 ### PowerShell 5.1 compatibility
 
