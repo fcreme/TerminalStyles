@@ -127,6 +127,70 @@ Describe 'Open-AppleTerminalProfile' {
     }
 }
 
+Describe 'Remove-AppleTerminalSettingsSet' {
+    InModuleScope TerminalStyles {
+        It 'does not call a profile gone when Terminal.app does not answer afterwards' {
+            # Neither the delete nor the follow-up query gets an answer. An empty
+            # list is what the lister returns then, so it proves nothing.
+            Mock Invoke-AppleTerminalScript { $null }
+
+            Remove-AppleTerminalSettingsSet -Name 'eva 1' | Should -BeFalse
+
+            Should -Invoke Invoke-AppleTerminalScript -Times 2 -Exactly
+        }
+
+        It 'calls it gone when Terminal.app answers without it' {
+            Mock Invoke-AppleTerminalScript {
+                if ($Script -match 'name of every settings set') { return 'Basic, Pro' }
+                return ''
+            }
+            Remove-AppleTerminalSettingsSet -Name 'eva 1' | Should -BeTrue
+        }
+
+        It 'does not call it gone while Terminal.app still lists it' {
+            Mock Invoke-AppleTerminalScript {
+                if ($Script -match 'name of every settings set') { return 'Basic, eva 1' }
+                return ''
+            }
+            Remove-AppleTerminalSettingsSet -Name 'eva 1' | Should -BeFalse
+        }
+
+        It 'never confirms a name the lister cannot return intact' {
+            Mock Invoke-AppleTerminalScript {
+                if ($Script -match 'name of every settings set') { return 'Basic, Pro' }
+                return ''
+            }
+
+            Remove-AppleTerminalSettingsSet -Name 'Tokyo, Night' | Should -BeFalse
+
+            Should -Invoke Invoke-AppleTerminalScript -ParameterFilter {
+                $Script -match 'delete settings set' } -Times 1 -Exactly
+        }
+    }
+}
+
+Describe 'Get-AppleTerminalSettingsSetName and the names it can list' {
+    # What couples the two: change the lister without the helper, or the
+    # helper without the lister, and a case below flips.
+    InModuleScope TerminalStyles {
+        It 'calls "<N>" listable exactly when the lister returns it intact' -ForEach @(
+            @{ N = 'eva' }
+            @{ N = 'neon rain' }
+            @{ N = 'Tokyo, Night' }
+            @{ N = 'eva ' }
+            @{ N = ' eva' }
+        ) {
+            $script:answerName = $N
+            Mock Invoke-AppleTerminalScript { 'Basic, ' + $script:answerName }
+
+            $listed = @(Get-AppleTerminalSettingsSetName)
+
+            $listed | Should -Contain 'Basic' -Because 'the lister answered'
+            (Test-AppleTerminalSettingsSetNameListable -Name $N) | Should -Be ($listed -ccontains $N)
+        }
+    }
+}
+
 Describe 'Get-AppleTerminalDuplicateProfile' {
     InModuleScope TerminalStyles {
         It 'finds the numbered copies of a known style' {
@@ -210,6 +274,33 @@ Describe 'tstyles profiles' {
             $deletes = @($script:calls | Where-Object { $_ -match 'delete settings set' })
             $deletes.Count | Should -Be 2
             ($deletes -join "`n") | Should -Not -Match 'settings set "eva"$'
+        }
+
+        It 'does not report a removal Terminal.app did not confirm' {
+            # Set here, so a value left in module scope cannot satisfy the check.
+            $script:sentDelete = $false
+            Mock Confirm-Action { $true }
+            Mock Invoke-AppleTerminalScript {
+                if ($Script -ceq 'tell application "Terminal" to get name of every settings set') {
+                    # Answers until a delete is sent, then goes quiet.
+                    if ($script:sentDelete) { return $null }
+                    return 'Basic, eva, eva 1'
+                }
+                if ($Script -match 'delete settings set') {
+                    $script:sentDelete = $true
+                    return $null
+                }
+                throw "unexpected AppleScript: $Script"
+            }
+
+            Invoke-TerminalStyleProfiles -Clean
+
+            $script:sentDelete | Should -BeTrue -Because 'the delete was attempted, or this measures nothing'
+            $said = ($script:written -join ' ') -replace '\s+', ' '
+            $said | Should -Not -CMatch 'Removed eva 1'
+            $said | Should -Match 'could not confirm eva 1 was removed'
+            $said | Should -Match 'Terminal\.app confirmed 0 of 1 removed'
+            $said | Should -Match 'Run tstyles profiles to see which are still listed'
         }
 
         It 'says so plainly off macOS instead of pretending' {

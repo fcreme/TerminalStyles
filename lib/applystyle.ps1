@@ -297,14 +297,38 @@ function Get-AppleTerminalSettingsSetName {
     The profiles Terminal.app currently has. Read-only.
 
     .DESCRIPTION
-    Empty when Terminal.app cannot be asked, which is the safe direction: every
-    caller then falls back to `open`, the behaviour that shipped before this.
+    Empty when Terminal.app cannot be asked, which is the safe direction:
+    Open-AppleTerminalProfile then falls back to `open`, the behaviour that
+    shipped before this, and Remove-AppleTerminalSettingsSet confirms nothing.
+
+    Terminal.app answers with the names joined by ', ', so a name that contains
+    a comma comes back as two, and one with a leading or trailing space comes
+    back trimmed. Test-AppleTerminalSettingsSetNameListable says which names
+    survive; change the two together.
     #>
     [CmdletBinding()]
     param()
     $out = Invoke-AppleTerminalScript 'tell application "Terminal" to get name of every settings set'
     if (-not $out) { return @() }
     @($out -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+}
+
+function Test-AppleTerminalSettingsSetNameListable {
+    <#
+    .SYNOPSIS
+    Whether Get-AppleTerminalSettingsSetName can return $Name intact.
+
+    .DESCRIPTION
+    Terminal.app answers with the names joined by ', ', and the lister splits on
+    commas and trims each piece. So 'Tokyo, Night' comes back as 'Tokyo' and
+    'Night', and 'eva ' as 'eva': for such a name, 'not in the list' proves
+    nothing, and a profile of the user's own by that name looks free. Change
+    this with the lister; tests/AppleTerminal-DuplicateProfiles.Tests.ps1 checks
+    that the two agree.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+    ($Name -notmatch ',') -and ($Name -ceq $Name.Trim())
 }
 
 function Get-AppleTerminalImportRecordPath {
@@ -359,13 +383,25 @@ function Get-AppleTerminalProfileHash {
 function Remove-AppleTerminalSettingsSet {
     <#
     .SYNOPSIS
-    Delete one Terminal.app profile. Returns $true when it is gone afterwards.
+    Delete one Terminal.app profile. Returns $true only when Terminal.app, asked
+    afterwards, answers with a list that does not include it.
+
+    .DESCRIPTION
+    An empty list is what Get-AppleTerminalSettingsSetName returns when
+    Terminal.app could not be asked, so it proves nothing -- the delete may or
+    may not have gone through. It used to count as gone (`'eva 1' -notin @()` is
+    $true), so `tstyles profiles -Clean` printed 'Removed' for a delete nobody
+    saw. A name the lister cannot return intact is never confirmed gone, for the
+    same reason.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Name)
     Invoke-AppleTerminalScript ("tell application `"Terminal`" to delete settings set {0}" -f
         (ConvertTo-AppleScriptString $Name)) | Out-Null
-    return ($Name -notin (Get-AppleTerminalSettingsSetName))
+    if (-not (Test-AppleTerminalSettingsSetNameListable -Name $Name)) { return $false }
+    # @($null) is one element; filtered, an answer of nothing counts as none.
+    $after = @(Get-AppleTerminalSettingsSetName | Where-Object { $_ })
+    return ($after.Count -gt 0 -and $Name -notin $after)
 }
 
 function Open-AppleTerminalProfile {
@@ -1470,10 +1506,13 @@ function Invoke-TerminalStyleProfiles {
             Write-Host ("  Removed {0}" -f $d.Name) -ForegroundColor Green
             $gone++
         } else {
-            Write-Host ("  ! could not remove {0}" -f $d.Name) -ForegroundColor Red
+            Write-Host ("  ! could not confirm {0} was removed" -f $d.Name) -ForegroundColor Red
         }
     }
     Write-Host ""
-    Write-Host ("  {0} of {1} removed." -f $gone, $dupes.Count) -ForegroundColor Cyan
+    Write-Host ("  Terminal.app confirmed {0} of {1} removed." -f $gone, $dupes.Count) -ForegroundColor Cyan
+    if ($gone -lt $dupes.Count) {
+        Write-Host "  Run tstyles profiles to see which are still listed." -ForegroundColor DarkGray
+    }
     Write-Host ""
 }
