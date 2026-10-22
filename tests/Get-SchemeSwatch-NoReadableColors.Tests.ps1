@@ -15,8 +15,9 @@
 # about itself.
 #
 # `tstyles current` is the third reader and shares the same call, but its swatch
-# branch runs only when stdout is NOT redirected -- under Pester it always is,
-# and it prints the bare name by design -- so it cannot be driven from here.
+# branch runs only when stdout is NOT redirected -- on every CI leg it is, and
+# there it prints the bare name by design -- so it is not driven from here.
+# Show-CurrentStyle's -OutputRedirected is the seam that would drive it.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }

@@ -1,8 +1,8 @@
 # Pester 5 tests for the one rule that keeps a style name from becoming a path.
 #
 # Regression: `tstyles tune ../styles/eva` deleted styles/eva. The tuner's
-# scratch directory is <DataRoot>/.tune-preview/<name> and its finally block
-# removes it whole and recursive; `.tune-preview` and `styles` are both
+# scratch directory was <DataRoot>/.tune-preview/<name> and its finally block
+# removed it whole and recursive; `.tune-preview` and `styles` are both
 # single-segment children of the data root, so any name reaching up a level
 # made the scratch dir and the style dir the same directory. It printed
 # "Reverted.", exited 0, and the style was gone. The same name arriving
@@ -94,23 +94,20 @@ Describe 'the tuner leaves the style it was tuning on disk' {
         }
 
         It 'does not delete styles/eva when asked to tune "../styles/eva"' {
-            # Under Pester stdin is redirected, so the tuner now bails at its
-            # console guard -- but it used to get all the way to the finally
-            # block, whose Remove-Item took the style with it.
-            try { Invoke-TerminalStyleTune -StyleName '../styles/eva' } catch { }
+            # Get-StyleDir refuses the name, so the tuner stops at "not found",
+            # before its console guards or any scratch directory -- it used to get
+            # all the way to the finally block, whose Remove-Item took the style
+            # with it. The refusal is what this asserts: that finally now removes
+            # only its own per-session directory, so the style survives a
+            # regressed gate too. Resolve-TuneSeed is the first thing past the
+            # guards, so a regressed gate fails there instead of opening the live
+            # tuner at a terminal.
+            Mock Resolve-TuneSeed { throw 'the tuner must stop at not found, before its console guards' }
+            Invoke-TerminalStyleTune -StyleName '../styles/eva'
+            Should -Invoke Write-Error -Times 1 -Exactly -Scope It -ParameterFilter { "$Message".Contains('not found') } `
+                -Because 'the name gate is what stops the tuner, not the console guard behind it'
             Test-Path -LiteralPath $script:victim | Should -BeTrue -Because 'the tuner must never delete a style directory'
             (Get-ChildItem -LiteralPath $script:victim).Count | Should -Be 4
-        }
-
-        It 'does not delete the base named by a tuned style tune.json' {
-            $shared = Join-Path $script:stylesDir 'shared'
-            New-Item -ItemType Directory -Path $shared -Force | Out-Null
-            [System.IO.File]::WriteAllText((Join-Path $shared 'scheme.json'), '{"name":"shared"}', $script:enc)
-            [System.IO.File]::WriteAllText((Join-Path $shared 'tune.json'),
-                '{"schemaVersion":1,"base":"../styles/eva","brightness":0,"saturation":0,"opacity":100,"fontFace":"Menlo","fontSize":12}', $script:enc)
-
-            try { Invoke-TerminalStyleTune -StyleName 'shared' } catch { }
-            Test-Path -LiteralPath $script:victim | Should -BeTrue -Because 'a tune.json base must not reach out of the styles dir'
         }
 
         It 'keeps its scratch directory inside .tune-preview, keyed per session' {
@@ -141,6 +138,53 @@ Describe 'the tuner leaves the style it was tuning on disk' {
             # for `session-1234.{gif,png,jpg,jpeg}` at 10s each -- up to 40
             # seconds on a blank screen -- then left a permanent cache dir.
             $src | Should -Match '\$scratchDir\s*=\s*Join-Path \$scratchSession \$baseName'
+        }
+    }
+}
+
+Describe 'a tune.json base is a style name, not a path' {
+    # Asked of Resolve-TuneSeed, not of the tuner: the tuner reads tune.json
+    # only past its console guard, so the tuner form of this test passed in CI
+    # without ever reading it and, at a terminal, opened the live tuner and
+    # waited for a key. BaseName is what the scratch directory is named from,
+    # so a base read as the folder it reaches is the path that once deleted it.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedSeedData    = $script:TStylesDataRoot
+            $script:savedSeedModule  = $script:TStylesModuleRoot
+            $script:savedSeedCurrent = $script:TStylesCurrent
+            $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = Join-Path $root 'data'
+            $script:TStylesModuleRoot = Join-Path $root 'module'
+            $script:TStylesCurrent    = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+
+            $enc    = [System.Text.UTF8Encoding]::new($false)
+            $styles = Join-Path $script:TStylesDataRoot 'styles'
+            # The folder the traversal reaches.
+            $eva = Join-Path $styles 'eva'
+            New-Item -ItemType Directory -Path $eva -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $eva 'scheme.json'), '{"name":"eva"}', $enc)
+
+            $script:shared = Join-Path $styles 'shared'
+            New-Item -ItemType Directory -Path $script:shared -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:shared 'scheme.json'), '{"name":"shared"}', $enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:shared 'tune.json'),
+                '{"schemaVersion":1,"base":"../styles/eva","brightness":0,"saturation":0,"opacity":100,"fontFace":"Menlo","fontSize":12}', $enc)
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedSeedData
+            $script:TStylesModuleRoot = $script:savedSeedModule
+            $script:TStylesCurrent    = $script:savedSeedCurrent
+        }
+
+        It 'reads a base that is a path as missing, not as the folder it reaches' {
+            Test-Path -LiteralPath (Join-Path (Join-Path (Join-Path $script:TStylesDataRoot 'styles') '../styles/eva') 'scheme.json') |
+                Should -BeTrue -Because 'the traversal must really reach a style for the answer to mean anything'
+
+            $seed = Resolve-TuneSeed -StyleName 'shared' -StyleDir $script:shared
+            $seed.BaseMissing | Should -BeTrue -Because 'a path is not a style name, so no style of that name exists'
+            $seed.BaseName    | Should -Be 'shared'
+            $seed.BaseDir     | Should -Be $script:shared
         }
     }
 }

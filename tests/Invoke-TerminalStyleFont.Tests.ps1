@@ -28,6 +28,19 @@ Describe 'Invoke-TerminalStyleFont' {
             # A font that is already present, so the install half is a no-op and
             # each test isolates the apply half.
             Mock Test-FontInstalled { $true }
+
+            # Nobody at the console, on every leg. In CI the real check already
+            # answers no; at a contributor's terminal it answered yes, and 'lists
+            # the catalog' opened the real font picker -- a cleared screen (its
+            # frame went to the Write-Host mock), a run blocked on a key, and in a
+            # Windows Terminal tab Enter wrote the first font into the real
+            # settings.json. The picker throws so a regressed gate fails instead.
+            #
+            # No case here may reach the real settings.json: every test that
+            # reaches Find-WTSettingsPath mocks it again.
+            Mock Test-InteractiveConsole { $false }
+            Mock Invoke-FontPicker       { throw 'the font picker must not open in this file' }
+            Mock Find-WTSettingsPath     { throw 'no test in this file may reach the real settings.json' }
         }
 
         It 'lists the catalog when given no name' {
