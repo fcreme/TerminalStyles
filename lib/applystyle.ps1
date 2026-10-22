@@ -1015,17 +1015,15 @@ function Apply-StyleDirect {
     Write-Host $StyleName -ForegroundColor Green
     Write-Host ""
 
-    # Live reload (same pattern as the picker's confirm path)
-    if ($isPwshTarget -and (Test-InWindowsTerminal) -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+    # Live reload of the style's prompt into this session. Reached only with
+    # the kind WindowsTerminal -- every other kind returned into
+    # Apply-StyleNonWT above -- so it does not ask about the terminal again. It
+    # used to, through Test-InWindowsTerminal, which read WT_SESSION by itself:
+    # a second copy of Get-TerminalKind's rule, answering yes in every process
+    # a WT tab starts.
+    if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
         . $script:TStylesCurrent
     }
-}
-
-function Test-InWindowsTerminal {
-    # True when the current session is hosted by Windows Terminal (which sets
-    # WT_SESSION). WT is the only host that renders a style's colors/background,
-    # so the themed prompt/banner is loaded only here.
-    return [bool]$env:WT_SESSION
 }
 
 function Reset-StyleNonWT {

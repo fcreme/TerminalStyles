@@ -13,6 +13,10 @@
 # ($Marker, $Value, $Term, $Kind, ...); a [pscustomobject] case would arrive
 # only as $_.
 #
+# The last Describe pins structure rather than behaviour, the way
+# Splat-Variables-Defined does: it walks the source files' AST and fails if
+# anything but Get-TerminalKind reads WT_SESSION.
+#
 # Run: Invoke-Pester -Path tests
 # Requires: Pester 5+
 
@@ -303,5 +307,61 @@ Describe 'Get-TerminalKind' {
             @('WindowsTerminal','AppleTerminal','ITerm2','Ghostty','WezTerm',
               'Kitty','Alacritty','VSCode','Unknown') | Should -Contain $kind
         }
+    }
+}
+
+Describe 'Windows Terminal detection has one owner' {
+    # "Is this a Windows Terminal session?" had three answers. Get-TerminalKind
+    # was one. Test-InWindowsTerminal, which gated the prompt reload after a
+    # Windows Terminal apply, was another, reading WT_SESSION by itself -- yes
+    # in every process a WT tab starts, WSL and a VS Code started from the tab
+    # included. A note in the tuner was the third. Every other place asks the
+    # kind, so a fix to the rule reaches it.
+    #
+    # This pins structure, not behaviour, the way Splat-Variables-Defined does:
+    # it parses the same source set and collects every $env:WT_SESSION and
+    # every string constant ending in WT_SESSION ('WT_SESSION' handed to a
+    # reader, Env:\WT_SESSION), keyed by the function that holds it. Moving the
+    # check into a helper on purpose means naming that helper here.
+    BeforeAll {
+        $script:wtRepoRoot = Split-Path $PSScriptRoot -Parent
+        $script:wtSourceFiles = @(
+            (Join-Path $script:wtRepoRoot 'tstyles.ps1')
+            (Join-Path $script:wtRepoRoot 'terminals.ps1')
+            (Join-Path $script:wtRepoRoot 'apply.ps1')
+            (Join-Path $script:wtRepoRoot 'install.ps1')
+        ) + @(Get-ChildItem -LiteralPath (Join-Path $script:wtRepoRoot 'lib') -Filter '*.ps1' |
+              ForEach-Object { $_.FullName })
+    }
+
+    It 'nothing but Get-TerminalKind reads WT_SESSION' {
+        @($script:wtSourceFiles).Count | Should -BeGreaterThan 4 -Because 'the scan must have files to read'
+
+        $owners = foreach ($path in $script:wtSourceFiles) {
+            $errors = $null
+            $ast = [System.Management.Automation.Language.Parser]::ParseFile($path, [ref]$null, [ref]$errors)
+            @($errors).Count | Should -Be 0 -Because "$path must parse"
+
+            $reads = $ast.FindAll({ param($n)
+                ($n -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                 $n.VariablePath.IsDriveQualified -and $n.VariablePath.DriveName -eq 'env' -and
+                 ($n.VariablePath.UserPath -replace '^[^:]*:', '') -eq 'WT_SESSION') -or
+                ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -and
+                 $n.Value -like '*WT_SESSION')
+            }, $true)
+
+            foreach ($read in $reads) {
+                $scope = $read.Parent
+                while ($scope -and -not ($scope -is [System.Management.Automation.Language.FunctionDefinitionAst])) {
+                    $scope = $scope.Parent
+                }
+                if ($scope) { $scope.Name } else { '<file scope>' }
+            }
+        }
+        $owners = @($owners | ForEach-Object { $_ } | Sort-Object -Unique)
+
+        # The positive control as well as the rule: exactly the one known
+        # reader, so an empty scan cannot pass.
+        ($owners -join ',') | Should -BeExactly 'Get-TerminalKind'
     }
 }
