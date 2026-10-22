@@ -1,5 +1,5 @@
 # A one-time offer to install WezTerm -- the only terminal off Windows that
-# animates a background GIF, which every bundled style ships.
+# animates a background GIF.
 #
 # Installing a GUI application is the largest thing this tool ever offers to do,
 # so the gate is correspondingly strict and every condition is tested on its
@@ -59,25 +59,60 @@ Describe 'Invoke-WezTermOfferFirstRun' {
             New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
             $script:marker = Join-Path $script:TStylesDataRoot '.wezterm-offered'
 
+            # The BeforeEach opens every condition of the gate, so a test that
+            # does not close one is asked the question -- and with the answer
+            # check regressed, that is a real `brew install --cask wezterm` on
+            # the macOS CI leg and on a contributor's Mac. This throw stops brew
+            # but cannot fail a test, because the offer's own catch swallows it:
+            # so every test that is asked and does not answer yes also asserts
+            # the call count, and the three that answer yes mock it themselves.
+            #
+            # What the offer says goes into a list, with .Add(): `+=` inside a
+            # mock body assigns a copy local to the mock, which is how a test
+            # here once recorded into a variable nothing could read.
+            $script:offerSaid = [System.Collections.ArrayList]::new()
             Mock Test-InteractiveConsole { $true }
             Mock Get-TStylesPlatform     { 'MacOS' }
             Mock Get-TerminalKind        { 'AppleTerminal' }
             Mock Test-WezTermInstalled   { $false }
             Mock Get-Command             { [pscustomobject]@{ Name = 'brew' } } -ParameterFilter { $Name -eq 'brew' }
             Mock Read-Host               { 'n' }
-            Mock Write-Host              { }
+            Mock Write-Host              { [void]$script:offerSaid.Add("$Object") }
+            Mock Install-WezTermViaBrew  { throw 'a test reached brew install --cask wezterm' }
         }
 
         It 'names the exact command before asking' {
-            $out = Invoke-WezTermOfferFirstRun 6>&1 | Out-String
+            # Recorded into the same list as the question, so the order is the
+            # assertion.
+            Mock Read-Host { [void]$script:offerSaid.Add('READ-HOST ' + $Prompt); 'n' }
+            Invoke-WezTermOfferFirstRun 6>&1 | Out-Null
+
+            $askedAt = -1; $namedAt = -1
+            for ($i = 0; $i -lt $script:offerSaid.Count; $i++) {
+                $line = [string]$script:offerSaid[$i]
+                if ($askedAt -lt 0 -and $line.StartsWith('READ-HOST ', [System.StringComparison]::Ordinal)) { $askedAt = $i }
+                if ($namedAt -lt 0 -and $line.Contains('brew install --cask wezterm')) { $namedAt = $i }
+            }
+            $askedAt | Should -BeGreaterOrEqual 0 -Because 'the question has to be asked for its order to mean anything'
+            $namedAt | Should -BeGreaterOrEqual 0 -Because 'the offer has to name the command it would run'
+            $namedAt | Should -BeLessThan $askedAt -Because 'the command is named before the question, not after the answer'
             Should -Invoke Read-Host -Times 1 -Exactly -Scope It
+            Should -Invoke Install-WezTermViaBrew -Times 0 -Exactly -Scope It
         }
 
         It 'installs nothing on a no' {
-            Mock Start-Process { throw 'must not run' }
             Invoke-WezTermOfferFirstRun 6>&1 | Out-Null
-            # brew is never invoked: the only call is the Get-Command probe.
+            Should -Invoke Read-Host -Times 1 -Exactly -Scope It `
+                -Because 'the gate was open, so the no is what stopped it'
+            Should -Invoke Install-WezTermViaBrew -Times 0 -Exactly -Scope It
+        }
+
+        It 'installs nothing on a bare Enter, the [y/N] default' {
+            Mock Read-Host { '' }
+            Invoke-WezTermOfferFirstRun 6>&1 | Out-Null
             Should -Invoke Read-Host -Times 1 -Exactly -Scope It
+            Should -Invoke Install-WezTermViaBrew -Times 0 -Exactly -Scope It `
+                -Because 'the capital N is the answer an empty line gives'
         }
 
         It 'records a refusal, so it is asked once and not every run' {
@@ -88,6 +123,7 @@ Describe 'Invoke-WezTermOfferFirstRun' {
             Invoke-WezTermOfferFirstRun 6>&1 | Out-Null
             Should -Invoke Read-Host -Times 1 -Exactly -Scope It `
                 -Because 'the second run must not ask again'
+            Should -Invoke Install-WezTermViaBrew -Times 0 -Exactly -Scope It
         }
 
         It 'asks nothing, and records nothing, in a redirected session' {
@@ -102,6 +138,8 @@ Describe 'Invoke-WezTermOfferFirstRun' {
             Mock Get-TerminalKind { 'WezTerm' }
             Invoke-WezTermOfferFirstRun 6>&1 | Out-Null
             Should -Invoke Read-Host -Times 0 -Exactly -Scope It
+            $script:offerSaid.Count | Should -Be 0 `
+                -Because 'not a line of the offer belongs on the screen of someone already running WezTerm'
         }
 
         It 'does not take the picker down when the install fails' {
@@ -121,10 +159,13 @@ Describe 'Invoke-WezTermOfferFirstRun' {
             Mock Read-Host { 'y' }
             Mock Install-WezTermViaBrew { }
             Mock Test-WezTermInstalled { $false }
-            $said = @()
-            Mock Write-Host { $said += "$Object" } -ParameterFilter { $Object }
             Invoke-WezTermOfferFirstRun 6>&1 | Out-Null
             Should -Invoke Install-WezTermViaBrew -Times 1 -Exactly -Scope It
+            $said = $script:offerSaid -join "`n"
+            $said.Contains('brew finished but WezTerm is not on this machine. Install it by hand:') |
+                Should -BeTrue -Because 'a clean exit that installed nothing has to say so, and how to install it'
+            $said.Contains('WezTerm installed.') |
+                Should -BeFalse -Because 'there is no WezTerm to claim'
         }
 
         It 'installs when the answer is yes' {
