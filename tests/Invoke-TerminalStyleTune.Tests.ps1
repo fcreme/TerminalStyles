@@ -57,30 +57,67 @@ Describe 'Invoke-TerminalStyleTune guards' {
 
 Describe 'Invoke-TerminalStyleTune outside Windows Terminal' {
     InModuleScope TerminalStyles {
+        BeforeEach {
+            # All three roots: the module root so the style the test writes there
+            # is the only one it can find, and $script:TStylesCurrent because it
+            # is fixed from the data root at module load (CHANGELOG 0.8.29) and
+            # does not follow an override of it. Restored, because InModuleScope
+            # shares module state with every other file in the run.
+            $script:savedTuneData    = $script:TStylesDataRoot
+            $script:savedTuneModule  = $script:TStylesModuleRoot
+            $script:savedTuneCurrent = $script:TStylesCurrent
+            $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = Join-Path $root 'data'
+            $script:TStylesModuleRoot = Join-Path $root 'module'
+            $script:TStylesCurrent    = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedTuneData
+            $script:TStylesModuleRoot = $script:savedTuneModule
+            $script:TStylesCurrent    = $script:savedTuneCurrent
+        }
+
         It 'never looks for a settings.json it cannot have' {
             # It used to fail here with "Could not locate Windows Terminal
-            # settings.json" -- an error about a file the user was never going
-            # to have. Then it refused outright, which was more conservative
-            # than the facts warranted: the color knobs preview fine over OSC.
-            # What must stay true is that no settings.json is touched.
+            # settings.json" -- an error about a file the user was never going to
+            # have. Then it refused outright, which was more conservative than the
+            # facts warranted: the color knobs preview fine over OSC. What must
+            # stay true is that it never goes looking for one.
+            #
+            # That is decided above the console guards, so a run with either
+            # stream redirected -- every CI leg -- measures it, and the guard's
+            # own line proves the call got that far. Past the guards the tuner is
+            # a live session no test can drive, so with a console attached this
+            # skips instead of opening it. It used to open it, repainting the
+            # contributor's terminal, wiping the scrollback, and spinning a core
+            # on a key nobody knew was wanted. Whether that session writes a
+            # settings.json off Windows Terminal is not reachable from here, so
+            # nothing here claims it.
+            if (-not ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected)) {
+                Set-ItResult -Skipped -Because 'a real console is attached; the tuner would take it over'
+                return
+            }
+            # A bundled style, as far as the tuner can tell: a scheme.json under
+            # the module root.
+            $eva = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') 'eva'
+            New-Item -ItemType Directory -Path $eva -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $eva 'scheme.json'),
+                '{"name":"eva","background":"#0a0006"}', [System.Text.UTF8Encoding]::new($false))
+
             Mock Get-TerminalKind { 'AppleTerminal' }
             Mock Test-UpdateAvailable { $null }
             Mock Find-WTSettingsPath { throw 'must not look for a settings.json off Windows Terminal' }
-            Mock Write-SettingsAtomic { throw 'must not write a settings.json off Windows Terminal' }
             Mock Write-Host {}
-            Mock Start-Sleep {}
-            # Fails on the console read rather than on settings.json -- there is
-            # no keyboard in a test run. Any settings.json access would throw
-            # from the mocks above instead, which is what is under test.
-            try { Invoke-TerminalStyleTune -StyleName 'eva' } catch { }
-            Should -Invoke Find-WTSettingsPath -Times 0
-            Should -Invoke Write-SettingsAtomic -Times 0
+            Invoke-TerminalStyleTune -StyleName 'eva'
+            Should -Invoke Find-WTSettingsPath -Times 0 -Exactly -Scope It
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object".Contains('The tuner needs') } `
+                -Because 'the call has to reach a console guard, past the Windows Terminal decision, to measure it'
         }
 
         # The two below were live assertions until the tuner grew its
         # IsInputRedirected guard. They could only ever reach the notice by
-        # riding the very crash that guard now prevents: under Pester stdin is
-        # always redirected, so every run drove the tuner into
+        # riding the very crash that guard now prevents: in CI stdin is
+        # redirected, so every run there drove the tuner into
         # [Console]::KeyAvailable and swallowed the exception in `catch { }`.
         # The branch needs a real console, so they are source assertions now --
         # the same trade Picker-NonWT.Tests.ps1 documents for the picker.
