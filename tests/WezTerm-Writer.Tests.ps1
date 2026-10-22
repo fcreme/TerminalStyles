@@ -595,6 +595,142 @@ Describe 'Write-WezTermStyleModule' {
             Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme -HomeDir $script:h |
                 Should -BeOfType [string]
         }
+
+        It 'still says failed when the module cannot be written' {
+            # The write moved into Write-WezTermModuleText, which reset now
+            # shares, and nothing above pinned this answer, so the move could
+            # have lost it unseen. A folder at the module path stands in for a
+            # file that cannot be written: reading and writing it both throw,
+            # on .NET Framework and .NET alike, with no chmod -- so it holds on
+            # the Windows legs and when the suite runs as root.
+            New-Item -ItemType Directory -Path (Get-WezTermModulePath -HomeDir $script:h) -Force | Out-Null
+            Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme -HomeDir $script:h |
+                Should -BeExactly 'failed'
+        }
+    }
+}
+
+Describe 'Clear-WezTermStyleModule and the module a reset leaves' {
+    # The writer had an apply half and uninstall's Remove-Item, and no reset
+    # half. `tstyles reset` in WezTerm sent the OSC reset and nothing else, and
+    # that hands the colours back to WezTerm's configured palette -- which, with
+    # this module loaded, is the style's own color_scheme. So nothing on screen
+    # changed, every new window still came up in the whole style, and reset
+    # printed "Reset WezTerm to its unstyled default."
+    #
+    # These pin the reset half, and the one question reset and uninstall both
+    # ask about the file: does it still apply a style?
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+        }
+
+        It 'rewrites a style module into one that applies nothing' {
+            Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme -HomeDir $script:h |
+                Should -Be 'written'
+            $p = Get-WezTermModulePath -HomeDir $script:h
+            [System.IO.File]::ReadAllText($p) |
+                Should -Match ([regex]::Escape("config.color_scheme = 'TerminalStyles eva'")) `
+                -Because 'the fixture has to be a real styled module, or the clear proves nothing'
+
+            Clear-WezTermStyleModule -HomeDir $script:h | Should -BeExactly 'cleared'
+
+            [System.IO.File]::Exists($p) | Should -BeTrue `
+                -Because 'rewritten, not deleted: a deleted module can drop off WezTerm''s reload watch list'
+            $text = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
+            $text | Should -BeExactly (Get-WezTermUnstyledLua)
+            $text | Should -Not -Match 'color_scheme'
+            # A BOM ahead of a Lua chunk is a parse error, here as on apply.
+            ([System.IO.File]::ReadAllBytes($p))[0..2] | Should -Not -Be ([byte[]]@(0xEF,0xBB,0xBF))
+        }
+
+        It 'the module a reset leaves sets nothing, keeps apply_to_config callable, and is ASCII' {
+            # Statements only, so this pins what the file DOES: it assigns no
+            # config field, and require still returns a table whose
+            # apply_to_config can be called. The wiring line's pcall guards only
+            # the require, so an empty chunk -- whose require returns true --
+            # would make `ts.apply_to_config(config)` a config error, and a
+            # config error is the user's whole wezterm.lua replaced by defaults.
+            Get-WezTermModuleCode (Get-WezTermUnstyledLua) | Should -BeExactly (
+                (@('local M = {}', 'function M.apply_to_config(config)', '  return config', 'end', 'return M')) -join [char]10)
+            (Get-WezTermUnstyledLua) | Should -Match ([regex]::Escape((Get-WezTermWiringLine))) `
+                -Because 'the file still says how it is loaded'
+            @((Get-WezTermUnstyledLua).ToCharArray() | Where-Object { [int]$_ -gt 127 }).Count | Should -Be 0
+        }
+
+        It 'Get-WezTermModuleCode drops comments, blank lines and CR, and keeps indentation' {
+            # CR LF fed in explicitly, so every leg runs the Windows line ending
+            # and not only the legs where AppendLine writes it. A plain
+            # line-feed split gets this wrong: each kept line keeps its CR, and
+            # the two forms of one file stop comparing equal.
+            $lines = '-- head', 'local M = {}', '', '  -- note', '  return config', ''
+            $crlf = $lines -join ([string][char]13 + [char]10)
+            $lf   = $lines -join [char]10
+            $want = 'local M = {}' + [char]10 + '  return config'
+            Get-WezTermModuleCode $crlf | Should -BeExactly $want
+            Get-WezTermModuleCode $lf   | Should -BeExactly $want
+        }
+
+        It 'Test-WezTermModuleStyled: a style module is styled; the reset''s module, a reworded one and no module are not' {
+            $p = Get-WezTermModulePath -HomeDir $script:h
+
+            Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme -HomeDir $script:h | Out-Null
+            Test-WezTermModuleStyled -Path $p | Should -BeTrue -Because 'an apply wrote a style into it'
+
+            Clear-WezTermStyleModule -HomeDir $script:h | Out-Null
+            Test-WezTermModuleStyled -Path $p | Should -BeFalse -Because 'a reset took the style out'
+
+            # Comments never decide. The header quotes the wiring line, and a
+            # reworded header must not make every module an older reset left
+            # read as styled -- to the next reset, or to a failed uninstall.
+            [System.IO.File]::WriteAllText($p,
+                ((Get-WezTermUnstyledLua) -replace '^-- [^\r\n]*', '-- an older header'),
+                [System.Text.UTF8Encoding]::new($false))
+            [System.IO.File]::ReadAllText($p) | Should -Match '^-- an older header' -Because 'the fixture must really differ'
+            Test-WezTermModuleStyled -Path $p | Should -BeFalse -Because 'only its comments changed'
+
+            Remove-Item -LiteralPath $p
+            Test-WezTermModuleStyled -Path $p | Should -BeFalse -Because 'no module styles nothing'
+
+            # A file it cannot read counts as styled: that answer's message
+            # names the file, so the user goes and looks. The other answer
+            # would print a success line nobody had checked.
+            New-Item -ItemType Directory -Path $p | Out-Null
+            Test-WezTermModuleStyled -Path $p | Should -BeTrue -Because 'a path it cannot read is not known to be clean'
+        }
+
+        It 'Clear-WezTermStyleModule says none and creates nothing where there is no module' {
+            Clear-WezTermStyleModule -HomeDir $script:h | Should -BeExactly 'none'
+            [System.IO.File]::Exists((Get-WezTermModulePath -HomeDir $script:h)) | Should -BeFalse
+            [System.IO.Directory]::Exists((Join-Path $script:h '.config')) | Should -BeFalse `
+                -Because 'reset must not create a module, or ~/.config/wezterm, where there was none'
+        }
+
+        It 'Clear-WezTermStyleModule leaves an already-unstyled module untouched' {
+            # A rewrite trips WezTerm's reload watch and repaints every window,
+            # so a second reset must not write the same bytes again. A fixed
+            # past timestamp, so the check does not lean on how finely the
+            # filesystem records one.
+            Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme -HomeDir $script:h | Out-Null
+            Clear-WezTermStyleModule -HomeDir $script:h | Should -BeExactly 'cleared'
+            $p = Get-WezTermModulePath -HomeDir $script:h
+            [System.IO.File]::SetLastWriteTimeUtc($p, [datetime]::new(2001, 1, 1, 0, 0, 0, [DateTimeKind]::Utc))
+
+            Clear-WezTermStyleModule -HomeDir $script:h | Should -BeExactly 'none'
+            [System.IO.File]::GetLastWriteTimeUtc($p).Year | Should -Be 2001 -Because 'nothing was rewritten'
+        }
+
+        It 'Clear-WezTermStyleModule says failed, not cleared, when the module cannot be written' {
+            # A folder at the module path: Test-Path sees it, it cannot be read
+            # (so it counts as styled), and it cannot be written -- on every leg,
+            # as root too, with no chmod.
+            $p = Get-WezTermModulePath -HomeDir $script:h
+            New-Item -ItemType Directory -Path $p -Force | Out-Null
+            Clear-WezTermStyleModule -HomeDir $script:h | Should -BeExactly 'failed'
+            [System.IO.Directory]::Exists($p) | Should -BeTrue
+        }
     }
 }
 
