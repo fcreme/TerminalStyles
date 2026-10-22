@@ -161,21 +161,44 @@ Describe 'picker target validation' {
             Mock Test-UpdateAvailable      { $null }
             Mock Write-Host                {}
             Mock Write-Error               {}
+
+            # Nobody at the console, on every leg. The picker asks
+            # Test-InteractiveConsole before the target guard -- the welcome and
+            # the one-time WezTerm offer both do -- and at a contributor's
+            # terminal, on a Mac with Homebrew and no WezTerm, the offer ran for
+            # real: a bare 'Install WezTerm now? [y/N]' (its explanation went into
+            # the Write-Host mock), and brew on a 'y'.
+            #
+            # Nothing in this Describe may ask anything, so Read-Host throws: a
+            # regressed offer gate fails here instead of waiting at a terminal.
+            # Install-WezTermViaBrew throws as containment only -- the offer's
+            # catch swallows it. Clear-Host and Invoke-PickerLoop throw so a
+            # reverted target guard fails here instead of opening the picker; in
+            # CI the console guard returns before either is reached.
+            Mock Test-InteractiveConsole   { $false }
+            Mock Read-Host                 { throw 'no question may be asked in this Describe' }
+            Mock Install-WezTermViaBrew    { throw 'no test may run brew' }
+            Mock Clear-Host                { throw 'the picker must not take the screen in this Describe' }
+            Mock Invoke-PickerLoop         { throw 'the picker loop must not start in this Describe' }
         }
 
         # What this Describe can and cannot assert, since getting it wrong once
         # is how four dead tests nearly landed here.
         #
-        # Under Pester, [Console]::IsInputRedirected is true, so the picker's
-        # interactive-console check returns before ANY write, backup, apply
-        # message or style record. Assertions like "settings.json is
-        # byte-identical" or "Style applied was not printed" therefore pass just
-        # as happily with the bug present -- they are measuring the console
-        # guard, not the target guard. The end-to-end comment loss was
-        # reproduced on a pty instead, with WT simulated through the module's
-        # own WT_SESSION / WT_SETTINGS_PATH seams: settings.json went from 2
-        # JSONC comments to 0, no colorScheme was written, and "Style applied:
-        # eva" printed in green.
+        # In CI both streams are redirected, so the picker's interactive-console
+        # check returns before ANY write, backup, apply message or style record.
+        # Assertions like "settings.json is byte-identical" or "Style applied was
+        # not printed" therefore pass just as happily with the bug present --
+        # they are measuring the console guard, not the target guard. The
+        # end-to-end comment loss was reproduced on a pty instead, with Windows
+        # Terminal simulated: settings.json went from 2 JSONC comments to 0, no
+        # colorScheme was written, and "Style applied: eva" printed in green.
+        #
+        # At a contributor's terminal neither stream is redirected, so that
+        # check does not fire: the valid-target cases below skip there, and the
+        # BeforeEach pins Test-InteractiveConsole and stops the screen and the
+        # key loop, so a reverted target guard fails here instead of opening the
+        # picker.
         #
         # What IS observable here is the ORDER: a bad target must lose at the
         # target guard, and a good one must get past it to the console guard.
@@ -215,6 +238,11 @@ Describe 'picker target validation' {
             # suite locally, so an unguarded version of this test would hijack
             # their terminal and then fail, while staying green in CI where
             # everything is redirected.
+            # (The BeforeEach's tripwires would now stop it at the Clear-Host,
+            # but only after the picker had started its background download from
+            # the gifs branch, backed up and rewritten this Describe's
+            # settings.json and hidden the cursor -- so the skip is still what
+            # keeps it off a real console.)
             #
             # Skipped at RUN time, not with -Skip: a -Skip condition is
             # evaluated during discovery, where this one would not yet be known.

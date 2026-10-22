@@ -169,6 +169,18 @@ Describe 'the picker itself' {
     InModuleScope TerminalStyles {
         BeforeEach {
             $script:TStylesDataRoot = $TestDrive
+
+            # Nobody at the console, on every leg. The picker runs the welcome
+            # and the one-time WezTerm offer before any check in this Describe,
+            # and at a contributor's terminal, on a Mac with Homebrew and no
+            # WezTerm, the offer stopped the run on a bare
+            # 'Install WezTerm now? [y/N]' and ran brew on a 'y'. Read-Host
+            # throws, so a regressed gate fails instead of waiting;
+            # Install-WezTermViaBrew throws as containment (the offer's catch
+            # swallows it).
+            Mock Test-InteractiveConsole { $false }
+            Mock Read-Host               { throw 'no question may be asked in this Describe' }
+            Mock Install-WezTermViaBrew  { throw 'no test may run brew' }
         }
 
         It 'refuses by NAME when nothing left has a readable scheme.json' {
@@ -192,9 +204,10 @@ Describe 'the picker itself' {
             $errors = [System.Collections.ArrayList]::new()
             Mock Write-Error { [void]$errors.Add("$Message") }
             # Neither may run: with nothing to pick from, the picker must not
-            # take over the screen, and must not block on a keyboard. These also
-            # keep the test from hanging on a machine that has a real console
-            # attached while the fix is reverted.
+            # take over the screen, and must not block on a keyboard. They are
+            # also what keeps this test off a real console if the check under
+            # test is reverted; the BeforeEach's console pin and Read-Host
+            # tripwire cover only what runs before it.
             Mock Clear-Host { throw 'the picker must not clear the screen with nothing to show' }
             Mock Invoke-PickerLoop { throw 'the picker loop must not start with no styles' }
 
@@ -207,11 +220,12 @@ Describe 'the picker itself' {
         It 'holds no unguarded parse of a user-authored file' {
             # The picker's body cannot be driven from a test -- it returns at the
             # console guard the moment stdin or stdout is redirected, which is
-            # every Pester run -- so this is a shape assertion, on the AST and on
-            # the property that carried the defect: every ConvertFrom-Json inside
-            # Invoke-TerminalStyle is inside a try. The theme.json pre-load
-            # twelve lines below the broken scheme.json one always was; the
-            # scheme.json parse was the only one that was not.
+            # every CI run, and at a terminal it would take the screen -- so this
+            # is a shape assertion, on the AST and on the property that carried
+            # the defect: every ConvertFrom-Json inside Invoke-TerminalStyle is
+            # inside a try. The theme.json pre-load twelve lines below the broken
+            # scheme.json one always was; the scheme.json parse was the only one
+            # that was not.
             #
             # Deliberately not "no pipeline mentions both scheme.json and
             # ConvertFrom-Json": the path was held in $sp on the line above, so
