@@ -49,6 +49,28 @@ Describe 'Register-ShellLoader fails softly' {
             } finally { & chmod 644 $script:rc }
         }
 
+        It 'returns failed rather than throwing when the file cannot be read' {
+            # The READ was outside the try, so a file that could not be read
+            # threw out of shell-init -- here, inside Pester's try, as under the
+            # zsh/bash shim's Stop. Unregister-ShellLoader's read has been
+            # guarded since 0.8.26; this was the other half of that symmetry.
+            #
+            # A DIRECTORY at the rc path, which ReadAllBytes refuses on every
+            # platform. Unlike the 444 cases around it there is no chmod, so
+            # this runs on all four legs.
+            $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            $rc = Join-Path $d '.zshrc'
+            New-Item -ItemType Directory -Path $rc -Force | Out-Null
+
+            # Two calls, for the scope reason the first test in this Describe gives.
+            { Register-ShellLoader -Path $rc } | Should -Not -Throw
+            Register-ShellLoader -Path $rc | Should -Be 'failed'
+            @(Get-ChildItem -Force -LiteralPath $rc).Count | Should -Be 0 -Because 'nothing was written into it'
+            @(Get-ChildItem -Force -LiteralPath $d).Count | Should -Be 1 `
+                -Because 'no backup is taken of a file that was never read, so nothing appears beside it'
+        }
+
         It 'leaves the unwritable file untouched' {
             if ($IsWindows) { Set-ItResult -Skipped -Because 'chmod is the POSIX way to make this unwritable'; return }
             & chmod 444 $script:rc
