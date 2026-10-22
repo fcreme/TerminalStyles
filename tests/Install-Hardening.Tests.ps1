@@ -262,6 +262,17 @@ Describe 'Register-LoaderInProfile round-trips the user''s own bytes' {
         $script:begin = '# ===== TerminalStyles BEGIN ====='
         $script:end   = '# ===== TerminalStyles END ====='
         $script:body  = "$script:begin`r`nImport-Module 'X' -DisableNameChecking`r`n$script:end"
+        # An older loader, standing in for what a previous install left. A
+        # re-install over $script:body itself gives the fixture back byte for
+        # byte whether or not it wrote anything, so a test seeded with it
+        # passed against an installer that wrote nothing.
+        $script:stale = "$script:begin`r`n. `"`$env:LOCALAPPDATA\TerminalStyles\tstyles.ps1`"`r`n$script:end"
+        # Built from [char] codes so this file stays ASCII: 5.1 reads a BOM-less
+        # .ps1 in the ANSI code page. A Latin-1 letter, a prompt glyph, Greek,
+        # Cyrillic, CJK, an emoji and a Powerline glyph -- each kind came back
+        # as '?', an ASCII look-alike or a byte pwsh 7 reads as U+FFFD.
+        $script:text = '# caf' + [char]0xE9 + "`r`n'" + [char]0x276F + [char]0x03BB + [char]0x0416 +
+            [char]0x65E5 + [char]::ConvertFromUtf32(0x1F680) + [char]0xE0B0 + "'`r`n"
     }
     BeforeEach {
         $script:fixture = Join-Path $TestDrive ('enc-' + [guid]::NewGuid().Guid.Substring(0,8))
@@ -280,6 +291,25 @@ Describe 'Register-LoaderInProfile round-trips the user''s own bytes' {
     function script:ProfileHex {
         ([System.BitConverter]::ToString([System.IO.File]::ReadAllBytes($script:profilePath)) -replace '-', '')
     }
+    # Called unqualified, like the two above: this Describe is not
+    # InModuleScope, and in an It body `script:` names a different scope from
+    # the one this Describe body defined them in, so `script:BytesHex` is not
+    # found there.
+    function script:BytesHex([byte[]]$Bytes) {
+        if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
+        [System.BitConverter]::ToString($Bytes) -replace '-', ''
+    }
+    # The first $Count bytes, or the whole file when it came back shorter, so a
+    # mismatch shows where it starts.
+    function script:HeadHex([byte[]]$Bytes, [int]$Count) {
+        if ($Bytes.Length -lt $Count) { return BytesHex $Bytes }
+        BytesHex ([byte[]]$Bytes[0..($Count - 1)])
+    }
+    # -Force: on Unix a dotfile comes back as nothing without it, and a count
+    # of nothing passes while measuring nothing.
+    function script:ProfileBaks {
+        @(Get-ChildItem -LiteralPath $script:profileDir -Filter '*.bak-*' -Force)
+    }
 
     It 'keeps a byte that is not valid UTF-8 (first install)' {
         [System.IO.File]::WriteAllBytes($script:profilePath,
@@ -297,13 +327,129 @@ Describe 'Register-LoaderInProfile round-trips the user''s own bytes' {
         # that already carries our block -- so on this path the corruption is
         # unrecoverable. The count is asserted first, so the test proves there
         # is no copy to fall back on rather than assuming it.
+        #
+        # Over a STALE block: seeded with $script:body itself, the one this
+        # writes, an installer that wrote nothing passed here.
         [System.IO.File]::WriteAllBytes($script:profilePath,
-            $script:cafe + [System.Text.Encoding]::ASCII.GetBytes("`r`n$script:body`r`n"))
+            $script:cafe + [System.Text.Encoding]::ASCII.GetBytes("`r`n$script:stale`r`n"))
         RegisterFixture
         @(Get-ChildItem -LiteralPath $script:profileDir -Filter '*.bak-*' -Force).Count |
             Should -Be 0 -Because 'a re-register only swaps our own block, so no backup is taken'
         [System.IO.File]::ReadAllBytes($script:profilePath) | Should -Contain 0xE9
         ProfileHex | Should -Not -Match 'EFBFBD'
+        $after = (Get-ProfileFileEncoding).GetString([System.IO.File]::ReadAllBytes($script:profilePath))
+        $after.Contains('tstyles.ps1') | Should -BeFalse -Because 'the stale block was replaced, so the write ran'
+        $after.Contains($script:body) | Should -BeTrue
+    }
+
+    # A $PROFILE saved with a byte-order mark. ReadAllText(path, ISO-8859-1)
+    # looks for one first and decodes by it, whatever encoding it is handed, and
+    # the text went back out through ISO-8859-1, which has no byte for anything
+    # above U+00FF. Measured: the BOM dropped and U+276F written as 3f, with no
+    # backup on the re-install. That is the path every bootstrap `tstyles
+    # update` runs.
+    It 'keeps a UTF-8 byte-order mark and every character on a RE-install, where no backup is taken' {
+        $utf8 = [System.Text.UTF8Encoding]::new($false)
+        $bom  = [byte[]]@(0xEF, 0xBB, 0xBF)
+        [System.IO.File]::WriteAllBytes($script:profilePath,
+            [byte[]]($bom + $utf8.GetBytes($script:text + "`r`n" + $script:stale + "`r`n")))
+
+        RegisterFixture
+
+        @(ProfileBaks).Count | Should -Be 0 -Because 'this is the path that takes no backup'
+        # The whole file, exactly: the BOM and the user's text as they were,
+        # and the stale block replaced by the current one.
+        ProfileHex | Should -BeExactly (BytesHex ([byte[]]($bom + $utf8.GetBytes($script:text + "`r`n" + $script:body + "`r`n"))))
+    }
+
+    It 'keeps a UTF-16 profile in UTF-16, BOM first' {
+        # 5.1's `>` and Out-File write UTF-16LE. It came back as single bytes,
+        # every glyph a 3f.
+        $enc = [System.Text.UnicodeEncoding]::new($false, $true)
+        $fixture = [byte[]]($enc.GetPreamble() + $enc.GetBytes($script:text))
+        [System.IO.File]::WriteAllBytes($script:profilePath, $fixture)
+
+        RegisterFixture
+
+        $after = [System.IO.File]::ReadAllBytes($script:profilePath)
+        HeadHex $after $fixture.Length | Should -BeExactly (BytesHex $fixture)
+        $enc.GetString($after, $fixture.Length, $after.Length - $fixture.Length) |
+            Should -MatchExactly '^\s*# ===== TerminalStyles BEGIN =====[\s\S]*# ===== TerminalStyles END =====\s*$' `
+            -Because 'the block lands in the file''s own encoding'
+        @(ProfileBaks).Count | Should -Be 1 -Because 'a first install keeps one copy'
+        BytesHex ([System.IO.File]::ReadAllBytes((ProfileBaks)[0].FullName)) | Should -BeExactly (BytesHex $fixture)
+    }
+
+    It 'keeps a stray F3 behind a UTF-8 byte-order mark, the case 0.8.29 said it could not' {
+        # 0.8.29 named this the one hole and said the byte came back EF BF BD.
+        # Measured, it came back 3F: the BOM made ReadAllText decode as UTF-8,
+        # F3 became U+FFFD, and ISO-8859-1 best-fits that to '?'.
+        [System.IO.File]::WriteAllBytes($script:profilePath,
+            [byte[]]@(0xEF, 0xBB, 0xBF, 0x23, 0x20, 0x78, 0xF3, 0x0D, 0x0A))
+
+        RegisterFixture
+
+        $after = [System.IO.File]::ReadAllBytes($script:profilePath)
+        HeadHex $after 7 | Should -BeExactly 'EFBBBF232078F3'
+        (Get-ProfileFileEncoding).GetString($after) | Should -Match ([regex]::Escape($script:begin)) `
+            -Because 'the loader really did go in, so the write under test ran'
+    }
+
+    # No trailing newline in the fixture, so a 0D after the user's last byte can
+    # only be the separator the write adds: an installer that wrote nothing, or
+    # cut the byte, fails on it.
+    It 'keeps the last byte of <Label>, which TrimEnd took for whitespace' -ForEach @(
+        @{ Label = 'a-grave (C3 A0)';   Tail = [byte[]]@(0xC3, 0xA0) }
+        @{ Label = 'a star (E2 98 85)'; Tail = [byte[]]@(0xE2, 0x98, 0x85) }
+    ) {
+        # Decoded through ISO-8859-1, 0xA0 is U+00A0 and 0x85 is U+0085, and
+        # String.TrimEnd() counts both as whitespace.
+        $fixture = [byte[]]([System.Text.Encoding]::ASCII.GetBytes('# voil') + $Tail)
+        [System.IO.File]::WriteAllBytes($script:profilePath, $fixture)
+
+        RegisterFixture
+
+        $after = [System.IO.File]::ReadAllBytes($script:profilePath)
+        HeadHex $after $fixture.Length | Should -BeExactly (BytesHex $fixture)
+        $after.Length | Should -BeGreaterThan $fixture.Length -Because 'the block was added'
+        $after[$fixture.Length] | Should -Be 0x0D
+        (Get-ProfileFileEncoding).GetString($after) | Should -Match ([regex]::Escape($script:begin))
+    }
+
+    # Every bundled styles/*/profile.ps1 is pure ASCII with no byte-order mark.
+    # Read byte for byte, a UTF-8-BOM copy of one starts with the BOM's three
+    # characters and so is no longer that style: it is kept, backed up, and
+    # gets the loader appended. A UTF-16 copy still matches, because its BOM is
+    # not part of the text compared, and is then written back as UTF-16 holding
+    # only the loader.
+    It 'takes a bundled style saved as <Label> for that style: <Migrates>' -ForEach @(
+        @{ Label = 'UTF-8 with BOM'; Kind = 'utf8bom'; Migrates = $false }
+        @{ Label = 'UTF-16LE';       Kind = 'utf16le'; Migrates = $true }
+    ) {
+        $styleDir = Join-Path $script:fixture 'styles/sober'
+        New-Item -ItemType Directory -Force -Path $styleDir | Out-Null
+        $styleText = "# sober`r`nfunction global:prompt { 'PS> ' }`r`n"
+        [System.IO.File]::WriteAllBytes((Join-Path $styleDir 'profile.ps1'), [System.Text.Encoding]::ASCII.GetBytes($styleText))
+        $enc = if ($Kind -eq 'utf8bom') { [System.Text.UTF8Encoding]::new($true) }
+               else { [System.Text.UnicodeEncoding]::new($false, $true) }
+        $fixture = [byte[]]($enc.GetPreamble() + $enc.GetBytes($styleText))
+        [System.IO.File]::WriteAllBytes($script:profilePath, $fixture)
+
+        RegisterFixture
+
+        Test-Path -LiteralPath (Join-Path $script:fixture 'current-style.ps1') | Should -Be $Migrates
+        $after = [System.IO.File]::ReadAllBytes($script:profilePath)
+        if ($Kind -eq 'utf8bom') {
+            HeadHex $after $fixture.Length | Should -BeExactly (BytesHex $fixture) `
+                -Because 'a profile that is not taken for a style keeps every byte'
+            (Get-ProfileFileEncoding).GetString($after) | Should -Match ([regex]::Escape($script:begin))
+            @(ProfileBaks).Count | Should -Be 1
+            BytesHex ([System.IO.File]::ReadAllBytes((ProfileBaks)[0].FullName)) | Should -BeExactly (BytesHex $fixture)
+        } else {
+            HeadHex $after 2 | Should -BeExactly 'FFFE' -Because 'a UTF-16 profile stays UTF-16'
+            $enc.GetString($after, 2, $after.Length - 2) | Should -BeExactly ($script:body + "`r`n") `
+                -Because 'a migrated profile holds the loader alone'
+        }
     }
 
     It 'still recognises a bundled style profile it has to migrate' {

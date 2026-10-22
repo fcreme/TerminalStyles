@@ -1071,6 +1071,9 @@ function Read-RcFileText {
     whole file back, so they read through this and write with the Encoding it
     returns. The read-only checks that must agree with them about a file --
     Test-ShellLoaderPresent and Test-WezTermStyleWired -- read through it too.
+    install.ps1 carries a twin, Read-ProfileFileText, for the reason it carries
+    Get-ProfileFileEncoding; tests/Bootstrap-ModuleSync.Tests.ps1 compares the
+    two token for token.
 
     From the raw bytes, never [System.IO.File]::ReadAllText(path, enc). That
     overload looks for a byte-order mark first and decodes by it whatever enc

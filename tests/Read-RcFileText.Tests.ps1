@@ -12,7 +12,7 @@
 #
 # These pin the decode table. Each writer's own test file pins that the writer
 # uses it: Invoke-TerminalStylesRegister, Remove-PowerShellProfileLoader,
-# Shell-Integration and Uninstall-ReversesShellInit.
+# Install-Hardening, Shell-Integration and Uninstall-ReversesShellInit.
 #
 # Every glyph is built from [char] codes. Windows PowerShell 5.1 reads a .ps1
 # with no BOM in the ANSI code page, where a non-ASCII string literal is a
