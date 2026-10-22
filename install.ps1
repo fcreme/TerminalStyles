@@ -455,12 +455,55 @@ function Get-ProfileFileEncoding {
     # it does so with no .bak taken, because the first-touch backup is skipped
     # for a file that already carries a BEGIN marker.
     #
-    # Limit, stated rather than pretended away: this does NOT save a $PROFILE
-    # carrying a UTF-8 BOM. [System.IO.File]::ReadAllText(path, enc) sniffs for
-    # a BOM and switches to UTF-8 whatever encoding it was handed, so a BOM'd
-    # profile with byte F3 still comes back EF BF BD. lib/update.ps1 has the
-    # identical hole, and both drop the BOM itself.
+    # Decode through Read-ProfileFileText, never [System.IO.File]::ReadAllText(
+    # path, enc): that overload honours a byte-order mark over the encoding it
+    # is handed, so a $PROFILE saved as UTF-8 with a BOM or as UTF-16 came back
+    # with every character above U+00FF as '?' or an ASCII look-alike, and no
+    # BOM. It did not, as this note used to say, turn F3 into EF BF BD: it came
+    # back 3F.
     return [System.Text.Encoding]::GetEncoding(28591)
+}
+
+function Read-ProfileFileText {
+    # NOTE: a deliberate twin of terminals.ps1's Read-RcFileText, for the reason
+    # Get-ProfileFileEncoding above is one: this file is fetched and piped to
+    # iex before the module exists, so it cannot dot-source the library.
+    # tests/Bootstrap-ModuleSync.Tests.ps1 compares the two token for token,
+    # reading this one's call to Get-ProfileFileEncoding as Get-RcFileEncoding.
+    #
+    # A $PROFILE as text, and the encoding that writes that text back to the
+    # same bytes. From the raw bytes: with no byte-order mark, or a UTF-8 one,
+    # every byte is decoded through ISO-8859-1, the BOM included, and comes
+    # back as it was read. A UTF-16 or UTF-32 BOM decodes in that encoding,
+    # with the BOM left out of Text and written back first by the Encoding
+    # returned. UTF-32LE is checked before UTF-16LE, since both start FF FE. A
+    # code unit not valid in that encoding comes back as U+FFFD, which is what
+    # PowerShell reads there.
+    #
+    # A file that cannot be read THROWS an error of our own that names it: in
+    # an advanced function a bare rethrow, or a local Stop, ends only the
+    # caller's statement, and a writer that goes on builds the whole file from
+    # nothing. Register-LoaderInProfile's caller catches it per profile.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+    } catch {
+        throw ("Could not read {0}: {1}" -f $Path, $_.Exception.GetBaseException().Message)
+    }
+    $n   = $bytes.Length
+    $enc = Get-ProfileFileEncoding
+    if ($n -ge 4 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE -and $bytes[2] -eq 0 -and $bytes[3] -eq 0) {
+        $enc = [System.Text.UTF32Encoding]::new($false, $true)
+    } elseif ($n -ge 4 -and $bytes[0] -eq 0 -and $bytes[1] -eq 0 -and $bytes[2] -eq 0xFE -and $bytes[3] -eq 0xFF) {
+        $enc = [System.Text.UTF32Encoding]::new($true, $true)
+    } elseif ($n -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        $enc = [System.Text.UnicodeEncoding]::new($false, $true)
+    } elseif ($n -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        $enc = [System.Text.UnicodeEncoding]::new($true, $true)
+    }
+    $skip = $enc.GetPreamble().Length
+    [pscustomobject]@{ Text = $enc.GetString($bytes, $skip, $n - $skip); Encoding = $enc }
 }
 
 function Get-StyleContentHash {
@@ -554,9 +597,11 @@ function Write-TextFileAtomic {
     param(
         [Parameter(Mandatory)][string]$Path,
         [Parameter(Mandatory)][string]$Content,
-        # Defaulted, not hardcoded: its one caller is Register-LoaderInProfile,
-        # which READ the same file through Get-ProfileFileEncoding -- writing it
-        # back through a different one is the round-trip that loses bytes.
+        # Defaulted, not hardcoded: Register-LoaderInProfile, its one caller,
+        # passes the Encoding Read-ProfileFileText chose for the same file
+        # (Get-ProfileFileEncoding for a $PROFILE that did not exist), and
+        # writing it back through a different one is the round trip that loses
+        # bytes. The default is for a caller that passes none.
         [System.Text.Encoding]$Encoding = (Get-ProfileFileEncoding)
     )
     $enc = $Encoding
@@ -635,14 +680,17 @@ function Register-LoaderInProfile {
         New-Item -ItemType Directory -Force -Path $profileDir | Out-Null
     }
 
-    # Explicit encoding (WinPS 5.1's Get-Content -Raw defaults to the ANSI
-    # codepage), and it is ISO-8859-1 rather than UTF-8: this reads the whole
-    # file and Write-TextFileAtomic writes the whole file back, so the encoding
-    # has to round-trip every byte the user already had. See
-    # Get-ProfileFileEncoding.
-    $existing = if (Test-Path -LiteralPath $ProfilePath) {
-        [System.IO.File]::ReadAllText($ProfilePath, (Get-ProfileFileEncoding))
-    } else { '' }
+    # Read as bytes by Read-ProfileFileText -- not Get-Content -Raw (the ANSI
+    # code page on WinPS 5.1) and not ReadAllText (which lets a byte-order mark
+    # override the encoding it is handed) -- and written back with the
+    # Encoding that read chose. See Get-ProfileFileEncoding.
+    $existing = ''
+    $profileEncoding = Get-ProfileFileEncoding
+    if (Test-Path -LiteralPath $ProfilePath) {
+        $read = Read-ProfileFileText -Path $ProfilePath
+        $existing = $read.Text
+        $profileEncoding = $read.Encoding
+    }
     $originalContent = $existing
 
     $escBegin = [regex]::Escape($LoaderBegin)
@@ -663,12 +711,15 @@ function Register-LoaderInProfile {
         foreach ($s in $styleDirs) {
             $sp = Join-Path $s.FullName 'profile.ps1'
             if (Test-Path -LiteralPath $sp) {
-                # The SAME decoding as $existing above, so the comparison is
-                # between two strings that were read the same way rather than
-                # two that were read differently. (Every bundled
-                # styles/*/profile.ps1 is pure ASCII today, so this changes no
-                # current answer -- it removes the way it could start lying.)
-                $styleContent = [System.IO.File]::ReadAllText($sp, (Get-ProfileFileEncoding))
+                # The SAME decoding as $existing above. Every bundled
+                # styles/*/profile.ps1 is pure ASCII with no byte-order mark. A
+                # $PROFILE that is one of them saved as UTF-8 with a BOM
+                # therefore no longer counts as that style, because its Text
+                # starts with the BOM's three characters: it keeps its content,
+                # is backed up below, and gets the loader appended. A UTF-16 copy
+                # still matches, because its BOM is not part of its Text, and is
+                # then written back as UTF-16 holding only the loader.
+                $styleContent = (Read-ProfileFileText -Path $sp).Text
                 if ($styleContent.TrimEnd() -eq $existing.TrimEnd()) {
                     $bak = "$ProfilePath.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
                     Copy-Item -LiteralPath $ProfilePath -Destination $bak -Force
@@ -697,8 +748,13 @@ function Register-LoaderInProfile {
         $existing = [regex]::Replace($existing, $blockPattern, '')
     }
 
-    $final = ($existing.TrimEnd() + "`r`n`r`n" + $LoaderBody + "`r`n").TrimStart()
-    Write-TextFileAtomic -Path $ProfilePath -Content $final -Encoding (Get-ProfileFileEncoding)
+    # ASCII whitespace only, and never an empty set (trimming no characters is
+    # TrimEnd()). The default also takes U+0085 and U+00A0, which ISO-8859-1
+    # decodes the bytes 0x85 and 0xA0 to -- the last byte of a UTF-8 a-grave,
+    # Er or star -- so a profile whose last line ended in one lost that byte.
+    $asciiSpace = "`t`n`v`f`r ".ToCharArray()
+    $final = ($existing.TrimEnd($asciiSpace) + "`r`n`r`n" + $LoaderBody + "`r`n").TrimStart($asciiSpace)
+    Write-TextFileAtomic -Path $ProfilePath -Content $final -Encoding $profileEncoding
 }
 
 # --- Validate a downloaded archive before extracting ---

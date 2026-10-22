@@ -1034,13 +1034,19 @@ function Get-ShellRcRemovalCandidate {
 function Get-RcFileEncoding {
     <#
     .SYNOPSIS
-    The encoding to read and write a user's rc file with.
+    The encoding a user's rc file or $PROFILE is decoded and written back with,
+    unless it opens with a UTF-16 or UTF-32 byte-order mark, and the one a file
+    this module creates is written in.
 
     .DESCRIPTION
-    ISO-8859-1, which maps every byte 0-255 to exactly one character and back.
-    Reading and writing an rc file through it is byte-preserving whatever the
-    file really is, and the markers and loader block this module cares about are
-    pure ASCII either way.
+    ISO-8859-1 maps every byte 0-255 to one character and back, so decoding a
+    file's RAW BYTES through it and writing the text back gives the same bytes
+    whatever the file is, a UTF-8 byte-order mark included. Only from the raw
+    bytes, which is what Read-RcFileText does: [System.IO.File]::ReadAllText(
+    path, enc) looks for a byte-order mark first and decodes by it whatever enc
+    says, so a profile saved as UTF-8 with a BOM, or as UTF-16, came back with
+    every character above U+00FF as '?' or an ASCII look-alike, and no BOM. The
+    markers and loader block this module cares about are pure ASCII either way.
 
     It used to be UTF-8. Both halves read the WHOLE file and write the WHOLE
     file back, so a single byte that is not valid UTF-8 -- a latin-1 comment, a
@@ -1050,6 +1056,81 @@ function Get-RcFileEncoding {
     to append three lines.
     #>
     return [System.Text.Encoding]::GetEncoding(28591)
+}
+
+function Read-RcFileText {
+    <#
+    .SYNOPSIS
+    A user's rc file or $PROFILE as text, and the encoding that writes that text
+    back to the same bytes.
+
+    .DESCRIPTION
+    The one decoder for a file the USER owns. Register-ShellLoader and
+    Unregister-ShellLoader (shell-init, shell-remove, and uninstall's $PROFILE
+    strip) and Invoke-TerminalStylesRegister read the whole file and write the
+    whole file back, so they read through this and write with the Encoding it
+    returns. The read-only checks that must agree with them about a file --
+    Test-ShellLoaderPresent and Test-WezTermStyleWired -- read through it too.
+    install.ps1 carries a twin, Read-ProfileFileText, for the reason it carries
+    Get-ProfileFileEncoding; tests/Bootstrap-ModuleSync.Tests.ps1 compares the
+    two token for token.
+
+    From the raw bytes, never [System.IO.File]::ReadAllText(path, enc). That
+    overload looks for a byte-order mark first and decodes by it whatever enc
+    says, so a UTF-8-BOM or UTF-16 profile arrived as Unicode text and was
+    written back out through ISO-8859-1, which has no byte for anything above
+    U+00FF.
+
+    The table, by the file's first bytes:
+      * No byte-order mark, or a UTF-8 one: ISO-8859-1 over every byte. A UTF-8
+        BOM becomes three characters at the start of Text, and since
+        ISO-8859-1's preamble is empty, the write puts the same three bytes
+        back. Byte-exact for any content: invalid UTF-8, a 5.1 profile in the
+        ANSI code page.
+      * A UTF-16 or UTF-32 byte-order mark: decoded in that encoding, the mark
+        left out of Text. The Encoding returned carries the mark, so
+        WriteAllText writes it first and the block lands in the file's own
+        encoding. UTF-32LE is checked before UTF-16LE, as
+        StreamReader.DetectEncoding checks it, because FF FE 00 00 starts with
+        FF FE. These five marks are exactly the set ReadAllText sniffs.
+
+    Limit: a code unit that is not valid in a UTF-16 or UTF-32 file's own
+    encoding -- a lone surrogate, an odd trailing byte, usually from an ANSI
+    append -- comes back, and is written back, as U+FFFD. That is what
+    PowerShell itself reads there.
+
+    A file that cannot be read THROWS, as an error of our own that names it, the
+    rule Read-VSCodeSettingsText follows. Not a bare rethrow and not a local
+    $ErrorActionPreference = 'Stop': in an advanced function either of those
+    ends only the CALLER's statement, so a caller with no try above it went on
+    with $null -- and a writer that goes on builds the whole file from nothing.
+    The try covers the read alone, because 'Could not read' is the claim it
+    makes; the decoders below replace rather than throw.
+
+    .OUTPUTS
+    [pscustomobject] Text     = the file's content
+                     Encoding = what to write Text back with
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Path)
+    try {
+        $bytes = [System.IO.File]::ReadAllBytes($Path)
+    } catch {
+        throw ("Could not read {0}: {1}" -f $Path, $_.Exception.GetBaseException().Message)
+    }
+    $n   = $bytes.Length
+    $enc = Get-RcFileEncoding
+    if ($n -ge 4 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE -and $bytes[2] -eq 0 -and $bytes[3] -eq 0) {
+        $enc = [System.Text.UTF32Encoding]::new($false, $true)
+    } elseif ($n -ge 4 -and $bytes[0] -eq 0 -and $bytes[1] -eq 0 -and $bytes[2] -eq 0xFE -and $bytes[3] -eq 0xFF) {
+        $enc = [System.Text.UTF32Encoding]::new($true, $true)
+    } elseif ($n -ge 2 -and $bytes[0] -eq 0xFF -and $bytes[1] -eq 0xFE) {
+        $enc = [System.Text.UnicodeEncoding]::new($false, $true)
+    } elseif ($n -ge 2 -and $bytes[0] -eq 0xFE -and $bytes[1] -eq 0xFF) {
+        $enc = [System.Text.UnicodeEncoding]::new($true, $true)
+    }
+    $skip = $enc.GetPreamble().Length
+    [pscustomobject]@{ Text = $enc.GetString($bytes, $skip, $n - $skip); Encoding = $enc }
 }
 
 function Test-PathIsSymlink {
@@ -1150,7 +1231,7 @@ function Save-FirstTouchBackup {
 function Register-ShellLoader {
     # Add (or refresh) the loader block in one rc file. Returns the action taken
     # so the caller can report it: 'added', 'updated', 'unchanged', 'skipped',
-    # 'malformed', or 'failed' when the file could not be written.
+    # 'malformed', or 'failed' when the file could not be read or written.
     #
     # 'malformed' is the same state Unregister-ShellLoader names, on the same
     # bytes: a BEGIN marker with no matching END. It was missing here, and the
@@ -1169,6 +1250,12 @@ function Register-ShellLoader {
     # before anything was reported, so the user saw a stack trace and had no
     # idea which of their rc files had been touched.
     #
+    # The read is guarded as well as the write, as Unregister-ShellLoader's is.
+    # It was not: with no try above it, a failed read left $content empty and
+    # the append below went ahead, so an rc file the user could write but not
+    # read was replaced by the bare block and reported 'added'; under the shell
+    # shim's Stop it aborted the loop instead.
+    #
     # Only touches a file that already exists, unless -Create is passed: silently
     # creating ~/.bashrc on a machine that only uses zsh would be a surprise.
     param(
@@ -1179,12 +1266,19 @@ function Register-ShellLoader {
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
     $block = Get-ShellLoaderBlock
+    # The encoding of a file -Create makes. An existing file is written back in
+    # the one its read chose (Read-RcFileText).
     $enc   = Get-RcFileEncoding
 
     $exists = Test-Path -LiteralPath $Path
     if (-not $exists -and -not $Create) { return 'skipped' }
 
-    $content = if ($exists) { [System.IO.File]::ReadAllText($Path, $enc) } else { '' }
+    $content = ''
+    if ($exists) {
+        try { $read = Read-RcFileText -Path $Path } catch { return 'failed' }
+        $content = $read.Text
+        $enc     = $read.Encoding
+    }
 
     if ($content -match [regex]::Escape($begin)) {
         # The span is TEMPERED -- it may not cross a second BEGIN -- and that is
@@ -1251,14 +1345,15 @@ function Test-ShellLoaderPresent {
     change BEFORE the user has agreed to change anything, so it needs the
     question asked on its own.
 
-    Same encoding as the rest of the rc handling, and an Ordinal Contains rather
-    than -match: the marker is a fixed string, and -match would write to the
-    automatic $Matches for a caller that never asked it to.
+    Read through Read-RcFileText, as Unregister-ShellLoader reads it, so the
+    listing and the strip cannot disagree about a file. And an Ordinal Contains
+    rather than -match: the marker is a fixed string, and -match would write to
+    the automatic $Matches for a caller that never asked it to.
     #>
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
     try {
-        $content = [System.IO.File]::ReadAllText($Path, (Get-RcFileEncoding))
+        $content = (Read-RcFileText -Path $Path).Text
     } catch { return $false }
     return $content.Contains('# ===== TerminalStyles BEGIN =====')
 }
@@ -1319,16 +1414,20 @@ function Unregister-ShellLoader {
     if (-not (Test-Path -LiteralPath $Path)) { return 'none' }
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
-    $enc   = Get-RcFileEncoding
     # The READ is guarded as well as the write. It was not, so an rc file this
     # user cannot read threw a raw MethodInvocationException straight out of
     # both callers -- past every remaining rc file, past the WezTerm cleanup and
     # past the $PROFILE strip, in the middle of an uninstall. 'failed' is the
     # right answer for the same reason it is when the write is refused: the
     # block is still in a file we could not deal with.
+    #
+    # Through Read-RcFileText, and written back below with the Encoding it
+    # chose: the bytes, a byte-order mark included, are the user's.
     try {
-        $content = [System.IO.File]::ReadAllText($Path, $enc)
+        $read = Read-RcFileText -Path $Path
     } catch { return 'failed' }
+    $content = $read.Text
+    $enc     = $read.Encoding
     if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
 
     # Tempered exactly as Register-ShellLoader's span is, and for the same
@@ -1688,7 +1787,9 @@ function Invoke-TerminalStylesShellInit {
         }
         Write-Host ("  {0,-9} {1}" -f $t.Action, $t.Path) -ForegroundColor $color
         if ($t.Action -eq 'failed') {
-            Write-Host "            (could not write it -- check the file's permissions)" -ForegroundColor DarkGray
+            # Read OR write: Register-ShellLoader says 'failed' for both, and
+            # this line is the only explanation shell-init prints.
+            Write-Host "            (could not read or write it -- check the file's permissions)" -ForegroundColor DarkGray
         }
         if ($t.Action -eq 'malformed') {
             Write-Host "            (a TerminalStyles BEGIN marker with no matching END -- nothing" -ForegroundColor DarkGray

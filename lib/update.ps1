@@ -462,13 +462,14 @@ function Invoke-TerminalStylesRegister {
     $loaderBegin = '# ===== TerminalStyles BEGIN ====='
     $loaderEnd   = '# ===== TerminalStyles END ====='
 
-    # Get-RcFileEncoding, not UTF-8, for the reason its docstring gives: this
-    # reads the WHOLE of a file the user owns and writes the WHOLE of it back,
-    # so a byte that is not valid UTF-8 -- a latin-1 comment, a stray byte from
-    # an old editor -- decoded to U+FFFD and was written back as the
-    # replacement character. That was fixed for rc files and the $PROFILE half
-    # never got it. ISO-8859-1 round-trips every byte 0-255 unchanged, and the
-    # markers and the loader line are ASCII either way.
+    # Read-RcFileText, and its Encoding for the write, for the reason
+    # Get-RcFileEncoding's docstring gives: this reads the WHOLE of a file the
+    # user owns and writes the WHOLE of it back. Through UTF-8 a byte that is
+    # not valid UTF-8 -- a latin-1 comment, a stray byte from an old editor --
+    # came back as U+FFFD. Through [System.IO.File]::ReadAllText, even with
+    # ISO-8859-1, a profile saved with a byte-order mark was decoded by its BOM,
+    # and every character above U+00FF came back as '?' or an ASCII look-alike.
+    # The markers and the loader line are ASCII either way.
 
     # By NAME only when the module is somewhere PowerShell will look. A
     # bootstrap install is not on $env:PSModulePath -- which is exactly why
@@ -550,9 +551,18 @@ $loaderEnd
     # skips a file that already carries a BEGIN.
     $blockPattern = "(?ms)$([regex]::Escape($loaderBegin))(?:(?!$([regex]::Escape($loaderBegin)))[\s\S])*?$([regex]::Escape($loaderEnd))\r?\n?"
     foreach ($t in $targets) {
-        $malformed = $false
+        $malformed  = $false
+        $unreadable = $null
         if ($t.Exists) {
-            $content = [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
+            # Read through Read-RcFileText, guarded, and $content reset for every
+            # target. It was neither: a $PROFILE that could not be read kept the
+            # PREVIOUS target's content -- 'Already registered' for a file nobody
+            # had read -- and under Stop the whole command threw. It is refused
+            # up front, with the reason, the way a malformed block is: the
+            # consent screen lists what will be written, and a file already
+            # known to be unreadable is not one of them.
+            $content = ''
+            try { $content = (Read-RcFileText -Path $t.ProfilePath).Text } catch { $unreadable = $_.Exception.Message }
             $t.HasLoader = ($content -match $blockPattern)
             # A BEGIN marker with no END to close it: the state
             # Register-ShellLoader and Unregister-ShellLoader both call
@@ -568,13 +578,21 @@ $loaderEnd
             # half already gives.
             $malformed = (-not $t.HasLoader) -and ($content -match [regex]::Escape($loaderBegin))
         }
-        $t | Add-Member -NotePropertyName Malformed -NotePropertyValue $malformed -Force
+        $t | Add-Member -NotePropertyName Malformed  -NotePropertyValue $malformed  -Force
+        $t | Add-Member -NotePropertyName Unreadable -NotePropertyValue $unreadable -Force
     }
 
     # Decide what to do per target
     $toWrite = @()
     $refused = @()
     foreach ($t in $targets) {
+        if ($t.Unreadable) {
+            # The message is Read-RcFileText's own, and names the file.
+            Write-Host ("  ! {0}" -f $t.Unreadable) -ForegroundColor Red
+            Write-Host "    Nothing was written. Check the file's permissions and run this again." -ForegroundColor Red
+            $refused += $t
+            continue
+        }
         if ($t.Malformed) {
             Write-Host ("  ! {0} has a TerminalStyles BEGIN marker with no matching END." -f $t.ProfilePath) -ForegroundColor Red
             Write-Host "    Nothing was written. Complete or delete that block by hand and run this" -ForegroundColor Red
@@ -646,9 +664,15 @@ $loaderEnd
                 New-Item -ItemType Directory -Path $profileDir -Force -ErrorAction Stop | Out-Null
             }
 
-            $existing = if ($t.Exists) {
-                [System.IO.File]::ReadAllText($t.ProfilePath, (Get-RcFileEncoding))
-            } else { '' }
+            # Written back with the Encoding the read chose; a $PROFILE that
+            # does not exist yet is created in Get-RcFileEncoding's.
+            $existing = ''
+            $profileEncoding = Get-RcFileEncoding
+            if ($t.Exists) {
+                $read = Read-RcFileText -Path $t.ProfilePath
+                $existing = $read.Text
+                $profileEncoding = $read.Encoding
+            }
             # The file as the USER last left it. Both arguments to the
             # first-touch rule below are about this, not about what is left
             # after the strip.
@@ -658,7 +682,13 @@ $loaderEnd
                 $existing = [regex]::Replace($existing, $blockPattern, '')
             }
 
-            $final = ($existing.TrimEnd() + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart()
+            # ASCII whitespace only, and never an empty set (trimming no
+            # characters is TrimEnd()). The default also takes U+0085 and
+            # U+00A0, which ISO-8859-1 decodes the bytes 0x85 and 0xA0 to -- the
+            # last byte of a UTF-8 a-grave, Er or star -- so a profile whose last
+            # line ended in one lost that byte.
+            $asciiSpace = "`t`n`v`f`r ".ToCharArray()
+            $final = ($existing.TrimEnd($asciiSpace) + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart($asciiSpace)
             # Same first-touch rule the bootstrap installer has always applied to
             # $PROFILE. The module half never did, so `tstyles register` rewrote a
             # hand-maintained profile with no copy kept.
@@ -676,7 +706,7 @@ $loaderEnd
             # above covers the other direction, where the bare marker matched a
             # file that carried no block of ours at all and skipped the copy.
             $bak = Save-FirstTouchBackup -Path $t.ProfilePath -Content $original -BlockPattern $blockPattern
-            [System.IO.File]::WriteAllText($t.ProfilePath, $final, (Get-RcFileEncoding))
+            [System.IO.File]::WriteAllText($t.ProfilePath, $final, $profileEncoding)
         } catch {
             # The backup was taken of a file we then never modified, and the
             # block never landed -- so the next run took another one, and the
@@ -917,10 +947,11 @@ function Remove-PowerShellProfileLoader {
     reads the whole of it and writes the whole of it back:
 
       * It read and wrote through UTF-8. Get-RcFileEncoding is ISO-8859-1
-        precisely because that round-trips every byte 0-255 unchanged, and its
-        own docstring describes what UTF-8 does instead: a latin-1 comment or a
-        stray byte from an old editor decodes to U+FFFD and is written back as
-        the replacement character. Measured on a $PROFILE whose first line was
+        precisely because, decoded from the raw bytes (Read-RcFileText), that
+        round-trips every byte 0-255 unchanged, and its own docstring
+        describes what UTF-8 does instead: a latin-1 comment or a stray byte
+        from an old editor decodes to U+FFFD and is written back as the
+        replacement character. Measured on a $PROFILE whose first line was
         `# caf\xe9`: the byte e9 came back as ef bf bd, permanently, from a
         command that was only asked to remove three lines -- and unlike the
         register path, removal takes no backup, because the FIRST TOUCH rule
