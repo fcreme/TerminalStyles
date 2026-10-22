@@ -1348,8 +1348,14 @@ function Invoke-TerminalStylesUninstall {
     # moment this file stops existing. That is the property that made this
     # design preferable to a marker block in a Lua program -- see the header of
     # lib/wezterm.ps1.
+    #
+    # The file may be a style module or the one `tstyles reset` leaves, which
+    # applies nothing. The delete is the same for both; the sentence about a
+    # file it could not delete is not, so it is decided once, from the file,
+    # and printed both here and in the sign-off.
     $wezPath = Get-WezTermModulePath @wezSplat
     $wezLeft = $null
+    $wezLeftAdvice = $null
     if (Test-Path -LiteralPath $wezPath) {
         try { Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop } catch { }
         # Read back, like every other removal here, and kept for the sign-off
@@ -1357,8 +1363,13 @@ function Invoke-TerminalStylesUninstall {
         # few lines under the warning.
         if (Test-Path -LiteralPath $wezPath) {
             $wezLeft = $wezPath
+            $wezLeftAdvice = if (Test-WezTermModuleStyled -Path $wezPath) {
+                'Delete it by hand; until then WezTerm keeps applying the last style.'
+            } else {
+                'Delete it by hand. It applies no style, so WezTerm looks the same until you do.'
+            }
             Write-Host "  ! could not remove $wezPath" -ForegroundColor Red
-            Write-Host "    Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Red
+            Write-Host "    $wezLeftAdvice" -ForegroundColor Red
         } else {
             Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
         }
@@ -1523,7 +1534,7 @@ function Invoke-TerminalStylesUninstall {
     if ($wezLeft) {
         Write-UninstallLeftoverLead -State $lead -What 'the WezTerm style module:'
         Write-Host ("  {0}" -f $wezLeft) -ForegroundColor Yellow
-        Write-Host "Delete it by hand; until then WezTerm keeps applying the last style." -ForegroundColor Yellow
+        Write-Host $wezLeftAdvice -ForegroundColor Yellow
     }
     # A VS Code style that could not be taken out. Its record is the only thing
     # that names those keys, and with the module gone no reset can use it -- so
