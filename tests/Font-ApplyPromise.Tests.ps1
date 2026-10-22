@@ -60,6 +60,10 @@ Describe 'tstyles font does not chase a settings.json that cannot exist' {
                 -Because "$kind has no settings.json, and the install had already succeeded"
             $out | Should -Match ([regex]::Escape((Get-TerminalDisplayName -Kind $kind))) `
                 -Because 'the decline has to name the terminal it is talking about'
+            # The count is what measures the gate: that sentence is now written
+            # by Find-WTSettingsPath, which this Describe mocks to a silent
+            # $null, so the -Not -Match above could no longer fail on its own.
+            Should -Invoke Find-WTSettingsPath -Times 0 -Exactly
         }
 
         It 'never reaches the Windows Terminal half at all on WezTerm' {

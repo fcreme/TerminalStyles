@@ -25,7 +25,7 @@ body:
     id: wt-version
     attributes:
       label: Windows Terminal version
-      description: Windows Terminal → Settings → About. Say so if you're on Preview.
+      description: "Windows Terminal → Settings → About. Say which build: Stable, Preview, Canary, or an unpackaged or portable copy."
       placeholder: 1.22.10731.0
   - type: input
     id: ps-version
@@ -56,5 +56,5 @@ body:
     id: settings-snippet
     attributes:
       label: Relevant settings.json snippet
-      description: Optional. The profile entry or `schemes` block involved, from `%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json`. Strip anything personal.
+      description: Optional. The profile entry or `schemes` block involved, from your Windows Terminal's `settings.json` (Settings → Open JSON file opens it). Strip anything personal.
       render: json

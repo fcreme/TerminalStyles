@@ -1077,10 +1077,7 @@ function Invoke-TerminalStyleTune {
     $settingsPath = $null
     if ($tuneUsesSettings) {
         $settingsPath = Find-WTSettingsPath
-        if (-not $settingsPath) {
-            Write-Error "Could not locate Windows Terminal settings.json."
-            return
-        }
+        if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
     }
 
     # The tuner is a keyboard-driven UI: it polls [Console]::KeyAvailable, which

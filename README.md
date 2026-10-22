@@ -264,6 +264,17 @@ tstyles eva -Target 'Ubuntu'   # style that profile instead of this tab's
 tstyles eva -Target defaults   # style profiles.defaults: everything inherits it
 ```
 
+That profile lives in the `settings.json` of the Windows Terminal the tab
+belongs to — Stable, Preview, Canary, or an unpackaged or portable copy.
+Windows Terminal does not tell the shell which build it is, so tstyles reads it
+off the process the session runs under. When that process does not lead back to
+a running Windows Terminal (a program in between has exited, say) and more than
+one build has a `settings.json`, it lists them and edits none: open a new tab
+in the one you want and run it there, or set `$env:TSTYLES_WT_SETTINGS` to that
+build's `settings.json` for the session. That variable wins over the detection
+wherever it is set, so with more than one build installed keep it out of
+`$PROFILE`, which every build's tabs run.
+
 **`defaults` is a target name, not a placeholder.** It is Windows Terminal's
 `profiles.defaults` block, which every profile that does not set a field itself
 inherits — so a style applied there reaches all of them at once. That is also
@@ -755,10 +766,16 @@ entirely by flags. It writes a timestamped `settings.json.bak-<timestamp>`
 keeping a full audit trail of every run. See `apply.ps1 -?` for the
 full parameter list.
 
+It edits the `settings.json` of the Windows Terminal it runs in, as
+`tstyles` does. Run outside one — from a scheduled task, say — on a machine
+where more than one build has a `settings.json`, it cannot tell which you
+mean and stops: pass `-SettingsPath`.
+
 ### Recovering from a bad write to `settings.json`
 
 There is exactly ONE rolling backup, `settings.json.bak` (no timestamp),
-in the same directory as `settings.json`. Every command that writes
+in the same directory as the `settings.json` tstyles edited — that of the
+Windows Terminal you ran it in. Every command that writes
 `settings.json` rolls it first: `tstyles <name>`, `tstyles random`,
 `tstyles reset`, `tstyles font <name>`, `tstyles tune`, and opening the
 picker (`tstyles` with no arg, which backs up before its first preview).
@@ -767,9 +784,18 @@ those — a font change or a tune after an apply is what you will get
 back, not the file from before the apply. To restore it:
 
 ```powershell
+# Stable's. Preview and Canary keep theirs in their own package folders under
+# Packages (Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe,
+# Microsoft.WindowsTerminalCanary_8wekyb3d8bbwe), an unpackaged build under
+# "$env:LOCALAPPDATA\Microsoft\Windows Terminal", and a portable one in the
+# settings folder beside WindowsTerminal.exe.
 $wt = "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json"
 Copy-Item "$wt.bak" $wt -Force
 ```
+
+Windows Terminal's Settings → Open JSON file opens the one in use, and
+`tstyles <name>`, `random`, `reset` and `font` print the backup's path as
+they take it (`Backed up settings to: ...`).
 
 `tstyles reset` is not a substitute: it removes the fields a style
 added, but it cannot put back what the style overwrote — your own
@@ -901,9 +927,10 @@ uninstall says so at the end rather than reporting a clean
 uninstall.
 
 If you want a clean default look back, either restore a
-`settings.json.bak-<timestamp>` file from
-`%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\`,
-or open WT Settings → "Open JSON file" and edit by hand.
+`settings.json.bak-<timestamp>` file from the folder that holds your Windows
+Terminal's `settings.json`
+(`%LOCALAPPDATA%\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\`
+for Stable), or open WT Settings → "Open JSON file" and edit by hand.
 
 ## Adding your own style
 

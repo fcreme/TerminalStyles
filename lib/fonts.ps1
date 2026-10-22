@@ -952,7 +952,7 @@ function Invoke-TerminalStyleFont {
     }
 
     $settingsPath = Find-WTSettingsPath
-    if (-not $settingsPath) { Write-Host "Could not locate Windows Terminal settings.json." -ForegroundColor Red; return }
+    if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
     # Parsed once and reused: the auto-detect below and the target check share it.
     $settingsJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $settingsObj  = ConvertFrom-JsoncText $settingsJson
