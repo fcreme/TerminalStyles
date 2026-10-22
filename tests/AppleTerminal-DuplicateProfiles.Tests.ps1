@@ -279,6 +279,24 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             $script:windows[$script:windows.Count - 1] | Should -Be '<plist>v2</plist>'
         }
 
+        It 'does not trust an import record written before 0.9.3' {
+            # 0.8.24-0.9.2 wrote this file after every `open`, so an entry in it
+            # may be a claim on a profile TerminalStyles never imported.
+            [void]$script:sets.Add([pscustomobject]@{ Name = 'eva'; Content = 'USER' })
+            $v1 = Get-AppleTerminalProfileHash -Path $script:profilePath
+            [System.IO.File]::WriteAllText((Join-Path $script:TStylesDataRoot '.appleterminal-imported.json'),
+                ('{"eva":"' + $v1 + '"}'), [System.Text.UTF8Encoding]::new($false))
+
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+
+            $script:windows | Should -Not -Contain 'USER'
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) |
+                Should -Be @('USER')
+            $script:windows.Count | Should -Be 2
+        }
+
         It 'says why when a profile it cannot prove it imported already has the name' {
             [void]$script:sets.Add([pscustomobject]@{ Name = 'eva'; Content = 'USER' })
 

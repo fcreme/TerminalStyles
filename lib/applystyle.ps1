@@ -332,7 +332,11 @@ function Test-AppleTerminalSettingsSetNameListable {
 }
 
 function Get-AppleTerminalImportRecordPath {
-    Join-Path $script:TStylesDataRoot '.appleterminal-imported.json'
+    # Not .appleterminal-imported.json: 0.8.24-0.9.2 wrote that after every
+    # import, including ones Terminal.app filed under a numbered name, so its
+    # entries can claim a profile TerminalStyles never created, and nothing in
+    # them tells a claim from a real import. It is left on disk and never read.
+    Join-Path $script:TStylesDataRoot '.appleterminal-owned.json'
 }
 
 function Get-AppleTerminalImportRecord {
@@ -347,7 +351,9 @@ function Get-AppleTerminalImportRecord {
     recoverable. Open-AppleTerminalProfile deletes only a name that appears
     here, and writes one only when the import is known to have landed under it.
     `tstyles profiles -Clean` is the exception: it deletes numbered copies by
-    name and never reads this (Get-AppleTerminalDuplicateProfile).
+    name and never reads this (Get-AppleTerminalDuplicateProfile). Records from
+    0.8.24-0.9.2 were not written that way, so they live in another file and are
+    not read.
 
     Maps settings-set name -> the SHA256 of the .terminal file that produced it,
     so a stale import is detectable.
@@ -511,7 +517,8 @@ end tell
             # anywhere new; recording $Name would make this profile ours to
             # reuse and, once the style changes, to delete.
             Write-Host ("  Terminal.app already has a profile named '{0}' that TerminalStyles cannot" -f $held) -ForegroundColor DarkGray
-            Write-Host "  prove it imported, so it is left alone, and the style may be added beside" -ForegroundColor DarkGray
+            Write-Host "  prove it imported -- imports made before 0.9.3 included, as their record is" -ForegroundColor DarkGray
+            Write-Host "  no longer trusted -- so it is left alone, and the style may be added beside" -ForegroundColor DarkGray
             Write-Host ("  it as a numbered copy. Rename or delete that '{0}' in Terminal's Settings >" -f $held) -ForegroundColor DarkGray
             Write-Host "  Profiles and the next -NewWindow imports the style under its own name and" -ForegroundColor DarkGray
             Write-Host "  reuses it after that; tstyles profiles -Clean removes numbered copies." -ForegroundColor DarkGray
