@@ -298,7 +298,7 @@ footer .sp{margin-left:auto}
     <div class="tablewrap"><table>
       <thead><tr><th>Terminal</th><th>Colors</th><th>Cursor</th><th>Font</th><th>Opacity</th><th>Background</th><th>Tab color</th></tr></thead>
       <tbody>
-        <tr><td>Windows Terminal</td><td class="yes">Yes</td><td class="yes">shape + color</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">animated</td><td class="yes">Yes</td></tr>
+        <tr><td>Windows Terminal&nbsp;<sup>2</sup></td><td class="yes">Yes</td><td class="yes">shape + color</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">animated</td><td class="yes">Yes</td></tr>
         <tr><td>Terminal.app</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="yes">still, new window</td><td class="no">&mdash;</td></tr>
         <tr><td>iTerm2</td><td class="yes">Yes</td><td>color only</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td><td class="no">&mdash;</td></tr>
         <tr><td>WezTerm</td><td class="yes">Yes</td><td class="yes">shape + color</td><td class="yes">Yes</td><td class="yes">Yes</td><td class="yes">animated</td><td class="yes">Yes</td></tr>
@@ -315,6 +315,11 @@ footer .sp{margin-left:auto}
     <p class="note"><sup>1</sup>&nbsp;VS Code, Insiders, VSCodium, Cursor and Windsurf, once you have said yes to
       this tool saving styles in that editor's <code>settings.json</code> &mdash; it asks the first time;
       until then, and in an editor it cannot identify, colors only.</p>
+    <p class="note"><sup>2</sup>&nbsp;When this tool runs on Windows. A pwsh installed inside a WSL distro is a
+      Linux install and cannot reach Windows Terminal's <code>settings.json</code>: in a WSL tab a style brings
+      colors, cursor color and prompt, and <code>tstyles font</code> installs into the distro, where Windows
+      Terminal does not look. Apply from a PowerShell tab of the same Windows Terminal with
+      <code>tstyles &lt;name&gt; -Target '&lt;profile&gt;'</code> to give that profile the rest.</p>
   </section>
 
   <section id="commands">

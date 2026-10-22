@@ -54,15 +54,38 @@ $script:TStylesCapabilityNames = @(
 function Get-TerminalKind {
     # Identify the terminal emulator hosting this session.
     #
-    # Detection is env-var based and ordered most-specific first, because the
-    # generic markers overlap: WezTerm and iTerm2 both set TERM_PROGRAM, and a
-    # multiplexer or SSH session can inherit a stale value from wherever it was
-    # launched. Returns 'Unknown' rather than guessing -- callers fall back to
-    # the OSC path, which is the one thing that works nearly everywhere.
+    # Every variable read here is inherited by whatever the terminal starts --
+    # a VS Code launched with `code .`, another terminal started from a shell,
+    # a pwsh inside WSL (Windows Terminal forwards WT_SESSION and WT_PROFILE_ID
+    # through WSLENV). A marker proves only that its terminal is somewhere above
+    # this process, so the order below follows which marker can be inherited
+    # INTO which host:
     #
-    # -EnvTable is a test seam: a hashtable standing in for $env:. Real callers
-    # omit it and the live environment is read.
-    param([hashtable]$EnvTable)
+    #   - iTerm2, WezTerm, Ghostty, Terminal.app and VS Code set TERM_PROGRAM
+    #     afresh in the sessions they host;
+    #   - kitty and Alacritty never touch TERM_PROGRAM, so one beside their
+    #     marker may have been inherited into them;
+    #   - Windows Terminal sets no TERM_PROGRAM, and a tab's environment is
+    #     rebuilt from the registry unless the profile turns
+    #     compatibility.reloadEnvironmentVariables off, or `wt` was given a
+    #     command line -- in those cases it inherits the environment of
+    #     whatever ran `wt`. So another terminal's markers seldom reach a WT
+    #     tab, while WT_SESSION reaches everything a tab starts.
+    #
+    # Where the environment cannot tell two readings apart, the ladder takes
+    # the one that writes no config (see the kitty/Alacritty check). Returns
+    # 'Unknown' rather than guessing -- callers fall back to the OSC path,
+    # which works nearly everywhere and writes no file.
+    #
+    # -EnvTable (a hashtable standing in for $env:) and -Platform (what
+    # Get-TStylesPlatform would answer) are test seams; real callers omit both.
+    # Advanced, so a misspelled seam is a binding error, not a silent read of
+    # the live platform.
+    [CmdletBinding()]
+    param(
+        [hashtable]$EnvTable,
+        [string]$Platform = (Get-TStylesPlatform)
+    )
 
     $get = {
         param([string]$Name)
@@ -70,21 +93,45 @@ function Get-TerminalKind {
         return [System.Environment]::GetEnvironmentVariable($Name)
     }
 
-    # Windows Terminal sets WT_SESSION on every tab it hosts. Checked first
-    # because WT also runs on the same machine as VS Code's terminal, which
-    # would otherwise match on TERM_PROGRAM below.
-    if (& $get 'WT_SESSION') { return 'WindowsTerminal' }
+    $program = & $get 'TERM_PROGRAM'
+    $term    = & $get 'TERM'
+    $vscode  = ($program -eq 'vscode')
 
-    # Own markers, before the generic ones. This block is what protects a
-    # terminal from a marker INHERITED from whatever launched it: the check
-    # below returns 'ITerm2' on ITERM_SESSION_ID alone, and that variable
-    # survives into any child environment -- a tmux server whose environment was
-    # captured under iTerm2, `ssh` with SendEnv, or another terminal started from
-    # an iTerm2 shell.
+    # kitty and Alacritty first: neither sets TERM_PROGRAM, and both KEEP one
+    # they inherit, so a kitty window started from a VS Code terminal says
+    # 'vscode' too. TERM settles that pair: kitty sets xterm-kitty and
+    # Alacritty alacritty (xterm-256color without its terminfo), while VS Code
+    # sets xterm-256color on macOS and Linux and no TERM at all on Windows.
     #
-    # kitty and Alacritty set no TERM_PROGRAM, only their own markers.
-    if (& $get 'KITTY_WINDOW_ID')    { return 'Kitty' }
-    if (& $get 'ALACRITTY_WINDOW_ID'){ return 'Alacritty' }
+    # Any other TERM_PROGRAM beside these markers cannot be settled from here.
+    # WezTerm keeps an inherited KITTY_WINDOW_ID and kitty keeps WEZTERM_* and
+    # TERM_PROGRAM, so a WezTerm window started from a kitty shell and a kitty
+    # window (term xterm-256color) started from a WezTerm shell carry the same
+    # variables -- as do Terminal.app/kitty and Ghostty/kitty. This answers
+    # kitty or Alacritty, which claim the OSC palette only, rather than WezTerm
+    # or Terminal.app, whose writers would write a config that window may not
+    # read. The cost: WezTerm, Ghostty or iTerm2 started from a kitty or
+    # Alacritty shell is named as that terminal, and WezTerm's module is not
+    # written for it. (-and and -or have equal precedence: the parentheses are
+    # load-bearing.)
+    if ((& $get 'KITTY_WINDOW_ID') -and (-not $vscode -or $term -eq 'xterm-kitty')) { return 'Kitty' }
+    if ((& $get 'ALACRITTY_WINDOW_ID') -and (-not $vscode -or $term -like 'alacritty*')) { return 'Alacritty' }
+
+    # VS Code sets TERM_PROGRAM=vscode in every terminal it starts and keeps
+    # everything it inherits except VSCODE_*, ELECTRON_*, SNAP* and
+    # GDK_PIXBUF_*, so a VS Code started from another terminal carries that
+    # terminal's markers. iTerm2, WezTerm and Ghostty overwrite TERM_PROGRAM in
+    # their own sessions, so 'vscode' beside their markers below means VS Code
+    # is the host. So does 'vscode' beside WT_SESSION, save for a WT tab that
+    # inherited it from the VS Code terminal `wt` was run in -- see the Windows
+    # Terminal check. Cursor, Windsurf, VSCodium and Insiders set the same
+    # value.
+    if ($vscode) { return 'VSCode' }
+
+    # Own markers before ITERM_SESSION_ID and TERM_PROGRAM: ITERM_SESSION_ID
+    # survives into any child environment -- a tmux server whose environment
+    # was captured under iTerm2, `ssh` with SendEnv, another terminal started
+    # from an iTerm2 shell -- so a terminal's own marker has to outrank it.
     if (& $get 'GHOSTTY_RESOURCES_DIR') { return 'Ghostty' }
     # WezTerm was identified by TERM_PROGRAM alone, below the iTerm2 gate, while
     # exporting three unambiguous markers this function never read. So a WezTerm
@@ -101,13 +148,33 @@ function Get-TerminalKind {
     # multiplexer, so it is the more reliable iTerm2 signal of the two.
     if (& $get 'ITERM_SESSION_ID')   { return 'ITerm2' }
 
-    switch ((& $get 'TERM_PROGRAM')) {
+    switch ($program) {
         'Apple_Terminal' { return 'AppleTerminal' }
         'iTerm.app'      { return 'ITerm2' }
         'WezTerm'        { return 'WezTerm' }
         'ghostty'        { return 'Ghostty' }
-        'vscode'         { return 'VSCode' }
     }
+
+    # Windows Terminal last, and only where its settings.json is reachable and
+    # nothing contradicts it. WT puts WT_SESSION into every process a tab
+    # starts and, through WSLENV, into WSL, where pwsh is a Linux install that
+    # cannot reach WT's settings.json and the escape sequences WT renders are
+    # the path that works. On Windows it is believed only with no TERM_PROGRAM
+    # beside it. WT sets none, and a tab's environment is rebuilt from the
+    # registry unless the profile turns compatibility.reloadEnvironmentVariables
+    # off, or `wt` was given a command line, so a TERM_PROGRAM here was nearly
+    # always set by a host started from a WT tab -- Git Bash's mintty sets
+    # TERM_PROGRAM=mintty. The exception runs the other way: in those two cases
+    # the tab inherits the environment of whatever ran `wt`, so a tab opened
+    # from a VS Code terminal is taken for VS Code above, one opened from a
+    # WezTerm shell for WezTerm, and one opened from a mintty shell gets the
+    # escape sequences only. A host that sets no TERM_PROGRAM and none of the
+    # markers above, started from a WT tab, still reads as Windows Terminal:
+    # the environment cannot tell it from the tab.
+    #
+    # Get-TStylesPlatform, never $IsWindows: that is $null on Windows
+    # PowerShell 5.1.
+    if ($Platform -eq 'Windows' -and -not $program -and (& $get 'WT_SESSION')) { return 'WindowsTerminal' }
 
     return 'Unknown'
 }
