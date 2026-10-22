@@ -296,7 +296,16 @@ record: earlier values come back, and a key you changed by hand since is left
 alone and named. No `.bak` is written for that. Elsewhere there is no
 `settings.json` to strip: the reset is an escape sequence handing color control
 back to the terminal's own profile, so there is nothing to back up and no
-`.bak` is written. Fields you set on the profile by hand are left alone.
+`.bak` is written. In WezTerm that profile includes the module TerminalStyles
+generated, `~/.config/wezterm/terminalstyles.lua`, so the reset also rewrites
+it to one that applies nothing. The tab you reset in and every new tab come up
+in your own `wezterm.lua`, and other open tabs lose what the module set: the
+font, padding, cursor shape, opacity, tab color, background and color scheme.
+WezTerm keeps colors an escape sequence set as that tab's own, though, so the
+tab you applied a style in can keep its colors until you close it or run
+`tstyles reset` there. A reset run in another terminal leaves the module alone,
+as it leaves VS Code's `settings.json`. Fields you set on the profile by hand
+are left alone.
 
 If you styled `profiles.defaults` (`tstyles eva -Target defaults`), a reset of
 one profile also has to deal with what that profile *inherits* — Windows
@@ -581,7 +590,10 @@ lose the style.
 Applying a style rewrites `~/.config/wezterm/terminalstyles.lua`, and because
 WezTerm watches every file it `require`s, the running window repaints on the
 spot — background animation included. No new window, no restart. `tstyles`
-prints the line above until it can see it in your config.
+prints the line above until it can see it in your config. `tstyles reset`, run
+in WezTerm, rewrites the same file to one that applies nothing, and the same
+reload takes the style back off (the tab you applied a style in can keep its
+colors; see "Resetting a profile"). `tstyles uninstall` deletes the file.
 
 The module carries the rest of the style too: the palette as a named color
 scheme, the font and its size, the interior padding, the cursor shape, the tab
