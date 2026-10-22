@@ -100,7 +100,12 @@ the other half in the same change.
 - `Get-RcFileEncoding` is **ISO-8859-1 (28591)**, not UTF-8, and it is load-bearing:
   these paths read the whole file and write the whole file back, so a byte that is not
   valid UTF-8 decodes to U+FFFD and is written back as the replacement character —
-  silently corrupting the user's own content. ISO-8859-1 round-trips every byte 0-255.
+  silently corrupting the user's own content. ISO-8859-1 round-trips every byte 0-255,
+  but only when the file's RAW BYTES are decoded through it. Read with `Read-RcFileText`
+  (install.ps1: `Read-ProfileFileText`) and write back with the `Encoding` it returns.
+  Never use `[System.IO.File]::ReadAllText(path, (Get-RcFileEncoding))`: it looks for a
+  byte-order mark first and decodes by it whatever encoding it is handed. A UTF-16 or
+  UTF-32 file is decoded and written back in its own encoding, BOM first.
 - Any timestamp that is **parsed back** must be culture-pinned on **both** sides.
   `Get-Date -Format` uses the current culture's *calendar*; under `ar-SA` or `fa-IR`
   that is not Gregorian, and a reader pinned to `InvariantCulture` misreads it by

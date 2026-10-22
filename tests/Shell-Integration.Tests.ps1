@@ -343,6 +343,34 @@ Describe 'the rc file survives contact with shell-init' {
             [System.Linq.Enumerable]::Contains([byte[]]$after, [byte]0xEF) | Should -BeFalse `
                 -Because '0xEF starts the UTF-8 replacement character'
         }
+
+        It 'keeps a UTF-8 byte-order mark and the glyph after it, through init and remove' {
+            # The same read as the $PROFILE half: ReadAllText(path, ISO-8859-1)
+            # decodes by a byte-order mark whatever encoding it is handed, and
+            # the text went back out through ISO-8859-1. Measured: `ef bb bf 23
+            # 20 e2 9d af 0a ..` came back `23 20 3f 0a ..`. The glyph is built
+            # from its code so this file stays ASCII for 5.1.
+            #
+            # No data root here, like the two tests above: both functions write
+            # only -Path, and the block's text is all they take from the root.
+            $rc = Join-Path $script:h '.zshrc'
+            $fixture = [byte[]]([byte[]]@(0xEF, 0xBB, 0xBF) +
+                [System.Text.UTF8Encoding]::new($false).GetBytes('# ' + [char]0x276F + "`nexport A=1`n"))
+            [System.IO.File]::WriteAllBytes($rc, $fixture)
+            $hex = { param([byte[]]$b) [System.BitConverter]::ToString($b) -replace '-', '' }
+
+            Register-ShellLoader -Path $rc | Should -Be 'added'
+            $mid = [System.IO.File]::ReadAllBytes($rc)
+            $midHead = if ($mid.Length -ge $fixture.Length) { [byte[]]$mid[0..($fixture.Length - 1)] } else { $mid }
+            (& $hex $midHead) | Should -BeExactly (& $hex $fixture) `
+                -Because 'the byte-order mark and the glyph are the user''s'
+            (Get-RcFileEncoding).GetString($mid) | Should -Match ([regex]::Escape('# ===== TerminalStyles BEGIN =====')) `
+                -Because 'the write under test ran'
+
+            Unregister-ShellLoader -Path $rc | Should -Be 'removed'
+            (& $hex ([System.IO.File]::ReadAllBytes($rc))) | Should -BeExactly (& $hex $fixture) `
+                -Because 'shell-remove is the byte-exact reversal of shell-init'
+        }
     }
 }
 
@@ -547,6 +575,34 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
                     Invoke-TerminalStylesShellInit -HomeDir $HomeDir -Force 6>&1 | Out-String
                 }
             } finally { $env:SHELL = $prev }
+        }
+
+        It 'names an rc file it cannot read, and still registers the files after it' {
+            # Register-ShellLoader read the file outside its try. In Pester, as
+            # in the zsh/bash shim's Stop, the error unwound out of shell-init
+            # partway, after earlier files were written. At the pwsh default it
+            # went on with no content instead: a write-only rc file was replaced
+            # by the bare block and reported 'added'.
+            #
+            # A DIRECTORY where .bashrc should be, between .zshrc and
+            # .bash_profile in Get-ShellRcCandidate's order: ReadAllBytes refuses
+            # one on every platform, with no chmod or ACL. Not InitAs, whose bare
+            # Out-String wraps a long path on 5.1.
+            $h = script:New-Home @('.zshrc', '.bash_profile')
+            $bashrc = Join-Path $h '.bashrc'
+            New-Item -ItemType Directory -Path $bashrc -Force | Out-Null
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/zsh'
+                $out = Invoke-TerminalStylesShellInit -HomeDir $h 6>&1 | Out-String -Width 500
+            } finally { $env:SHELL = $prev }
+
+            $out | Should -Match ('failed\s+' + [regex]::Escape($bashrc))
+            $out | Should -Match 'could not read or write it' -Because '"failed" now has two causes, and this is the only line that says so'
+            script:RcText (Join-Path $h '.zshrc')        | Should -Match 'TerminalStyles BEGIN'
+            script:RcText (Join-Path $h '.bash_profile') | Should -Match 'TerminalStyles BEGIN' `
+                -Because 'one unreadable rc file does not stop the ones after it'
+            @(Get-ChildItem -LiteralPath $bashrc -Force).Count | Should -Be 0 -Because 'nothing was written into it'
         }
 
         # The literal array can never be empty at discovery. Pester 6 fails the
