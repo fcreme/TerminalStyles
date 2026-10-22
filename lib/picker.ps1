@@ -702,10 +702,13 @@ function Test-WezTermInstalled {
 }
 
 function Install-WezTermViaBrew {
-    # The external call, on its own, so the failure path around it can be
-    # driven. Pester cannot mock `& brew` -- an external binary is not a
-    # command it can intercept -- so a test that tried would pass while
-    # exercising nothing, which is exactly what the first version of it did.
+    # The external call, on its own, so a test can stand in for it on every
+    # runner. `Mock brew` works only where brew is on PATH: elsewhere -- the
+    # Windows CI legs among them -- it throws "Could not find Command", and
+    # where brew IS on PATH a test that mocks nothing runs the real install.
+    # This function can be mocked everywhere. A mock of something the offer
+    # never calls passes while exercising nothing, which is what the first
+    # version of its test did.
     [CmdletBinding()]
     param()
     & brew install --cask wezterm 2>&1 | ForEach-Object { Write-Host "    $_" -ForegroundColor DarkGray }

@@ -613,11 +613,13 @@ Describe 'a tune.json the seeder cannot use is not seeded over in silence' {
             # CLAUDE.md). This is the one thing the behavioural half above
             # cannot reach: the sentence is drawn inside $drawMenu, a scriptblock
             # local to Invoke-TerminalStyleTune, and the function returns on
-            # [Console]::IsInputRedirected long before it -- which is always true
-            # under Pester. Without something here, a seed flag that no screen
-            # ever reads passes the whole suite and ships the same silence with
-            # more code in it. The WORDING is not asserted here; it was checked
-            # by driving the real tuner on a pty against a corrupt tune.json.
+            # [Console]::IsInputRedirected long before it -- which is true on
+            # every CI leg, and at a terminal $drawMenu runs inside a live
+            # session no test can drive. Without something here, a seed flag
+            # that no screen ever reads passes the whole suite and ships the same
+            # silence with more code in it. The WORDING is not asserted here; it
+            # was checked by driving the real tuner on a pty against a corrupt
+            # tune.json.
             # The behavioural half, which the extraction made possible: the
             # sentence exists, is conditional on the state, and names it.
             [System.IO.File]::WriteAllText($script:tunePath, 'not json {{{', $script:enc)
@@ -635,8 +637,8 @@ Describe 'a tune.json the seeder cannot use is not seeded over in silence' {
             # The structural half, still: that the tuner PAINTS what it is
             # handed. $drawMenu is local to Invoke-TerminalStyleTune and the
             # function returns on [Console]::IsInputRedirected long before it,
-            # which is always true under Pester -- so without this, a notice
-            # nothing prints passes the whole suite.
+            # which is true on every CI leg -- so without this, a notice nothing
+            # prints passes the whole suite.
             $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
             $loops = @($ast.FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.ForEachStatementAst] }, $true) |

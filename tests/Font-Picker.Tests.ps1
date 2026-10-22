@@ -191,6 +191,13 @@ Describe 'Invoke-FontPicker' {
             }
         }
 
+        BeforeEach {
+            # The real Clear-Host otherwise, which at a terminal clears the screen
+            # and the scrollback, and every line the run had printed with them.
+            # The Its about clearing mock it again themselves.
+            Mock -CommandName Clear-Host -MockWith { }
+        }
+
         It 'returns the font the arrows landed on' {
             $r = Invoke-FontPicker -Catalog $script:Cat -Installed @() `
                     -ReadKey (NewKeys 'DownArrow', 'DownArrow', 'Enter') -Write { }
