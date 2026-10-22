@@ -337,6 +337,223 @@ Describe 'register tells the truth about a $PROFILE it could not write' {
     }
 }
 
+Describe 'register tells the truth about a $PROFILE it could not read' {
+    # The other half of the Describe above, one loop earlier. Detection read
+    # each $PROFILE with a bare ReadAllText, outside any try, and did not reset
+    # its content between targets. At the shell default a failed read only
+    # ended that statement, so the file was answered for from the PREVIOUS
+    # target's text -- "Already registered" for a file nobody had read -- and
+    # it was never named under "Not registered in". Under Stop, and inside any
+    # try (Pester's included), the whole command threw.
+    #
+    # The unreadable profile is a DIRECTORY at the profile path: ReadAllBytes
+    # refuses one on every platform the suite runs on, with no chmod or ACL.
+    # The order is the defect's: B after A is what made the old loop answer for
+    # B with A's content, and C after B proves the loop goes on.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:d -Force | Out-Null
+            $script:a = Join-Path $script:d 'a-profile.ps1'
+            $script:b = Join-Path $script:d 'b-profile.ps1'
+            $script:c = Join-Path $script:d 'c-profile.ps1'
+            [System.IO.File]::WriteAllText($script:a,
+                "# mine`r`n`r`n# ===== TerminalStyles BEGIN =====`r`nImport-Module TerminalStyles -DisableNameChecking`r`n# ===== TerminalStyles END =====`r`n",
+                [System.Text.UTF8Encoding]::new($false))
+            New-Item -ItemType Directory -Path $script:b -Force | Out-Null
+            [System.IO.File]::WriteAllText($script:c, "# fresh`r`n", [System.Text.UTF8Encoding]::new($false))
+
+            # Fresh objects per call: register adds members to the ones it is given.
+            function script:Targets {
+                @([pscustomobject]@{ Label = 'A-registered'; ProfilePath = $script:a; Exists = $true; HasLoader = $false }
+                  [pscustomobject]@{ Label = 'B-unreadable'; ProfilePath = $script:b; Exists = $true; HasLoader = $false }
+                  [pscustomobject]@{ Label = 'C-fresh';      ProfilePath = $script:c; Exists = $true; HasLoader = $false })
+            }
+        }
+
+        It 'names a $PROFILE it cannot read, offers it nowhere, and still registers the rest' {
+            # -Width 500: 5.1 wraps host text at the console width, and these
+            # match whole $TestDrive paths.
+            $out = Invoke-TerminalStylesRegister -Yes -Targets (script:Targets) 6>&1 | Out-String -Width 500
+
+            $out | Should -Match ('Already registered in ' + [regex]::Escape($script:a))
+            $out | Should -Match ('Could not read ' + [regex]::Escape($script:b)) `
+                -Because 'the user is told which file, and why'
+            $out | Should -Not -Match ('Already registered in ' + [regex]::Escape($script:b)) `
+                -Because 'nothing was read from it, so nothing can be said about what it holds'
+            $out | Should -Not -Match ('B-unreadable: ' + [regex]::Escape($script:b)) `
+                -Because 'the consent screen lists what will be written, and this file will not be'
+            $out | Should -Match 'Not registered in: B-unreadable'
+            [System.IO.File]::ReadAllText($script:c) | Should -Match 'TerminalStyles BEGIN' `
+                -Because 'one unreadable profile does not stop the ones after it'
+            @(Get-ChildItem -LiteralPath $script:b -Force).Count | Should -Be 0 -Because 'nothing was written into it'
+        }
+
+        It 'does not throw out of the command under $ErrorActionPreference = Stop' {
+            # The user-profile and `-ErrorAction Stop` case the Describe above
+            # pins for the write.
+            $ErrorActionPreference = 'Stop'
+            { Invoke-TerminalStylesRegister -Yes -Targets (script:Targets) 6>&1 | Out-Null } | Should -Not -Throw
+            [System.IO.File]::ReadAllText($script:c) | Should -Match 'TerminalStyles BEGIN'
+        }
+    }
+}
+
+Describe 'register keeps a $PROFILE''s byte-order mark and every character in it' {
+    # Register read the $PROFILE with [System.IO.File]::ReadAllText(path,
+    # ISO-8859-1). That overload looks for a byte-order mark first and decodes
+    # by it, whatever encoding it is handed, so a profile saved as UTF-8 with a
+    # BOM -- ISE, Notepad's "UTF-8 with BOM", 5.1's Set-Content -Encoding UTF8
+    # -- or as UTF-16 -- 5.1's > and Out-File -- arrived as Unicode text. It was
+    # written back through ISO-8859-1, which has no byte for anything above
+    # U+00FF. Measured on a UTF-8-BOM profile: `ef bb bf 23 20 63 61 66 c3 a9`
+    # came back `23 20 63 61 66 e9`, and the prompt glyph U+276F as 3f. Those
+    # are the files Windows PowerShell 5.1 needs: it reads a character outside
+    # the ANSI code page only from a file that opens with a byte-order mark.
+    #
+    # Every expected byte is computed from the fixture, never from a decode of
+    # the result: a decode that agrees with the writer agrees with its bugs.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:d -Force | Out-Null
+            $script:p = Join-Path $script:d 'fake-profile.ps1'
+            $script:begin = '# ===== TerminalStyles BEGIN ====='
+            $script:end   = '# ===== TerminalStyles END ====='
+            # The legacy body the '-Force replaces an existing loader block'
+            # test seeds. A block that is not the one register writes is what
+            # makes the write visible: with the current loader line as the
+            # fixture's block, a register that wrote nothing passed.
+            $script:stale = "$script:begin`r`n. `"`$env:LOCALAPPDATA\TerminalStyles\tstyles.ps1`"`r`n$script:end"
+        }
+
+        # Built from [char] codes so this file stays ASCII: 5.1 reads a BOM-less
+        # .ps1 in the ANSI code page. A Latin-1 letter, a prompt glyph, Greek,
+        # Cyrillic, CJK, an emoji and a Powerline glyph.
+        function script:Text {
+            '# caf' + [char]0xE9 + "`r`n'" + [char]0x276F + [char]0x03BB + [char]0x0416 + [char]0x65E5 +
+                [char]::ConvertFromUtf32(0x1F680) + [char]0xE0B0 + "'`r`n"
+        }
+        function script:EncodingOf([string]$Kind) {
+            switch ($Kind) {
+                'utf8bom' { [System.Text.UTF8Encoding]::new($true) }
+                'utf16le' { [System.Text.UnicodeEncoding]::new($false, $true) }
+                'utf16be' { [System.Text.UnicodeEncoding]::new($true, $true) }
+                'utf32le' { [System.Text.UTF32Encoding]::new($false, $true) }
+                'utf32be' { [System.Text.UTF32Encoding]::new($true, $true) }
+                default   { throw "No encoding kind '$Kind'." }
+            }
+        }
+        function script:Hex([byte[]]$Bytes) {
+            if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return '' }
+            [System.BitConverter]::ToString($Bytes) -replace '-', ''
+        }
+        function script:Head([byte[]]$Bytes, [int]$Count) {
+            if ($Bytes.Length -lt $Count) { return script:Hex $Bytes }
+            script:Hex ([byte[]]$Bytes[0..($Count - 1)])
+        }
+        # -Force: on Unix a dotfile fixture comes back as nothing without it.
+        function script:Baks {
+            @(Get-ChildItem -LiteralPath $script:d -Filter 'fake-profile.ps1.bak-*' -Force)
+        }
+        function script:Target([bool]$HasLoader) {
+            [pscustomobject]@{ Label = 'PowerShell 7'; ProfilePath = $script:p; Exists = $true; HasLoader = $HasLoader }
+        }
+
+        It 'keeps them in a <Label> $PROFILE it registers for the first time' -ForEach @(
+            @{ Label = 'UTF-8 with BOM'; Kind = 'utf8bom' }
+            @{ Label = 'UTF-16LE';       Kind = 'utf16le' }
+            @{ Label = 'UTF-16BE';       Kind = 'utf16be' }
+            @{ Label = 'UTF-32LE';       Kind = 'utf32le' }
+            @{ Label = 'UTF-32BE';       Kind = 'utf32be' }
+        ) {
+            $enc = script:EncodingOf $Kind
+            $bom = $enc.GetPreamble()
+            $fixture = [byte[]]($bom + $enc.GetBytes((script:Text)))
+            [System.IO.File]::WriteAllBytes($script:p, $fixture)
+            script:Head ([System.IO.File]::ReadAllBytes($script:p)) $bom.Length | Should -BeExactly (script:Hex $bom) `
+                -Because 'the fixture has to open with the mark it is named for'
+
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:Target $false)) 6>&1 | Out-Null
+
+            $after = [System.IO.File]::ReadAllBytes($script:p)
+            $after.Length | Should -BeGreaterThan $fixture.Length -Because 'the block was added'
+            script:Head $after $fixture.Length | Should -BeExactly (script:Hex $fixture) `
+                -Because 'the byte-order mark and every character of the user''s text are theirs'
+            # The fixture ends in CRLF, and register's separator starts with
+            # one, so the user's bytes are a prefix of the file and what follows
+            # them is the block alone, in the file's own encoding.
+            $enc.GetString($after, $fixture.Length, $after.Length - $fixture.Length) |
+                Should -MatchExactly '^\s*# ===== TerminalStyles BEGIN =====[\s\S]*# ===== TerminalStyles END =====\s*$'
+            @(script:Baks).Count | Should -Be 1 -Because 'a first register keeps one copy'
+            script:Hex ([System.IO.File]::ReadAllBytes((script:Baks)[0].FullName)) | Should -BeExactly (script:Hex $fixture)
+        }
+
+        It 'keeps them under -Force, which takes no backup' {
+            # The path where the loss could not be undone: the first-touch rule
+            # is asked about a file that already carries our block, so no copy
+            # is taken. The count is asserted first, so the test proves there is
+            # no copy to fall back on rather than assuming it.
+            $utf8 = [System.Text.UTF8Encoding]::new($false)
+            $head = [byte[]]([byte[]]@(0xEF, 0xBB, 0xBF) + $utf8.GetBytes((script:Text)))
+            [System.IO.File]::WriteAllBytes($script:p, [byte[]]($head + $utf8.GetBytes("`r`n$script:stale`r`n")))
+
+            Invoke-TerminalStylesRegister -Yes -Force -Targets @((script:Target $true)) 6>&1 | Out-Null
+
+            @(script:Baks).Count | Should -Be 0 -Because 'our block was already in the file'
+            $after = [System.IO.File]::ReadAllBytes($script:p)
+            script:Head $after $head.Length | Should -BeExactly (script:Hex $head)
+            $rest = $utf8.GetString($after, $head.Length, $after.Length - $head.Length)
+            $rest | Should -Match 'Import-Module TerminalStyles -DisableNameChecking' -Because 'the block was rewritten'
+            $rest.Contains('tstyles.ps1') | Should -BeFalse -Because 'the stale body is gone'
+            [regex]::Matches($rest, [regex]::Escape($script:begin)).Count | Should -Be 1
+            [regex]::Matches($rest, [regex]::Escape($script:end)).Count   | Should -Be 1
+        }
+
+        # No trailing newline in the fixture, so a 0D after the user's last byte
+        # can only be the separator the write adds: a register that wrote
+        # nothing, or cut the byte, both fail on it.
+        It 'keeps the last byte of <Label>, which TrimEnd took for whitespace' -ForEach @(
+            @{ Label = 'a-grave (C3 A0)';   Tail = [byte[]]@(0xC3, 0xA0) }
+            @{ Label = 'a star (E2 98 85)'; Tail = [byte[]]@(0xE2, 0x98, 0x85) }
+        ) {
+            # Decoded through ISO-8859-1, 0xA0 is U+00A0 and 0x85 is U+0085, and
+            # String.TrimEnd() counts both as whitespace.
+            $fixture = [byte[]]([System.Text.Encoding]::ASCII.GetBytes('# voil') + $Tail)
+            [System.IO.File]::WriteAllBytes($script:p, $fixture)
+
+            Invoke-TerminalStylesRegister -Yes -Targets @((script:Target $false)) 6>&1 | Out-Null
+
+            $after = [System.IO.File]::ReadAllBytes($script:p)
+            script:Head $after $fixture.Length | Should -BeExactly (script:Hex $fixture)
+            $after.Length | Should -BeGreaterThan $fixture.Length -Because 'the block was added'
+            $after[$fixture.Length] | Should -Be 0x0D
+            (Get-RcFileEncoding).GetString($after) | Should -Match ([regex]::Escape($script:begin))
+        }
+
+        It 'keeps a trailing star on -Force, where the block moves and no backup is taken' {
+            # The user's last line sits AFTER our block, so -Force strips the
+            # block, trims, and appends it again below that line.
+            $fixture = [byte[]]([System.Text.Encoding]::ASCII.GetBytes("# mine`r`n$script:stale`r`n# voil") +
+                                [byte[]]@(0xE2, 0x98, 0x85))
+            [System.IO.File]::WriteAllBytes($script:p, $fixture)
+
+            Invoke-TerminalStylesRegister -Yes -Force -Targets @((script:Target $true)) 6>&1 | Out-Null
+
+            @(script:Baks).Count | Should -Be 0
+            $text = (Get-RcFileEncoding).GetString([System.IO.File]::ReadAllBytes($script:p))
+            $line = '# voil' + [char]0xE2 + [char]0x98 + [char]0x85 + "`r`n"
+            # Ordinal: these are control characters, which a culture-aware
+            # search may skip over.
+            $at = $text.IndexOf($line, [System.StringComparison]::Ordinal)
+            $at | Should -BeGreaterOrEqual 0 -Because 'the star is kept, and the separator comes after it'
+            $text.Contains('tstyles.ps1') | Should -BeFalse
+            $text.IndexOf($script:begin, [System.StringComparison]::Ordinal) | Should -BeGreaterThan $at `
+                -Because 'the block moved below the user''s last line, so the write ran'
+        }
+    }
+}
+
 Describe 'register backs up the pristine $PROFILE, once' {
     # The three cases install.ps1's half has had pinned since 0.8.18
     # (tests/Install-Hardening.Tests.ps1) and the module half never did, plus the
