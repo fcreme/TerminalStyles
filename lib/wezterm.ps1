@@ -698,7 +698,10 @@ function Test-WezTermStyleWired {
     foreach ($p in (Get-WezTermConfigCandidate @splat)) {
         if (-not (Test-Path -LiteralPath $p)) { continue }
         try {
-            $text = [System.IO.File]::ReadAllText($p, (Get-RcFileEncoding))
+            # Read-RcFileText, the one decoding every reader of a user's rc or
+            # config file uses; read-only here, and its unanchored match is
+            # unaffected by a BOM.
+            $text = (Read-RcFileText -Path $p).Text
         } catch { return $false }
         return $text -match "require\s*[\(,]?\s*['`"]terminalstyles['`"]"
     }

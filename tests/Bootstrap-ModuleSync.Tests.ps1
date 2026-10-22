@@ -34,17 +34,28 @@
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
 # A twin that was deliberately RENAMED still has to be compared. install.ps1's
-# Get-ProfileFileEncoding is terminals.ps1's Get-RcFileEncoding: the distinct
-# name is on purpose -- it stops a reader taking the two for one shared
-# function -- but pairing by name alone would drop it out of $SharedFns and
-# leave it compared against nothing, which is the failure this file's own
-# header describes.
+# Get-ProfileFileEncoding is terminals.ps1's Get-RcFileEncoding, and its
+# Read-ProfileFileText is terminals.ps1's Read-RcFileText: the distinct names
+# are on purpose -- they stop a reader taking the two for one shared function
+# -- but pairing by name alone would drop them out of $SharedFns and leave them
+# compared against nothing, which is the failure this file's own header
+# describes.
+#
+# One renamed twin can CALL another: Read-ProfileFileText asks
+# Get-ProfileFileEncoding exactly where Read-RcFileText asks Get-RcFileEncoding.
+# So the install side's tokens are mapped through the same pairs before the
+# comparison. Without that the two bodies differ in that one call and the twin
+# is permanently red while saying nothing about whether the code drifted; a
+# wrong map entry still fails loudly, on that token.
 #
 # At FILE scope deliberately. The pairing is needed in BeforeDiscovery (the
 # -ForEach that generates the per-function tests) and again in BeforeAll (the
 # body that runs them), which are different scopes; a copy in each is a second
 # implementation of the rule this file exists to enforce.
-$script:RenamedTwins = @{ 'Get-ProfileFileEncoding' = 'Get-RcFileEncoding' }
+$script:RenamedTwins = @{
+    'Get-ProfileFileEncoding' = 'Get-RcFileEncoding'
+    'Read-ProfileFileText'    = 'Read-RcFileText'
+}
 
 BeforeDiscovery {
     $repoRoot = Split-Path $PSScriptRoot -Parent
@@ -97,7 +108,10 @@ BeforeAll {
     # 'still duplicates the ones it is supposed to' fails; drop it above and the
     # per-function test for the twin is never generated, which the same
     # assertion catches.
-    $script:RenamedTwins = @{ 'Get-ProfileFileEncoding' = 'Get-RcFileEncoding' }
+    $script:RenamedTwins = @{
+        'Get-ProfileFileEncoding' = 'Get-RcFileEncoding'
+        'Read-ProfileFileText'    = 'Read-RcFileText'
+    }
     $script:SharedFns = @(
         @($iNames | Where-Object { $mNames -contains $_ }) +
         @($script:RenamedTwins.Keys | Where-Object {
@@ -107,8 +121,14 @@ BeforeAll {
     # Code only: tokens inside the function's extent, minus comments and layout.
     # A regex that stripped '#' to end-of-line would also gut any hex colour or
     # '#' inside a string, which this repo is full of.
+    #
+    # -Rename maps a token's text to the name it has on the other side, for a
+    # renamed twin that calls another (see the map at the top of this file).
+    # Whole tokens only, so a string or a variable that merely contains a
+    # twin's name is compared as written.
     function script:Get-FunctionCode {
-        param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name)
+        param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][string]$Name,
+              [hashtable]$Rename)
         $tokens = $null
         $ast = [System.Management.Automation.Language.Parser]::ParseFile($Path, [ref]$tokens, [ref]$null)
         $fn = @($ast.FindAll({ param($n)
@@ -125,7 +145,9 @@ BeforeAll {
         (($tokens | Where-Object {
             $_.Extent.StartOffset -ge $start -and $_.Extent.EndOffset -le $end -and
             $_.Kind -ne 'Comment' -and $_.Kind -ne 'NewLine' -and $_.Kind -ne 'EndOfInput'
-        }) | ForEach-Object { $_.Text }) -join ' '
+        }) | ForEach-Object {
+            if ($Rename -and $Rename.ContainsKey($_.Text)) { $Rename[$_.Text] } else { $_.Text }
+        }) -join ' '
     }
 }
 
@@ -136,7 +158,7 @@ Describe 'install.ps1 duplicates the module faithfully' {
         # the exact failure mode this suite has been cleaning up all week.
         @($script:SharedFns).Count | Should -BeGreaterOrEqual 3
         foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate',
-                       'Get-ProfileFileEncoding', 'Test-PathIsSymlink',
+                       'Get-ProfileFileEncoding', 'Read-ProfileFileText', 'Test-PathIsSymlink',
                        'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers') {
             $script:SharedFns | Should -Contain $n -Because (
                 "$n is duplicated into install.ps1 and this file is what compares the two copies")
@@ -144,7 +166,9 @@ Describe 'install.ps1 duplicates the module faithfully' {
     }
 
     It '<_> is identical in install.ps1 and the module' -ForEach $script:SharedFns {
-        $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1') -Name $_
+        # The install side read through the twin names, so a renamed twin that
+        # calls another compares equal to the module's call (see -Rename).
+        $a = script:Get-FunctionCode -Path (Join-Path $script:repoRoot 'install.ps1') -Name $_ -Rename $script:RenamedTwins
         $b = $null
         $from = $null
         # The module-side name, which is the same one unless this is a twin

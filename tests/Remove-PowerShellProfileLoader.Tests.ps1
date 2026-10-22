@@ -102,6 +102,47 @@ Describe 'Remove-PowerShellProfileLoader' {
             }
         }
 
+        Context 'a $PROFILE saved with a byte-order mark' {
+            # Unregister-ShellLoader read with [System.IO.File]::ReadAllText(path,
+            # ISO-8859-1), which looks for a byte-order mark first and decodes by
+            # it whatever encoding it is handed, and wrote the text back through
+            # ISO-8859-1. Measured: status 'removed', no backup, and
+            # `ef bb bf 23 20 63 61 66 c3 a9 ..` back as `23 20 63 61 66 e9 ..`,
+            # with the prompt glyph U+276F as 3f. Removal takes no copy by the
+            # first-touch rule, so nothing could be recovered.
+            #
+            # Glyphs from [char] codes: 5.1 reads a BOM-less .ps1 in the ANSI
+            # code page, where a non-ASCII literal is a parse error.
+            It 'strips the block and keeps the BOM and every character, for <Label>' -ForEach @(
+                @{ Label = 'UTF-8 with BOM'; Kind = 'utf8bom' }
+                @{ Label = 'UTF-16LE';       Kind = 'utf16le' }
+            ) {
+                $enc = if ($Kind -eq 'utf8bom') { [System.Text.UTF8Encoding]::new($true) }
+                       else { [System.Text.UnicodeEncoding]::new($false, $true) }
+                $text = '# caf' + [char]0xE9 + "`nfunction prompt { '" + [char]0x276F + [char]0x03BB + ' ' +
+                        [char]::ConvertFromUtf32(0x1F680) + " ' }`n"
+                $block = "`n# ===== TerminalStyles BEGIN =====`nImport-Module TerminalStyles`n# ===== TerminalStyles END =====`n"
+                $kept = [byte[]]($enc.GetPreamble() + $enc.GetBytes($text))
+                $p = Join-Path $script:d 'p.ps1'
+                [System.IO.File]::WriteAllBytes($p, [byte[]]($kept + $enc.GetBytes($block)))
+
+                $r = Remove-PowerShellProfileLoader -Target @([pscustomobject]@{ ProfilePath = $p; Label = 'PowerShell 7' }) 6>$null
+
+                $r.Removed | Should -Be 1
+                @($r.Problems).Count | Should -Be 0
+                $after = [System.IO.File]::ReadAllBytes($p)
+                # The whole file when it came back shorter -- transcoded to single
+                # bytes, say -- so the comparison shows where it differs.
+                $head = if ($after.Length -ge $kept.Length) { [byte[]]$after[0..($kept.Length - 1)] } else { $after }
+                ([System.BitConverter]::ToString($head) -replace '-', '') |
+                    Should -BeExactly ([System.BitConverter]::ToString($kept) -replace '-', '') `
+                    -Because 'the byte-order mark and every character of the user''s text are theirs'
+                $enc.GetString($after, $kept.Length, $after.Length - $kept.Length) | Should -MatchExactly '^\s*$' `
+                    -Because 'the block is gone, and only the line break the strip leaves follows the user''s text'
+                @(Get-ChildItem -LiteralPath $script:d -Filter 'p.ps1.bak-*' -Force).Count | Should -Be 0
+            }
+        }
+
         Context 'a block with BEGIN and no END' {
             It 'says so loudly instead of silently doing nothing' {
                 # The command signs off with "Open a new pwsh tab to confirm the
