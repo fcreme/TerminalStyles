@@ -270,6 +270,80 @@ function Find-WTSettingsPath {
     return $null
 }
 
+function Find-WTHostExePath {
+    # The WindowsTerminal.exe this session runs under: the nearest ancestor of that
+    # name, or $null. A tab's shell is WT's own child -- WT creates the ConPTY client
+    # itself (ConptyConnection.cpp) -- and shells started in the tab add levels.
+    # It says which Windows Terminal started this process tree, not whether the
+    # session is that terminal's tab: that is Get-TerminalKind's question.
+    #
+    # One Get-ProcessRecord per level. It stops at a lookup that finds nothing, PID
+    # 0 or 4, an ID it has seen, 32 levels, or a parent created after its child
+    # (that ID was reused). Off Windows it looks nothing up. Paid only by the
+    # commands that write settings.json; no cache.
+    #
+    # -StartId / -Platform are test seams; real callers omit them. -Platform
+    # defaults to Get-TStylesPlatform, never $IsWindows, which is $null on 5.1.
+    [CmdletBinding()]
+    param(
+        [int]$StartId = $PID,
+        [string]$Platform = (Get-TStylesPlatform)
+    )
+
+    if ($Platform -ne 'Windows') { return $null }
+
+    $seen  = @{}
+    $id    = $StartId
+    $child = $null
+    for ($depth = 0; $depth -lt 32; $depth++) {
+        if ($id -le 0 -or $id -eq 4 -or $seen.ContainsKey($id)) { return $null }
+        $seen[$id] = $true
+        $rec = Get-ProcessRecord -Id $id
+        if (-not $rec) { return $null }
+        if ($child -and $rec.Started -and $child.Started -and $rec.Started -gt $child.Started) { return $null }
+        if ($rec.Name -eq 'WindowsTerminal.exe') {
+            if ($rec.Path) { return $rec.Path }
+            return $null
+        }
+        $child = $rec
+        $id    = $rec.ParentId
+    }
+    return $null
+}
+
+function Get-ProcessRecord {
+    # One process as Find-WTHostExePath reads it -- ParentId ([int], so the walk's
+    # seen-set and a test's table agree), Name, Path, Started (UTC) -- or $null when
+    # Windows will not say. Win32_Process through CIM on both engines: Get-Process's
+    # .Parent is pwsh 6+ only, and one reader gives one answer. This is the only
+    # place it is read, so tests/Get-ProcessRecord.Tests.ps1 can check the names and
+    # types on the Windows legs. -OperationTimeoutSec bounds each query.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Id)
+
+    $p = $null
+    try {
+        # The filter interpolates an [int], never text.
+        $p = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $Id" `
+            -Property ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate `
+            -OperationTimeoutSec 10 -ErrorAction Stop | Select-Object -First 1
+    } catch { return $null }
+    if (-not $p) { return $null }
+
+    # A value that will not convert is Windows not saying, too: the walk then
+    # stops at the safe answer, no host, rather than throwing into the command.
+    try {
+        $started = $null
+        if ($p.CreationDate) { $started = ([datetime]$p.CreationDate).ToUniversalTime() }
+        return [pscustomobject]@{
+            ParentId = [int]$p.ParentProcessId
+            Name     = [string]$p.Name
+            Path     = [string]$p.ExecutablePath
+            Started  = $started
+        }
+    } catch { return $null }
+}
+
 function Get-CurrentWTProfileName {
     param($Settings)
     if (-not $env:WT_PROFILE_ID) { return $null }
