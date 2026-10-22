@@ -297,9 +297,13 @@ function Get-TerminalStyleHelpData {
             Name = 'profiles'; Usage = 'profiles [-Clean]'
             Summary = 'Terminal.app profiles this tool has left behind (macOS)'
             Detail = @("Opening a style with -NewWindow imports a .terminal profile into",
-                       "Terminal.app. Before this was fixed, every run imported ANOTHER copy --",
-                       "Terminal.app numbers the collisions, so a style opened four times left",
-                       "'eva', 'eva 1', 'eva 2' and 'eva 3' in your profile list for good.",
+                       "Terminal.app, and later runs reuse it. Before 0.8.24 every run imported",
+                       "ANOTHER copy -- Terminal.app numbers the collisions, so a style opened",
+                       "four times left 'eva', 'eva 1', 'eva 2' and 'eva 3' in your profile list",
+                       "for good. A run can still add a numbered copy where the import cannot land",
+                       "on the style's own name: for example while a profile of that name exists",
+                       "that TerminalStyles cannot prove it imported, which it never reuses,",
+                       "replaces or deletes.",
                        "",
                        "This lists them and, with -Clean, deletes the numbered ones. The",
                        "unnumbered profile is never touched: it may be one you made yourself,",
