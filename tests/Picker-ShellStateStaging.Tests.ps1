@@ -8,12 +8,13 @@
 # banner, while `tstyles <name>` on the very same terminal got it right.
 #
 # These are AST assertions rather than a driven picker on purpose. The confirm
-# branch lives inline in Invoke-TerminalStyle behind an interactive-stdin guard
-# ([Console]::IsInputRedirected), which is always true under Pester -- so a
-# behavioural test here would silently never reach the branch. That is the same
-# green-but-never-run failure that hid the Terminal.app cases for three
-# releases; a structural assertion that always runs beats a behavioural one
-# that never does.
+# branch lives inline in Invoke-TerminalStyle behind the picker's console guard
+# ([Console]::IsInputRedirected / IsOutputRedirected), which returns first on
+# every CI leg, where both are redirected -- and at a terminal, what lies past
+# it is a live key loop -- so a behavioural test here would silently never
+# reach the branch. That is the same green-but-never-run failure that hid the
+# Terminal.app cases for three releases; a structural assertion that always
+# runs beats a behavioural one that never does.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }

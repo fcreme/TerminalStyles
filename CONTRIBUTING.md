@@ -256,6 +256,34 @@ testing locally in `powershell.exe` saves a round trip.
   the live `$HOME`, so `-HomeDir` alone does not contain it.
   `tests/Zz-RealStateUntouched.Tests.ps1` fails the run if a test got
   this wrong, and names the paths it changed.
+- Pin the console; never inherit it. CI runs every leg with stdin and
+  stdout redirected, so every console check in the module answers
+  "nobody is there", and every picker, prompt and one-time question
+  returns before it starts. Run from your terminal, the same checks
+  answer yes, and a test that has not pinned them opens the real picker
+  or asks the real question. Every caller of `Test-InteractiveConsole`
+  is one of those checks — search for the name to list them; install.ps1
+  carries a copy of its own. They include the welcome and the WezTerm
+  offer at the start of `tstyles` with no style name (`-Target` alone
+  included), the font prompt, `tstyles font` with no name, `tstyles
+  show`, VS Code consent, `Confirm-Action` and apply.ps1's prompts. A
+  test that reaches one mocks `Test-InteractiveConsole` — to `$false`,
+  unless that question is what it tests — or binds the seam the
+  function has for it (`Invoke-TerminalStyleShow -Interactive`). A test
+  that reaches `Confirm-Action` without `-Yes` mocks it instead of
+  relying on the console check: to refuse, unless what follows a yes is
+  what it tests, and then it is sandboxed as the bullet above says. The
+  picker and the tuner also read `[Console]` directly, which nothing can
+  mock: a test that gets past those reads skips at run time when a
+  console is attached, with `Set-ItResult -Skipped` inside the `It` (a
+  `-Skip:` condition is decided at discovery). That is why a run from
+  your terminal reports a few tests as skipped that CI runs.
+- Anything that starts, drives or installs an application goes through
+  a function of its own, and a test that could reach one mocks it:
+  today `Install-WezTermViaBrew` (brew), `Open-AppleTerminalProfile`
+  (`open`) and `Invoke-AppleTerminalScript` (osascript, which drives
+  Terminal.app). `Mock brew` is no substitute: it throws wherever brew
+  is not on PATH, the Windows CI legs among them.
 - Write JSON fixtures BOM-less:
   `[System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))`
   — see `tests/Find-WTSettingsPath.Tests.ps1`.

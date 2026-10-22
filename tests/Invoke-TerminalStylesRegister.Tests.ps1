@@ -22,11 +22,12 @@ BeforeAll {
 }
 
 # These exercise the WRITE, not the consent gate, so they pass -Yes. Without it
-# they now refuse: Pester's host is redirected, and the confirm prompt no longer
-# assumes yes when nobody can answer. That change is the point -- `tstyles
-# register < /dev/null` used to write the loader into both engines' $PROFILE
-# files unattended, because `$ans -match '^(?i)n'` is FALSY against the
-# AutomationNull that Read-Host returns at EOF.
+# they would refuse in CI, where the host is redirected and the confirm prompt
+# no longer assumes yes when nobody can answer -- and at a terminal they would
+# ask. That change is the point -- `tstyles register < /dev/null` used to write
+# the loader into both engines' $PROFILE files unattended, because
+# `$ans -match '^(?i)n'` is FALSY against the AutomationNull that Read-Host
+# returns at EOF.
 Describe 'Invoke-TerminalStylesRegister' {
     InModuleScope TerminalStyles {
         BeforeEach {

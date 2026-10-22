@@ -34,8 +34,10 @@ Describe 'the picker refuses a session with no real console' {
         It 'guards on output as well as input' {
             # Pinned on the AST rather than behaviour because the discriminating
             # case -- stdin a console, stdout a file -- cannot be built from
-            # inside Pester, which is redirected on both. It was reproduced on a
-            # pty instead; see this file's header for the measurements.
+            # inside a test: the statics describe the whole process, which CI
+            # redirects on both sides and a terminal on neither. It was
+            # reproduced on a pty instead; see this file's header for the
+            # measurements.
             $ast = (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast
 
             $guards = @($ast.FindAll({ param($n)
@@ -95,9 +97,10 @@ Describe 'the picker refuses a session with no real console' {
         }
 
         It 'bails out with a message naming what is wrong' {
-            # Behavioural half. Pester's host is redirected, so this exercises
+            # Behavioural half. In CI the host is redirected, so this exercises
             # the guard for real -- it just cannot choose which branch of the
-            # message it gets.
+            # message it gets. At a terminal the guard does not fire, so this
+            # skips rather than open the picker.
             if (-not ([Console]::IsInputRedirected -or [Console]::IsOutputRedirected)) {
                 Set-ItResult -Skipped -Because 'this test run has a real console attached'
                 return
