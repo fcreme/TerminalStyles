@@ -1,0 +1,99 @@
+# A real Windows Terminal Preview tab, on a runner where Stable is installed
+# too, checking which settings.json TerminalStyles edits from it.
+#
+# WHY THIS EXISTS. PR #120 makes Find-WTSettingsPath read which Windows
+# Terminal hosts the session off the process tree -- the nearest
+# WindowsTerminal.exe ancestor -- and map that build's install folder to its
+# settings.json. Before it, a Preview tab on a machine with Stable installed
+# wrote Stable's file. test.yml mocks the process tree, so the PR's two
+# premises rest on upstream source: that a tab's shell is a child of
+# WindowsTerminal.exe, and that its ExecutablePath can be read. Nobody on the
+# project has a Windows PC to look, so this looks on a runner that is thrown
+# away afterwards.
+#
+# WHAT A LEG DOES. scripts/wt-live-install.ps1 registers Stable and Preview
+# from microsoft/terminal's own releases (a build already there is left
+# alone). scripts/wt-live-check.ps1 opens a Preview tab running
+# scripts/wt-live-probe.ps1 under the engine under test; the probe applies
+# `eva` to the tab's profile and resets it, through the module's real write
+# path; the check judges what it recorded and writes the verdicts to the job
+# summary. Evidence -- result.json, the transcript, screenshots, the process
+# list -- is uploaded whatever happens.
+#
+# THE MATRIX. engine is the shell inside the tab. launch is how the tab is
+# opened: 'alias' (Preview's own per-package wt.exe, started as a shell starts
+# `wt`) is the method under test; 'activate' (ActivateApplication on Preview's
+# AppUserModelId) is the fallback, tried for what it shows, and allowed to
+# fail. So a green run means both engines passed every check with the alias.
+#
+# WHAT IT CANNOT SHOW. Everything a step starts here is elevated (the runner
+# account is an administrator with UAC prompts off), so the tab is an
+# Administrator tab: the standard-user case is not exercised.
+#
+# WHEN. On a push to spike/wt-live-check. GitHub offers workflow_dispatch only
+# for a workflow on the default branch, so that trigger works once this file
+# is on main.
+
+name: WT live spike
+
+on:
+  push:
+    branches: [spike/wt-live-check]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  live:
+    name: WT live (${{ matrix.engine }}, ${{ matrix.launch }})
+    runs-on: windows-latest
+    timeout-minutes: 25
+    continue-on-error: ${{ matrix.launch == 'activate' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        engine: [powershell, pwsh]
+        launch: [alias, activate]
+    steps:
+      - uses: actions/checkout@v5
+
+      # The control runs the lookup #120 replaced, lifted out of tstyles.ps1 as
+      # main had it just before the merge.
+      # Quoted: unquoted, YAML reads ' #120' as a comment.
+      - name: 'Fetch tstyles.ps1 from before #120'
+        shell: bash
+        env:
+          PRE120_COMMIT: d1ee4e9e23864a20909c57135c3f5002570a484d
+        run: |
+          git fetch --no-tags --depth=1 origin "$PRE120_COMMIT"
+          git show "$PRE120_COMMIT:tstyles.ps1" > "$RUNNER_TEMP/pre120-tstyles.ps1"
+
+      # Windows PowerShell 5.1 whatever the engine: the Appx module is native there.
+      - name: Install Windows Terminal Stable and Preview
+        shell: powershell
+        timeout-minutes: 10
+        run: |
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/wt-live-install.ps1
+          exit $LASTEXITCODE
+
+      - name: Open a Preview tab and check
+        shell: powershell
+        timeout-minutes: 12
+        env:
+          WT_LIVE_ENGINE: ${{ matrix.engine }}
+          WT_LIVE_LAUNCH: ${{ matrix.launch }}
+        run: |
+          # The orchestration runs under Windows PowerShell 5.1; the engine
+          # under test is the shell inside the tab.
+          & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File ./scripts/wt-live-check.ps1 -Pre120Path "$env:RUNNER_TEMP\pre120-tstyles.ps1"
+          exit $LASTEXITCODE
+
+      - name: Upload the evidence
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: wt-live-${{ matrix.engine }}-${{ matrix.launch }}
+          path: ${{ runner.temp }}/wt-live
+          if-no-files-found: warn
+          retention-days: 14
