@@ -307,7 +307,16 @@ record: earlier values come back, and a key you changed by hand since is left
 alone and named. No `.bak` is written for that. Elsewhere there is no
 `settings.json` to strip: the reset is an escape sequence handing color control
 back to the terminal's own profile, so there is nothing to back up and no
-`.bak` is written. Fields you set on the profile by hand are left alone.
+`.bak` is written. In WezTerm that profile includes the module TerminalStyles
+generated, `~/.config/wezterm/terminalstyles.lua`, so the reset also rewrites
+it to one that applies nothing. The tab you reset in and every new tab come up
+in your own `wezterm.lua`, and other open tabs lose what the module set: the
+font, padding, cursor shape, opacity, tab color, background and color scheme.
+WezTerm keeps colors an escape sequence set as that tab's own, though, so the
+tab you applied a style in can keep its colors until you close it or run
+`tstyles reset` there. A reset run in another terminal leaves the module alone,
+as it leaves VS Code's `settings.json`. Fields you set on the profile by hand
+are left alone.
 
 If you styled `profiles.defaults` (`tstyles eva -Target defaults`), a reset of
 one profile also has to deal with what that profile *inherits* — Windows
@@ -543,7 +552,7 @@ unaffected.
 
 | | Colors | Cursor | Font | Opacity | Background image | Tab color |
 |---|---|---|---|---|---|---|
-| Windows Terminal | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
+| Windows Terminal ² | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
 | WezTerm | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
 | Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
 | iTerm2 | ✅ | color only | — | — | — | — |
@@ -560,6 +569,13 @@ WezTerm's generated Lua module, and a VS Code-family editor's `settings.json`.
 TerminalStyles saving styles in that editor's `settings.json` — it asks the
 first time. Until then, and in an editor it cannot identify, colors only. See
 [VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf).
+
+² When TerminalStyles runs on Windows. A pwsh installed inside a WSL distro is
+a Linux install, and Windows Terminal's `settings.json` is on the Windows side,
+out of its reach: in a WSL tab a style brings the colors, the cursor color and
+the prompt, and `tstyles font` installs into the distro, where Windows Terminal
+does not look for fonts. To give that profile the rest, apply the style from a
+PowerShell tab of the same Windows Terminal: `tstyles <name> -Target '<profile>'`.
 
 So the dashes above describe this tool, not the emulator. iTerm2 would honour a
 Dynamic Profile; nothing here writes one yet. They are marked `—` rather than
@@ -592,7 +608,10 @@ lose the style.
 Applying a style rewrites `~/.config/wezterm/terminalstyles.lua`, and because
 WezTerm watches every file it `require`s, the running window repaints on the
 spot — background animation included. No new window, no restart. `tstyles`
-prints the line above until it can see it in your config.
+prints the line above until it can see it in your config. `tstyles reset`, run
+in WezTerm, rewrites the same file to one that applies nothing, and the same
+reload takes the style back off (the tab you applied a style in can keep its
+colors; see "Resetting a profile"). `tstyles uninstall` deletes the file.
 
 The module carries the rest of the style too: the palette as a named color
 scheme, the font and its size, the interior padding, the cursor shape, the tab
@@ -618,7 +637,10 @@ tstyles eva -NewWindow   # a new window with the background image as well
 
 The profile is written either way, under
 `~/Library/Application Support/TerminalStyles/profiles/`, so you can also open
-it from Finder or set it as your Terminal.app default.
+it from Finder or set it as your Terminal.app default. If you open it from
+Finder before any `-NewWindow` has imported the style, the profile that creates
+is yours: `-NewWindow` has no record of importing it, so it never reuses,
+replaces or deletes it, and may add its own numbered copy (`eva 1`) beside it.
 
 > Terminal.app renders a **still** background, not an animated one. The bundled
 > backgrounds are animated GIFs, so the first frame is extracted to a PNG and
@@ -707,7 +729,9 @@ is never touched: only images TerminalStyles itself installed are cleared.
 
 - **Windows** 10 / 11, or **macOS**, or **Linux**
 - A terminal that can render a style:
-  - **Windows Terminal** — the full feature set, including background images
+  - **Windows Terminal** — the full feature set, including background images,
+    when tstyles runs on Windows; in a WSL distro, colors, cursor color and
+    prompt (see ² under "What your terminal can show")
   - **Terminal.app** — colors, cursor color, and prompt in the current window,
     plus a background image in a new one (`tstyles <name> -NewWindow`)
   - **WezTerm** — colors, cursor color and shape, prompt, font, padding,

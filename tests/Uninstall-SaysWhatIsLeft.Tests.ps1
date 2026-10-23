@@ -599,6 +599,30 @@ Describe 'tstyles uninstall' {
 
                 $out | Should -Match 'could not remove'
                 $out | Should -Match 'EXCEPT the WezTerm style module'
+                # '-- generated' is not the module a reset leaves, so it still
+                # reads as a style. Fails a fix that drops the clause for every
+                # leftover.
+                $out | Should -Match 'keeps applying the last style'
+                $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$'
+            }
+
+            It 'does not say WezTerm keeps a style when the module it could not delete applies none' {
+                # What `tstyles reset` in WezTerm leaves behind: a module whose
+                # apply_to_config sets nothing. Still a leftover to name, but
+                # "until then WezTerm keeps applying the last style" is false
+                # about it.
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermUnstyledLua), [System.Text.UTF8Encoding]::new($false))
+                Mock Remove-Item { throw 'The process cannot access the file because it is being used by another process.' } `
+                    -ParameterFilter { $LiteralPath -eq $script:wez }
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'could not remove'
+                $out | Should -Match 'EXCEPT the WezTerm style module'
+                $out | Should -Match 'applies no style'
+                $out | Should -Not -Match 'keeps applying the last style'
                 $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$'
             }
 

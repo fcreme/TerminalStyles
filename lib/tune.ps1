@@ -1183,9 +1183,6 @@ function Invoke-TerminalStyleTune {
             Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
             return
         }
-        if (-not $env:WT_SESSION) {
-            Write-Host "Note: live preview is only visible inside Windows Terminal." -ForegroundColor Yellow
-        }
     } else {
         # Set expectations before the screen is taken over: the two color knobs
         # move on screen, the other three are only recorded.

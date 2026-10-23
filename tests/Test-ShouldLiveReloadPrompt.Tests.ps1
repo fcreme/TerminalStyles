@@ -61,9 +61,9 @@ Describe 'Test-ShouldLiveReloadPrompt' {
             # The regression guard. Whatever this session is running in, the
             # answer depends only on the arguments -- a picker confirm off
             # Windows Terminal must reload exactly as one inside it does.
-            $inWT = Test-InWindowsTerminal
+            $kind = Get-TerminalKind
             Test-ShouldLiveReloadPrompt -IsPwshTarget $true -ProfilePresent $true -AutoLoadSuppressed $false |
-                Should -BeTrue -Because "the gate must not vary with the host (in WT: $inWT)"
+                Should -BeTrue -Because "the gate must not vary with the host (kind: $kind)"
         }
 
         It 'both apply doors decide it here, and neither keeps its own copy' {

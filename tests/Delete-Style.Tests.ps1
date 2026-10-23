@@ -808,6 +808,76 @@ Describe 'deleting the active style performs the reset the prompt itemised' {
     }
 }
 
+# The same promise in WezTerm, where the reset never touched the generated
+# module: the style moved to .deleted, and every WezTerm window went on painting
+# it, because the module still selected `TerminalStyles mine`. The delete
+# reaches the fix through Reset-StyleDirect, as `tstyles reset` does.
+#
+# Self-contained, rather than built on script:New-Style: the module path is
+# outside the data root, so the fixture names it here, and mocks it into the
+# sandbox.
+Describe 'deleting the active style in WezTerm takes it out of the generated module' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedModule  = $script:TStylesModuleRoot
+            $script:savedCurrent = $script:TStylesCurrent
+
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            $script:TStylesCurrent    = Join-Path $script:root 'current-style.ps1'
+
+            $enc = [System.Text.UTF8Encoding]::new($false)
+            foreach ($n in 'eva', 'mine') {
+                $d = Join-Path (Join-Path $script:root 'styles') $n
+                New-Item -ItemType Directory -Path $d -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), ('{"name":"' + $n + '"}'), $enc)
+            }
+            $mineDir = Join-Path (Join-Path $script:root 'styles') 'mine'
+            [System.IO.File]::WriteAllText((Join-Path $mineDir 'tune.json'), '{"base":"eva"}', $enc)
+            # WasActive is a byte-compare of current-style.ps1 against each
+            # style's profile.ps1, so the style needs one and it has to match.
+            [System.IO.File]::WriteAllText((Join-Path $mineDir 'profile.ps1'), '# mine prompt', $enc)
+            [System.IO.File]::WriteAllText($script:TStylesCurrent, '# mine prompt', $enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n", $enc)
+
+            Mock Get-TerminalKind             { 'WezTerm' }
+            Mock Get-WezTermModulePath        { Join-Path $script:root 'terminalstyles.lua' }
+            Mock Write-HostOscPacket          { $true }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-InteractiveConsole      { $false }
+
+            Write-WezTermStyleModule -StyleName 'mine' `
+                -Scheme ([pscustomobject]@{ background = '#101010'; foreground = '#f0f0f0' }) |
+                Should -Be 'written'
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesCurrent    = $script:savedCurrent
+        }
+
+        It 'takes the deleted style out of the module the RESET bullet promised to' {
+            $plan = Get-StyleDeletePlan -Name 'mine'
+            $plan.WasActive | Should -BeTrue -Because 'otherwise no reset runs and this measures nothing'
+            $plan.RevealDir | Should -BeNullOrEmpty -Because 'the name GOES; the shadow branch re-applies instead'
+            $wez = Join-Path $script:root 'terminalstyles.lua'
+            [System.IO.File]::ReadAllText($wez) | Should -Match 'TerminalStyles mine' `
+                -Because 'the fixture has to be a module styled by the style being deleted'
+
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String -Width 500
+
+            $out | Should -Match 'Deleted mine'
+            $out | Should -Match 'to its unstyled default'
+            $after = [System.IO.File]::ReadAllText($wez, [System.Text.UTF8Encoding]::new($false))
+            $after | Should -Not -Match 'TerminalStyles mine' `
+                -Because 'WezTerm would go on painting a style that no longer exists'
+            $after | Should -BeExactly (Get-WezTermUnstyledLua)
+        }
+    }
+}
+
 # What the consent screen promises a TUNED CHILD of the style being deleted.
 #
 # The shadow branch printed, in Gray -- the colour this file reserves for what
