@@ -607,7 +607,10 @@ tstyles eva -NewWindow   # a new window with the background image as well
 
 The profile is written either way, under
 `~/Library/Application Support/TerminalStyles/profiles/`, so you can also open
-it from Finder or set it as your Terminal.app default.
+it from Finder or set it as your Terminal.app default. If you open it from
+Finder before any `-NewWindow` has imported the style, the profile that creates
+is yours: `-NewWindow` has no record of importing it, so it never reuses,
+replaces or deletes it, and may add its own numbered copy (`eva 1`) beside it.
 
 > Terminal.app renders a **still** background, not an animated one. The bundled
 > backgrounds are animated GIFs, so the first frame is extracted to a PNG and
