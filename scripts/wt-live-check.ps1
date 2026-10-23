@@ -13,12 +13,21 @@
 #
 # Each check is one claim with its own verdict function below, and every
 # verdict refuses to pass on a missing reading: two absent hashes are equal,
-# and equal proves nothing. tests/WT-Live-Check.Tests.ps1 pins them.
+# and equal proves nothing. tests/WT-Live-Check.Tests.ps1 reaches every return
+# in every verdict.
 #
 # The tab is opened one of two ways (-Launch): 'alias', Preview's own
 # per-package execution alias started with CreateProcess, as a user's `wt`
 # would; or 'activate', IApplicationActivationManager::ActivateApplication on
 # Preview's AppUserModelId. The bare wt.exe is never used: both builds claim it.
+#
+# Afterwards it stops what it started and nothing else: the probe, if it is
+# still running, and a WindowsTerminal.exe that was not running before the
+# launch, runs from Preview's install folder, and was created after the
+# launch. When it could not list the terminals running before the launch, it
+# stops no terminal at all. The runner agent's own console is hosted by a
+# Stable WindowsTerminal.exe that was running before the job, and stopping it
+# can end the job before the evidence is uploaded.
 #
 # NOT FOR A MACHINE ANYONE USES: the probe applies a style to the tab's profile
 # and resets it. This refuses to start anywhere but a GitHub-hosted runner.
@@ -161,8 +170,12 @@ function Get-TabVerdict {
     # Windows Terminal tab.
     param($Result, [string]$Nonce, [string]$Engine, [string]$Workspace)
     if ($null -eq $Result) { return 'no result from the tab' }
-    if (-not $Nonce -or "$($Result.Nonce)" -ne $Nonce) { return "the result belongs to another run (nonce '$($Result.Nonce)', expected '$Nonce')" }
     $fatal = @($Result.Errors | Where-Object { $_ })
+    # A probe that failed before it read the config has no nonce to record,
+    # and its result.json says why. That is this run's failure, not another
+    # run's result: the check empties its folder before it starts.
+    if (-not "$($Result.Nonce)" -and $fatal.Count -gt 0) { return "the probe failed before it recorded this run's nonce: $($fatal -join '; ')" }
+    if (-not $Nonce -or "$($Result.Nonce)" -ne $Nonce) { return "the result belongs to another run (nonce '$($Result.Nonce)', expected '$Nonce')" }
     if ($fatal.Count -gt 0) { return "the probe failed: $($fatal -join '; ')" }
     # Every prompt on this path is meant to be held back; one that was reached
     # was refused unanswered, and what followed it is not the user's path.
@@ -182,12 +195,26 @@ function Get-TabVerdict {
 function Get-HostVerdict {
     # The tab's nearest WindowsTerminal.exe ancestor is Preview's, and
     # Find-WTHostExePath -- the module's own walk -- names the same one.
+    #
+    # The first two failures are the PR's two premises, kept apart because
+    # telling them apart is what this check is for: no WindowsTerminal.exe
+    # above the shell is the first failing (a tab's shell is WT's child), and
+    # one above it whose ExecutablePath Win32_Process does not give is the
+    # second (that path can be read).
     param($Result, [string]$PreviewInstallLocation)
     $hostRec = $Result.NearestHost
-    if ($null -eq $hostRec -or -not "$($hostRec.ExecutablePath)") {
-        $names = @($Result.Chain | ForEach-Object { "$($_.Name)" }) -join ' <- '
+    if ($null -eq $hostRec) {
         if ($Result.ChainError) { return "the tab could not read its process tree: $($Result.ChainError)" }
+        $names = @($Result.Chain | ForEach-Object { "$($_.Name)" }) -join ' <- '
+        if (-not $names) { return "no WindowsTerminal.exe above the tab's shell: the walk found no process at all, not even the shell" }
         return "no WindowsTerminal.exe above the tab's shell (shell and ancestors: $names)"
+    }
+    if (-not "$($hostRec.ExecutablePath)") {
+        $pkg = "package $($hostRec.Package)"
+        if (-not "$($hostRec.Package)") { $pkg = "no package named (error $($hostRec.PackageError))" }
+        $walk = "Find-WTHostExePath returned '$($Result.HostExePath)'"
+        if (-not "$($Result.HostExePath)") { $walk = 'Find-WTHostExePath returned nothing' }
+        return "WindowsTerminal.exe (pid $($hostRec.ProcessId), $pkg) is the nearest ancestor of the tab's shell, but Win32_Process returned no ExecutablePath for it; $walk"
     }
     if (-not (Test-PathUnder -Path $hostRec.ExecutablePath -Root $PreviewInstallLocation)) {
         return "the tab's nearest WindowsTerminal.exe is $($hostRec.ExecutablePath), which is not under Preview's $PreviewInstallLocation"
@@ -239,15 +266,26 @@ function Get-LookupVerdict {
 }
 
 function Get-ControlVerdict {
-    # The lookup #120 replaced, run in the same tab, picks Stable's file. If it
-    # does not, this tab does not reproduce the bug, and the lookup check passing
-    # proves less than it says.
+    # This tab reproduces the bug #120 fixes. Two conditions, both needed: the
+    # lookup #120 replaced, run in the same tab, picks Stable's file; and the
+    # tab's profile is in that file. The pre-#120 apply (d1ee4e9,
+    # lib/applystyle.ps1, Apply-StyleDirect) looked WT_PROFILE_ID up in the
+    # file the lookup returned and, finding no such profile, refused ('Could
+    # not auto-detect a Windows Terminal profile') and wrote nothing. Without
+    # either, the lookup check passing proves less than it says.
     param($Result, [string]$StableSettingsPath)
     if ($null -eq $Result.Pre120) { return 'the pre-#120 lookup was not run' }
     if ("$($Result.Pre120.Error)") { return "the pre-#120 lookup could not run: $($Result.Pre120.Error)" }
     if (-not (Test-SamePath $Result.Pre120.Path $StableSettingsPath)) {
         return "the pre-#120 lookup returned '$($Result.Pre120.Path)', not Stable's $StableSettingsPath, so this tab does not reproduce the bug"
     }
+    $refused = "so the pre-#120 apply would have refused ('Could not auto-detect a Windows Terminal profile') rather than write Stable's file: this tab does not reproduce the bug"
+    $guid = "$($Result.Env.WT_PROFILE_ID)"
+    if (-not $guid) { return "the tab has no WT_PROFILE_ID, $refused" }
+    $stable = $Result.Before.Stable
+    if ($null -eq $stable -or -not $stable.Exists -or -not "$($stable.Sha256)") { return "the tab could not read Stable's settings.json before the apply, so whether the pre-#120 apply would have found the tab's profile in it is unknown" }
+    if (-not $stable.Parsed) { return "Stable's settings.json did not parse in the tab ($($stable.ParseError)), so whether the pre-#120 apply would have found the tab's profile in it is unknown" }
+    if (-not $stable.ProfileFound) { return "Stable's settings.json has no profile $guid (the tab's WT_PROFILE_ID), $refused" }
     return $null
 }
 
@@ -299,9 +337,21 @@ function Get-StableVerdict {
     return $null
 }
 
+function Get-ThrewVerdict {
+    # Why a command that stopped on an error the probe caught does not count.
+    # The probe calls it inside a try, and inside any try a statement-
+    # terminating error ends the command, where a user's session prints it and
+    # runs on to the command's next statement. So from that error on, the run
+    # is not known to have taken the user's path; the readings after it are
+    # still in result.json, and the transcript shows the error.
+    param([Parameter(Mandatory)][string]$Command, [AllowEmptyString()][string]$Threw)
+    return "$Command stopped on an error the probe caught: $Threw. Inside the probe's try, an error a user's session would print and run past ends the command, so what followed is not known to be the user's path"
+}
+
 function Get-ApplyVerdict {
     # `tstyles <style>` changed Preview's settings.json, which now carries the
-    # style's scheme, and gave the tab's own profile its colorScheme.
+    # style's scheme, and gave the tab's own profile its colorScheme, without
+    # stopping on an error.
     param($Result, [string]$StyleName)
     if ($null -eq $Result.Apply) { return 'the apply never ran' }
     $before = $Result.Before.Preview
@@ -317,13 +367,16 @@ function Get-ApplyVerdict {
     if (-not $after.HasScheme -or -not $after.TextHasScheme) { return "Preview's settings.json changed but carries no '$StyleName' scheme$tail" }
     if (-not $after.ProfileFound) { return "the tab's profile ($($Result.Env.WT_PROFILE_ID)) is not in Preview's settings.json$tail" }
     if ("$($after.ProfileColorScheme)" -cne $StyleName) { return "the tab's profile '$($after.ProfileName)' has colorScheme '$($after.ProfileColorScheme)', not '$StyleName'$tail" }
+    if ("$($Result.Apply.Threw)") { return (Get-ThrewVerdict -Command "tstyles $StyleName" -Threw "$($Result.Apply.Threw)") }
     return $null
 }
 
 function Get-ResetVerdict {
     # `tstyles reset` took the style back out of Preview's settings.json: no
-    # scheme, and no colorScheme on the tab's profile. Only after an apply that
-    # put them there -- a reset of nothing removes nothing and proves nothing.
+    # scheme, and no colorScheme on the tab's profile, which is still there --
+    # a profile that vanished has no colorScheme either, and proves nothing.
+    # Only after an apply that put them there: a reset of nothing removes
+    # nothing and proves nothing. And without stopping on an error.
     param($Result, [string]$StyleName)
     if ($null -eq $Result.Reset) { return 'the reset never ran' }
     $applied = $Result.Apply.Settled.Preview
@@ -337,8 +390,24 @@ function Get-ResetVerdict {
     if ("$($after.Sha256)" -eq "$($applied.Sha256)") { return "Preview's settings.json is byte-identical after tstyles reset$tail" }
     if (-not $after.Parsed) { return "Preview's settings.json does not parse after the reset: $($after.ParseError)" }
     if ($after.HasScheme -or $after.TextHasScheme) { return "Preview's settings.json still carries the '$StyleName' scheme after tstyles reset$tail" }
+    if (-not $after.ProfileFound) { return "the tab's profile ($($Result.Env.WT_PROFILE_ID)) is not in Preview's settings.json after tstyles reset$tail" }
     if ("$($after.ProfileColorScheme)" -ceq $StyleName) { return "the tab's profile still has colorScheme '$StyleName' after tstyles reset$tail" }
+    if ("$($Result.Reset.Threw)") { return (Get-ThrewVerdict -Command 'tstyles reset' -Threw "$($Result.Reset.Threw)") }
     return $null
+}
+
+function Get-HostCaveat {
+    # What a passing host check does not cover. Premise 2 is that a STANDARD
+    # user can read WindowsTerminal.exe's ExecutablePath, and on a hosted
+    # runner everything a step starts is elevated, the tab's shell included.
+    param($Result)
+    if ($Result.Elevated -eq $true) {
+        $who = 'an elevated process'
+        if ("$($Result.UserSid)".EndsWith('-500')) { $who = 'an elevated process running as the built-in Administrator' }
+        return "The path was read by $($who): premise 2 is exercised elevated only, and the standard-user case is not covered"
+    }
+    if ($Result.Elevated -eq $false) { return 'The path was read by a process that is not elevated' }
+    return 'Whether the process that read the path was elevated is not recorded, so which case of premise 2 this covers is unknown'
 }
 
 # --- Reporting, in the shape of scripts/live-gallery-check.ps1. ---
@@ -575,25 +644,158 @@ function Save-TerminalEvents {
     try { Write-JsonAtomic -Path $Path -InputObject $rows } catch { }
 }
 
-function Stop-NewTerminal {
-    # Stops what this check started and nothing else: WindowsTerminal.exe
-    # processes that were not running before the launch, and a probe still
-    # running. The Stable Terminal hosting the runner's own console was running
-    # before the launch, so it is never touched. Returns what was stopped.
-    param([int[]]$Before = @(), [Parameter(Mandatory)][string]$Marker)
-    $stopped = @()
-    foreach ($p in @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue)) {
-        $id = [int]$p.ProcessId
-        $isNewTerminal = ([string]$p.Name -eq 'WindowsTerminal.exe') -and ($Before -notcontains $id)
-        $isProbe = ([string]$p.Name -match '^(powershell|pwsh)\.exe$') -and $id -ne $PID -and
-                   ([string]$p.CommandLine).IndexOf($Marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0
-        if (-not ($isNewTerminal -or $isProbe)) { continue }
-        try {
-            Stop-Process -Id $id -Force -ErrorAction Stop
-            $stopped += ('{0} (pid {1}) {2}' -f $p.Name, $id, $p.ExecutablePath)
-        } catch { }
+function Get-TerminalSnapshot {
+    # The WindowsTerminal.exe processes running now, as { Ok; Ids; Error }. Ok
+    # is $false when Windows would not list them, and then no terminal may be
+    # taken for one this check started: an empty list would make every running
+    # terminal look new, the Stable one hosting the runner's console among them.
+    [CmdletBinding()]
+    param()
+    try {
+        $ids = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'WindowsTerminal.exe'" -OperationTimeoutSec 30 -ErrorAction Stop |
+            ForEach-Object { [int]$_.ProcessId })
+        return [pscustomobject]@{ Ok = $true; Ids = $ids; Error = $null }
+    } catch {
+        return [pscustomobject]@{ Ok = $false; Ids = @(); Error = "$($_.Exception.Message)" }
     }
-    return $stopped
+}
+
+function Test-ProbeProcess {
+    # $Process is this run's probe: a powershell.exe or pwsh.exe, not this
+    # process, whose command line carries $Marker, the run's config path. The
+    # one rule both the wait and the cleanup ask.
+    param($Process, [Parameter(Mandatory)][string]$Marker, [int]$SelfId = $PID)
+    if ($null -eq $Process) { return $false }
+    if ([string]$Process.Name -notmatch '^(powershell|pwsh)\.exe$') { return $false }
+    if ([int]$Process.ProcessId -eq $SelfId) { return $false }
+    return (([string]$Process.CommandLine).IndexOf($Marker, [System.StringComparison]::OrdinalIgnoreCase) -ge 0)
+}
+
+function Test-ProbeRunning {
+    # $true while the probe runs, $false once no process is the probe, and
+    # $null when Windows would not list the processes -- which is not "it exited".
+    param([Parameter(Mandatory)][string]$Marker)
+    $all = $null
+    try {
+        $all = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'powershell.exe' OR Name = 'pwsh.exe'" -OperationTimeoutSec 30 -ErrorAction Stop)
+    } catch { return $null }
+    foreach ($p in $all) { if (Test-ProbeProcess -Process $p -Marker $Marker) { return $true } }
+    return $false
+}
+
+function Wait-ProbeResult {
+    # Waits for the probe: first for a sign that the tab started it -- its
+    # started.json, or a result.json from a probe that failed before it wrote
+    # that -- then for result.json. The second wait ends early once the probe
+    # has exited: two process listings in a row with no probe in them, where a
+    # listing that fails breaks the row. Returns { Started; Finished; Exited }:
+    # Exited when the probe ended without a result.
+    param(
+        [Parameter(Mandatory)][string]$StartedPath,
+        [Parameter(Mandatory)][string]$ResultPath,
+        [Parameter(Mandatory)][string]$Marker,
+        [double]$StartTimeoutSeconds = 120,
+        [double]$ResultTimeoutSeconds = 300,
+        [int]$IntervalMs = 1000
+    )
+    $out = [ordered]@{ Started = $false; Finished = $false; Exited = $false }
+    $out.Started = Wait-Until -Condition { [System.IO.File]::Exists($StartedPath) -or [System.IO.File]::Exists($ResultPath) } `
+                              -TimeoutSeconds $StartTimeoutSeconds -IntervalMs $IntervalMs
+    if (-not $out.Started) { return [pscustomobject]$out }
+    $deadline = [datetime]::UtcNow.AddSeconds($ResultTimeoutSeconds)
+    $gone = 0
+    while ($true) {
+        if ([System.IO.File]::Exists($ResultPath)) { $out.Finished = $true; break }
+        $running = Test-ProbeRunning -Marker $Marker
+        if ($running -eq $false) { $gone++ } else { $gone = 0 }
+        if ($gone -ge 2) {
+            # It may have written its result on the way out.
+            $out.Finished = [System.IO.File]::Exists($ResultPath)
+            $out.Exited = -not $out.Finished
+            break
+        }
+        if ([datetime]::UtcNow -ge $deadline) { break }
+        Start-Sleep -Milliseconds $IntervalMs
+    }
+    return [pscustomobject]$out
+}
+
+function Select-ProcessToStop {
+    # Which of $Processes this check started, and so may stop:
+    #   - the probe, if it is still running (Test-ProbeProcess);
+    #   - a WindowsTerminal.exe that was not in the before-launch $Snapshot,
+    #     runs from under Preview's $PreviewInstallLocation, and was created
+    #     after $LaunchedAt. All three, so the Stable WindowsTerminal.exe
+    #     hosting the runner agent's console -- running before the launch, from
+    #     Stable's folder -- is never taken whatever the snapshot says; and no
+    #     terminal at all when the snapshot failed, since an empty one makes
+    #     every terminal look new.
+    # A terminal whose path or creation time Windows does not give is kept.
+    param(
+        $Processes,
+        [Parameter(Mandatory)]$Snapshot,
+        [AllowEmptyString()][string]$PreviewInstallLocation,
+        [Parameter(Mandatory)][datetime]$LaunchedAt,
+        [Parameter(Mandatory)][string]$Marker,
+        [int]$SelfId = $PID
+    )
+    $launchedUtc = $LaunchedAt.ToUniversalTime()
+    foreach ($p in @($Processes | Where-Object { $null -ne $_ })) {
+        if (Test-ProbeProcess -Process $p -Marker $Marker -SelfId $SelfId) { $p; continue }
+        if ([string]$p.Name -ne 'WindowsTerminal.exe') { continue }
+        if (-not $Snapshot.Ok) { continue }
+        if (@($Snapshot.Ids) -contains [int]$p.ProcessId) { continue }
+        if (-not (Test-PathUnder -Path ([string]$p.ExecutablePath) -Root $PreviewInstallLocation)) { continue }
+        if ($null -eq $p.CreationDate) { continue }
+        if (([datetime]$p.CreationDate).ToUniversalTime() -le $launchedUtc) { continue }
+        $p
+    }
+}
+
+function Stop-CheckProcess {
+    # Stops what Select-ProcessToStop picks, and nothing else. Returns {
+    # Stopped; Failed; Note }: what was stopped, what could not be and why,
+    # and why some or all were not even considered. -Processes is a test seam;
+    # real callers omit it, and the running processes are listed here.
+    param(
+        [Parameter(Mandatory)]$Snapshot,
+        [AllowEmptyString()][string]$PreviewInstallLocation,
+        [Parameter(Mandatory)][datetime]$LaunchedAt,
+        [Parameter(Mandatory)][string]$Marker,
+        $Processes
+    )
+    $out = [ordered]@{ Stopped = @(); Failed = @(); Note = $null }
+    if (-not $Snapshot.Ok) { $out.Note = "no WindowsTerminal.exe was stopped: the ones running before the launch could not be listed ($($Snapshot.Error))" }
+    if (-not $PSBoundParameters.ContainsKey('Processes')) {
+        try {
+            $Processes = @(Get-CimInstance -ClassName Win32_Process -OperationTimeoutSec 30 -ErrorAction Stop)
+        } catch {
+            $out.Note = "nothing was stopped: the running processes could not be listed ($($_.Exception.Message))"
+            return [pscustomobject]$out
+        }
+    }
+    foreach ($p in @(Select-ProcessToStop -Processes $Processes -Snapshot $Snapshot -PreviewInstallLocation $PreviewInstallLocation `
+                                          -LaunchedAt $LaunchedAt -Marker $Marker)) {
+        $what = '{0} (pid {1}) {2}' -f $p.Name, $p.ProcessId, $p.ExecutablePath
+        try {
+            Stop-Process -Id ([int]$p.ProcessId) -Force -ErrorAction Stop
+            $out.Stopped += $what
+        } catch {
+            $out.Failed += ('{0}: {1}' -f $what, $_.Exception.Message)
+        }
+    }
+    return [pscustomobject]$out
+}
+
+function Format-StopReport {
+    # Stop-CheckProcess's answer as one line for the facts.
+    param($Report)
+    $parts = @()
+    if (@($Report.Stopped).Count -gt 0) { $parts += ('stopped ' + (@($Report.Stopped) -join '; ')) }
+    if (@($Report.Failed).Count -gt 0) { $parts += ('could not stop ' + (@($Report.Failed) -join '; ')) }
+    if ($Report.Note) { $parts += "$($Report.Note)" }
+    if ($parts.Count -eq 0) { return 'nothing' }
+    return ($parts -join '. ')
 }
 
 function Show-ProbeTranscript {
@@ -727,10 +929,17 @@ function Invoke-WTLiveCheck {
     }
     Write-Host "Windows Terminal arguments: $arguments"
 
-    # 4. Open the tab.
-    $terminalsBefore = @(Get-CimInstance -ClassName Win32_Process -Filter "Name = 'WindowsTerminal.exe'" -ErrorAction SilentlyContinue |
-        ForEach-Object { [int]$_.ProcessId })
+    # 4. Open the tab. First, which terminals run already: the cleanup stops
+    # only one that did not, and none if this listing fails.
+    $terminalsBefore = Get-TerminalSnapshot
+    if ($terminalsBefore.Ok) {
+        $facts['WT before the launch'] = $(if (@($terminalsBefore.Ids).Count -gt 0) { 'pid ' + (@($terminalsBefore.Ids) -join ', ') } else { 'none' })
+    } else {
+        $facts['WT before the launch'] = "could not be listed ($($terminalsBefore.Error)), so no terminal will be stopped afterwards"
+        Write-Host "The running WindowsTerminal.exe processes could not be listed before the launch ($($terminalsBefore.Error)); no terminal will be stopped afterwards."
+    }
     $launchedAt = Get-Date
+    $stopArgs = @{ Snapshot = $terminalsBefore; PreviewInstallLocation = "$($preview.InstallLocation)"; LaunchedAt = $launchedAt; Marker = $configPath }
     $opened = Start-PreviewTab -Launch $Launch -FamilyName $preview.PackageFamilyName -Arguments $arguments
     $facts['Launch'] = $opened.Detail
     if (-not $opened.Ok) {
@@ -738,7 +947,7 @@ function Invoke-WTLiveCheck {
         $null = Save-DesktopScreenshot -Path (Join-Path $RunRoot 'screenshot-launch.png')
         Save-ProcessList -Path (Join-Path $RunRoot 'processes.json') -Marker $configPath
         Save-TerminalEvents -Path (Join-Path $RunRoot 'events.json') -Since $launchedAt
-        $null = Stop-NewTerminal -Before $terminalsBefore -Marker $configPath
+        $facts['Stopped'] = Format-StopReport (Stop-CheckProcess @stopArgs)
         return (Complete-Run -Results $results -Title $title -Facts $facts)
     }
     Add-Result -Results $results -Step 'launch' -Detail $opened.Detail
@@ -746,17 +955,18 @@ function Invoke-WTLiveCheck {
     # 5. Wait for the probe: first that the tab started it, then for its result.
     $startedPath = Join-Path $RunRoot 'started.json'
     $resultPath = Join-Path $RunRoot 'result.json'
-    $started = Wait-Until -Condition { [System.IO.File]::Exists($startedPath) } -TimeoutSeconds $StartTimeoutSeconds -IntervalMs 1000
-    $finished = $false
-    if ($started) { $finished = Wait-Until -Condition { [System.IO.File]::Exists($resultPath) } -TimeoutSeconds $ResultTimeoutSeconds -IntervalMs 1000 }
-    if (-not $finished) {
+    $wait = Wait-ProbeResult -StartedPath $startedPath -ResultPath $resultPath -Marker $configPath `
+                             -StartTimeoutSeconds $StartTimeoutSeconds -ResultTimeoutSeconds $ResultTimeoutSeconds
+    if (-not $wait.Finished) {
         $shot = Save-DesktopScreenshot -Path (Join-Path $RunRoot 'screenshot-timeout.png')
         if ($shot) { Write-Host $shot }
         Save-ProcessList -Path (Join-Path $RunRoot 'processes.json') -Marker $configPath
         Save-TerminalEvents -Path (Join-Path $RunRoot 'events.json') -Since $launchedAt
-        $stopped = @(Stop-NewTerminal -Before $terminalsBefore -Marker $configPath)
-        $facts['Stopped'] = $(if ($stopped.Count -gt 0) { $stopped -join '; ' } else { 'nothing' })
-        if ($started) {
+        $facts['Stopped'] = Format-StopReport (Stop-CheckProcess @stopArgs)
+        if ($wait.Exited) {
+            $why = 'the probe started in the tab and exited without writing result.json; transcript.txt shows how far it got'
+            Show-ProbeTranscript -Path (Join-Path $RunRoot 'transcript.txt')
+        } elseif ($wait.Started) {
             $why = "the probe started in the tab but wrote no result within $ResultTimeoutSeconds s; transcript.txt shows how far it got"
             Show-ProbeTranscript -Path (Join-Path $RunRoot 'transcript.txt')
         } else {
@@ -770,13 +980,8 @@ function Invoke-WTLiveCheck {
     try { $result = Read-JsonFile -Path $resultPath } catch { $readError = "$($_.Exception.Message)" }
 
     # 6. Let the tab close, stop what is left, and take the last readings.
-    $null = Wait-Until -Condition {
-        @(Get-CimInstance -ClassName Win32_Process -ErrorAction SilentlyContinue | Where-Object {
-            [string]$_.Name -match '^(powershell|pwsh)\.exe$' -and [int]$_.ProcessId -ne $PID -and
-            ([string]$_.CommandLine).IndexOf($configPath, [System.StringComparison]::OrdinalIgnoreCase) -ge 0 }).Count -eq 0
-    } -TimeoutSeconds 30 -IntervalMs 1000
-    $stopped = @(Stop-NewTerminal -Before $terminalsBefore -Marker $configPath)
-    $facts['Stopped'] = $(if ($stopped.Count -gt 0) { $stopped -join '; ' } else { 'nothing' })
+    $null = Wait-Until -Condition { (Test-ProbeRunning -Marker $configPath) -eq $false } -TimeoutSeconds 30 -IntervalMs 1000
+    $facts['Stopped'] = Format-StopReport (Stop-CheckProcess @stopArgs)
     $final = [pscustomobject]@{
         Stable     = Get-FileFacts -Path $stablePath
         Preview    = Get-FileFacts -Path $previewPath
@@ -785,9 +990,10 @@ function Invoke-WTLiveCheck {
     try { Write-JsonAtomic -Path (Join-Path $RunRoot 'after.json') -InputObject $final } catch { }
     Save-ProcessList -Path (Join-Path $RunRoot 'processes.json') -Marker $configPath
 
-    # 7. The checks. Only a result that is not this run's stops here: past
-    # that, every check is judged on what the probe recorded, so one failure
-    # does not hide what the rest of the run showed.
+    # 7. The checks. Only a result that cannot be tied to this run -- another
+    # run's, or a probe's that failed before it read the config -- stops here:
+    # past that, every check is judged on what the probe recorded, so one
+    # failure does not hide what the rest of the run showed.
     if ($readError -or $null -eq $result -or "$($result.Nonce)" -ne $nonce) {
         $why = "result.json did not read: $readError"
         if (-not $readError) { $why = Get-TabVerdict -Result $result -Nonce $nonce -Engine $Engine -Workspace $repoRoot }
@@ -800,20 +1006,25 @@ function Invoke-WTLiveCheck {
     $facts['Tab ancestry'] = (@($result.Chain | ForEach-Object { '{0} {1}' -f $_.Name, $_.ProcessId }) -join ' <- ')
     $facts['Tab environment'] = $(if ($result.Env.InheritedStepEnvironment) { 'inherited from the CI step (GITHUB_ACTIONS present)' } else { 'not the CI step''s (no GITHUB_ACTIONS)' })
     if (@($result.Notes).Count -gt 0) { $facts['Probe notes'] = (@($result.Notes) -join '; ') }
+    # What a user's session would have printed and the probe collected instead.
+    $stray = @(@($result.Apply.PipelineOutput) + @($result.Reset.PipelineOutput) | Where-Object { $_ })
+    if ($stray.Count -gt 0) { $facts['Pipeline output'] = ($stray -join '; ') }
 
     Add-Result -Results $results -Step 'tab' -Failure (Get-TabVerdict -Result $result -Nonce $nonce -Engine $Engine -Workspace $repoRoot) `
         -Detail ('{0} {1}, pid {2}, elevated: {3}, ran the checkout with its data root in {4}' -f
                  $result.PSEdition, $result.PSVersion, $result.ProcessId, $result.Elevated, $result.Module.DataRoot)
 
     Add-Result -Results $results -Step 'host' -Failure (Get-HostVerdict -Result $result -PreviewInstallLocation $preview.InstallLocation) `
-        -Detail ('{0} (pid {1}), {2} level(s) above the shell; Find-WTHostExePath names the same file' -f $hostRec.ExecutablePath, $hostRec.ProcessId, $result.HostDepth)
+        -Detail ('{0} (pid {1}), {2} level(s) above the shell; Find-WTHostExePath names the same file. {3}' -f
+                 $hostRec.ExecutablePath, $hostRec.ProcessId, $result.HostDepth, (Get-HostCaveat -Result $result))
     Add-Result -Results $results -Step 'identity' -Failure (Get-IdentityVerdict -Result $result -PreviewPackageFullName $preview.PackageFullName `
                                                            -UnpackagedBefore $unpackagedBefore -UnpackagedAfter $final.Unpackaged) `
         -Detail ('that WindowsTerminal.exe runs as package {0}; no unpackaged settings.json appeared' -f $hostRec.Package)
     Add-Result -Results $results -Step 'lookup' -Failure (Get-LookupVerdict -Result $result -PreviewSettingsPath $previewPath -StableSettingsPath $stablePath) `
         -Detail "Find-WTSettingsPath returned $previewPath while Stable's $stablePath existed"
     Add-Result -Results $results -Step 'control' -Failure (Get-ControlVerdict -Result $result -StableSettingsPath $stablePath) `
-        -Detail "the pre-#120 lookup, in the same tab, returns Stable's $stablePath"
+        -Detail ("the pre-#120 lookup, in the same tab, returns Stable's {0}, and the tab's profile {1} ('{2}') is in that file" -f
+                 $stablePath, $result.Env.WT_PROFILE_ID, $result.Before.Stable.ProfileName)
     Add-Result -Results $results -Step 'rig' -Failure (Get-RigVerdict -BaselineSha256 $seed.Stable.Sha256 -Result $result) `
         -Detail "Stable's settings.json unchanged from before the launch to the apply ($($seed.Stable.Sha256))"
     Add-Result -Results $results -Step 'stable' -Failure (Get-StableVerdict -Result $result -Final $final -StyleName $script:StyleName) `
@@ -822,8 +1033,8 @@ function Invoke-WTLiveCheck {
         -Detail ("tstyles {0}: Preview's settings.json {1} -> {2}, carries the '{0}' scheme, and profile '{3}' has colorScheme '{0}'" -f
                  $script:StyleName, $result.Before.Preview.Sha256, $result.Apply.Settled.Preview.Sha256, $result.Apply.Settled.Preview.ProfileName)
     Add-Result -Results $results -Step 'reset' -Failure (Get-ResetVerdict -Result $result -StyleName $script:StyleName) `
-        -Detail ("tstyles reset: Preview's settings.json {0} -> {1}, no '{2}' scheme, no colorScheme '{2}' on the profile" -f
-                 $result.Apply.Settled.Preview.Sha256, $result.Reset.Settled.Preview.Sha256, $script:StyleName)
+        -Detail ("tstyles reset: Preview's settings.json {0} -> {1}, no '{2}' scheme, and profile '{3}' is there with no colorScheme '{2}'" -f
+                 $result.Apply.Settled.Preview.Sha256, $result.Reset.Settled.Preview.Sha256, $script:StyleName, $result.Reset.Settled.Preview.ProfileName)
     if (@($results | Where-Object { -not $_.Ok }).Count -gt 0) { Show-ProbeTranscript -Path (Join-Path $RunRoot 'transcript.txt') }
     return (Complete-Run -Results $results -Title $title -Facts $facts)
 }

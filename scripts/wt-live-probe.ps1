@@ -12,16 +12,24 @@
 #
 # In order: who and where it runs; the process tree above it, read here
 # independently of the module; the checked-out module, imported with its data
-# root moved to a scratch folder; what Find-WTHostExePath and
-# Find-WTSettingsPath answer, and what the lookup #120 replaced answers in the
-# same tab; then `tstyles eva` and `tstyles reset` exactly as a user types
-# them, reading both builds' settings.json after each. result.json is written
-# whatever happens, in a finally.
+# root moved to a scratch folder, and the style's background put in that
+# folder's cache; what Find-WTHostExePath and Find-WTSettingsPath answer, and
+# what the lookup #120 replaced answers in the same tab; then `tstyles eva` and
+# `tstyles reset` exactly as a user types them, reading both builds'
+# settings.json after each. result.json is written whatever happens, in a
+# finally.
 #
 # Prompts: neither command asks anything on this path. The update notice is
 # held back by a fresh .last-update-check in the scratch data root, and
 # Read-Host is replaced by a function that records and throws -- a prompt
 # reached here is a failure, and is never answered.
+#
+# The network: neither command makes a request. The same .last-update-check
+# means the update check sends none, and the background in the cache comes
+# with a fresh revalidation marker, so the apply neither downloads the style's
+# image from the gifs branch on raw.githubusercontent.com nor asks there
+# whether it changed (Initialize-ProbeBackground). A seed that did not take is
+# in the notes.
 #
 # NOT FOR A MACHINE ANYONE USES: it styles and resets the tab's own profile in
 # the Terminal it runs under, so it refuses a config that was not written on a
@@ -191,6 +199,41 @@ function Import-ProbeModule {
     }
 }
 
+function Initialize-ProbeBackground {
+    # Puts a background for the style in its cache, inside the sandboxed data
+    # root, beside a revalidation marker stamped now. The apply then takes the
+    # image from disk (Get-StyleBundledBackground's second tier) and, with the
+    # marker fresh, does not ask the gifs branch whether it changed: so it
+    # reaches neither raw.githubusercontent.com nor any other host. The image
+    # is a 1x1 transparent GIF, not the style's own -- what the run checks is
+    # which settings.json is written, and the path written into it is the
+    # cache file either way. Where the cache is and what the marker means are
+    # the module's own answers (Get-StyleCacheDir, Test-BackgroundRefreshDue),
+    # asked here rather than restated. Returns { Path; RefreshDue; Error }.
+    param([Parameter(Mandatory)]$Module, [Parameter(Mandatory)][string]$StyleName)
+    $gif = [byte[]](0x47, 0x49, 0x46, 0x38, 0x39, 0x61, 0x01, 0x00, 0x01, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00,
+                    0xFF, 0xFF, 0xFF, 0x21, 0xF9, 0x04, 0x01, 0x00, 0x00, 0x00, 0x00, 0x2C, 0x00, 0x00, 0x00, 0x00,
+                    0x01, 0x00, 0x01, 0x00, 0x00, 0x02, 0x02, 0x44, 0x01, 0x00, 0x3B)
+    $out = [ordered]@{ Path = $null; RefreshDue = $null; Error = $null }
+    try {
+        $dir = & $Module { param($n) Get-StyleCacheDir -StyleName $n } $StyleName
+        $null = New-Item -ItemType Directory -Force -Path $dir -ErrorAction Stop
+        $path = Join-Path $dir 'background.gif'
+        [System.IO.File]::WriteAllBytes($path, $gif)
+        # The shape Update-CachedBackground writes, culture-pinned as its reader is.
+        $marker = ConvertTo-Json -Compress -InputObject ([ordered]@{
+            kind = 'checked'
+            at   = [datetime]::UtcNow.ToString('o', [System.Globalization.CultureInfo]::InvariantCulture)
+        })
+        [System.IO.File]::WriteAllText((Join-Path $dir '.background-checked'), $marker, (New-Object System.Text.UTF8Encoding($false)))
+        $out.Path = $path
+        $out.RefreshDue = [bool](& $Module { param($t) Test-BackgroundRefreshDue -MarkerText $t } $marker)
+    } catch {
+        $out.Error = "$($_.Exception.Message)"
+    }
+    return [pscustomobject]$out
+}
+
 function Invoke-ProbeCommand {
     # One tstyles command exactly as a user types it -- the exported command,
     # the session's own profile, no -Target -- and both settings.json files read
@@ -204,16 +247,25 @@ function Invoke-ProbeCommand {
         [AllowEmptyString()][string]$ProfileGuid
     )
     $step = [ordered]@{
-        Command = "tstyles $Argument"; Output = ''; Errors = @(); Threw = $null
+        Command = "tstyles $Argument"; Output = ''; PipelineOutput = @(); Errors = @(); Threw = $null
         Immediate = $null; PreviewQuiet = $null; Settled = $null
     }
     $ev = $null
     $iv = $null
+    $piped = $null
     try {
-        Invoke-TerminalStyle -Arg $Argument -ErrorVariable ev -InformationVariable iv
+        # Assigned, so nothing the command writes to the pipeline joins this
+        # function's own output: the result's Apply and Reset stay one object.
+        $piped = Invoke-TerminalStyle -Arg $Argument -ErrorVariable ev -InformationVariable iv
     } catch {
+        # Inside a try -- this one, or the one around the whole probe -- a
+        # statement-terminating error ends the command, where a user's session
+        # would print it and run on. So a Threw here means the run may have
+        # left the user's path at that error, and the check fails it.
         $step.Threw = "$($_.Exception.Message)"
     }
+    # Filtered first: a $null piped into ForEach-Object still runs it once.
+    $step.PipelineOutput = @(@($piped) | Where-Object { $null -ne $_ } | ForEach-Object { "$_" })
     $step.Output = ConvertTo-HostText -Records $iv
     $step.Errors = @($ev | ForEach-Object { "$_" })
     $step.Immediate = Get-BothSettingsFacts -Config $Config -Module $Module -ProfileGuid $ProfileGuid
@@ -241,6 +293,7 @@ function Invoke-WTLiveProbe {
         SettingsPath = @(); SettingsPathErrors = @(); StableExistedAtLookup = $null
         Pre120 = $null
         PreviewReady = $null
+        Background = $null
         Before = $null; Apply = $null; Reset = $null
         DataRootFiles = @()
         Prompts = @(); Notes = @(); Errors = @()
@@ -321,6 +374,14 @@ function Invoke-WTLiveProbe {
             DataRoot = $imported.DataRoot; Current = $imported.Current; Sandboxed = $imported.Sandboxed
         }
         if (-not $imported.Sandboxed) { throw "the module's data root is '$($imported.DataRoot)', not the sandbox $($config.SandboxDataRoot)" }
+
+        # The style's background, from disk: the apply then reaches no host.
+        $result.Background = Initialize-ProbeBackground -Module $module -StyleName "$($config.StyleName)"
+        if ($result.Background.Error) {
+            [void]$notes.Add("the style's background was not seeded ($($result.Background.Error)), so the apply may fetch it from raw.githubusercontent.com")
+        } elseif ($result.Background.RefreshDue) {
+            [void]$notes.Add("the module takes the seeded background as due for a re-check, so the apply may ask raw.githubusercontent.com about it")
+        }
 
         # Preview writes its settings.json before it opens the first tab; wait
         # for it anyway, and for it to stop changing.

@@ -39,6 +39,7 @@ BeforeAll {
     $script:GoodResultJson = @'
 {
   "Nonce": "n1", "PSEdition": "Desktop", "PSVersion": "5.1.26100.1", "ProcessId": 4242, "Elevated": true,
+  "UserSid": "S-1-5-21-1111111111-2222222222-3333333333-500",
   "Env": { "WT_SESSION": "f00", "WT_PROFILE_ID": "{61c54bbd-c2c6-5271-96e7-009a87ff44bf}", "TERM_PROGRAM": null, "InheritedStepEnvironment": true },
   "Module": { "ModuleBase": "D:\\a\\TerminalStyles\\TerminalStyles", "DataRoot": "D:\\a\\_temp\\wt-live-sandbox-powershell", "Sandboxed": true },
   "TerminalKind": "WindowsTerminal",
@@ -55,7 +56,7 @@ BeforeAll {
   "StableExistedAtLookup": true,
   "Pre120": { "Path": "C:\\Users\\runneradmin\\AppData\\Local\\Packages\\Microsoft.WindowsTerminal_8wekyb3d8bbwe\\LocalState\\settings.json", "Error": null },
   "Before": {
-    "Stable":  { "Exists": true, "Sha256": "aaa", "Parsed": true, "HasScheme": false, "TextHasScheme": false },
+    "Stable":  { "Exists": true, "Sha256": "aaa", "Parsed": true, "HasScheme": false, "TextHasScheme": false, "ProfileFound": true, "ProfileName": "Windows PowerShell", "ProfileColorScheme": null },
     "Preview": { "Exists": true, "Sha256": "aaa", "Parsed": true, "HasScheme": false, "TextHasScheme": false, "ProfileFound": true, "ProfileName": "Windows PowerShell", "ProfileColorScheme": null }
   },
   "Apply": {
@@ -86,6 +87,19 @@ BeforeAll {
     $script:NewResult = { $script:GoodResultJson | ConvertFrom-Json }
     $script:GoodFinal = [pscustomobject]@{ Stable = [pscustomobject]@{ Exists = $true; Sha256 = 'aaa' } }
     $script:Missing = [pscustomobject]@{ Exists = $false; Sha256 = $null }
+    # There, but unreadable: Exists without a hash.
+    $script:Unread = [pscustomobject]@{ Exists = $true; Sha256 = $null }
+
+    # Get-CimInstance is Windows-only. Elsewhere a stand-in takes its place, so
+    # the tests that mock it run, and mean the same, on every leg; unmocked, it
+    # fails, as a WMI query can.
+    if (-not (Get-Command -Name Get-CimInstance -ErrorAction SilentlyContinue)) {
+        function Get-CimInstance {
+            [CmdletBinding()]
+            param([string]$ClassName, [string]$Filter, [int]$OperationTimeoutSec, [string[]]$Property)
+            throw 'Get-CimInstance is not available on this platform'
+        }
+    }
 
     # A zip, from { entry name = string or bytes }.
     $script:NewZipBytes = {
@@ -156,7 +170,7 @@ Describe 'wt-live: where it runs' {
         Mock Get-RunnerFacts { throw 'read the runner' }
         Mock Initialize-SettingsFile { throw 'seeded a settings.json' }
         Mock Start-PreviewTab { throw 'opened a tab' }
-        Mock Stop-NewTerminal { throw 'stopped a process' }
+        Mock Stop-CheckProcess { throw 'stopped a process' }
 
         $code = Invoke-WTLiveCheck -Engine 'powershell' -Launch 'alias' 6>$null
         $code | Should -Be 2 -Because 'one exit code, and nothing else on the pipeline'
@@ -164,6 +178,7 @@ Describe 'wt-live: where it runs' {
         Should -Invoke Get-RunnerFacts -Times 0 -Exactly
         Should -Invoke Initialize-SettingsFile -Times 0 -Exactly
         Should -Invoke Start-PreviewTab -Times 0 -Exactly
+        Should -Invoke Stop-CheckProcess -Times 0 -Exactly
     }
 
     It 'the installer refuses before it installs anything' {
@@ -173,6 +188,9 @@ Describe 'wt-live: where it runs' {
 
         $code = Invoke-WTLiveInstall 6>$null
         $code | Should -Be 2
+        # Off a runner the real guard says no as well, so a mock that did not
+        # take would pass here too; this is what shows it was the one asked.
+        Should -Invoke Test-GitHubHostedRunner -Times 1 -Exactly
         Should -Invoke Install-WTBuild -Times 0 -Exactly
         Should -Invoke Get-WTBuildReport -Times 0 -Exactly
     }
@@ -278,12 +296,56 @@ Describe 'wt-live: the verdicts fail where they should' {
             $r | Add-Member -NotePropertyName Prompts -NotePropertyValue @('Target profile') -Force
             Get-TabVerdict -Result $r -Nonce 'n1' -Engine 'powershell' -Workspace $script:Workspace | Should -Match 'prompt was reached.*Target profile'
         }
+
+        It 'rejects a tab with no profile to style' {
+            $r = & $script:NewResult; $r.Env.WT_PROFILE_ID = $null
+            Get-TabVerdict -Result $r -Nonce 'n1' -Engine 'powershell' -Workspace $script:Workspace | Should -Match 'no WT_PROFILE_ID'
+        }
+
+        It 'reports a probe that failed before it read its config as that failure, not as another run''s result' {
+            # The probe writes result.json in a finally; one that could not read
+            # the config never learned the nonce, and says why in Errors.
+            $r = & $script:NewResult; $r.Nonce = $null; $r.Errors = @('cannot read D:\a\_temp\wt-live\config.json (line 256)')
+            $v = Get-TabVerdict -Result $r -Nonce 'n1' -Engine 'powershell' -Workspace $script:Workspace
+            $v | Should -Match 'failed before it recorded this run''s nonce: cannot read D:'
+            $v | Should -Not -Match 'another run'
+            # With no error to report, a missing nonce is still not this run's.
+            $r = & $script:NewResult; $r.Nonce = $null
+            Get-TabVerdict -Result $r -Nonce 'n1' -Engine 'powershell' -Workspace $script:Workspace | Should -Match 'another run'
+        }
     }
 
     Context 'the host and its identity' {
-        It 'rejects a tab with no WindowsTerminal.exe above it' {
-            $r = & $script:NewResult; $r.NearestHost = $null
-            Get-HostVerdict -Result $r -PreviewInstallLocation $script:PreviewInstall | Should -Match 'no WindowsTerminal.exe'
+        It 'rejects a tab with no WindowsTerminal.exe above it, and names what is above it' {
+            $r = & $script:NewResult; $r.NearestHost = $null; $r.Chain = @($r.Chain[0])
+            Get-HostVerdict -Result $r -PreviewInstallLocation $script:PreviewInstall |
+                Should -Match 'no WindowsTerminal.exe above the tab''s shell \(shell and ancestors: powershell\.exe\)'
+        }
+
+        It 'tells a WindowsTerminal.exe whose path Windows withholds from no WindowsTerminal.exe at all' {
+            # The PR's second premise failing, not its first: the ancestor is
+            # there and named, only its ExecutablePath is not given.
+            $r = & $script:NewResult; $r.NearestHost.ExecutablePath = ''; $r.HostExePath = ''
+            $v = Get-HostVerdict -Result $r -PreviewInstallLocation $script:PreviewInstall
+            $v | Should -Match ('WindowsTerminal\.exe \(pid 4000, package ' + [regex]::Escape($script:PreviewFull) + '\) is the nearest ancestor of the tab''s shell, but Win32_Process returned no ExecutablePath for it')
+            $v | Should -Match 'Find-WTHostExePath returned nothing'
+            $v | Should -Not -Match 'no WindowsTerminal\.exe'
+            # Package identity is read off the process, not its path, so that
+            # check can still pass on the same result; the host row is the one that fails.
+            Get-IdentityVerdict -Result $r -PreviewPackageFullName $script:PreviewFull -UnpackagedBefore $script:Missing -UnpackagedAfter $script:Missing |
+                Should -BeNullOrEmpty
+
+            $r = & $script:NewResult; $r.NearestHost.ExecutablePath = $null; $r.NearestHost.Package = $null; $r.NearestHost.PackageError = 5
+            $v = Get-HostVerdict -Result $r -PreviewInstallLocation $script:PreviewInstall
+            $v | Should -Match '\(pid 4000, no package named \(error 5\)\)'
+            $v | Should -Match ("Find-WTHostExePath returned '" + [regex]::Escape($script:PreviewExe) + "'")
+        }
+
+        It 'says when the tab could not read its process tree, or found no process in it' {
+            $r = & $script:NewResult; $r.NearestHost = $null; $r.Chain = @(); $r.ChainError = 'Access denied'
+            Get-HostVerdict -Result $r -PreviewInstallLocation $script:PreviewInstall | Should -Match 'could not read its process tree: Access denied'
+            $r = & $script:NewResult; $r.NearestHost = $null; $r.Chain = @()
+            Get-HostVerdict -Result $r -PreviewInstallLocation $script:PreviewInstall | Should -Match 'not even the shell'
         }
 
         It 'rejects Stable''s WindowsTerminal.exe, and a folder that only starts like Preview''s' {
@@ -303,8 +365,28 @@ Describe 'wt-live: the verdicts fail where they should' {
         It 'rejects a WindowsTerminal.exe with no package identity, or another package''s' {
             $r = & $script:NewResult; $r.NearestHost.Package = $null; $r.NearestHost.PackageError = 15700
             Get-IdentityVerdict -Result $r -PreviewPackageFullName $script:PreviewFull | Should -Match 'unpackaged'
+            $r = & $script:NewResult; $r.NearestHost.Package = $null; $r.NearestHost.PackageError = 5
+            Get-IdentityVerdict -Result $r -PreviewPackageFullName $script:PreviewFull | Should -Match 'named no package .*: error 5$'
             $r = & $script:NewResult; $r.NearestHost.Package = 'Microsoft.WindowsTerminal_1.23.20211.0_x64__8wekyb3d8bbwe'
             Get-IdentityVerdict -Result $r -PreviewPackageFullName $script:PreviewFull | Should -Match 'not Microsoft.WindowsTerminalPreview'
+            $r = & $script:NewResult; $r.NearestHost = $null
+            Get-IdentityVerdict -Result $r -PreviewPackageFullName $script:PreviewFull | Should -Match 'no WindowsTerminal.exe above the tab''s shell to ask'
+        }
+
+        It 'says on a passing host row that premise 2 was read elevated only' {
+            # A green summary must not read as proof that a standard user can
+            # read the path: on a hosted runner the reader is elevated.
+            $r = & $script:NewResult
+            $c = Get-HostCaveat -Result $r
+            $c | Should -Match 'elevated process running as the built-in Administrator: premise 2 is exercised elevated only, and the standard-user case is not covered'
+            $r.UserSid = 'S-1-5-21-1111111111-2222222222-3333333333-1001'
+            $c = Get-HostCaveat -Result $r
+            $c | Should -Match '^The path was read by an elevated process: premise 2 is exercised elevated only'
+            $c | Should -Not -Match 'built-in'
+            $r.Elevated = $false
+            Get-HostCaveat -Result $r | Should -BeExactly 'The path was read by a process that is not elevated'
+            $r.Elevated = $null
+            Get-HostCaveat -Result $r | Should -Match 'not recorded'
         }
 
         It 'rejects an unpackaged settings.json that appeared or changed during the run' {
@@ -336,11 +418,33 @@ Describe 'wt-live: the verdicts fail where they should' {
                 Should -Match 'could not have picked it'
         }
 
+        It 'fails a lookup that names some third file' {
+            $r = & $script:NewResult; $r.SettingsPath = @('C:\elsewhere\settings.json')
+            Get-LookupVerdict -Result $r -PreviewSettingsPath $script:PreviewSettings -StableSettingsPath $script:StableSettings |
+                Should -Match ('returned C:\\elsewhere\\settings\.json, not Preview''s ' + [regex]::Escape($script:PreviewSettings))
+        }
+
         It 'fails the control when the old lookup does not pick Stable''s file' {
             $r = & $script:NewResult; $r.Pre120.Path = $script:PreviewSettings
             Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings | Should -Match 'does not reproduce the bug'
             $r = & $script:NewResult; $r.Pre120.Path = $null; $r.Pre120.Error = 'no pre-#120 tstyles.ps1'
             Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings | Should -Match 'could not run'
+            $r = & $script:NewResult; $r.Pre120 = $null
+            Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings | Should -Match 'was not run'
+        }
+
+        It 'fails the control when Stable''s file lacks the tab''s profile, since the old apply then refused instead' {
+            # Pre-#120 Apply-StyleDirect looked WT_PROFILE_ID up in the file the
+            # lookup returned, and with no such profile wrote nothing.
+            $r = & $script:NewResult; $r.Before.Stable.ProfileFound = $false
+            Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings |
+                Should -Match 'has no profile \{61c54bbd-c2c6-5271-96e7-009a87ff44bf\} \(the tab''s WT_PROFILE_ID\), so the pre-#120 apply would have refused.*does not reproduce the bug'
+            $r = & $script:NewResult; $r.Env.WT_PROFILE_ID = $null
+            Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings | Should -Match 'has no WT_PROFILE_ID, so the pre-#120 apply would have refused'
+            $r = & $script:NewResult; $r.Before.Stable = $script:Unread
+            Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings | Should -Match 'could not read Stable''s settings.json before the apply.*unknown'
+            $r = & $script:NewResult; $r.Before.Stable.Parsed = $false; $r.Before.Stable | Add-Member -NotePropertyName ParseError -NotePropertyValue 'bad token' -Force
+            Get-ControlVerdict -Result $r -StableSettingsPath $script:StableSettings | Should -Match 'did not parse in the tab \(bad token\).*unknown'
         }
     }
 
@@ -348,6 +452,11 @@ Describe 'wt-live: the verdicts fail where they should' {
         It 'fails when Stable''s file moved before the apply' {
             Get-RigVerdict -BaselineSha256 'zzz' -Result (& $script:NewResult) | Should -Match 'before TerminalStyles wrote anything'
             Get-RigVerdict -BaselineSha256 '' -Result (& $script:NewResult) | Should -Match 'no reading'
+        }
+
+        It 'fails when the tab found Stable''s file but could not read it' {
+            $r = & $script:NewResult; $r.Before.Stable = $script:Unread
+            Get-RigVerdict -BaselineSha256 'aaa' -Result $r | Should -Match 'could not read Stable''s settings.json before the apply'
         }
 
         It 'fails on any one changed reading, and names TerminalStyles when the style landed in it' {
@@ -404,12 +513,56 @@ Describe 'wt-live: the verdicts fail where they should' {
             Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'still has colorScheme'
             $r = & $script:NewResult; $r.Reset.Settled.Preview.Sha256 = 'bbb'
             Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'byte-identical after tstyles reset'
+            # And says what the command said, when it said something.
+            $r = & $script:NewResult; $r.Reset.Settled.Preview.Sha256 = 'bbb'; $r.Reset.Errors = @('', 'Could not locate Windows Terminal settings.json.')
+            Get-ResetVerdict -Result $r -StyleName 'eva' |
+                Should -BeExactly "Preview's settings.json is byte-identical after tstyles reset (it said: Could not locate Windows Terminal settings.json.)"
         }
 
         It 'does not pass a reset after an apply that never put the style there' {
             # Nothing was there to remove, so "it is gone" proves nothing.
             $r = & $script:NewResult; $r.Apply.Settled.Preview.HasScheme = $false
             Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'not measured'
+        }
+
+        It 'does not pass a reset after which the tab''s profile is gone' {
+            # A profile that is not there has no colorScheme either.
+            $r = & $script:NewResult; $r.Reset.Settled.Preview.ProfileFound = $false; $r.Reset.Settled.Preview.ProfileName = $null
+            Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'tab''s profile \(\{61c54bbd-c2c6-5271-96e7-009a87ff44bf\}\) is not in Preview''s settings.json after tstyles reset'
+        }
+
+        It 'fails an apply or a reset that never ran, or whose file could not be read or parsed' {
+            $r = & $script:NewResult; $r.Apply = $null
+            Get-ApplyVerdict -Result $r -StyleName 'eva' | Should -Match 'the apply never ran'
+            $r = & $script:NewResult; $r.Before.Preview = $script:Unread
+            Get-ApplyVerdict -Result $r -StyleName 'eva' | Should -Match 'could not be read before the apply'
+            $r = & $script:NewResult; $r.Apply.Settled.Preview = $script:Unread
+            Get-ApplyVerdict -Result $r -StyleName 'eva' | Should -Match 'could not be read after the apply'
+            $r = & $script:NewResult; $r.Apply.Settled.Preview.Parsed = $false
+            $r.Apply.Settled.Preview | Add-Member -NotePropertyName ParseError -NotePropertyValue 'bad token' -Force
+            Get-ApplyVerdict -Result $r -StyleName 'eva' | Should -Match 'does not parse after the apply: bad token'
+
+            $r = & $script:NewResult; $r.Reset = $null
+            Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'the reset never ran'
+            $r = & $script:NewResult; $r.Reset.Settled.Preview = $script:Unread
+            Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'could not be read after the reset'
+            $r = & $script:NewResult; $r.Reset.Settled.Preview.Parsed = $false
+            $r.Reset.Settled.Preview | Add-Member -NotePropertyName ParseError -NotePropertyValue 'bad token' -Force
+            Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match 'does not parse after the reset: bad token'
+        }
+
+        It 'fails an apply that styled a profile its file does not hold' {
+            $r = & $script:NewResult; $r.Apply.Settled.Preview.ProfileFound = $false
+            Get-ApplyVerdict -Result $r -StyleName 'eva' | Should -Match 'tab''s profile .* is not in Preview''s settings.json'
+        }
+
+        It 'fails an apply or a reset that stopped on an error, even where every file came out right' {
+            # Inside the probe's try, a statement-terminating error ends the
+            # command where a user's session would run on past it.
+            $r = & $script:NewResult; $r.Apply.Threw = 'Exception calling "Parse"'
+            Get-ApplyVerdict -Result $r -StyleName 'eva' | Should -Match '^tstyles eva stopped on an error the probe caught: Exception calling "Parse"\. .*not known to be the user''s path'
+            $r = & $script:NewResult; $r.Reset.Threw = 'boom'
+            Get-ResetVerdict -Result $r -StyleName 'eva' | Should -Match '^tstyles reset stopped on an error the probe caught: boom\.'
         }
     }
 
@@ -421,12 +574,292 @@ Describe 'wt-live: the verdicts fail where they should' {
             Get-PackagesVerdict -Stable @($one) -Preview @($one) | Should -BeNullOrEmpty
         }
 
+        It 'wants each build registered at a folder' {
+            $one = [pscustomobject]@{ InstallLocation = 'C:\x' }
+            $none = [pscustomobject]@{ InstallLocation = '' }
+            Get-PackagesVerdict -Stable @($none) -Preview @($one) | Should -Match '^Stable is registered with no InstallLocation'
+            Get-PackagesVerdict -Stable @($one) -Preview @($none) | Should -Match '^Preview is registered with no InstallLocation'
+        }
+
         It 'wants Stable''s file there, readable and still' {
             $ok = [pscustomobject]@{ Exists = $true; Sha256 = 'aaa' }
             Get-SettingsVerdict -Stable $script:Missing -Preview $ok -StableQuiet $null | Should -Match 'old Stable-first lookup'
             Get-SettingsVerdict -Stable $ok -Preview $ok -StableQuiet ([pscustomobject]@{ Settled = $false; Changes = 4 }) | Should -Match 'kept changing'
             Get-SettingsVerdict -Stable $ok -Preview $script:Missing -StableQuiet $null | Should -Match 'Preview''s settings.json is missing'
             Get-SettingsVerdict -Stable $ok -Preview $ok -StableQuiet ([pscustomobject]@{ Settled = $true; Changes = 0 }) | Should -BeNullOrEmpty
+        }
+
+        It 'tells a file that is there but unreadable from a missing one' {
+            $ok = [pscustomobject]@{ Exists = $true; Sha256 = 'aaa' }
+            Get-SettingsVerdict -Stable $script:Unread -Preview $ok -StableQuiet $null | Should -Match '^Stable''s settings.json is there but could not be read'
+            Get-SettingsVerdict -Stable $ok -Preview $script:Unread -StableQuiet $null | Should -Match '^Preview''s settings.json is there but could not be read'
+        }
+    }
+}
+
+Describe 'wt-live: the cleanup stops what the check started, and nothing else' {
+    BeforeAll {
+        $script:LaunchedAt = [datetime]::new(2026, 10, 23, 9, 30, 0, [System.DateTimeKind]::Utc)
+        $script:Marker = 'D:\a\_temp\wt-live\config.json'
+        # A hosted runner's processes: a Stable WindowsTerminal.exe from before
+        # the job, hosting the runner agent's console (pid 3960 in the job log
+        # the review quoted); then the Preview one this check opened, the probe
+        # in its tab, and the step's own shell.
+        $script:StableWT = [pscustomobject]@{ ProcessId = 3960; Name = 'WindowsTerminal.exe'; CommandLine = $null
+            ExecutablePath = 'C:\Program Files\WindowsApps\Microsoft.WindowsTerminal_1.23.20211.0_x64__8wekyb3d8bbwe\WindowsTerminal.exe'
+            CreationDate = $script:LaunchedAt.AddMinutes(-20) }
+        $script:PreviewWT = [pscustomobject]@{ ProcessId = 5100; Name = 'WindowsTerminal.exe'; CommandLine = $null
+            ExecutablePath = $script:PreviewExe; CreationDate = $script:LaunchedAt.AddSeconds(2) }
+        $script:ProbeProc = [pscustomobject]@{ ProcessId = 5200; Name = 'pwsh.exe'; ExecutablePath = 'C:\Program Files\PowerShell\7\pwsh.exe'
+            CommandLine = '"C:\Program Files\PowerShell\7\pwsh.exe" -NoProfile -File D:\a\r\r\scripts\wt-live-probe.ps1 -ConfigPath D:\a\_temp\wt-live\config.json'
+            CreationDate = $script:LaunchedAt.AddSeconds(3) }
+        $script:StepShell = [pscustomobject]@{ ProcessId = 1200; Name = 'powershell.exe'; ExecutablePath = 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe'
+            CommandLine = 'powershell -command ". ''D:\a\_temp\1234.ps1''"'; CreationDate = $script:LaunchedAt.AddMinutes(-1) }
+        $script:Running = @($script:StableWT, $script:PreviewWT, $script:ProbeProc, $script:StepShell)
+        $script:Snap = { param([int[]]$Ids) [pscustomobject]@{ Ok = $true; Ids = @($Ids); Error = $null } }
+        $script:StopWith = {
+            param($Snapshot)
+            Stop-CheckProcess -Snapshot $Snapshot -PreviewInstallLocation $script:PreviewInstall -LaunchedAt $script:LaunchedAt `
+                              -Marker $script:Marker -Processes $script:Running
+        }
+    }
+
+    It 'an empty before-launch snapshot does not make the Stable terminal hosting the runner look new' {
+        Mock Stop-Process { }
+        $report = & $script:StopWith (& $script:Snap @())
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 3960 } -Times 0 -Exactly
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 1200 } -Times 0 -Exactly
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 5100 } -Times 1 -Exactly
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 5200 } -Times 1 -Exactly
+        Should -Invoke Stop-Process -Times 2 -Exactly
+        @($report.Stopped).Count | Should -Be 2
+        $report.Note | Should -BeNullOrEmpty
+    }
+
+    It 'a snapshot that failed stops no terminal, says so, and still stops the probe' {
+        Mock Stop-Process { }
+        $report = & $script:StopWith ([pscustomobject]@{ Ok = $false; Ids = @(); Error = 'WMI hiccup' })
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 3960 } -Times 0 -Exactly
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 5100 } -Times 0 -Exactly
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 5200 } -Times 1 -Exactly
+        Should -Invoke Stop-Process -Times 1 -Exactly
+        $report.Note | Should -Match 'no WindowsTerminal\.exe was stopped: the ones running before the launch could not be listed \(WMI hiccup\)'
+        Format-StopReport $report | Should -Match '^stopped pwsh\.exe \(pid 5200\).*\. no WindowsTerminal\.exe was stopped'
+    }
+
+    It 'keeps a terminal that was running before the launch' {
+        Mock Stop-Process { }
+        $null = & $script:StopWith (& $script:Snap @(3960, 5100))
+        Should -Invoke Stop-Process -ParameterFilter { $Id -contains 3960 -or $Id -contains 5100 } -Times 0 -Exactly
+    }
+
+    It 'keeps a terminal outside Preview''s folder, or from before the launch, or one Windows gives no path or start time for' {
+        $snap = & $script:Snap @()
+        $keep = @(
+            [pscustomobject]@{ ProcessId = 1; Name = 'WindowsTerminal.exe'; ExecutablePath = $script:StableWT.ExecutablePath; CreationDate = $script:LaunchedAt.AddSeconds(5) },
+            [pscustomobject]@{ ProcessId = 2; Name = 'WindowsTerminal.exe'; ExecutablePath = $script:PreviewInstall + '-copy\WindowsTerminal.exe'; CreationDate = $script:LaunchedAt.AddSeconds(5) },
+            [pscustomobject]@{ ProcessId = 3; Name = 'WindowsTerminal.exe'; ExecutablePath = $script:PreviewExe; CreationDate = $script:LaunchedAt.AddSeconds(-5) },
+            [pscustomobject]@{ ProcessId = 4; Name = 'WindowsTerminal.exe'; ExecutablePath = $script:PreviewExe; CreationDate = $script:LaunchedAt },
+            [pscustomobject]@{ ProcessId = 5; Name = 'WindowsTerminal.exe'; ExecutablePath = ''; CreationDate = $script:LaunchedAt.AddSeconds(5) },
+            [pscustomobject]@{ ProcessId = 6; Name = 'WindowsTerminal.exe'; ExecutablePath = $script:PreviewExe; CreationDate = $null }
+        )
+        $picked = @(Select-ProcessToStop -Processes $keep -Snapshot $snap -PreviewInstallLocation $script:PreviewInstall `
+                                         -LaunchedAt $script:LaunchedAt -Marker $script:Marker)
+        $picked.Count | Should -Be 0 -Because 'each fails one of: Preview''s folder, created after the launch, a path, a start time'
+        # And with no Preview folder to compare against, no terminal at all.
+        @(Select-ProcessToStop -Processes @($script:PreviewWT) -Snapshot $snap -PreviewInstallLocation '' `
+                               -LaunchedAt $script:LaunchedAt -Marker $script:Marker).Count | Should -Be 0
+    }
+
+    It 'reports a stop that failed instead of dropping it' {
+        Mock Stop-Process { throw 'Access is denied' }
+        $report = & $script:StopWith (& $script:Snap @(3960))
+        @($report.Stopped).Count | Should -Be 0
+        @($report.Failed).Count | Should -Be 2
+        Format-StopReport $report | Should -Match '^could not stop WindowsTerminal\.exe \(pid 5100\).*: Access is denied; pwsh\.exe \(pid 5200\).*: Access is denied$'
+    }
+
+    It 'stops nothing when the processes cannot be listed, and says why' {
+        Mock Get-CimInstance { Write-Error 'The RPC server is unavailable' }
+        Mock Stop-Process { }
+        $report = Stop-CheckProcess -Snapshot (& $script:Snap @()) -PreviewInstallLocation $script:PreviewInstall -LaunchedAt $script:LaunchedAt -Marker $script:Marker
+        Should -Invoke Get-CimInstance -Times 1 -Exactly
+        Should -Invoke Stop-Process -Times 0 -Exactly
+        $report.Note | Should -Match '^nothing was stopped: the running processes could not be listed \(The RPC server is unavailable\)'
+        Format-StopReport ([pscustomobject]@{ Stopped = @(); Failed = @(); Note = $null }) | Should -BeExactly 'nothing'
+    }
+
+    It 'takes the snapshot so that a failure is a failure, not an empty list' {
+        # Written, not thrown: CIM reports a failed query as a non-terminating
+        # error, which -ErrorAction SilentlyContinue would turn into no rows.
+        Mock Get-CimInstance { Write-Error 'WMI hiccup' }
+        $s = Get-TerminalSnapshot
+        $s.Ok | Should -BeFalse
+        $s.Error | Should -Match 'WMI hiccup'
+        Mock Get-CimInstance { }
+        $s = Get-TerminalSnapshot
+        $s.Ok | Should -BeTrue -Because 'no terminal running is an answer'
+        @($s.Ids).Count | Should -Be 0
+        Mock Get-CimInstance { [pscustomobject]@{ ProcessId = 3960 }; [pscustomobject]@{ ProcessId = 77 } }
+        (@((Get-TerminalSnapshot).Ids) -join ',') | Should -Be '3960,77'
+    }
+
+    It 'knows the probe by the run''s config path on a PowerShell command line, and never takes this process' {
+        Test-ProbeProcess -Process $script:ProbeProc -Marker $script:Marker | Should -BeTrue
+        Test-ProbeProcess -Process $script:ProbeProc -Marker $script:Marker.ToUpperInvariant() | Should -BeTrue -Because 'Windows paths ignore case'
+        Test-ProbeProcess -Process $script:ProbeProc -Marker $script:Marker -SelfId 5200 | Should -BeFalse
+        Test-ProbeProcess -Process $script:StepShell -Marker $script:Marker | Should -BeFalse
+        $wt = [pscustomobject]@{ ProcessId = 9; Name = 'WindowsTerminal.exe'; CommandLine = $script:ProbeProc.CommandLine }
+        Test-ProbeProcess -Process $wt -Marker $script:Marker | Should -BeFalse -Because 'only a PowerShell is the probe'
+        Test-ProbeProcess -Process ([pscustomobject]@{ ProcessId = 9; Name = 'pwsh.exe'; CommandLine = $null }) -Marker $script:Marker | Should -BeFalse
+        Test-ProbeProcess -Process $null -Marker $script:Marker | Should -BeFalse
+    }
+
+    It 'says whether the probe still runs, and does not take a failed listing for an exit' {
+        Mock Get-CimInstance { $script:StepShell; $script:ProbeProc }
+        Test-ProbeRunning -Marker $script:Marker | Should -BeTrue
+        Mock Get-CimInstance { $script:StepShell }
+        Test-ProbeRunning -Marker $script:Marker | Should -BeFalse
+        Mock Get-CimInstance { Write-Error 'WMI hiccup' }
+        Test-ProbeRunning -Marker $script:Marker | Should -BeNullOrEmpty
+        $null -eq (Test-ProbeRunning -Marker $script:Marker) | Should -BeTrue
+    }
+}
+
+Describe 'wt-live: the wait for the probe' {
+    BeforeEach {
+        $script:dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('N'))
+        $null = New-Item -ItemType Directory -Force -Path $script:dir
+        $script:startedPath = Join-Path $script:dir 'started.json'
+        $script:resultPath = Join-Path $script:dir 'result.json'
+        $script:WaitFor = {
+            param([double]$Start = 2, [double]$Result = 2)
+            Wait-ProbeResult -StartedPath $script:startedPath -ResultPath $script:resultPath -Marker 'D:\a\_temp\wt-live\config.json' `
+                             -StartTimeoutSeconds $Start -ResultTimeoutSeconds $Result -IntervalMs 50
+        }
+    }
+
+    It 'takes the result.json of a probe that failed before it wrote started.json, and reads it at once' {
+        [System.IO.File]::WriteAllText($script:resultPath, '{}')
+        Mock Test-ProbeRunning { throw 'asked the process list' }
+        $w = & $script:WaitFor
+        $w.Started | Should -BeTrue
+        $w.Finished | Should -BeTrue
+        $w.Exited | Should -BeFalse
+        Should -Invoke Test-ProbeRunning -Times 0 -Exactly
+    }
+
+    It 'stops waiting once the probe has exited without a result' {
+        [System.IO.File]::WriteAllText($script:startedPath, '{}')
+        Mock Test-ProbeRunning { $false }
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $w = & $script:WaitFor -Result 60
+        $clock.Stop()
+        $w.Exited | Should -BeTrue
+        $w.Finished | Should -BeFalse
+        $clock.Elapsed.TotalSeconds | Should -BeLessThan 30 -Because 'it did not wait out the 60 s'
+        Should -Invoke Test-ProbeRunning -Times 2 -Exactly -Because 'two listings in a row without the probe'
+    }
+
+    It 'does not take one missing reading, or a failed listing, for an exit' {
+        [System.IO.File]::WriteAllText($script:startedPath, '{}')
+        $script:answers = @($false, $true, $null, $false, $null)
+        $script:asked = 0
+        Mock Test-ProbeRunning { $a = $script:answers[$script:asked % $script:answers.Count]; $script:asked++; $a }
+        $w = & $script:WaitFor -Result 1
+        $w.Exited | Should -BeFalse
+        $w.Finished | Should -BeFalse
+        Mock Test-ProbeRunning { $null }
+        (& $script:WaitFor -Result 0.5).Exited | Should -BeFalse
+    }
+
+    It 'reads a result the probe wrote on its way out' {
+        [System.IO.File]::WriteAllText($script:startedPath, '{}')
+        $script:asked = 0
+        Mock Test-ProbeRunning {
+            $script:asked++
+            if ($script:asked -ge 2) { [System.IO.File]::WriteAllText($script:resultPath, '{}') }
+            $false
+        }
+        $w = & $script:WaitFor
+        $w.Finished | Should -BeTrue
+        $w.Exited | Should -BeFalse
+    }
+
+    It 'says no tab started the probe when nothing appears' {
+        Mock Test-ProbeRunning { $true }
+        $w = & $script:WaitFor -Start 0.3
+        $w.Started | Should -BeFalse
+        $w.Finished | Should -BeFalse
+        Should -Invoke Test-ProbeRunning -Times 0 -Exactly -Because 'a probe that has not started has not exited either'
+    }
+}
+
+Describe 'wt-live: what the probe records of a command' {
+    BeforeAll {
+        $script:Cfg = [pscustomobject]@{ PreviewSettings = 'C:\nowhere\settings.json'; StableSettings = 'C:\nowhere\s.json'; StyleName = 'eva' }
+    }
+    BeforeEach {
+        Mock Get-BothSettingsFacts { [pscustomobject]@{ Stable = $null; Preview = $null } }
+        Mock Wait-FileQuiet { [pscustomobject]@{ Settled = $true; Sha256 = $null; Changes = 0; Exists = $false } }
+    }
+
+    It 'keeps what the command writes to the pipeline out of its own result' {
+        Mock Invoke-TerminalStyle { 'stray line'; 42 }
+        $step = @(Invoke-ProbeCommand -Argument 'eva' -Config $script:Cfg -Module 'unused' -ProfileGuid 'g')
+        $step.Count | Should -Be 1 -Because 'result.Apply has to stay one object'
+        $step[0].Command | Should -Be 'tstyles eva'
+        (@($step[0].PipelineOutput) -join '|') | Should -Be 'stray line|42'
+        $step[0].Threw | Should -BeNullOrEmpty
+    }
+
+    It 'records an error the command stopped on' {
+        Mock Invoke-TerminalStyle { throw 'boom' }
+        $step = @(Invoke-ProbeCommand -Argument 'reset' -Config $script:Cfg -Module 'unused' -ProfileGuid 'g')
+        $step.Count | Should -Be 1
+        $step[0].Threw | Should -Be 'boom'
+        @($step[0].PipelineOutput).Count | Should -Be 0
+    }
+}
+
+Describe 'wt-live: the probe puts the style''s background on disk' {
+    It 'seeds the cache in the sandbox, and the module then fetches nothing' {
+        $m = Get-Module TerminalStyles
+        $saved = & $m { $script:TStylesDataRoot }
+        $root = Join-Path $TestDrive 'data'
+        try {
+            & $m { param($r) $script:TStylesDataRoot = $r } $root
+            $b = Initialize-ProbeBackground -Module $m -StyleName 'eva'
+            $b.Error | Should -BeNullOrEmpty
+            $b.Path | Should -Be (Join-Path (Join-Path (Join-Path $root 'cache') 'eva') 'background.gif')
+            [System.IO.File]::ReadAllBytes($b.Path).Length | Should -Be 43
+            $b.RefreshDue | Should -BeFalse -Because 'the module reads the marker as fresh'
+
+            # The module's own resolver, with the network out of reach: a style
+            # folder named eva with no image of its own, as the checkout's is.
+            Mock -ModuleName TerminalStyles Invoke-WebRequest { throw 'the apply reached the network' }
+            $style = Join-Path (Join-Path $TestDrive 'styles') 'eva'
+            $null = New-Item -ItemType Directory -Force -Path $style
+            & $m { param($d) Get-StyleBundledBackground -StyleDir $d } $style | Should -Be $b.Path
+            Should -Invoke -ModuleName TerminalStyles Invoke-WebRequest -Times 0 -Exactly
+        } finally {
+            & $m { param($r) $script:TStylesDataRoot = $r } $saved
+        }
+    }
+
+    It 'says why when the cache cannot be written' {
+        $m = Get-Module TerminalStyles
+        $saved = & $m { $script:TStylesDataRoot }
+        # A file where the data root's folder should be.
+        $blocker = Join-Path $TestDrive 'blocked'
+        [System.IO.File]::WriteAllText($blocker, 'x')
+        try {
+            & $m { param($r) $script:TStylesDataRoot = $r } $blocker
+            $b = Initialize-ProbeBackground -Module $m -StyleName 'eva'
+            $b.Error | Should -Not -BeNullOrEmpty
+            $b.Path | Should -BeNullOrEmpty
+        } finally {
+            & $m { param($r) $script:TStylesDataRoot = $r } $saved
         }
     }
 }

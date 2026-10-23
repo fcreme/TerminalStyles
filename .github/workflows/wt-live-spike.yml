@@ -20,6 +20,15 @@
 # summary. Evidence -- result.json, the transcript, screenshots, the process
 # list -- is uploaded whatever happens.
 #
+# WHAT IT DOWNLOADS, past the checkout: microsoft/terminal's release assets,
+# each against a pinned SHA-256, and one commit of this repository's history,
+# for tstyles.ps1 as it was before #120. The apply and the reset reach no host.
+# A fresh update-check stamp in the sandbox holds the update notice back, and
+# the probe puts a stand-in for eva's background in the sandbox's cache, with
+# a fresh revalidation marker, so the module neither fetches the image from
+# the gifs branch on raw.githubusercontent.com nor asks there whether it
+# changed. A stand-in that did not take shows in the summary's probe notes.
+#
 # THE MATRIX. engine is the shell inside the tab. launch is how the tab is
 # opened: 'alias' (Preview's own per-package wt.exe, started as a shell starts
 # `wt`) is the method under test; 'activate' (ActivateApplication on Preview's
@@ -28,7 +37,10 @@
 #
 # WHAT IT CANNOT SHOW. Everything a step starts here is elevated (the runner
 # account is an administrator with UAC prompts off), so the tab is an
-# Administrator tab: the standard-user case is not exercised.
+# Administrator tab: the standard-user case is not exercised, and premise 2 --
+# that a standard user can read WindowsTerminal.exe's ExecutablePath -- is
+# shown only for an elevated reader. The summary's host row says so when it
+# passes.
 #
 # WHEN. On a push to spike/wt-live-check. GitHub offers workflow_dispatch only
 # for a workflow on the default branch, so that trigger works once this file
