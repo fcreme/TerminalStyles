@@ -1124,12 +1124,17 @@ function Apply-StyleDirect {
 function Reset-StyleNonWT {
     # `tstyles reset` off Windows Terminal.
     #
-    # There is no Windows Terminal settings.json to strip. The one settings.json
-    # an apply writes off it is a VS Code-family editor's, which keeps a record
-    # of what it wrote and is undone from that record below. The applied colors
-    # live in the terminal's dynamic-color state: OSC 104/110/111/112/117 hands
-    # that state back to the terminal's own configured profile, which is
-    # exactly what "unstyled default" means here.
+    # There is no Windows Terminal settings.json to strip. An apply off it
+    # writes two files that reset undoes, each only in its own terminal: a VS
+    # Code-family editor's settings.json, undone from the record kept when it
+    # was written, and WezTerm's generated module, rewritten to one that applies
+    # nothing (Clear-WezTermStyleModule). The applied colors live in the
+    # terminal's dynamic-color state, and OSC 104/110/111/112/117 hands that
+    # state back to the terminal's own configured profile -- which is the whole
+    # reset everywhere but VS Code and WezTerm. In WezTerm the configured
+    # profile includes the module, whose color_scheme is the style's own, so
+    # without the rewrite the hand-back repainted the window in the very style
+    # it was resetting.
     param(
         # The seam its apply sibling has carried since 0.8.27, and for the same
         # reason: the .NET statics cannot be mocked and every CI leg runs
@@ -1159,8 +1164,31 @@ function Reset-StyleNonWT {
         Remove-Item -LiteralPath $script:TStylesCurrent -Force -ErrorAction SilentlyContinue
     }
 
+    # WezTerm's generated module, which every WezTerm window loads. In WezTerm
+    # only, like the VS Code half below and like the apply half
+    # (Publish-StyleWezTermConfig declines every other kind). After the OSC
+    # reset: that drops this tab's own colour override, and the rewrite then
+    # makes WezTerm reload this tab and every other into the user's config. The
+    # path is resolved once, for both lines that name it.
+    $wez = 'none'
+    $wezPath = $null
+    if ($kind -eq 'WezTerm') {
+        $wez = Clear-WezTermStyleModule
+        $wezPath = Get-WezTermModulePath
+    }
+
     Write-Host ""
-    if ($repainted) {
+    if ($wez -eq 'failed') {
+        # First, because every other line below is false while the module
+        # still styles this window and every new one. The record is cleared all
+        # the same, as it is when the VS Code half fails, so this names the file
+        # and what fixes it. A retry first: a rewrite keeps the file on
+        # WezTerm's reload watch list, and a delete may not.
+        Write-Host "  Could not take the style out of WezTerm's module:" -ForegroundColor Yellow
+        Write-Host "    $wezPath" -ForegroundColor Yellow
+        Write-Host "  Make it writable and run tstyles reset again, or delete it by hand; until" -ForegroundColor Yellow
+        Write-Host "  then WezTerm keeps applying the last style." -ForegroundColor Yellow
+    } elseif ($repainted) {
         Write-Host "  Reset " -NoNewline
         Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan -NoNewline
         Write-Host " to its unstyled default."
@@ -1169,19 +1197,37 @@ function Reset-StyleNonWT {
         # everything except the repaint: the record is gone and the staged
         # zsh/bash files are gone, so every future tab is unstyled. What did not
         # is this session, because its output does not go to a terminal.
-        Write-Host "  This session's colors were not reset: its output is redirected," -ForegroundColor Yellow
-        Write-Host "  so there is no terminal to repaint." -ForegroundColor Yellow
+        if ($wez -eq 'cleared') {
+            # Only what the packet did. The rewrite makes WezTerm reload this
+            # tab too, which repaints it unless an escape sequence gave it
+            # colours of its own -- so "this session's colors were not reset"
+            # is not something this can know.
+            Write-Host "  The color reset did not reach this session: its output is redirected." -ForegroundColor Yellow
+        } else {
+            Write-Host "  This session's colors were not reset: its output is redirected," -ForegroundColor Yellow
+            Write-Host "  so there is no terminal to repaint." -ForegroundColor Yellow
+        }
+        Write-Host "  The style is cleared -- a new tab comes up unstyled." -ForegroundColor Yellow
+    } elseif ($wez -eq 'cleared') {
+        # "so this session keeps the colors it has" is not reliably true once
+        # WezTerm reloads the rewritten module.
+        Write-Host "  This terminal did not accept the color reset." -ForegroundColor Yellow
         Write-Host "  The style is cleared -- a new tab comes up unstyled." -ForegroundColor Yellow
     } else {
         Write-Host "  This terminal did not accept the color reset, so this session keeps the" -ForegroundColor Yellow
         Write-Host "  colors it has. The style is cleared -- a new tab comes up unstyled." -ForegroundColor Yellow
+    }
+    # VS Code's wording, plus the path, which XDG_CONFIG_HOME moves. Nothing for
+    # 'none': there was no style in the module to take out.
+    if ($wez -eq 'cleared') {
+        Write-Host "  Took the style back out of WezTerm's module ($wezPath)." -ForegroundColor DarkGray
     }
     # VS Code's settings.json, when a style was saved there. From its record,
     # so it does not matter whether the style still exists.
     if ($kind -eq 'VSCode') {
         Show-VSCodeResetResult -Result (Reset-StyleVSCodeConfig)
     }
-    # True on all three paths: the loader target is removed either way.
+    # True on every path: the loader target is removed either way.
     Write-Host "  Open a new tab to restore your default prompt."
     Write-Host ""
 }
@@ -1217,7 +1263,8 @@ function Reset-StyleDirect {
     # the reset is an OSC 104/110-117 packet that hands color control back to
     # the terminal's own profile, plus dropping the style record and
     # current-style.ps1 -- and, in a VS Code-family terminal, taking the style
-    # back out of the one settings.json written there, the editor's own.
+    # back out of the one settings.json written there, the editor's own, and,
+    # in WezTerm, rewriting its generated module to one that applies nothing.
     #
     # -KnownStyleName is one name the CALLER has already proved is ours, for the
     # ownership marker below. `tstyles delete` is the only user: it proves

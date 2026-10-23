@@ -282,7 +282,7 @@ Describe 'README claims that the code can settle' {
                 $script:TStylesCurrent    = $savedCurrent
             }
         }
-        @($created) | Should -BeNullOrEmpty -Because 'the non-WT reset is an escape sequence; it writes nothing'
+        @($created) | Should -BeNullOrEmpty -Because "Terminal.app's reset is an escape sequence; it writes nothing"
 
         $section = ([regex]::Match($script:readme, '(?ms)^### Resetting a profile.*?(?=^#{2,3} )')).Value
         $section | Should -Not -BeNullOrEmpty -Because 'the section this test is about must still exist'

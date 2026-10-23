@@ -76,9 +76,15 @@ BeforeDiscovery {
     # and the two halves of that symmetry are exactly what 0.8.22 found had
     # diverged. No -HomeDir on the call, deliberately -- the live $HOME is the
     # whole point of this file.
+    #
+    # The generated WezTerm module is one of them. Apply and reset both write it,
+    # and its path comes from the live $HOME and $XDG_CONFIG_HOME, which the
+    # data-root override does not contain. WezTerm itself never writes the file,
+    # so size and timestamp are the right probe for it.
     $m = Get-Module TerminalStyles
     $global:TStylesRealStateWatch = @(& $m { Get-TStylesDataRoot }) +
         @(& $m { Get-ShellRcRemovalCandidate } | ForEach-Object { $_.Path }) +
+        @(& $m { Get-WezTermModulePath }) +
         @($PROFILE.CurrentUserAllHosts, $PROFILE.CurrentUserCurrentHost)
 
     $global:TStylesRealStateBefore = & $global:TStylesRealStateProbe -Path $global:TStylesRealStateWatch
@@ -141,6 +147,15 @@ Describe 'the real-state baseline' {
     It 'actually captured something' {
         $global:TStylesRealStateBefore | Should -Not -BeNullOrEmpty
         @($global:TStylesRealStateWatch).Count | Should -BeGreaterThan 0
+    }
+
+    It 'watches the generated WezTerm module, which apply and reset both write' {
+        # Resolved from the live $HOME and $XDG_CONFIG_HOME, so the data-root
+        # override does not contain it -- and since reset learned to rewrite it,
+        # the reset tests reach it too. They mock the path into TestDrive; this
+        # is what fails the run if one ever stops.
+        $global:TStylesRealStateWatch |
+            Should -Contain (& (Get-Module TerminalStyles) { Get-WezTermModulePath })
     }
 
     It 'knows which VS Code files and keys to fingerprint' {
