@@ -751,14 +751,27 @@ Describe 'wt-live: the wait for the probe' {
 
     It 'stops waiting once the probe has exited without a result' {
         [System.IO.File]::WriteAllText($script:startedPath, '{}')
-        Mock Test-ProbeRunning { $false }
+        $script:answers = @($true, $false, $false)
+        $script:asked = 0
+        Mock Test-ProbeRunning { $a = $script:answers[[Math]::Min($script:asked, 2)]; $script:asked++; $a }
         $clock = [System.Diagnostics.Stopwatch]::StartNew()
         $w = & $script:WaitFor -Result 60
         $clock.Stop()
         $w.Exited | Should -BeTrue
         $w.Finished | Should -BeFalse
         $clock.Elapsed.TotalSeconds | Should -BeLessThan 30 -Because 'it did not wait out the 60 s'
-        Should -Invoke Test-ProbeRunning -Times 2 -Exactly -Because 'two listings in a row without the probe'
+        Should -Invoke Test-ProbeRunning -Times 3 -Exactly -Because 'seen once, then two listings in a row without it'
+    }
+
+    It 'waits in full for a probe it never saw running, since not finding one then says nothing' {
+        # A probe whose command line Windows does not give is never found, from
+        # the first listing to the last; that is not an exit.
+        [System.IO.File]::WriteAllText($script:startedPath, '{}')
+        Mock Test-ProbeRunning { $false }
+        $w = & $script:WaitFor -Result 1
+        $w.Exited | Should -BeFalse
+        $w.Finished | Should -BeFalse
+        Should -Invoke Test-ProbeRunning -Times 3 -Because 'it kept asking until the deadline'
     }
 
     It 'does not take one missing reading, or a failed listing, for an exit' {
@@ -774,16 +787,20 @@ Describe 'wt-live: the wait for the probe' {
     }
 
     It 'reads a result the probe wrote on its way out' {
+        # Seen, then gone twice; the result lands during the second listing
+        # that misses it, after this loop last looked for it.
         [System.IO.File]::WriteAllText($script:startedPath, '{}')
         $script:asked = 0
         Mock Test-ProbeRunning {
             $script:asked++
-            if ($script:asked -ge 2) { [System.IO.File]::WriteAllText($script:resultPath, '{}') }
+            if ($script:asked -eq 1) { return $true }
+            if ($script:asked -ge 3) { [System.IO.File]::WriteAllText($script:resultPath, '{}') }
             $false
         }
         $w = & $script:WaitFor
         $w.Finished | Should -BeTrue
         $w.Exited | Should -BeFalse
+        Should -Invoke Test-ProbeRunning -Times 3 -Exactly
     }
 
     It 'says no tab started the probe when nothing appears' {

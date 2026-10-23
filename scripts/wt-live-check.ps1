@@ -687,9 +687,11 @@ function Wait-ProbeResult {
     # Waits for the probe: first for a sign that the tab started it -- its
     # started.json, or a result.json from a probe that failed before it wrote
     # that -- then for result.json. The second wait ends early once the probe
-    # has exited: two process listings in a row with no probe in them, where a
-    # listing that fails breaks the row. Returns { Started; Finished; Exited }:
-    # Exited when the probe ended without a result.
+    # has exited: seen running, and then not found by two process listings in
+    # a row. A listing that fails breaks the row, and a probe never seen --
+    # one whose command line Windows does not give, say -- is waited for in
+    # full, since not finding it then says nothing. Returns { Started;
+    # Finished; Exited }: Exited when the probe ended without a result.
     param(
         [Parameter(Mandatory)][string]$StartedPath,
         [Parameter(Mandatory)][string]$ResultPath,
@@ -703,11 +705,19 @@ function Wait-ProbeResult {
                               -TimeoutSeconds $StartTimeoutSeconds -IntervalMs $IntervalMs
     if (-not $out.Started) { return [pscustomobject]$out }
     $deadline = [datetime]::UtcNow.AddSeconds($ResultTimeoutSeconds)
+    $seen = $false
     $gone = 0
     while ($true) {
         if ([System.IO.File]::Exists($ResultPath)) { $out.Finished = $true; break }
         $running = Test-ProbeRunning -Marker $Marker
-        if ($running -eq $false) { $gone++ } else { $gone = 0 }
+        if ($running -eq $true) {
+            $seen = $true
+            $gone = 0
+        } elseif ($running -eq $false -and $seen) {
+            $gone++
+        } else {
+            $gone = 0
+        }
         if ($gone -ge 2) {
             # It may have written its result on the way out.
             $out.Finished = [System.IO.File]::Exists($ResultPath)
