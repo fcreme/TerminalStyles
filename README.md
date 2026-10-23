@@ -532,7 +532,7 @@ unaffected.
 
 | | Colors | Cursor | Font | Opacity | Background image | Tab color |
 |---|---|---|---|---|---|---|
-| Windows Terminal | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
+| Windows Terminal ² | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
 | WezTerm | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
 | Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
 | iTerm2 | ✅ | color only | — | — | — | — |
@@ -549,6 +549,13 @@ WezTerm's generated Lua module, and a VS Code-family editor's `settings.json`.
 TerminalStyles saving styles in that editor's `settings.json` — it asks the
 first time. Until then, and in an editor it cannot identify, colors only. See
 [VS Code, Cursor, VSCodium and Windsurf](#vs-code-cursor-vscodium-and-windsurf).
+
+² When TerminalStyles runs on Windows. A pwsh installed inside a WSL distro is
+a Linux install, and Windows Terminal's `settings.json` is on the Windows side,
+out of its reach: in a WSL tab a style brings the colors, the cursor color and
+the prompt, and `tstyles font` installs into the distro, where Windows Terminal
+does not look for fonts. To give that profile the rest, apply the style from a
+PowerShell tab of the same Windows Terminal: `tstyles <name> -Target '<profile>'`.
 
 So the dashes above describe this tool, not the emulator. iTerm2 would honour a
 Dynamic Profile; nothing here writes one yet. They are marked `—` rather than
@@ -699,7 +706,9 @@ is never touched: only images TerminalStyles itself installed are cleared.
 
 - **Windows** 10 / 11, or **macOS**, or **Linux**
 - A terminal that can render a style:
-  - **Windows Terminal** — the full feature set, including background images
+  - **Windows Terminal** — the full feature set, including background images,
+    when tstyles runs on Windows; in a WSL distro, colors, cursor color and
+    prompt (see ² under "What your terminal can show")
   - **Terminal.app** — colors, cursor color, and prompt in the current window,
     plus a background image in a new one (`tstyles <name> -NewWindow`)
   - **WezTerm** — colors, cursor color and shape, prompt, font, padding,
