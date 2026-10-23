@@ -59,8 +59,8 @@ Describe 'Invoke-TerminalStyleFont' {
             BeforeEach {
                 Mock Get-TerminalKind { 'AppleTerminal' }
                 # Find-WTSettingsPath must not even be consulted: off Windows
-                # Terminal there is no settings.json to find, and asking builds
-                # candidate paths from a null $env:LOCALAPPDATA.
+                # Terminal there is no settings.json to find, and asking ends in
+                # its "Could not locate Windows Terminal settings.json." error.
                 Mock Find-WTSettingsPath { throw 'must not look for Windows Terminal settings.json off WT' }
                 Mock Set-ProfileFont { throw 'must not try to write a profile off WT' }
             }
@@ -93,16 +93,23 @@ Describe 'Invoke-TerminalStyleFont' {
                 Mock Get-TerminalKind { 'WindowsTerminal' }
             }
 
-            It 'still goes down the settings.json path' {
+            It 'still goes down the settings.json path, and leaves the refusal to Find-WTSettingsPath' {
                 # The gate is the Font capability, which only Windows Terminal
                 # has -- so trimming the over-claims must not have cost WT its
                 # apply.
+                #
+                # When there is no file to write, the finder has already said
+                # why. This command used to add its own "Could not locate
+                # Windows Terminal settings.json." -- a red Write-Host, where the
+                # other four said it as an error.
                 Mock Find-WTSettingsPath { $null }
+                Mock Write-Error {}
+                Mock Save-SettingsBackup { throw 'must not back up a file it does not have' }
                 Invoke-TerminalStyleFont -Name 'JetBrains Mono'
                 Should -Invoke Find-WTSettingsPath -Times 1 -Exactly
-                Should -Invoke Write-Host -ParameterFilter {
-                    "$Object" -match 'Could not locate Windows Terminal'
-                }
+                Should -Invoke Write-Error -Times 0 -Exactly
+                Should -Not -Invoke Write-Host -ParameterFilter { ([string]$Object).Contains('Could not locate') }
+                Should -Invoke Save-SettingsBackup -Times 0 -Exactly
             }
 
             It 'says that it spent the rolling backup, and really took it' {

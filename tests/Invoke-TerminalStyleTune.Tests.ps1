@@ -38,7 +38,7 @@ Describe 'Invoke-TerminalStyleTune guards' {
             Invoke-TerminalStyleTune -StyleName 'nope'
             Should -Invoke Write-Error -Times 1 -ParameterFilter { "$Message" -match "not found" }
         }
-        It 'errors when settings.json cannot be located' {
+        It 'stops at a settings.json it cannot locate, and adds no message of its own' {
             Mock Get-StyleDir { $TestDrive }
             # Pin the terminal to Windows Terminal: these assertions are about the
             # settings.json merge path, which only runs on WT. Without this the
@@ -47,10 +47,17 @@ Describe 'Invoke-TerminalStyleTune guards' {
             Mock Get-TerminalKind { 'WindowsTerminal' }
             Mock Test-UpdateAvailable { $null }
             Mock Write-Error {}
+            Mock Write-Host {}
             # Provide a scheme.json so the base load would succeed past resolution.
             [System.IO.File]::WriteAllText((Join-Path $TestDrive 'scheme.json'), '{"name":"x"}', [System.Text.UTF8Encoding]::new($false))
             Invoke-TerminalStyleTune -StyleName 'x'
-            Should -Invoke Write-Error -Times 1 -ParameterFilter { "$Message" -match 'settings.json' }
+            Should -Invoke Find-WTSettingsPath -Times 1 -Exactly
+            # The refusal is Find-WTSettingsPath's to word; a second line here
+            # would sit beside it, under a list of two files, say.
+            Should -Invoke Write-Error -Times 0 -Exactly
+            # Both console guards open with this phrase, so in CI -- where they
+            # would fire -- this shows the tuner returned before reaching them.
+            Should -Not -Invoke Write-Host -ParameterFilter { ([string]$Object).Contains('The tuner needs') }
         }
     }
 }

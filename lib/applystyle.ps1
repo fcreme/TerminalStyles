@@ -970,10 +970,7 @@ function Apply-StyleDirect {
     }
 
     $settingsPath = Find-WTSettingsPath
-    if (-not $settingsPath) {
-        Write-Error "Could not locate Windows Terminal settings.json."
-        return
-    }
+    if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $settings = ConvertFrom-JsoncText $originalJson
@@ -1280,10 +1277,7 @@ function Reset-StyleDirect {
     }
 
     $settingsPath = Find-WTSettingsPath
-    if (-not $settingsPath) {
-        Write-Error "Could not locate Windows Terminal settings.json."
-        return
-    }
+    if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $settings = ConvertFrom-JsoncText $originalJson

@@ -509,11 +509,12 @@ Describe 'the update notice survives the picker clearing the screen' {
         # The check stamps .last-update-check on every attempt, and that stamp
         # is the 24-hour throttle list / current / random / apply all read. Sat
         # at the top of the command it ran above the redirected-console guard
-        # and above the "No styles found." / "Could not locate Windows Terminal
-        # settings.json." returns, so a run that showed nobody anything still
-        # spent the day's check. Behaviour for the redirected case is driven in
-        # tests/Picker-ConsoleGuards.Tests.ps1; the ORDERING is pinned here,
-        # because the other early returns cannot be reached from Pester.
+        # and above the "No styles found." return and the settings.json one
+        # (whose message Find-WTSettingsPath now writes), so a run that showed
+        # nobody anything still spent the day's check. Behaviour for the
+        # redirected case is driven in tests/Picker-ConsoleGuards.Tests.ps1; the
+        # ORDERING is pinned here, because the other early returns cannot be
+        # reached from Pester.
         $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
 
         $guard = @($fn.FindAll({ param($n)
@@ -527,14 +528,16 @@ Describe 'the update notice survives the picker clearing the screen' {
         @($check).Count | Should -Be 1 -Because 'one check, one stamp'
         $check[0].Extent.StartOffset | Should -BeGreaterThan $guard[0].Extent.StartOffset
 
-        # And below every early return that prints an error instead of a menu.
+        # And below every early return that prints an error instead of a menu --
+        # the settings.json one included, whose Write-Error is inside
+        # Find-WTSettingsPath, out of this query's sight, so the call stands in.
         $errors = @($fn.FindAll({ param($n)
             $n -is [System.Management.Automation.Language.CommandAst] -and
-            $n.GetCommandName() -eq 'Write-Error' }, $true))
+            $n.GetCommandName() -in @('Write-Error', 'Find-WTSettingsPath') }, $true))
         @($errors).Count | Should -BeGreaterThan 0 -Because 'those returns are the other half of the same problem'
         foreach ($e in $errors) {
             $check[0].Extent.StartOffset | Should -BeGreaterThan $e.Extent.StartOffset `
-                -Because 'a run that returns on an error has nobody to show a notice to either'
+                -Because 'a run that returns on an error -- its own, or the one Find-WTSettingsPath writes -- has nobody to show a notice to either'
         }
     }
 

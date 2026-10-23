@@ -6,6 +6,7 @@
 #   pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -BackgroundImage "C:\img.gif"
 #   pwsh -File .\apply.ps1 -Style umbrella -Target defaults           # apply globally
 #   pwsh -File .\apply.ps1 -Style kitty -Target "PowerShell" -KeepPrompt
+#   pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -SettingsPath "<settings.json>"   # choose the file yourself
 #
 # Always backs up settings.json (and $PROFILE if overwriting one) before
 # making changes.

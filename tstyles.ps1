@@ -251,23 +251,235 @@ $script:TStylesThemeFields = @('colorScheme', 'tabTitle', 'tabColor', 'cursorSha
 # === Internals ===
 
 function Find-WTSettingsPath {
-    # Prefer the settings.json of the Windows Terminal build hosting THIS session.
-    # WT sets $env:WT_SETTINGS_PATH to its live file, so honoring it makes a user
-    # on WT Preview (with Stable also installed) edit Preview's file -- not
-    # Stable's, which the static list below would otherwise win. Falls back to the
-    # candidate list (Stable > Preview > unpackaged) when the env var is absent.
-    if ($env:WT_SETTINGS_PATH -and (Test-Path -LiteralPath $env:WT_SETTINGS_PATH)) {
-        return $env:WT_SETTINGS_PATH
-    }
-    $candidates = @(
-        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminal_8wekyb3d8bbwe\LocalState\settings.json",
-        "$env:LOCALAPPDATA\Packages\Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe\LocalState\settings.json",
-        "$env:LOCALAPPDATA\Microsoft\Windows Terminal\settings.json"
+    # The settings.json every Windows Terminal write goes to -- or $null, and $null
+    # only after saying why, once, so callers add nothing.
+    #
+    # Windows Terminal does not tell a tab which build it is. The shell gets
+    # WT_SESSION and WT_PROFILE_ID, and the profile GUIDs match in every build (the
+    # inbox ones are fixed in defaults.json, generated ones are v5 UUIDs of the
+    # profile name, and Preview and Canary seed their file from Stable's), so the
+    # session's profile is found in any build's file and nothing stops a write to
+    # the wrong one. WT_SETTINGS_DIR is set in WT's own process, and a tab's
+    # environment is rebuilt from the registry unless the profile turns
+    # compatibility.reloadEnvironmentVariables off, or `wt` was given a command
+    # line; in those cases it inherits the environment of whatever ran `wt`. So a
+    # tab sees WT_SETTINGS_DIR only then, and it can be another build's.
+    #
+    # So the build is read off the process tree (Find-WTHostExePath) and mapped the
+    # way WT's FileUtils.cpp places the file:
+    #   ...\WindowsApps\<Name>_<Ver>_<Arch>_<Res>_<Pub>\ -> %LOCALAPPDATA%\Packages\<Name>_<Pub>\LocalState
+    #   .portable beside the exe                       -> <exe dir>\settings
+    #   anything else                                  -> %LOCALAPPDATA%\Microsoft\Windows Terminal
+    # A host whose file is not there is refused, never swapped for another build's:
+    # 0.6.2 to 0.9.2 trusted a WT_SETTINGS_PATH no Windows Terminal has ever set,
+    # fell through to a Stable-first list, and so wrote Stable's file from Preview
+    # and Canary tabs. WT_SETTINGS_DIR answers only when the tree names no host;
+    # then the list answers only when exactly one build has a file.
+    #
+    # Misread: a package registered from a folder (Add-AppxPackage -Register, as
+    # Visual Studio deploys a Dev build) is not under WindowsApps and maps as
+    # unpackaged -- refused when that file is absent, used when a leftover one is
+    # there. TSTYLES_WT_SETTINGS names the file outright and wins over all of this.
+    #
+    # Whether the session is a tab at all is Get-TerminalKind's question. It is
+    # asked here only to word the last refusal, and no terminal marker is read
+    # here directly: two readers of one rule would drift (CLAUDE.md).
+    #
+    # Nested two-argument Join-Path, so the decision runs, and is tested, on macOS
+    # and Linux. -EnvTable stands in for $env:. A BOUND -HostExePath, even '',
+    # replaces the walk. Named-only binding: a splat of an undefined variable then
+    # fails instead of binding '' (CLAUDE.md).
+    [CmdletBinding(PositionalBinding = $false)]
+    param(
+        [hashtable]$EnvTable,
+        [AllowEmptyString()][string]$HostExePath
     )
-    foreach ($c in $candidates) {
-        if (Test-Path -LiteralPath $c) { return $c }
+
+    $get = {
+        param([string]$Name)
+        if ($null -ne $EnvTable) { return $EnvTable[$Name] }
+        return [System.Environment]::GetEnvironmentVariable($Name)
+    }
+    # Every file check goes through here. An empty value never reaches Test-Path,
+    # which Windows PowerShell 5.1 rejects at binding, and a value it cannot parse
+    # as a path is not a file.
+    $isFile = {
+        param($Path)
+        if (-not $Path) { return $false }
+        try { return [bool](Test-Path -LiteralPath $Path -PathType Leaf) } catch { return $false }
+    }
+    # The two LOCALAPPDATA layouts, or $null when it is not set, so nothing is
+    # joined onto an empty base.
+    $lad = & $get 'LOCALAPPDATA'
+    $packaged = {
+        param([string]$Family)
+        if (-not $lad) { return $null }
+        Join-Path (Join-Path (Join-Path (Join-Path $lad 'Packages') $Family) 'LocalState') 'settings.json'
+    }
+    $unpackaged = {
+        if (-not $lad) { return $null }
+        Join-Path (Join-Path (Join-Path $lad 'Microsoft') 'Windows Terminal') 'settings.json'
+    }
+    $setOverride = 'Set $env:TSTYLES_WT_SETTINGS to the file that build''s Settings > Open JSON file opens, for this session (not in $PROFILE, which every build''s tabs load).'
+
+    # 1. The user named the file. No fallback: it is the file they meant or none.
+    $override = & $get 'TSTYLES_WT_SETTINGS'
+    if ($override) {
+        if (& $isFile $override) { return (Convert-Path -LiteralPath $override) }
+        Write-Error ('TSTYLES_WT_SETTINGS is set to ''{0}'', which is not a file, so tstyles edits nothing rather than look elsewhere. Point it at a settings.json, or remove it.' -f $override)
+        return
+    }
+
+    # 2. The build the session runs under. Once it is known, nothing else answers:
+    # falling through to WT_SETTINGS_DIR or the list from here is the bug above.
+    if ($PSBoundParameters.ContainsKey('HostExePath')) { $exe = $HostExePath } else { $exe = Find-WTHostExePath }
+    $exeDir = $null
+    if ($exe) {
+        # A path with no folder (never what Windows reports) names no build.
+        try { $exeDir = [System.IO.Path]::GetDirectoryName($exe) } catch { $exeDir = $null }
+    }
+    if ($exeDir) {
+        $folder = [System.IO.Path]::GetFileName($exeDir)
+        $parent = $null
+        $up = [System.IO.Path]::GetDirectoryName($exeDir)
+        if ($up) { $parent = [System.IO.Path]::GetFileName($up) }
+
+        # <Name>_<Ver>_<Arch>_<Res>_<PublisherId>, and only under WindowsApps: an
+        # extracted copy in a folder named like a package is not the Store build.
+        # Portable mode is checked second because upstream honours .portable only
+        # for unpackaged builds -- as any item, the way std::filesystem::exists does.
+        if ($folder -match '^([^_]+)_[^_]+_[^_]*_[^_]*_([a-z0-9]{13})$' -and $parent -eq 'WindowsApps') {
+            $expected = & $packaged ('{0}_{1}' -f $Matches[1], $Matches[2])
+        } else {
+            $isPortable = $false
+            try { $isPortable = [bool](Test-Path -LiteralPath (Join-Path $exeDir '.portable' -ErrorAction Stop)) } catch { $isPortable = $false }
+            if ($isPortable) {
+                $expected = Join-Path (Join-Path $exeDir 'settings') 'settings.json'
+            } else {
+                $expected = & $unpackaged
+            }
+        }
+
+        if (-not $expected) {
+            Write-Error (('This session runs under the Windows Terminal at {0}, which keeps its settings.json under LOCALAPPDATA, and LOCALAPPDATA is not set here, so tstyles edits no other build''s file instead. ' -f $exe) + $setOverride)
+            return
+        }
+        if (& $isFile $expected) { return $expected }
+        Write-Error (('This session runs under the Windows Terminal at {0}. tstyles expected its settings.json at {1} and found none there, so it edits no other build''s file instead. ' -f $exe, $expected) + $setOverride)
+        return
+    }
+
+    # 3. No host: WT_SETTINGS_DIR. Only here, because when the tree names a host
+    # the two can disagree, and an inherited one belongs to another build.
+    $settingsDir = & $get 'WT_SETTINGS_DIR'
+    if ($settingsDir) {
+        $fromDir = $null
+        try { $fromDir = Join-Path $settingsDir 'settings.json' -ErrorAction Stop } catch { $fromDir = $null }
+        if (& $isFile $fromDir) { return $fromDir }
+    }
+
+    # 4. Still nothing: the one settings.json there is, if there is one. Never one
+    # chosen from several -- that guess is what wrote Stable's file.
+    $found = @()
+    foreach ($candidate in @(
+            (& $packaged 'Microsoft.WindowsTerminal_8wekyb3d8bbwe'),
+            (& $packaged 'Microsoft.WindowsTerminalPreview_8wekyb3d8bbwe'),
+            (& $packaged 'Microsoft.WindowsTerminalCanary_8wekyb3d8bbwe'),
+            (& $unpackaged))) {
+        if (& $isFile $candidate) { $found += $candidate }
+    }
+    if ($found.Count -eq 1) { return $found[0] }
+    if ($found.Count -eq 0) {
+        Write-Error 'Could not locate Windows Terminal settings.json.'
+        return
+    }
+
+    $lines = @('Could not tell which Windows Terminal''s settings.json to edit, and will not guess between:')
+    foreach ($f in $found) { $lines += ('  ' + $f) }
+    # The -EnvTable only when one was bound, so a real call asks about the live
+    # environment, as every other caller of Get-TerminalKind does.
+    $kindSplat = @{}
+    if ($PSBoundParameters.ContainsKey('EnvTable')) { $kindSplat['EnvTable'] = $EnvTable }
+    if ((Get-TerminalKind @kindSplat) -eq 'WindowsTerminal') {
+        $lines += 'This session carries a Windows Terminal tab''s WT_SESSION, but its process does not lead back to a running WindowsTerminal.exe that tstyles can read. Set $env:TSTYLES_WT_SETTINGS to the settings.json of the Windows Terminal this runs in (its Settings > Open JSON file opens it), for this session (not in $PROFILE, which every build''s tabs load).'
+    } else {
+        $lines += 'Open a new tab in the Windows Terminal you want styled and run it there, or set $env:TSTYLES_WT_SETTINGS to that build''s settings.json for this session (not in $PROFILE, which every build''s tabs load). apply.ps1 also takes the file as -SettingsPath.'
+    }
+    Write-Error ($lines -join [Environment]::NewLine)
+}
+
+function Find-WTHostExePath {
+    # The WindowsTerminal.exe this session runs under: the nearest ancestor of that
+    # name, or $null. A tab's shell is WT's own child -- WT creates the ConPTY client
+    # itself (ConptyConnection.cpp) -- and shells started in the tab add levels.
+    # It says which Windows Terminal started this process tree, not whether the
+    # session is that terminal's tab: that is Get-TerminalKind's question.
+    #
+    # One Get-ProcessRecord per level. It stops at a lookup that finds nothing, PID
+    # 0 or 4, an ID it has seen, 32 levels, or a parent created after its child
+    # (that ID was reused). Off Windows it looks nothing up. Paid only by the
+    # commands that write settings.json; no cache.
+    #
+    # -StartId / -Platform are test seams; real callers omit them. -Platform
+    # defaults to Get-TStylesPlatform, never $IsWindows, which is $null on 5.1.
+    [CmdletBinding()]
+    param(
+        [int]$StartId = $PID,
+        [string]$Platform = (Get-TStylesPlatform)
+    )
+
+    if ($Platform -ne 'Windows') { return $null }
+
+    $seen  = @{}
+    $id    = $StartId
+    $child = $null
+    for ($depth = 0; $depth -lt 32; $depth++) {
+        if ($id -le 0 -or $id -eq 4 -or $seen.ContainsKey($id)) { return $null }
+        $seen[$id] = $true
+        $rec = Get-ProcessRecord -Id $id
+        if (-not $rec) { return $null }
+        if ($child -and $rec.Started -and $child.Started -and $rec.Started -gt $child.Started) { return $null }
+        if ($rec.Name -eq 'WindowsTerminal.exe') {
+            if ($rec.Path) { return $rec.Path }
+            return $null
+        }
+        $child = $rec
+        $id    = $rec.ParentId
     }
     return $null
+}
+
+function Get-ProcessRecord {
+    # One process as Find-WTHostExePath reads it -- ParentId ([int], so the walk's
+    # seen-set and a test's table agree), Name, Path, Started (UTC) -- or $null when
+    # Windows will not say. Win32_Process through CIM on both engines: Get-Process's
+    # .Parent is pwsh 6+ only, and one reader gives one answer. This is the only
+    # place it is read, so tests/Get-ProcessRecord.Tests.ps1 can check the names and
+    # types on the Windows legs. -OperationTimeoutSec bounds each query.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][int]$Id)
+
+    $p = $null
+    try {
+        # The filter interpolates an [int], never text.
+        $p = Get-CimInstance -ClassName Win32_Process -Filter "ProcessId = $Id" `
+            -Property ProcessId, ParentProcessId, Name, ExecutablePath, CreationDate `
+            -OperationTimeoutSec 10 -ErrorAction Stop | Select-Object -First 1
+    } catch { return $null }
+    if (-not $p) { return $null }
+
+    # A value that will not convert is Windows not saying, too: the walk then
+    # stops at the safe answer, no host, rather than throwing into the command.
+    try {
+        $started = $null
+        if ($p.CreationDate) { $started = ([datetime]$p.CreationDate).ToUniversalTime() }
+        return [pscustomobject]@{
+            ParentId = [int]$p.ParentProcessId
+            Name     = [string]$p.Name
+            Path     = [string]$p.ExecutablePath
+            Started  = $started
+        }
+    } catch { return $null }
 }
 
 function Get-CurrentWTProfileName {
@@ -860,10 +1072,7 @@ function Invoke-TerminalStyle {
     $settingsPath = $null
     if ($useSettingsFile) {
         $settingsPath = Find-WTSettingsPath
-        if (-not $settingsPath) {
-            Write-Error "Could not locate Windows Terminal settings.json."
-            return
-        }
+        if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
     }
 
     # Enumerate via the shared helper so the picker shows user + tuned styles
