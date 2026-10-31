@@ -1618,6 +1618,44 @@ function Get-UninstallShellRcTarget {
     @(Get-ShellRcRemovalCandidate @splat | Where-Object { Test-ShellLoaderPresent -Path $_.Path })
 }
 
+function Remove-ShellLoaderBlockText {
+    # The loader block taken out of rc-file text: the one copy of the pattern
+    # Unregister-ShellLoader strips with and the uninstall consent screen
+    # previews with. Tempered exactly as Register-ShellLoader's span is: `.*?`
+    # anchored at the first BEGIN would swallow everything up to the first END,
+    # so a stray BEGIN above a real block cost the user's own lines.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $begin = '# ===== TerminalStyles BEGIN ====='
+    $end   = '# ===== TerminalStyles END ====='
+    $pattern = '\r?\n?' + [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end) + '\r?\n?'
+    [regex]::Replace($Text, $pattern, "`n", 'Singleline')
+}
+
+function Test-ShellInitBashProfile {
+    <#
+    .SYNOPSIS
+    Is this ~/.bash_profile one shell-init created, holding nothing else once
+    the loader block is out?
+
+    .DESCRIPTION
+    Such a file goes when the loader does: left in place it shadows a
+    ~/.bash_login the user keeps (bash reads the first of the two), and the
+    next shell-init backed it up as "your original". Only the COMMENTED seed
+    (Get-BashLoginSeed) counts: the bare `[ -r "$HOME/.bashrc" ] ...` line is
+    one users write themselves. Never a symlink: a dotfile manager that adopted
+    the file keeps it in its own store, and deleting the link would leave the
+    block there to come back on the next re-link. -Text is the file's text
+    with the block already out; omitted, the file is read.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [string]$Text)
+    if ((Split-Path -Leaf $Path) -cne '.bash_profile') { return $false }
+    if (Test-PathIsSymlink -Path $Path) { return $false }
+    if (-not $PSBoundParameters.ContainsKey('Text')) {
+        try { $Text = Remove-ShellLoaderBlockText -Text (Read-RcFileText -Path $Path).Text } catch { return $false }
+    }
+    return ($Text.Replace("`r`n", "`n").TrimEnd("`n") -ceq (Get-BashLoginSeed).TrimEnd("`n"))
+}
+
 function Unregister-ShellLoader {
     <#
     .SYNOPSIS
@@ -1630,6 +1668,9 @@ function Unregister-ShellLoader {
     'failed'     -- the block is there and the file could not be written
     'unreadable' -- the file is there and could not be read; nothing was
                     written, and whether it holds a block is not known
+    'deleted'    -- the block was there, and the file was a ~/.bash_profile
+                    shell-init created that held nothing else, so it is gone
+                    (Test-ShellInitBashProfile)
 
     A STATUS, not a boolean, because the failure modes are not the same
     thing and were being reported as one. Two of them lied to the user:
@@ -1681,20 +1722,16 @@ function Unregister-ShellLoader {
     # it: `$stripped -eq $content` only fires when there is no END ANYWHERE, and
     # this input matched fine. Removal takes no backup either, by the same
     # first-touch rule, so the loss was silent and total.
-    $pattern = '\r?\n?' + [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end) + '\r?\n?'
-    $stripped = [regex]::Replace($content, $pattern, "`n", 'Singleline')
+    $stripped = Remove-ShellLoaderBlockText -Text $content
     if ($stripped -eq $content) { return 'malformed' }
 
-    # A ~/.bash_profile left holding exactly the seed shell-init writes into one
-    # it creates is shell-init's own file, and goes. Left in place it shadows a
-    # ~/.bash_login the user keeps (bash reads the first of the two), and the
-    # next shell-init backed it up as "your original". Only the commented seed:
-    # the bare `[ -r "$HOME/.bashrc" ] ...` line is one users write themselves.
-    if ((Split-Path -Leaf $Path) -ceq '.bash_profile' -and
-        $stripped.Replace("`r`n", "`n").TrimEnd("`n") -ceq (Get-BashLoginSeed).TrimEnd("`n")) {
+    # A ~/.bash_profile shell-init created, holding nothing else, goes with
+    # the block. Its own status, so the line the user reads says the file is
+    # gone, not only the block.
+    if (Test-ShellInitBashProfile -Path $Path -Text $stripped) {
         try {
             Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
-            return 'removed'
+            return 'deleted'
         } catch { }
     }
 
@@ -1743,6 +1780,11 @@ function Remove-ShellLoaderBlock {
         switch (Unregister-ShellLoader -Path $p) {
             'removed' {
                 Write-Host ("  removed the loader from {0}" -f $p) -ForegroundColor Green
+                $removed++
+            }
+            'deleted' {
+                Write-Host ("  removed the loader from {0}, and deleted the file:" -f $p) -ForegroundColor Green
+                Write-Host "    it held only the lines shell-init created it with." -ForegroundColor DarkGray
                 $removed++
             }
             'malformed' {

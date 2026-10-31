@@ -1003,7 +1003,9 @@ function Remove-PowerShellProfileLoader {
     $unreadable = @()
     foreach ($t in $Target) {
         switch (Unregister-ShellLoader -Path $t.ProfilePath) {
-            'removed' {
+            # 'deleted' is a ~/.bash_profile's, never a $PROFILE's; counted as
+            # removed so a status added for the rc half cannot drop out here.
+            { $_ -in @('removed', 'deleted') } {
                 Write-Host "  Removed loader from $($t.ProfilePath)" -ForegroundColor Green
                 $removed++
             }
@@ -1228,6 +1230,9 @@ function Invoke-TerminalStylesUninstall {
         Write-Host "  - Strip the zsh/bash loader block from:" -ForegroundColor Yellow
         foreach ($t in $shellRcTargets) {
             Write-Host ("      {0}" -f $t.Path) -ForegroundColor Yellow
+            if (Test-ShellInitBashProfile -Path $t.Path) {
+                Write-Host "        (and delete it: shell-init created it, and it holds nothing else)" -ForegroundColor Yellow
+            }
         }
     }
     $wezModule = Get-WezTermModulePath @wezSplat

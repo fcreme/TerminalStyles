@@ -203,6 +203,19 @@ Describe 'the uninstall consent listing names what it will change' {
             $out | Should -Match ([regex]::Escape($rc))
         }
 
+        It 'says it will delete a ~/.bash_profile shell-init created, and only that one' {
+            $bp = Join-Path $script:h '.bash_profile'
+            [System.IO.File]::WriteAllText($bp, (Get-BashLoginSeed), [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $bp | Should -Be 'added'
+            $rc = script:New-Rc $script:h '.zshrc' -WithBlock
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+            $out | Should -Match ([regex]::Escape($bp) + '\s+\(and delete it: shell-init created it')
+            ([regex]::Matches($out, 'and delete it')).Count | Should -Be 1 -Because "the user's own .zshrc is only stripped"
+            [System.IO.File]::Exists($bp) | Should -BeTrue -Because 'consent was refused'
+        }
+
         It 'says nothing about shell rc files when none carry a block' {
             script:New-Rc $script:h '.zshrc' | Out-Null
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500

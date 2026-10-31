@@ -137,6 +137,40 @@ Describe 'shell-init keeps a copy of the rc file it edits' {
             $out2 | Should -Not -Match ('backed up your original to: ' + [regex]::Escape($bp))
         }
 
+        It 'says it deleted the ~/.bash_profile, not only that it took the loader out' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $bp = Join-Path $h '.bash_profile'
+            [System.IO.File]::WriteAllText($bp, (Get-BashLoginSeed))
+            Register-ShellLoader -Path $bp | Should -Be 'added'
+
+            $out = Invoke-TerminalStylesShellInit -HomeDir $h -Remove 6>&1 | Out-String -Width 500
+
+            [System.IO.File]::Exists($bp) | Should -BeFalse
+            $out | Should -Match ('removed the loader from ' + [regex]::Escape($bp) + ', and deleted the file')
+        }
+
+        It 'writes through a symlinked seed-only ~/.bash_profile instead of deleting the link' {
+            # A dotfile manager that adopted the file keeps it in its own store:
+            # deleting the link would leave the block there for the next re-link.
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $store = Join-Path $h 'dots'
+            New-Item -ItemType Directory -Path $store -Force | Out-Null
+            $real = Join-Path $store 'bash_profile'
+            [System.IO.File]::WriteAllText($real, (Get-BashLoginSeed))
+            Register-ShellLoader -Path $real | Should -Be 'added'
+            $bp = Join-Path $h '.bash_profile'
+            try { New-Item -ItemType SymbolicLink -Path $bp -Target $real -ErrorAction Stop | Out-Null }
+            catch { Set-ItResult -Skipped -Because 'this platform or account cannot create symlinks'; return }
+
+            Invoke-TerminalStylesShellInit -HomeDir $h -Remove *> $null
+
+            (Get-Item -LiteralPath $bp -Force).LinkType | Should -Be 'SymbolicLink'
+            [System.IO.File]::ReadAllText($real) | Should -Not -Match 'TerminalStyles BEGIN'
+            [System.IO.File]::ReadAllText($real) | Should -Match 'Created by TerminalStyles'
+        }
+
         It 'keeps a ~/.bash_profile that holds anything of the user''s besides the seed' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null
