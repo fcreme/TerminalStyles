@@ -21,6 +21,6 @@
 - [ ] No background binary on `main` — `tests/No-Committed-Backgrounds.Tests.ps1` fails CI if one sneaks in
 - [ ] If the theme ships a background: the image sits flat at the root of the `gifs` branch as `<name>.<ext>`, under ~2 MB
 - [ ] I have the right to redistribute any image in this PR
-- [ ] README catalog entry added and screenshot regenerated via `scripts/capture-screenshots.ps1` (the maintainer can capture it if you can't run Windows Terminal)
+- [ ] Catalog entry added to `docs/wiki/Styles.md` and screenshot regenerated via `scripts/capture-screenshots.ps1` (the maintainer can capture it if you can't run Windows Terminal)
 
 </details>

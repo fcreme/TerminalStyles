@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The documentation moved to the [wiki](https://github.com/fcreme/TerminalStyles/wiki), and the README is the short version.** The README had grown to 1,101 lines, with the install steps and the gallery at the top and everything else -- every subcommand, each terminal, recovery, uninstalling, writing a style -- below them in one page. It now keeps what the tool is, how to install it, the gallery, and a list of the wiki's pages. The rest moved word for word into nine pages under `docs/wiki/`, beside a new Home page and a FAQ and Troubleshooting page that points into them. The pages live in this repository rather than in the wiki's own, because six test files check the README's text against the code -- the theme count, the install size, the `-Target defaults` explanation, the settings.json recovery recipe, the font command's scope, the banner -- and the wiki is a repository CI never checks out. `tests/Get-DocsText.ps1` gives those tests the README and the wiki pages together, so each claim is checked wherever its section now sits, and `tests/Wiki-Links.Tests.ps1` fails a link to a page or heading that does not exist, a page the sidebar, Home or the README does not list, and a relative link to a repository file, which on the wiki would 404. `.github/workflows/wiki.yml` copies `docs/wiki/` to the wiki on every push to main that changes it; an edit made on the wiki itself is overwritten by the next sync.
+
 ## [0.9.3] - 2026-10-23
 
 ### Added

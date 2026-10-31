@@ -72,7 +72,7 @@ styles/<name>/
 
 To develop one, iterate locally first: drop the folder into
 `%LOCALAPPDATA%\TerminalStyles\styles\<name>\` and `tstyles` picks it
-up on next module load (see "Adding your own style" in the README).
+up on next module load (see [Creating a Style](docs/wiki/Creating-a-Style.md)).
 
 ### scheme.json rules
 
@@ -155,7 +155,8 @@ Invoke-Pester -Path .\tests\Scheme-Contrast.Tests.ps1  # just the contrast guard
 
 ### Screenshots
 
-After adding a theme, regenerate the README screenshot gallery. Note that
+After adding a theme, add its entry to [docs/wiki/Styles.md](docs/wiki/Styles.md)
+and regenerate the screenshot gallery. Note that
 this overwrites **every** screenshot, including the ones that are renders
 rather than captures (each says so in its style README) — stage only the
 file you meant to change, and redraw a render with
@@ -306,6 +307,23 @@ testing locally in `powershell.exe` saves a round trip.
   two drifted anyway and lost user data. Since 0.8.7 it dot-sources
   `lib/` like everything else, and the comment at the top of the file
   records which forks went wrong and how. Do not reintroduce one.
+
+## Documentation
+
+The README is the short version: what the tool is, how to install it, and
+the gallery. Everything else is the wiki, whose pages live in
+[`docs/wiki/`](docs/wiki) and are published to the GitHub wiki by
+`.github/workflows/wiki.yml` on every push to main. Edit them here, in the
+same pull request as the change they describe; an edit made on the wiki
+itself is overwritten by the next sync.
+
+The tests read the documentation as the code's claims about itself.
+`tests/Get-DocsText.ps1` hands them the README and the wiki pages together,
+so a section can move between the two and stay checked.
+`tests/Wiki-Links.Tests.ps1` fails a link to a page or heading that does not
+exist, and a relative link to a repository file, which resolves against the
+wiki and 404s there: link those with a full `https://github.com/...` URL.
+Link one page to another as `Page.md`; the sync drops the extension.
 
 ## Pull request expectations
 

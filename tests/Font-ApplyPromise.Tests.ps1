@@ -164,9 +164,8 @@ Describe 'the two shortest descriptions of tstyles font tell the truth' {
 
 Describe 'README says the same thing the command does' {
     BeforeAll {
-        $script:readme = [System.IO.File]::ReadAllText(
-            (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md'),
-            [System.Text.UTF8Encoding]::new($false))
+        . (Join-Path $PSScriptRoot 'Get-DocsText.ps1')
+        $script:readme = Get-DocsText -Root (Split-Path $PSScriptRoot -Parent)
     }
 
     It 'the site''s command list does not promise the apply everywhere either' {
@@ -186,7 +185,7 @@ Describe 'README says the same thing the command does' {
     It 'scopes the apply half of tstyles font to the terminal that has it' {
         # The fenced recipe read "# install it (if needed) and apply it to the
         # active profile", with no qualifier anywhere in the section.
-        $section = ([regex]::Match($script:readme, '(?ms)^### Installing a coding font.*?(?=^#{2,3} )')).Value
+        $section = ([regex]::Match($script:readme, '(?ms)^### Installing a coding font.*?(?=^#{2,3} |\z)')).Value
         $section | Should -Not -BeNullOrEmpty -Because 'this test is about that section'
         $section | Should -Match '(?i)windows terminal' `
             -Because 'applying the font to a profile is the only half that is Windows Terminal only'

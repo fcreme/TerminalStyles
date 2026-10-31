@@ -33,8 +33,8 @@ BeforeAll {
     $repoRoot = Split-Path $PSScriptRoot -Parent
     Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
 
-    $script:readme = [System.IO.File]::ReadAllText(
-        (Join-Path $repoRoot 'README.md'), [System.Text.UTF8Encoding]::new($false))
+    . (Join-Path $PSScriptRoot 'Get-DocsText.ps1')
+    $script:readme = Get-DocsText -Root $repoRoot
 
     # Everything `tstyles help` can print, rendered rather than read off the
     # data structure: a Detail line that never reaches the screen is not help.
@@ -95,7 +95,7 @@ Describe 'a -Target name the tool offers' {
         $script:help | Should -Match '(?i)inherit'
     }
 
-    It 'is explained in the README' {
+    It 'is explained in the docs' {
         $invented = @($script:offer.Available | Where-Object { $_ -notin $script:offer.Own })
         foreach ($name in $invented) {
             $script:readme | Should -Match ([regex]::Escape($name)) `
