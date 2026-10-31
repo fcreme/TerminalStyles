@@ -185,7 +185,37 @@ Describe 'Remove-PowerShellProfileLoader' {
             }
         }
 
+        Context 'a $PROFILE that cannot be read' {
+            It 'says it could not read it, and claims no loader in it' {
+                $dir = Join-Path $script:d 'p.ps1'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                { [System.IO.File]::ReadAllBytes($dir) } | Should -Throw -Because 'the fixture has to be unreadable on this leg'
+                $t = [pscustomobject]@{ ProfilePath = $dir; Label = 'PowerShell 7' }
+
+                { script:Say @($t) } | Should -Not -Throw
+                $out = script:Say @($t)
+                $out | Should -Match ('could not read ' + [regex]::Escape($dir))
+                $out | Should -Not -Match ('could not write ' + [regex]::Escape($dir))
+                $out | Should -Not -Match 'The loader is still there'
+                @(Get-ChildItem -Force -LiteralPath $dir).Count | Should -Be 0
+            }
+        }
+
         Context 'what it reports back to the caller' {
+            It 'hands back a $PROFILE it could not read as Unreadable, not as a problem' {
+                $ok = script:New-Profile 'a.ps1' ([byte[]]@())
+                $dir = Join-Path $script:d 'b.ps1'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                { [System.IO.File]::ReadAllBytes($dir) } | Should -Throw -Because 'the fixture has to be unreadable on this leg'
+
+                $r = Remove-PowerShellProfileLoader -Target @($ok, [pscustomobject]@{ ProfilePath = $dir; Label = 'x' }) 6>$null
+
+                $r.Removed | Should -Be 1
+                @($r.Problems).Count | Should -Be 0
+                $r.PSObject.Properties.Match('Unreadable').Count | Should -Be 1
+                @($r.Unreadable) | Should -Be @($dir)
+            }
+
             # A COUNT was all it reported, and that is the shape of the defect
             # the whole file is about, one level up: 'malformed' and 'failed'
             # were printed per file and then dropped, so uninstall's sign-off

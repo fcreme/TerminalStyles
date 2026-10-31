@@ -688,7 +688,7 @@ function Sync-ShellRuntime {
     # read-only, root-owned after a sudo install, or simply full was told
     # "shell/tstyles.sh missing from the module" -- which sends them to reinstall
     # the module, the one action that cannot help -- while the directory really
-    # at fault was never named. Same rule as Unregister-ShellLoader's four
+    # at fault was never named. Same rule as Unregister-ShellLoader's
     # statuses, and the same reason.
     $script:TStylesShellStagingError = $null
     $src = Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'tstyles.sh'
@@ -1450,7 +1450,12 @@ function Register-ShellLoader {
     # nothing, and said the same on every run afterwards. In the shape this
     # state usually arrives in -- a block deleted by hand down to its first line
     # -- there is no loader in that file at all. The status vocabulary exists so
-    # the two halves of the pair cannot disagree about what a file is.
+    # the two halves of the pair cannot disagree about what a file is: about
+    # what its bytes say. A file neither half could read is the one they name
+    # differently, and on purpose. 'failed' here claims only that no loader was
+    # written, which a failed read makes true. Unregister-ShellLoader's 'failed'
+    # claims the block is still in the file, which a failed read cannot know,
+    # so that half answers 'unreadable'.
     #
     # 'failed' rather than an exception: shell-init registers into several rc
     # files in a loop, and one unwritable file (read-only, owned by root, on a
@@ -1576,6 +1581,10 @@ function Test-ShellLoaderPresent {
     listing and the strip cannot disagree about a file. And an Ordinal Contains
     rather than -match: the marker is a fixed string, and -match would write to
     the automatic $Matches for a caller that never asked it to.
+
+    A file it cannot read answers $false, on purpose. The uninstall listing
+    names what will be stripped, and Unregister-ShellLoader strips nothing from
+    such a file: it answers 'unreadable', and uninstall's sign-off names it.
     #>
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
@@ -1615,12 +1624,14 @@ function Unregister-ShellLoader {
     Strip the loader block from one rc file.
 
     .OUTPUTS
-    'removed'   -- the block was there and is gone
-    'none'      -- no block in this file (or the file does not exist)
-    'malformed' -- a BEGIN marker with no matching END; nothing was removed
-    'failed'    -- the block is there and the file could not be written
+    'removed'    -- the block was there and is gone
+    'none'       -- no block in this file (or the file does not exist)
+    'malformed'  -- a BEGIN marker with no matching END; nothing was removed
+    'failed'     -- the block is there and the file could not be written
+    'unreadable' -- the file is there and could not be read; nothing was
+                    written, and whether it holds a block is not known
 
-    A STATUS, not a boolean, because the three failure modes are not the same
+    A STATUS, not a boolean, because the failure modes are not the same
     thing and were being reported as one. Two of them lied to the user:
 
       * A BEGIN with no END (hand-edited rc, interrupted write) made the
@@ -1644,15 +1655,20 @@ function Unregister-ShellLoader {
     # The READ is guarded as well as the write. It was not, so an rc file this
     # user cannot read threw a raw MethodInvocationException straight out of
     # both callers -- past every remaining rc file, past the WezTerm cleanup and
-    # past the $PROFILE strip, in the middle of an uninstall. 'failed' is the
-    # right answer for the same reason it is when the write is refused: the
-    # block is still in a file we could not deal with.
+    # past the $PROFILE strip, in the middle of an uninstall.
+    #
+    # 'unreadable', not 'failed'. 'failed' says the block is still in the file,
+    # and a file nothing was read from says nothing about what it holds. As
+    # 'failed', a mode-000 rc file that never carried a block -- or a dotfile
+    # symlink whose target is gone, on a pwsh whose Test-Path counts one as
+    # existing, as 7.7's does -- was printed "could not write ... The loader is
+    # still there", and shell-remove closed on "NOT fully removed".
     #
     # Through Read-RcFileText, and written back below with the Encoding it
     # chose: the bytes, a byte-order mark included, are the user's.
     try {
         $read = Read-RcFileText -Path $Path
-    } catch { return 'failed' }
+    } catch { return 'unreadable' }
     $content = $read.Text
     $enc     = $read.Encoding
     if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
@@ -1696,10 +1712,10 @@ function Remove-ShellLoaderBlock {
     .DESCRIPTION
     ONE implementation of the reporting rule, because there are two callers --
     `tstyles shell-remove` and `tstyles uninstall` -- and they diverged.
-    shell-remove switched on all four of Unregister-ShellLoader's statuses;
+    shell-remove switched on every one of Unregister-ShellLoader's statuses;
     uninstall kept `if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed')`,
     which is an explicit comparison against exactly one of them and throws the
-    other three away. So an unwritable rc file (the managed-dotfile case that
+    rest away. So an unwritable rc file (the managed-dotfile case that
     function's docstring names) and a BEGIN with no END printed nothing at all,
     were counted as nothing, and the command signed off on "TerminalStyles
     uninstalled." with the block still in files its own consent screen had just
@@ -1707,10 +1723,13 @@ function Remove-ShellLoaderBlock {
     could no longer take them out either.
 
     .OUTPUTS
-    [pscustomobject] Removed  = how many blocks went
-                     Problems = the paths still carrying one
+    [pscustomobject] Removed    = how many blocks went
+                     Problems   = the paths still carrying one
+                     Unreadable = the paths it could not read: nothing was
+                                  removed from them, and whether they carry a
+                                  block is not known
 
-    The caller decides what to say about those two numbers, because the two
+    The caller decides what to say about those, because the two
     commands close on different sentences. Neither gets to decide whether a
     failure is mentioned at all.
     #>
@@ -1719,6 +1738,7 @@ function Remove-ShellLoaderBlock {
 
     $removed = 0
     $problems = @()
+    $unreadable = @()
     foreach ($p in $Path) {
         switch (Unregister-ShellLoader -Path $p) {
             'removed' {
@@ -1736,11 +1756,17 @@ function Remove-ShellLoaderBlock {
                 Write-Host "    dotfile, or a symlink into a managed store) and remove the block by hand." -ForegroundColor Red
                 $problems += $p
             }
+            'unreadable' {
+                Write-Host ("  ! could not read {0}" -f $p) -ForegroundColor Red
+                Write-Host "    Nothing was removed from it. If it holds the loader block, delete that" -ForegroundColor Red
+                Write-Host "    by hand once it can be read -- check its permissions, and where a symlink points." -ForegroundColor Red
+                $unreadable += $p
+            }
             # 'none' is the ordinary case for an rc file that never carried a
             # block, and says nothing on purpose.
         }
     }
-    [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
+    [pscustomobject]@{ Removed = $removed; Problems = @($problems); Unreadable = @($unreadable) }
 }
 
 function Invoke-TerminalStylesShellInit {
@@ -1788,16 +1814,26 @@ function Invoke-TerminalStylesShellInit {
         # "nothing was registered", so the user was told the loader was gone
         # while every new shell still sourced it.
         #
+        # A file it could not read is neither: not a leftover, since nothing
+        # says a block is in it, and not "nothing was registered", since nothing
+        # says one is not.
+        #
         # Projected with ForEach-Object rather than `$candidates.Path`: member
         # access on an empty collection yields one $null, and a list with one
-        # empty path in it is not the same as an empty list.
+        # empty path in it is not the same as an empty list. Unreadable is
+        # filtered for the same reason: @($null) is one element, so a result
+        # without that field would announce an unread file with no path.
         $swept = Remove-ShellLoaderBlock -Path @($candidates | ForEach-Object { $_.Path })
         $removed  = $swept.Removed
         $problems = $swept.Problems
+        $unread   = @($swept.Unreadable | Where-Object { $_ })
         Clear-ShellStyleState
         if ($problems.Count -gt 0) {
             Write-Host ""
             Write-Host "  Shell loader NOT fully removed. See the file(s) above." -ForegroundColor Yellow
+        } elseif ($removed -eq 0 -and $unread.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  No shell loader was removed. See the file(s) above." -ForegroundColor Yellow
         } elseif ($removed -eq 0) {
             Write-Host "  No shell loader was registered." -ForegroundColor Gray
         } else {

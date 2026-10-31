@@ -1033,7 +1033,9 @@ Describe 'Register-ShellLoader refuses a BEGIN with no matching END' {
 
         It 'gives the same answer as Unregister-ShellLoader on the same bytes' {
             # One file, one state, one name for it. The status vocabulary exists
-            # so the two halves of the pair cannot disagree about what happened.
+            # so the two halves of the pair cannot disagree about what happened
+            # -- about what the bytes say, that is: a file neither half can read
+            # is named differently on purpose (see Register-ShellLoader's header).
             $status = Register-ShellLoader -Path $script:rc
             $status | Should -Be (Unregister-ShellLoader -Path $script:rc)
         }

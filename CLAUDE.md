@@ -84,8 +84,10 @@ does, change what it says in the same commit. When a listing bounds itself ("wil
 modify X"), a reader is entitled to treat it as complete.
 
 Corollary: don't collapse a status into a boolean. `Unregister-ShellLoader` returns
-`removed` / `none` / `malformed` / `failed` precisely because "it failed" and "there was
-nothing to do" became the same answer once, and the user was told the opposite of the truth.
+`removed` / `none` / `malformed` / `failed` / `unreadable` precisely because "it failed" and
+"there was nothing to do" became the same answer once, and the user was told the opposite of
+the truth. `unreadable` split from `failed` for the same reason: `failed` says the block is
+still there, and a file nothing was read from says nothing about what it holds.
 
 ## Two implementations of one rule will diverge
 

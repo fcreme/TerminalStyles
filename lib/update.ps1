@@ -974,8 +974,11 @@ function Remove-PowerShellProfileLoader {
     Real callers omit it and get Get-PowerShellProfileTarget.
 
     .OUTPUTS
-    [pscustomobject] Removed  = how many blocks went
-                     Problems = the $PROFILE paths still carrying one
+    [pscustomobject] Removed    = how many blocks went
+                     Problems   = the $PROFILE paths still carrying one
+                     Unreadable = the $PROFILE paths it could not read: nothing
+                                  was removed from them, and whether they carry
+                                  a block is not known
 
     The same shape Remove-ShellLoaderBlock returns for the rc half, and for the
     same reason. This returned a COUNT, so 'malformed' and 'failed' were printed
@@ -997,6 +1000,7 @@ function Remove-PowerShellProfileLoader {
 
     $removed = 0
     $problems = @()
+    $unreadable = @()
     foreach ($t in $Target) {
         switch (Unregister-ShellLoader -Path $t.ProfilePath) {
             'removed' {
@@ -1014,11 +1018,17 @@ function Remove-PowerShellProfileLoader {
                 Write-Host "    profile, or one managed by nix or chezmoi) and remove the block by hand." -ForegroundColor Red
                 $problems += $t.ProfilePath
             }
+            'unreadable' {
+                Write-Host ("  ! could not read {0}" -f $t.ProfilePath) -ForegroundColor Red
+                Write-Host "    Nothing was removed from it. If it holds the loader block, delete that" -ForegroundColor Red
+                Write-Host "    by hand once it can be read -- check its permissions, and where a symlink points." -ForegroundColor Red
+                $unreadable += $t.ProfilePath
+            }
             # 'none' is the ordinary case for an engine that was never
             # registered, and says nothing on purpose.
         }
     }
-    [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
+    [pscustomobject]@{ Removed = $removed; Problems = @($problems); Unreadable = @($unreadable) }
 }
 
 function Get-OtherEngineModuleRoot {
@@ -1363,8 +1373,8 @@ function Invoke-TerminalStylesUninstall {
     # that block forever.
     #
     # Through the same helper `tstyles shell-remove` uses. This loop used to be
-    # its own copy of the rule, comparing the four-state status against exactly
-    # one value -- an explicit comparison, so the lint for "don't use the status
+    # its own copy of the rule, comparing the status against exactly one of its
+    # values -- an explicit comparison, so the lint for "don't use the status
     # as a boolean" passed, while 'failed' and 'malformed' were thrown away in
     # silence. The consent screen above NAMES these files one per line, and two
     # of them could be left carrying the block with nothing said about it.
@@ -1372,6 +1382,9 @@ function Invoke-TerminalStylesUninstall {
                                              ForEach-Object { $_.Path })
     $shellRemoved  = $sweep.Removed
     $shellProblems = $sweep.Problems
+    # Filtered, not only wrapped: @($null) is one element, so a result without
+    # this field would announce an unread file with no path.
+    $shellUnread   = @($sweep.Unreadable | Where-Object { $_ })
     Clear-ShellStyleState
 
     # The generated WezTerm module. Removal is a single delete because nothing
@@ -1434,9 +1447,11 @@ function Invoke-TerminalStylesUninstall {
     #
     # The same list the consent screen named, and its problems join the rc
     # half's: an unwritable or malformed $PROFILE was reported per file and then
-    # dropped, so the sign-off below could not know about it.
+    # dropped, so the sign-off below could not know about it. One it could not
+    # read comes back apart from those, as the rc half's does.
     $profileSweep    = Remove-PowerShellProfileLoader -Target $profileTargets
     $profileProblems = @($profileSweep.Problems)
+    $profileUnread   = @($profileSweep.Unreadable | Where-Object { $_ })
 
     # 4. Optionally remove user state
     $dataLeft = $false
@@ -1563,6 +1578,23 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "step 1 has just removed, so every new tab opens on a red error until you delete it." -ForegroundColor Gray
         }
     }
+    # A file the strip could not READ is not one of those: nothing says a block
+    # is in it. Unregister-ShellLoader answered 'failed' for it, so it was listed
+    # under "the loader block in:" -- a mode-000 rc file that never held one
+    # included -- and a $PROFILE was said to open every new tab on a red error.
+    # Named here for what is known: that it could not be read.
+    $allUnread = @(@($shellUnread) + @($profileUnread))
+    if ($allUnread.Count -gt 0) {
+        $oneUnread = $allUnread.Count -eq 1
+        Write-UninstallLeftoverLead -State $lead -What $(if ($oneUnread) { 'any loader block in this file, which it could not read:' } else { 'any loader block in these files, which it could not read:' })
+        foreach ($p in $allUnread) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
+        $check = if ($oneUnread) { 'Check it by hand once it can be read' } else { 'Check them by hand once they can be read' }
+        if ($moduleGone) {
+            Write-Host ('{0}: the module is gone, so tstyles cannot.' -f $check) -ForegroundColor Yellow
+        } else {
+            Write-Host ('{0}.' -f $check) -ForegroundColor Yellow
+        }
+    }
     if ($wezLeft) {
         Write-UninstallLeftoverLead -State $lead -What 'the WezTerm style module:'
         Write-Host ("  {0}" -f $wezLeft) -ForegroundColor Yellow
@@ -1602,7 +1634,9 @@ function Invoke-TerminalStylesUninstall {
     # Only when the $PROFILE side really did come out clean. This was printed
     # unconditionally, directly under a warning that the loader is still in a
     # profile file -- the same sentence, about the same file, in both directions.
-    if ($profileProblems.Count -eq 0) {
+    # A $PROFILE it could not read is not clean either: nothing says the loader
+    # is gone from it.
+    if ($profileProblems.Count -eq 0 -and $profileUnread.Count -eq 0) {
         Write-Host "Open a new pwsh tab to confirm the loader is gone." -ForegroundColor Gray
     }
     Write-Host "Windows Terminal's settings.json was NOT modified. If you want its default look" -ForegroundColor Gray
