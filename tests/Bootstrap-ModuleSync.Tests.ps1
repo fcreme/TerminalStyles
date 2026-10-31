@@ -159,7 +159,8 @@ Describe 'install.ps1 duplicates the module faithfully' {
         @($script:SharedFns).Count | Should -BeGreaterOrEqual 3
         foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate',
                        'Get-ProfileFileEncoding', 'Read-ProfileFileText', 'Test-PathIsSymlink',
-                       'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers') {
+                       'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers',
+                       'Initialize-ReplaceTemp') {
             $script:SharedFns | Should -Contain $n -Because (
                 "$n is duplicated into install.ps1 and this file is what compares the two copies")
         }

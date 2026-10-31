@@ -113,6 +113,72 @@ Describe 'Restore-TuneBaseLook' {
                 Should -Be 'reverted'
             Should -Invoke Write-SettingsAtomic -Times 2 -Exactly
         }
+
+        Context 'when settings.json cannot be put back' {
+            # The real writer, not a mock: a mocked throw is script-terminating
+            # already and would say nothing about what the tuner does with the
+            # writer's own error.
+            BeforeEach {
+                $script:folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+                [void][System.IO.Directory]::CreateDirectory($script:folder)
+                $script:blockTemps = {
+                    param([string]$f)
+                    foreach ($t in @(('{0}.{1}.tstmp' -f $f, $PID), "$f.tstmp")) {
+                        [void][System.IO.Directory]::CreateDirectory($t)
+                    }
+                }
+            }
+
+            It 'finishes the revert, and answers failed' {
+                Mock Write-HostOscPacket { $true }
+                $dir = Join-Path $script:folder 'settings.json'
+                [void][System.IO.Directory]::CreateDirectory($dir)
+
+                $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
+                    -SettingsPath $dir -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
+
+                $r | Should -Be 'failed'
+                Should -Invoke Write-HostOscPacket -Times 1 -Exactly -Because 'the palette goes back whatever the file did'
+                $script:tuneState.Reverted | Should -BeTrue
+                ([string]$script:tuneState.SettingsRestoreError).Contains("Could not write $dir") | Should -BeTrue `
+                    -Because "the reason is what the exit prints: $($script:tuneState.SettingsRestoreError)"
+
+                Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
+                    -SettingsPath $dir -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened | Should -Be 'already'
+                Should -Invoke Write-HostOscPacket -Times 1 -Exactly
+            }
+
+            It 'a settings.json that never took a preview is not reported as a failed revert' {
+                Mock Write-HostOscPacket { $true }
+                $f = Join-Path $script:folder 'settings.json'
+                [System.IO.File]::WriteAllText($f, '{ "x": 1 }', [System.Text.UTF8Encoding]::new($false))
+                $before = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($f))
+                & $script:blockTemps $f
+
+                $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
+                    -SettingsPath $f -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
+
+                $r | Should -Be 'reverted' -Because 'the file is already as the tuner found it'
+                $script:tuneState.SettingsRestoreError | Should -BeNullOrEmpty
+                Should -Invoke Write-HostOscPacket -Times 1 -Exactly
+                [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($f)) | Should -BeExactly $before
+            }
+
+            It 'still reports a put-back that failed over a preview' {
+                Mock Write-HostOscPacket { $true }
+                $f = Join-Path $script:folder 'settings.json'
+                [System.IO.File]::WriteAllText($f, '{ "preview": true }', [System.Text.UTF8Encoding]::new($false))
+                & $script:blockTemps $f
+
+                $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
+                    -SettingsPath $f -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
+
+                $r | Should -Be 'failed'
+                $script:tuneState.SettingsRestoreError | Should -Not -BeNullOrEmpty
+                [System.IO.File]::ReadAllText($f) | Should -BeExactly '{ "preview": true }'
+                Should -Invoke Write-HostOscPacket -Times 1 -Exactly
+            }
+        }
     }
 }
 
@@ -145,5 +211,43 @@ Describe 'the tuner routes all three exits through it' {
             $n.CommandElements[0].VariablePath.UserPath -eq 'restoreBaseLook' }, $true))
         @($invocations).Count | Should -BeGreaterThan 2 `
             -Because 'Esc, an aborted save and the finally all have to undo the preview'
+    }
+
+    It 'reads what the revert answered on every exit, and guards the one in its finally' {
+        $A = [System.Management.Automation.Language.Ast]
+        $invocations = @($script:tunerAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.InvocationOperator -eq [System.Management.Automation.Language.TokenKind]::Ampersand -and
+            $n.CommandElements[0] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+            $n.CommandElements[0].VariablePath.UserPath -eq 'restoreBaseLook' }, $true))
+        @($invocations).Count | Should -BeGreaterOrEqual 3 -Because 'a loop over none would pass'
+
+        $inFinally = @()
+        foreach ($c in $invocations) {
+            # The status is read: the pipeline is the right-hand side of an
+            # assignment, so nothing leaks to the command's output either.
+            $c.Parent.Parent | Should -BeOfType ([System.Management.Automation.Language.AssignmentStatementAst]) `
+                -Because "every exit has to know whether the file went back ($($c.Extent.Text) at line $($c.Extent.StartLineNumber))"
+
+            $p = $c.Parent; $tryOuter = $null; $tryInner = $null
+            while ($p) {
+                if ($p -is [System.Management.Automation.Language.TryStatementAst]) {
+                    if ($p.Finally -and $c.Extent.StartOffset -ge $p.Finally.Extent.StartOffset -and
+                        $c.Extent.EndOffset -le $p.Finally.Extent.EndOffset) { $tryOuter = $p; break }
+                    if (-not $tryInner) { $tryInner = $p }
+                }
+                $p = $p.Parent
+            }
+            if ($tryOuter) { $inFinally += [pscustomobject]@{ Call = $c; Outer = $tryOuter; Guard = $tryInner } }
+        }
+        $inFinally.Count | Should -Be 1 -Because 'one call is the safety net in the finally'
+        $inFinally[0].Guard | Should -Not -BeNullOrEmpty -Because 'a throw there would skip the title and the scratch cleanup'
+
+        $title = @($inFinally[0].Outer.Finally.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'Test-ShouldRestoreWindowTitle' }, $true))
+        $title.Count | Should -Be 1
+        $title[0].Extent.StartOffset | Should -BeLessThan $inFinally[0].Call.Extent.StartOffset `
+            -Because 'the title goes back first, as in the picker'
     }
 }

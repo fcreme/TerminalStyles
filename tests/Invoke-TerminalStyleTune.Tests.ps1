@@ -377,8 +377,28 @@ Describe 'cancelling the tuner puts the terminal back' {
         It 'guards the finally against restoring before it exists' {
             # An exception thrown before $baseScheme is read would otherwise turn
             # a real error into a null-invocation error on the way out.
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match 'if \(\$restoreBaseLook\) \{ & \$restoreBaseLook \}'
+            # By the AST, not the text: the call in the finally now also reads
+            # its answer and sits in a try, and what matters is only that an
+            # `if ($restoreBaseLook)` encloses it.
+            $ast = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast
+            $tries = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and $n.Finally }, $true))
+            $calls = @(foreach ($t in $tries) {
+                $t.Finally.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.CommandAst] -and
+                    $n.CommandElements[0] -is [System.Management.Automation.Language.VariableExpressionAst] -and
+                    $n.CommandElements[0].VariablePath.UserPath -eq 'restoreBaseLook' }, $true)
+            })
+            $calls.Count | Should -Be 1 -Because 'the finally holds the one safety-net call'
+            $p = $calls[0].Parent; $guarded = $false
+            while ($p) {
+                if ($p -is [System.Management.Automation.Language.IfStatementAst] -and
+                    @($p.Clauses | Where-Object { $_.Item1.Extent.Text -eq '$restoreBaseLook' }).Count -gt 0) {
+                    $guarded = $true; break
+                }
+                $p = $p.Parent
+            }
+            $guarded | Should -BeTrue
         }
     }
 }

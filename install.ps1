@@ -592,6 +592,33 @@ function Test-PathIsSymlink {
     } catch { return $false }
 }
 
+function Initialize-ReplaceTemp {
+    # NOTE: duplicated from terminals.ps1 -- keep in sync (the module copy's
+    # help says why in full).
+    #
+    # On macOS and Linux [System.IO.File]::Replace is a bare rename(2): the file
+    # it leaves is the temp, at 0666 less the umask, and it asks only the
+    # directory. So off Windows this refuses a file that cannot be opened for
+    # writing, then starts the temp as a copy of it, so the swap keeps its mode.
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$TempPath
+    )
+    if ((Get-TStylesPlatform) -eq 'Windows') { return }
+    if (-not [System.IO.File]::Exists($Path)) { return }
+    try {
+        [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write,
+                               [System.IO.FileShare]::ReadWrite).Dispose()
+        [System.IO.File]::Copy($Path, $TempPath, $true)
+    } catch {
+        $reason = $_.Exception.GetBaseException()
+        if ([System.IO.File]::Exists($TempPath)) {
+            Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
+        }
+        throw [System.IO.IOException]::new(("Could not write {0}: {1}" -f $Path, $reason.Message), $reason)
+    }
+}
+
 # --- Atomic text write: temp sibling + replace ---
 function Write-TextFileAtomic {
     param(
@@ -612,7 +639,9 @@ function Write-TextFileAtomic {
     # `home-manager switch` / `stow -R` either conflicts on an unexpected
     # regular file or overwrites it, taking our loader with it. It also only
     # needs write permission on the containing DIRECTORY, so the installer
-    # succeeded at detaching a profile pointing into a read-only nix store --
+    # succeeded at detaching a profile pointing into a read-only nix store (and
+    # so did the regular-file swap below on macOS and Linux, until
+    # Initialize-ReplaceTemp asked the file itself first) --
     # the exact case lib/update.ps1 refuses with "a read-only profile, one
     # managed by nix or chezmoi". Every other writer of a user-owned file in
     # this repo (terminals.ps1's rc half, lib/update.ps1's $PROFILE half) is a
@@ -626,7 +655,22 @@ function Write-TextFileAtomic {
 
     $dir = Split-Path -Parent $Path
     $tmp = Join-Path $dir ('.' + (Split-Path -Leaf $Path) + '.tmp-' + ([guid]::NewGuid().Guid.Substring(0,8)))
-    [System.IO.File]::WriteAllText($tmp, $Content, $enc)
+    try {
+        Initialize-ReplaceTemp -Path $Path -TempPath $tmp
+    } catch {
+        throw (("{0}. Check the file's permissions (a read-only profile, one managed by nix or " +
+                "chezmoi, or a cloud-synced placeholder).") -f $_.Exception.Message)
+    }
+    # The temp now starts as a full copy of the profile, so a refill that fails
+    # (a full disk: on APFS the copy is a clone and costs nothing) must not
+    # leave it beside the user's file; each rerun would add another.
+    try {
+        [System.IO.File]::WriteAllText($tmp, $Content, $enc)
+    } catch {
+        $why = $_.Exception.GetBaseException().Message
+        if ([System.IO.File]::Exists($tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        throw ("Could not write $Path -- its temporary copy could not be written: $why")
+    }
     try {
         if (Test-Path -LiteralPath $Path) {
             [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)   # atomic; consumes $tmp
@@ -638,8 +682,9 @@ function Write-TextFileAtomic {
         #
         # The cleanup is in a finally, not a trailing statement. Two different
         # failures land here and only one of them is about the volume: when the
-        # DESTINATION is unwritable -- a read-only $PROFILE, a cloud-synced
-        # placeholder -- the direct write throws too, the exception escaped past
+        # DESTINATION is unwritable -- a read-only $PROFILE (on Windows; on
+        # macOS and Linux Initialize-ReplaceTemp refuses it above), a
+        # cloud-synced placeholder -- the direct write throws too, the exception escaped past
         # the cleanup line, and `.<profile>.tmp-<guid>` was left beside the
         # user's $PROFILE with a fresh GUID per attempt, so re-running the
         # installer piled them up. lib/wtsettings.ps1's Write-SettingsAtomic is

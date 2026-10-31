@@ -480,8 +480,10 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint M
 
 function Set-ProfileFont {
     # Set $Family as the font.face on the target Windows Terminal profile (or
-    # profiles.defaults). Returns $true if applied, $false if a named target
-    # doesn't exist (file left untouched). Uses the atomic settings writer.
+    # profiles.defaults). Returns $true once the font is written, $false if a
+    # named target doesn't exist (file left untouched). Uses the atomic settings
+    # writer: a write that fails throws (Write-SettingsAtomic) and never answers
+    # $true, so `tstyles font` cannot print "Applied" over it.
     param(
         [Parameter(Mandatory)][string]$SettingsPath,
         [Parameter(Mandatory)][string]$TargetName,

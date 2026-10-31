@@ -48,7 +48,11 @@ Copy-Item "$wt.bak" $wt -Force
 
 Windows Terminal's Settings → Open JSON file opens the one in use, and
 `tstyles <name>`, `random`, `reset` and `font` print the backup's path as
-they take it (`Backed up settings to: ...`).
+they take it (`Backed up settings to: ...`). If the write itself then
+fails — a read-only `settings.json`, or one another program has locked — the
+command stops at `Could not write <path>: <reason>`. It prints no success line
+and leaves the style record and your prompt as they were; the `.bak` it has
+just taken is a copy of the file as it still is.
 
 `tstyles reset` is not a substitute: it removes the fields a style
 added, but it cannot put back what the style overwrote — your own
@@ -57,8 +61,10 @@ apply drops when it re-serializes the file. The `.bak` is the only
 route back to those.
 
 A crash mid-pick or mid-tune is recoverable from the same file. Pressing
-Esc in the picker reverts in-memory to the exact prior bytes without
-needing it. If you want a full history of changes rather than just "undo
+Esc in the picker or the tuner reverts in-memory to the exact prior bytes
+without needing it — unless `settings.json` cannot be written at that
+moment, when it says so instead of "Reverted." and prints the `Copy-Item`
+that puts this `.bak` back. If you want a full history of changes rather than just "undo
 the most recent write", use `apply.ps1` — it keeps a timestamped backup
 per run.
 
