@@ -661,7 +661,16 @@ function Write-TextFileAtomic {
         throw (("{0}. Check the file's permissions (a read-only profile, one managed by nix or " +
                 "chezmoi, or a cloud-synced placeholder).") -f $_.Exception.Message)
     }
-    [System.IO.File]::WriteAllText($tmp, $Content, $enc)
+    # The temp now starts as a full copy of the profile, so a refill that fails
+    # (a full disk: on APFS the copy is a clone and costs nothing) must not
+    # leave it beside the user's file; each rerun would add another.
+    try {
+        [System.IO.File]::WriteAllText($tmp, $Content, $enc)
+    } catch {
+        $why = $_.Exception.GetBaseException().Message
+        if ([System.IO.File]::Exists($tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+        throw ("Could not write $Path -- its temporary copy could not be written: $why")
+    }
     try {
         if (Test-Path -LiteralPath $Path) {
             [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)   # atomic; consumes $tmp
