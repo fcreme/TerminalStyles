@@ -1,6 +1,8 @@
 # Pester 5 tests for Write-SettingsAtomic: writes settings.json via a
 # same-directory temp file + atomic replace so a crash/kill mid-write can never
-# leave a truncated settings.json, and never leaves the temp file behind.
+# leave a truncated settings.json, and never leaves the temp file behind. On
+# macOS and Linux the swap also keeps the file's mode and refuses a file the
+# account cannot write (see Initialize-ReplaceTemp).
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
@@ -126,6 +128,76 @@ Describe 'Write-SettingsAtomic' {
             (Get-Item -LiteralPath $link -Force).LinkType | Should -Be 'SymbolicLink'
             [System.IO.File]::ReadAllText($real, $enc) | Should -Be '{"v":"NEW"}' `
                 -Because 'the dotfiles copy is the file the link points at'
+        }
+
+        It 'refuses a settings.json it cannot write, and leaves its bytes and its lock as they were' {
+            # On macOS and Linux [System.IO.File]::Replace is a bare rename(2),
+            # which asks only the DIRECTORY for permission: a read-only
+            # settings.json was swapped for the temp, left writable, and the
+            # VS Code writer said it had saved. Windows' ReplaceFile refuses it.
+            $enc = [System.Text.UTF8Encoding]::new($false)
+            $dir = Join-Path $TestDrive ('ro-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $f = Join-Path $dir 'settings.json'
+            [System.IO.File]::WriteAllText($f, '{"v":"OLD"}', $enc)
+            (Get-Item -LiteralPath $f -Force).IsReadOnly = $true
+            try {
+                $locked = $false
+                try { [System.IO.File]::Open($f, 'Open', 'Write', 'ReadWrite').Dispose() } catch { $locked = $true }
+                if (-not $locked) {
+                    Set-ItResult -Skipped -Because 'this account writes through a read-only file (root)'
+                    return
+                }
+
+                { Write-SettingsAtomic -Path $f -Json '{"v":"NEW"}' } | Should -Throw
+
+                [System.IO.File]::ReadAllText($f, $enc) | Should -BeExactly '{"v":"OLD"}'
+                (Get-Item -LiteralPath $f -Force).IsReadOnly | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $dir -Force).Count | Should -Be 1 -Because 'no temp of any name is left beside it'
+            } finally {
+                (Get-Item -LiteralPath $f -Force).IsReadOnly = $false
+            }
+        }
+
+        It 'keeps the mode of a settings.json made private, through a real swap' {
+            # The temp rename(2) puts in place is a new file at 0666 less the
+            # umask, so a 0600 settings.json came back 0644.
+            if ($PSVersionTable.PSVersion.Major -lt 6 -or $IsWindows) {
+                Set-ItResult -Skipped -Because 'Windows has no mode bits for this to keep; ReplaceFile keeps the DACL'
+                return
+            }
+            if (-not ([System.IO.File] | Get-Member -Static -Name GetUnixFileMode)) {
+                Set-ItResult -Skipped -Because 'needs .NET 7 to read a mode'
+                return
+            }
+            $enc = [System.Text.UTF8Encoding]::new($false)
+            $dir = Join-Path $TestDrive ('mode-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $probe = Join-Path $dir 'probe'
+            [System.IO.File]::WriteAllText($probe, 'x', $enc)
+            $probeMode = [Convert]::ToString([int][System.IO.File]::GetUnixFileMode($probe), 8)
+            Remove-Item -LiteralPath $probe -Force
+            if ($probeMode -eq '600') {
+                Set-ItResult -Skipped -Because 'umask 077: a lost mode would not show'
+                return
+            }
+
+            $f = Join-Path $dir 'settings.json'
+            [System.IO.File]::WriteAllText($f, '{"v":"OLD"}', $enc)
+            [System.IO.File]::SetUnixFileMode($f, [Convert]::ToInt32('600', 8))
+            $link = Join-Path $dir 'settings.hardlink.json'
+            try { New-Item -ItemType HardLink -Path $link -Target $f -ErrorAction Stop | Out-Null }
+            catch {
+                Set-ItResult -Skipped -Because 'this filesystem cannot make a hard link'
+                return
+            }
+
+            Write-SettingsAtomic -Path $f -Json '{"v":"NEW"}'
+
+            [System.IO.File]::ReadAllText($f, $enc) | Should -BeExactly '{"v":"NEW"}'
+            [Convert]::ToString([int][System.IO.File]::GetUnixFileMode($f), 8) | Should -Be '600'
+            [System.IO.File]::ReadAllText($link, $enc) | Should -BeExactly '{"v":"OLD"}' `
+                -Because 'the mode must cross a real swap, not be kept by a write in place'
         }
     }
 }

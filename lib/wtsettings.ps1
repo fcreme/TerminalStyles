@@ -830,6 +830,9 @@ function Write-SettingsAtomic {
     # complete new bytes -- never a truncated middle. Falls back to a direct copy
     # if Replace/Move is unsupported (e.g. an odd filesystem). UTF-8, keeping the
     # byte-order mark the live file already had and adding none to a new file.
+    # On macOS and Linux Replace is a bare rename(2): it keeps nothing of the
+    # file it replaces and asks only the directory, so Initialize-ReplaceTemp
+    # runs first.
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyString()][string]$Json)
 
     # Whether settings.json starts with a BOM is the FILE's property, not this
@@ -881,6 +884,9 @@ function Write-SettingsAtomic {
     }
 
     $tmp = "$Path.tstmp"
+    # On macOS and Linux Replace is a bare rename(2): it keeps nothing of the
+    # file it replaces and asks only the directory. See Initialize-ReplaceTemp.
+    Initialize-ReplaceTemp -Path $Path -TempPath $tmp
     [System.IO.File]::WriteAllText($tmp, $Json, $enc)
     try {
         if (Test-Path -LiteralPath $Path) {
@@ -895,10 +901,12 @@ function Write-SettingsAtomic {
         }
     } catch {
         # Best-effort fallback (cross-volume temp, Replace unsupported, etc.).
-        # The cleanup is in a finally because the fallback can throw too -- a
-        # read-only or locked settings.json fails BOTH the Replace and the
-        # WriteAllText, and the exception then escaped past the cleanup line,
-        # leaving a .tstmp beside the user's settings.json on every attempt.
+        # The cleanup is in a finally because the fallback can throw too -- on
+        # Windows a read-only or locked settings.json fails BOTH the Replace and
+        # the WriteAllText, and the exception then escaped past the cleanup line,
+        # leaving a .tstmp beside the user's settings.json on every attempt. On
+        # macOS and Linux a read-only one never gets here: Initialize-ReplaceTemp
+        # refuses it before the temp exists.
         try {
             [System.IO.File]::WriteAllText($Path, $Json, $enc)
         } finally {

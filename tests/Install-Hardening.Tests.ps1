@@ -237,6 +237,79 @@ Describe 'Write-TextFileAtomic' {
             [System.IO.File]::ReadAllText($hard, $script:enc) | Should -Be 'OLD'
         }
     }
+
+    Context 'the destination''s own permissions' {
+        # On macOS and Linux [System.IO.File]::Replace is a bare rename(2): the
+        # file left in place is the temp, created 0666 less the umask, and the
+        # rename asks only the DIRECTORY. So a private $PROFILE came back 0644
+        # and a read-only one was rewritten and left writable, where
+        # `tstyles register` refuses the same file.
+        It 'refuses a $PROFILE it cannot write, as tstyles register does, and leaves it as it was' {
+            $dir = Join-Path $TestDrive ('iro-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $p = Join-Path $dir 'Microsoft.PowerShell_profile.ps1'
+            [System.IO.File]::WriteAllText($p, "# mine`r`n", $script:enc)
+            (Get-Item -LiteralPath $p -Force).IsReadOnly = $true
+            try {
+                $locked = $false
+                try { [System.IO.File]::Open($p, 'Open', 'Write', 'ReadWrite').Dispose() } catch { $locked = $true }
+                if (-not $locked) {
+                    Set-ItResult -Skipped -Because 'this account writes through a read-only file (root)'
+                    return
+                }
+
+                $err = $null
+                try { Write-TextFileAtomic -Path $p -Content 'NEW' } catch { $err = $_ }
+
+                $err | Should -Not -BeNullOrEmpty
+                "$err" | Should -Match 'permissions'
+                "$err" | Should -Match ([regex]::Escape($p))
+                [System.IO.File]::ReadAllText($p, $script:enc) | Should -BeExactly "# mine`r`n"
+                (Get-Item -LiteralPath $p -Force).IsReadOnly | Should -BeTrue
+                @(Get-ChildItem -LiteralPath $dir -Force).Count | Should -Be 1 -Because 'no temp of any name is left beside it'
+            } finally {
+                (Get-Item -LiteralPath $p -Force).IsReadOnly = $false
+            }
+        }
+
+        It 'keeps a private $PROFILE private, through a real swap' {
+            if ($PSVersionTable.PSVersion.Major -lt 6 -or $IsWindows) {
+                Set-ItResult -Skipped -Because 'Windows has no mode bits for this to keep; ReplaceFile keeps the DACL'
+                return
+            }
+            if (-not ([System.IO.File] | Get-Member -Static -Name GetUnixFileMode)) {
+                Set-ItResult -Skipped -Because 'needs .NET 7 to read a mode'
+                return
+            }
+            $dir = Join-Path $TestDrive ('imode-' + [guid]::NewGuid().Guid.Substring(0,8))
+            New-Item -ItemType Directory -Force -Path $dir | Out-Null
+            $probe = Join-Path $dir 'probe'
+            [System.IO.File]::WriteAllText($probe, 'x', $script:enc)
+            $probeMode = [Convert]::ToString([int][System.IO.File]::GetUnixFileMode($probe), 8)
+            Remove-Item -LiteralPath $probe -Force
+            if ($probeMode -eq '600') {
+                Set-ItResult -Skipped -Because 'umask 077: a lost mode would not show'
+                return
+            }
+
+            $p = Join-Path $dir 'Microsoft.PowerShell_profile.ps1'
+            [System.IO.File]::WriteAllText($p, 'OLD', $script:enc)
+            [System.IO.File]::SetUnixFileMode($p, [Convert]::ToInt32('600', 8))
+            $hard = Join-Path $dir 'profile.hardlink.ps1'
+            try { New-Item -ItemType HardLink -Path $hard -Target $p -ErrorAction Stop | Out-Null }
+            catch {
+                Set-ItResult -Skipped -Because 'this filesystem cannot make a hard link'
+                return
+            }
+
+            Write-TextFileAtomic -Path $p -Content 'NEW'
+
+            [System.IO.File]::ReadAllText($p, $script:enc) | Should -BeExactly 'NEW'
+            [Convert]::ToString([int][System.IO.File]::GetUnixFileMode($p), 8) | Should -Be '600'
+            [System.IO.File]::ReadAllText($hard, $script:enc) | Should -BeExactly 'OLD' `
+                -Because 'the mode must cross a real swap, not be kept by a write in place'
+        }
+    }
 }
 
 Describe 'Register-LoaderInProfile round-trips the user''s own bytes' {
