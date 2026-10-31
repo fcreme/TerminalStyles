@@ -273,7 +273,7 @@ Describe 'shell-init and uninstall agree on where the loader lives' {
             $uninstall | Should -Match 'Get-ShellRcRemovalCandidate'
         }
 
-        It 'the removal list is a superset of the registration list, plus ~/.profile' {
+        It 'the removal list is a superset of the registration list, plus ~/.bash_login and ~/.profile' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null
 
@@ -285,6 +285,8 @@ Describe 'shell-init and uninstall agree on where the loader lives' {
             }
             $rem | Should -Contain (Join-Path $h '.profile') `
                 -Because 'shell-init registers there when it is the only file login bash reads'
+            $rem | Should -Contain (Join-Path $h '.bash_login') `
+                -Because 'shell-init registers there when it is the file login bash reads'
         }
 
         It 'Get-ShellRcCandidate covers zsh and both bash rc files' {
@@ -657,6 +659,76 @@ Describe 'both rc-removal callers report every file they could not strip' {
     }
 }
 
+Describe 'a loader in ~/.bash_login comes back out' {
+    # shell-init now registers in ~/.bash_login when that is the file login bash
+    # reads, so both removal callers have to sweep it. The fixture is planted
+    # inside each It, so the round trip below starts from a clean home.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $script:data
+            Mock Get-TStylesDataRoot { $script:data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            Mock Get-PowerShellProfileTarget { @() }
+            Mock Confirm-Action { $true }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It '<caller> takes it out of ~/.bash_login' -ForEach @(
+            @{ caller = 'shell-remove' }
+            @{ caller = 'uninstall' }
+        ) {
+            $bl = Join-Path $script:h '.bash_login'
+            [System.IO.File]::WriteAllText($bl, "# original .bash_login`nexport MINE=1`n", [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $bl | Should -Be 'added' -Because 'the fixture must plant a real block'
+
+            $out = if ($caller -eq 'uninstall') {
+                Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            } else {
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove 6>&1 | Out-String -Width 500
+            }
+
+            $text = [System.IO.File]::ReadAllText($bl, [System.Text.UTF8Encoding]::new($false))
+            $text | Should -Not -Match 'TerminalStyles BEGIN'
+            $text | Should -Match 'export MINE=1'
+            $out | Should -Match ('removed the loader from ' + [regex]::Escape($bl))
+        }
+
+        It 'leaves login bash reading the ~/.bash_login it found, after init and remove, for the <label> layout' -ForEach @(
+            @{ label = '.bashrc + .bash_login';            files = @('.bashrc', '.bash_login') }
+            @{ label = '.bash_login only';                 files = @('.bash_login') }
+            @{ label = '.bashrc + .bash_login + .profile'; files = @('.bashrc', '.bash_login', '.profile') }
+        ) {
+            foreach ($f in $files) {
+                [System.IO.File]::WriteAllText((Join-Path $script:h $f), "# original $f`nexport MINE=1`n",
+                    [System.Text.UTF8Encoding]::new($false))
+            }
+            $bl = Join-Path $script:h '.bash_login'
+            $before = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($bl))
+
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Force *> $null
+                [System.IO.File]::ReadAllText($bl, [System.Text.UTF8Encoding]::new($false)) |
+                    Should -Match 'TerminalStyles BEGIN' -Because 'init must have registered the file login bash reads'
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove *> $null
+            } finally { $env:SHELL = $prev }
+
+            $left = @(Get-ChildItem -LiteralPath $script:h -File -Force |
+                Where-Object { [System.IO.File]::ReadAllText($_.FullName) -match 'TerminalStyles BEGIN' } |
+                ForEach-Object { $_.Name })
+            $left -join ', ' | Should -BeNullOrEmpty
+            [System.IO.File]::Exists((Join-Path $script:h '.bash_profile')) | Should -BeFalse
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($bl)) | Should -BeExactly $before
+        }
+    }
+}
+
 Describe 'uninstall reports a $PROFILE it could not strip, not just an rc file' {
     # The same rule as the Describe above, on the other half of the symmetry --
     # and the half nothing covered. Remove-PowerShellProfileLoader printed
@@ -816,7 +888,7 @@ Describe 'an rc file that cannot even be READ is a status, not a stack trace' {
     # strip. The whole point of the status vocabulary is that one bad rc file
     # cannot take the command down.
     InModuleScope TerminalStyles {
-        It 'reports failed rather than throwing' {
+        It 'reports unreadable rather than throwing' {
             if ((Get-TStylesPlatform) -eq 'Windows') {
                 Set-ItResult -Skipped -Because 'chmod is the POSIX way to make a file unreadable'; return
             }
@@ -837,8 +909,142 @@ Describe 'an rc file that cannot even be READ is a status, not a stack trace' {
                     return
                 }
                 { Unregister-ShellLoader -Path $rc } | Should -Not -Throw
-                Unregister-ShellLoader -Path $rc | Should -Be 'failed'
+                Unregister-ShellLoader -Path $rc | Should -BeExactly 'unreadable'
             } finally { & chmod 644 $rc }
+        }
+
+        It 'reports unreadable, not failed, for a path it could not read' {
+            # A directory at the rc path: unreadable on every leg, no chmod.
+            $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            $rc = Join-Path $d '.zshrc'
+            New-Item -ItemType Directory -Path $rc -Force | Out-Null
+            { [System.IO.File]::ReadAllBytes($rc) } | Should -Throw -Because 'the fixture has to be unreadable on this leg'
+
+            { Unregister-ShellLoader -Path $rc } | Should -Not -Throw
+            Unregister-ShellLoader -Path $rc | Should -BeExactly 'unreadable'
+            @(Get-ChildItem -Force -LiteralPath $rc).Count | Should -Be 0
+            @(Get-ChildItem -Force -LiteralPath $d).Count | Should -Be 1
+        }
+    }
+}
+
+Describe 'a file the strip could not read is not reported as a leftover' {
+    # 'failed' means the block is still in the file. A file nothing was read
+    # from says nothing about what it holds, and as 'failed' it was printed
+    # "could not write ... The loader is still there", shell-remove closed on
+    # "NOT fully removed", and uninstall listed it under "the loader block in:".
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $script:data
+            Mock Get-TStylesDataRoot { $script:data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            Mock Get-PowerShellProfileTarget { @() }
+            Mock Confirm-Action { $true }
+            Mock Test-InteractiveConsole { $false }
+
+            $script:plantClean = {
+                $p = Join-Path $script:h '.zshrc'
+                [System.IO.File]::WriteAllText($p, "# original`nexport MINE=1`n", [System.Text.UTF8Encoding]::new($false))
+                Register-ShellLoader -Path $p | Should -Be 'added' -Because 'the fixture must plant a real block'
+                $p
+            }
+            $script:plantDir = {
+                param([string]$Name)
+                $p = Join-Path $script:h $Name
+                New-Item -ItemType Directory -Path $p -Force | Out-Null
+                { [System.IO.File]::ReadAllBytes($p) } | Should -Throw -Because 'the fixture has to be unreadable on this leg'
+                $p
+            }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'Remove-ShellLoaderBlock hands it back as Unreadable, not as a Problem' {
+            $clean = & $script:plantClean
+            $dir = & $script:plantDir '.bashrc'
+
+            $r = Remove-ShellLoaderBlock -Path @($clean, $dir) 6>$null
+
+            $r.Removed | Should -Be 1
+            @($r.Problems).Count | Should -Be 0 -Because 'nothing is known to be left in a file nobody read'
+            $r.PSObject.Properties.Match('Unreadable').Count | Should -Be 1
+            @($r.Unreadable) | Should -Be @($dir)
+            $after = [System.IO.File]::ReadAllText($clean)
+            $after | Should -Not -Match 'TerminalStyles BEGIN'
+            $after | Should -Match 'export MINE=1'
+        }
+
+        It 'shell-remove names it as unread and still closes on the prompt line' {
+            $clean = & $script:plantClean
+            $bashrc = & $script:plantDir '.bashrc'
+
+            $out = Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove 6>&1 | Out-String -Width 500
+
+            $out | Should -Match ('could not read ' + [regex]::Escape($bashrc))
+            $out | Should -Not -Match ('could not write ' + [regex]::Escape($bashrc))
+            $out | Should -Not -Match 'The loader is still there'
+            $out | Should -Not -Match 'NOT fully removed'
+            $out | Should -Match 'original prompt back'
+            $after = [System.IO.File]::ReadAllText($clean)
+            $after | Should -Not -Match 'TerminalStyles BEGIN'
+            $after | Should -Match 'export MINE=1'
+            @(Get-ChildItem -Force -LiteralPath $bashrc).Count | Should -Be 0
+        }
+
+        It 'shell-remove with nothing but an unread file says nothing was removed, not that nothing was registered' {
+            & $script:plantDir '.bashrc' | Out-Null
+
+            $out = Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove 6>&1 | Out-String -Width 500
+
+            $out | Should -Match 'No shell loader was removed'
+            $out | Should -Not -Match 'NOT fully removed'
+            $out | Should -Not -Match 'No shell loader was registered' `
+                -Because 'nothing was read from that file, so nothing can be said about what it holds'
+        }
+
+        It 'uninstall names files it could not read apart from loader blocks it left behind' {
+            $clean = & $script:plantClean
+            $bashrc = & $script:plantDir '.bashrc'
+            $prof = & $script:plantDir 'unread-profile.ps1'
+            $targets = @([pscustomobject]@{ ProfilePath = $prof; Label = 'PowerShell 7'; Labels = @('PowerShell 7') })
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget $targets 6>&1 | Out-String -Width 500
+
+            $out | Should -Match ('could not read ' + [regex]::Escape($bashrc))
+            $out | Should -Match ('could not read ' + [regex]::Escape($prof))
+            $out | Should -Match '(?m)^TerminalStyles uninstalled, EXCEPT any loader block in these files, which it could not read:'
+            $tail = ($out -split 'which it could not read:', 2)[1]
+            $tail | Should -Match ([regex]::Escape($bashrc))
+            $tail | Should -Match ([regex]::Escape($prof))
+            foreach ($bad in 'The loader is still there', 'the loader block in:', 'not inert like that',
+                             '(?m)^TerminalStyles uninstalled\.\s*$', 'Open a new pwsh tab to confirm the loader is gone') {
+                $out | Should -Not -Match $bad
+            }
+            [System.IO.File]::ReadAllText($clean) | Should -Not -Match 'TerminalStyles BEGIN'
+            [System.IO.File]::ReadAllText($clean) | Should -Match 'export MINE=1'
+        }
+
+        It 'uninstall with only an unread $PROFILE names it in the singular and still holds back the pwsh-tab line' {
+            $clean = & $script:plantClean
+            $prof = & $script:plantDir 'unread-profile.ps1'
+            $targets = @([pscustomobject]@{ ProfilePath = $prof; Label = 'PowerShell 7'; Labels = @('PowerShell 7') })
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget $targets 6>&1 | Out-String -Width 500
+
+            $out | Should -Match ('could not read ' + [regex]::Escape($prof))
+            $out | Should -Match '(?m)^TerminalStyles uninstalled, EXCEPT any loader block in this file, which it could not read:'
+            ($out -split 'which it could not read:', 2)[1] | Should -Match ([regex]::Escape($prof))
+            $out | Should -Match 'Check it by hand once it can be read: the module is gone, so tstyles cannot\.'
+            foreach ($bad in 'the loader block in:', 'every new tab opens on a red error',
+                             'Open a new pwsh tab to confirm the loader is gone', '(?m)^TerminalStyles uninstalled\.\s*$') {
+                $out | Should -Not -Match $bad
+            }
+            [System.IO.File]::ReadAllText($clean) | Should -Not -Match 'TerminalStyles BEGIN'
         }
     }
 }

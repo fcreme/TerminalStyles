@@ -268,16 +268,18 @@ function Get-TerminalStyleHelpData {
                   "up with your own prompt and no style.",
                   "",
                   "On macOS and Linux the same command wires the shell side up in full:",
-                  "the loader goes into ~/.zshrc, ~/.bashrc and ~/.bash_profile, and the",
+                  "the loader goes into the rc files zsh and bash read, and the",
                   "runtime finds the staged style where the apply put it.")
             } else {
-                @("Adds a loader to your ~/.zshrc, ~/.bashrc and ~/.bash_profile so a zsh",
-                  "or bash tab comes up in the applied style -- colors, prompt, and banner.",
+                @("Adds a loader to the rc files your shells read -- ~/.zshrc, ~/.bashrc,",
+                  "~/.bash_profile -- so a zsh or bash tab comes up in the applied style:",
+                  "colors, prompt, and banner.",
                   "Also defines a 'tstyles' command for those shells.",
                   "",
-                  "Two files it does not name above, in the layouts that need them:",
-                  "your ~/.profile, when that is the only file your login shell reads,",
-                  "and `$ZDOTDIR/.zshrc when you keep zsh config outside your home.",
+                  "Files it does not name above, in the layouts that need them: your",
+                  "~/.bash_login or ~/.profile, when that is the file your login shell",
+                  "reads, and `$ZDOTDIR/.zshrc when you keep zsh config outside your home.",
+                  "A missing rc file is created only when your login shell is zsh or bash.",
                   "",
                   "Colors belong to the terminal rather than to any one shell, so without",
                   "this a zsh user still sees the palette but keeps their own prompt.",
@@ -289,7 +291,8 @@ function Get-TerminalStyleHelpData {
             Name = 'shell-remove'; Usage = 'shell-remove'; Summary = 'Remove the zsh/bash loader'
             Detail = @("Strips the loader block from your shell rc files and clears the staged",
                        "prompt. Your own prompt returns in the next tab. The inverse of",
-                       "shell-init; leaves the PowerShell side untouched.")
+                       "shell-init; leaves the PowerShell side untouched. A ~/.bash_profile",
+                       "shell-init created, holding nothing else, is deleted.")
             Keys = @(); Examples = @('tstyles shell-remove')
         }
         [pscustomobject]@{
@@ -346,7 +349,8 @@ function Get-TerminalStyleHelpData {
                        "PowerShell engine on this machine. It also strips the zsh/bash loader",
                        "block from your shell rc files -- the same files shell-remove sweeps",
                        "-- so an uninstall does not leave a shell sourcing a runtime it just",
-                       "deleted.",
+                       "deleted. A ~/.bash_profile shell-init created, holding nothing else,",
+                       "is deleted too.",
                        "",
                        "A style saved to a VS Code-family editor's settings.json (VS Code,",
                        "Insiders, VSCodium, Cursor, Windsurf) is taken back out of it, from",

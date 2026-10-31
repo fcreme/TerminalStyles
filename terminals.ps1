@@ -688,7 +688,7 @@ function Sync-ShellRuntime {
     # read-only, root-owned after a sudo install, or simply full was told
     # "shell/tstyles.sh missing from the module" -- which sends them to reinstall
     # the module, the one action that cannot help -- while the directory really
-    # at fault was never named. Same rule as Unregister-ShellLoader's four
+    # at fault was never named. Same rule as Unregister-ShellLoader's
     # statuses, and the same reason.
     $script:TStylesShellStagingError = $null
     $src = Join-Path (Join-Path $script:TStylesModuleRoot 'shell') 'tstyles.sh'
@@ -1054,6 +1054,85 @@ function Get-ShellRcCandidate {
 }
 
 
+function Get-LoginShell {
+    <#
+    .SYNOPSIS
+    Which shell this user logs in to, as one of zsh, bash, sh or other -- the
+    one reader of $env:SHELL.
+
+    .DESCRIPTION
+    shell-init read $env:SHELL twice, two ways. The writes took anything
+    without 'zsh' anywhere in its PATH for bash, and the closing line took any
+    leaf that was not bash or zsh for a POSIX sh. So pwsh, fish, tcsh and nu
+    were both at once: a ~/.bash_profile was invented for them and their
+    ~/.profile registered, and the run ended on "the loader needs your
+    ~/.profile". /opt/zsh-tools/bin/bash was taken for zsh.
+
+    By the PROGRAM's name, not a path substring: a trailing .exe, '-static'
+    (Debian's zsh-static, bash-static) and a version suffix (zsh5, ksh93) are
+    dropped, and the restricted rbash and rzsh count as their shells.
+
+    'sh' is an allowlist of shells known to read ~/.profile as a login shell,
+    because the closing line for that kind claims they do: sh, dash, ash and
+    the ksh family. yash is not on it (it reads ~/.yash_profile).
+
+    Unset or empty -- Windows, and some daemons -- is 'bash' with an empty
+    Name, the answer both cases had before.
+    #>
+    param([string]$Shell = $env:SHELL)
+    $parts = @(([string]$Shell).Trim() -split '[\\/]' | Where-Object { $_ })
+    if ($parts.Count -eq 0) { return [pscustomobject]@{ Kind = 'bash'; Name = '' } }
+    $name = $parts[$parts.Count - 1] -replace '\.exe$', ''
+    $base = ($name -replace '-static$', '') -replace '-?[0-9][0-9.]*$', ''
+    $kind = switch -Regex ($base) {
+        '^r?zsh$'  { 'zsh'; break }
+        '^r?bash$' { 'bash'; break }
+        '^(sh|dash|ash|ksh|mksh|lksh|pdksh|oksh|loksh|posh)$' { 'sh'; break }
+        default    { 'other' }
+    }
+    [pscustomobject]@{ Kind = $kind; Name = $name }
+}
+
+function Get-BashLoginFile {
+    <#
+    .SYNOPSIS
+    The file a bash login shell reads in this home, or nothing.
+
+    .DESCRIPTION
+    bash reads the FIRST of ~/.bash_profile, ~/.bash_login and ~/.profile that
+    exists, and stops. shell-init had two branches that created or chose a
+    login file, and both reduced that order to "does ~/.profile exist". So a
+    home whose login setup lived in ~/.bash_login got a new ~/.bash_profile,
+    which login bash then read instead -- measured: an export in ~/.bash_login
+    was set before the run and gone after it -- or, with a ~/.profile beside
+    it, the loader went into the ~/.profile login bash never opens.
+    #>
+    param([string]$HomeDir = $HOME)
+    foreach ($leaf in '.bash_profile', '.bash_login', '.profile') {
+        $p = Join-Path $HomeDir $leaf
+        if ([System.IO.File]::Exists($p)) { return $p }
+    }
+}
+
+function Get-BashLoginSeed {
+    <#
+    .SYNOPSIS
+    The lines shell-init puts in a ~/.bash_profile it creates, ahead of the
+    loader block.
+
+    .DESCRIPTION
+    A bare ~/.bash_profile would leave the user's own ~/.bashrc unloaded in
+    login shells, so the file sources it, which is the conventional shape. LF,
+    because it is shell code like the block. shell-remove deletes a
+    ~/.bash_profile that holds exactly these lines once the block is out (see
+    Unregister-ShellLoader), so changing the text strands the files earlier
+    releases made.
+    #>
+    "# Created by TerminalStyles: bash login shells read this file, never`n" +
+    "# ~/.bashrc. Sourcing it here is the conventional way to get both.`n" +
+    '[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"' + "`n"
+}
+
 function Get-ShellRcRemovalCandidate {
     <#
     .SYNOPSIS
@@ -1064,13 +1143,11 @@ function Get-ShellRcRemovalCandidate {
     Registration and removal are not the same list, and treating them as one
     left a block that nothing could ever take out.
 
-    `Get-ShellRcCandidate` is the REGISTRATION list, and ~/.profile is
-    deliberately not on it: it is sh's file rather than bash's, and writing to
-    it unasked would reach past the shells this tool claims. But shell-init
-    registers there anyway in the one case where it is the only file the login
-    shell will read -- a home with a ~/.profile and no .bash_profile, where
-    creating a .bash_profile would shadow a file already in use. Two branches
-    do this (the .bashrc-exists branch and the nothing-existed fallback).
+    `Get-ShellRcCandidate` is the REGISTRATION list, and ~/.bash_login and
+    ~/.profile are not on it: login bash reads each only when nothing ahead of
+    it in its order exists, and ~/.profile is sh's. shell-init registers in one
+    only when it IS the file the login shell reads (Get-BashLoginFile for bash;
+    ~/.profile for a POSIX sh). Sweep both.
 
     Removal iterated the REGISTRATION list, so it never looked at ~/.profile.
     `tstyles shell-remove` reported "removed from ~/.bashrc" and "Open a new tab
@@ -1095,7 +1172,8 @@ function Get-ShellRcRemovalCandidate {
     if ($PSBoundParameters.ContainsKey('ZDotDir')) { $splat.ZDotDir = $ZDotDir }
 
     @(Get-ShellRcCandidate @splat) +
-    @([pscustomobject]@{ Shell = 'sh'; Path = (Join-Path $HomeDir '.profile') })
+    @([pscustomobject]@{ Shell = 'bash'; Path = (Join-Path $HomeDir '.bash_login') }) +
+    @([pscustomobject]@{ Shell = 'sh';   Path = (Join-Path $HomeDir '.profile') })
 }
 
 function Get-RcFileEncoding {
@@ -1372,7 +1450,12 @@ function Register-ShellLoader {
     # nothing, and said the same on every run afterwards. In the shape this
     # state usually arrives in -- a block deleted by hand down to its first line
     # -- there is no loader in that file at all. The status vocabulary exists so
-    # the two halves of the pair cannot disagree about what a file is.
+    # the two halves of the pair cannot disagree about what a file is: about
+    # what its bytes say. A file neither half could read is the one they name
+    # differently, and on purpose. 'failed' here claims only that no loader was
+    # written, which a failed read makes true. Unregister-ShellLoader's 'failed'
+    # claims the block is still in the file, which a failed read cannot know,
+    # so that half answers 'unreadable'.
     #
     # 'failed' rather than an exception: shell-init registers into several rc
     # files in a loop, and one unwritable file (read-only, owned by root, on a
@@ -1389,10 +1472,17 @@ function Register-ShellLoader {
     #
     # Only touches a file that already exists, unless -Create is passed: silently
     # creating ~/.bashrc on a machine that only uses zsh would be a surprise.
+    #
+    # -Seed is what a file -Create makes holds ahead of the block, written in
+    # the same one write: the ~/.bash_profile shell-init creates used to get its
+    # seed from a second writer first, and this function then found an existing
+    # file with no block and backed it up as "your original". An existing file
+    # ignores -Seed.
     param(
         [Parameter(Mandatory)][string]$Path,
         [switch]$Create,
-        [switch]$Force
+        [switch]$Force,
+        [string]$Seed = ''
     )
     $begin = '# ===== TerminalStyles BEGIN ====='
     $end   = '# ===== TerminalStyles END ====='
@@ -1404,7 +1494,7 @@ function Register-ShellLoader {
     $exists = Test-Path -LiteralPath $Path
     if (-not $exists -and -not $Create) { return 'skipped' }
 
-    $content = ''
+    $content = $Seed
     if ($exists) {
         try { $read = Read-RcFileText -Path $Path } catch { return 'failed' }
         $content = $read.Text
@@ -1442,7 +1532,18 @@ function Register-ShellLoader {
             $existing = [regex]::Match($content, $pattern, 'Singleline').Value
             if ($existing.Trim() -eq $block.Trim()) { return 'unchanged' }
         }
-        $updated = [regex]::Replace($content, $pattern, $block.Trim(), 'Singleline')
+        # The block goes in as it is. This overload reads its third argument as
+        # a .NET REPLACEMENT string, where `$` is special, and the block carries
+        # the data-root path: a `$_` there put the whole rc file into the quoted
+        # path, `$&`, `$0`, `${0}` and `$+` the old block, `` $` `` and `$'` the
+        # text either side of it, and `$$` wrote a path one `$` short. Each said
+        # 'updated', on the one path that takes no backup, and the five that copy
+        # text compounded on every later run. `$$` is the grammar's own escape
+        # for a literal `$`, so doubling every one leaves nothing to expand. The
+        # append below joins strings and never had this problem;
+        # ConvertTo-WezTermLuaString (lib/wezterm.ps1) met the same grammar from
+        # the backslash side.
+        $updated = [regex]::Replace($content, $pattern, $block.Trim().Replace('$', '$$'), 'Singleline')
         try { [System.IO.File]::WriteAllText($Path, $updated, $enc) } catch { return 'failed' }
         return 'updated'
     }
@@ -1480,6 +1581,10 @@ function Test-ShellLoaderPresent {
     listing and the strip cannot disagree about a file. And an Ordinal Contains
     rather than -match: the marker is a fixed string, and -match would write to
     the automatic $Matches for a caller that never asked it to.
+
+    A file it cannot read answers $false, on purpose. The uninstall listing
+    names what will be stripped, and Unregister-ShellLoader strips nothing from
+    such a file: it answers 'unreadable', and uninstall's sign-off names it.
     #>
     param([Parameter(Mandatory)][string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return $false }
@@ -1513,18 +1618,61 @@ function Get-UninstallShellRcTarget {
     @(Get-ShellRcRemovalCandidate @splat | Where-Object { Test-ShellLoaderPresent -Path $_.Path })
 }
 
+function Remove-ShellLoaderBlockText {
+    # The loader block taken out of rc-file text: the one copy of the pattern
+    # Unregister-ShellLoader strips with and the uninstall consent screen
+    # previews with. Tempered exactly as Register-ShellLoader's span is: `.*?`
+    # anchored at the first BEGIN would swallow everything up to the first END,
+    # so a stray BEGIN above a real block cost the user's own lines.
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    $begin = '# ===== TerminalStyles BEGIN ====='
+    $end   = '# ===== TerminalStyles END ====='
+    $pattern = '\r?\n?' + [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end) + '\r?\n?'
+    [regex]::Replace($Text, $pattern, "`n", 'Singleline')
+}
+
+function Test-ShellInitBashProfile {
+    <#
+    .SYNOPSIS
+    Is this ~/.bash_profile one shell-init created, holding nothing else once
+    the loader block is out?
+
+    .DESCRIPTION
+    Such a file goes when the loader does: left in place it shadows a
+    ~/.bash_login the user keeps (bash reads the first of the two), and the
+    next shell-init backed it up as "your original". Only the COMMENTED seed
+    (Get-BashLoginSeed) counts: the bare `[ -r "$HOME/.bashrc" ] ...` line is
+    one users write themselves. Never a symlink: a dotfile manager that adopted
+    the file keeps it in its own store, and deleting the link would leave the
+    block there to come back on the next re-link. -Text is the file's text
+    with the block already out; omitted, the file is read.
+    #>
+    param([Parameter(Mandatory)][string]$Path, [string]$Text)
+    if ((Split-Path -Leaf $Path) -cne '.bash_profile') { return $false }
+    if (Test-PathIsSymlink -Path $Path) { return $false }
+    if (-not $PSBoundParameters.ContainsKey('Text')) {
+        try { $Text = Remove-ShellLoaderBlockText -Text (Read-RcFileText -Path $Path).Text } catch { return $false }
+    }
+    return ($Text.Replace("`r`n", "`n").TrimEnd("`n") -ceq (Get-BashLoginSeed).TrimEnd("`n"))
+}
+
 function Unregister-ShellLoader {
     <#
     .SYNOPSIS
     Strip the loader block from one rc file.
 
     .OUTPUTS
-    'removed'   -- the block was there and is gone
-    'none'      -- no block in this file (or the file does not exist)
-    'malformed' -- a BEGIN marker with no matching END; nothing was removed
-    'failed'    -- the block is there and the file could not be written
+    'removed'    -- the block was there and is gone
+    'none'       -- no block in this file (or the file does not exist)
+    'malformed'  -- a BEGIN marker with no matching END; nothing was removed
+    'failed'     -- the block is there and the file could not be written
+    'unreadable' -- the file is there and could not be read; nothing was
+                    written, and whether it holds a block is not known
+    'deleted'    -- the block was there, and the file was a ~/.bash_profile
+                    shell-init created that held nothing else, so it is gone
+                    (Test-ShellInitBashProfile)
 
-    A STATUS, not a boolean, because the three failure modes are not the same
+    A STATUS, not a boolean, because the failure modes are not the same
     thing and were being reported as one. Two of them lied to the user:
 
       * A BEGIN with no END (hand-edited rc, interrupted write) made the
@@ -1548,15 +1696,20 @@ function Unregister-ShellLoader {
     # The READ is guarded as well as the write. It was not, so an rc file this
     # user cannot read threw a raw MethodInvocationException straight out of
     # both callers -- past every remaining rc file, past the WezTerm cleanup and
-    # past the $PROFILE strip, in the middle of an uninstall. 'failed' is the
-    # right answer for the same reason it is when the write is refused: the
-    # block is still in a file we could not deal with.
+    # past the $PROFILE strip, in the middle of an uninstall.
+    #
+    # 'unreadable', not 'failed'. 'failed' says the block is still in the file,
+    # and a file nothing was read from says nothing about what it holds. As
+    # 'failed', a mode-000 rc file that never carried a block -- or a dotfile
+    # symlink whose target is gone, on a pwsh whose Test-Path counts one as
+    # existing, as 7.7's does -- was printed "could not write ... The loader is
+    # still there", and shell-remove closed on "NOT fully removed".
     #
     # Through Read-RcFileText, and written back below with the Encoding it
     # chose: the bytes, a byte-order mark included, are the user's.
     try {
         $read = Read-RcFileText -Path $Path
-    } catch { return 'failed' }
+    } catch { return 'unreadable' }
     $content = $read.Text
     $enc     = $read.Encoding
     if ($content -notmatch [regex]::Escape($begin)) { return 'none' }
@@ -1569,9 +1722,18 @@ function Unregister-ShellLoader {
     # it: `$stripped -eq $content` only fires when there is no END ANYWHERE, and
     # this input matched fine. Removal takes no backup either, by the same
     # first-touch rule, so the loss was silent and total.
-    $pattern = '\r?\n?' + [regex]::Escape($begin) + '(?:(?!' + [regex]::Escape($begin) + ')[\s\S])*?' + [regex]::Escape($end) + '\r?\n?'
-    $stripped = [regex]::Replace($content, $pattern, "`n", 'Singleline')
+    $stripped = Remove-ShellLoaderBlockText -Text $content
     if ($stripped -eq $content) { return 'malformed' }
+
+    # A ~/.bash_profile shell-init created, holding nothing else, goes with
+    # the block. Its own status, so the line the user reads says the file is
+    # gone, not only the block.
+    if (Test-ShellInitBashProfile -Path $Path -Text $stripped) {
+        try {
+            Remove-Item -LiteralPath $Path -Force -ErrorAction Stop
+            return 'deleted'
+        } catch { }
+    }
 
     # Same reasoning as Register-ShellLoader: one unwritable rc file must not
     # take down a shell-remove that has already stripped others.
@@ -1587,10 +1749,10 @@ function Remove-ShellLoaderBlock {
     .DESCRIPTION
     ONE implementation of the reporting rule, because there are two callers --
     `tstyles shell-remove` and `tstyles uninstall` -- and they diverged.
-    shell-remove switched on all four of Unregister-ShellLoader's statuses;
+    shell-remove switched on every one of Unregister-ShellLoader's statuses;
     uninstall kept `if ((Unregister-ShellLoader -Path $c.Path) -eq 'removed')`,
     which is an explicit comparison against exactly one of them and throws the
-    other three away. So an unwritable rc file (the managed-dotfile case that
+    rest away. So an unwritable rc file (the managed-dotfile case that
     function's docstring names) and a BEGIN with no END printed nothing at all,
     were counted as nothing, and the command signed off on "TerminalStyles
     uninstalled." with the block still in files its own consent screen had just
@@ -1598,10 +1760,13 @@ function Remove-ShellLoaderBlock {
     could no longer take them out either.
 
     .OUTPUTS
-    [pscustomobject] Removed  = how many blocks went
-                     Problems = the paths still carrying one
+    [pscustomobject] Removed    = how many blocks went
+                     Problems   = the paths still carrying one
+                     Unreadable = the paths it could not read: nothing was
+                                  removed from them, and whether they carry a
+                                  block is not known
 
-    The caller decides what to say about those two numbers, because the two
+    The caller decides what to say about those, because the two
     commands close on different sentences. Neither gets to decide whether a
     failure is mentioned at all.
     #>
@@ -1610,10 +1775,16 @@ function Remove-ShellLoaderBlock {
 
     $removed = 0
     $problems = @()
+    $unreadable = @()
     foreach ($p in $Path) {
         switch (Unregister-ShellLoader -Path $p) {
             'removed' {
                 Write-Host ("  removed the loader from {0}" -f $p) -ForegroundColor Green
+                $removed++
+            }
+            'deleted' {
+                Write-Host ("  removed the loader from {0}, and deleted the file:" -f $p) -ForegroundColor Green
+                Write-Host "    it held only the lines shell-init created it with." -ForegroundColor DarkGray
                 $removed++
             }
             'malformed' {
@@ -1627,11 +1798,17 @@ function Remove-ShellLoaderBlock {
                 Write-Host "    dotfile, or a symlink into a managed store) and remove the block by hand." -ForegroundColor Red
                 $problems += $p
             }
+            'unreadable' {
+                Write-Host ("  ! could not read {0}" -f $p) -ForegroundColor Red
+                Write-Host "    Nothing was removed from it. If it holds the loader block, delete that" -ForegroundColor Red
+                Write-Host "    by hand once it can be read -- check its permissions, and where a symlink points." -ForegroundColor Red
+                $unreadable += $p
+            }
             # 'none' is the ordinary case for an rc file that never carried a
             # block, and says nothing on purpose.
         }
     }
-    [pscustomobject]@{ Removed = $removed; Problems = @($problems) }
+    [pscustomobject]@{ Removed = $removed; Problems = @($problems); Unreadable = @($unreadable) }
 }
 
 function Invoke-TerminalStylesShellInit {
@@ -1669,8 +1846,8 @@ function Invoke-TerminalStylesShellInit {
     $candidates = Get-ShellRcCandidate @splat
 
     if ($Remove) {
-        # The WIDE list: shell-init can register into ~/.profile, which is not a
-        # registration candidate. Sweeping the narrow list left that block in
+        # The WIDE list: shell-init can register into ~/.bash_login or
+        # ~/.profile, which are not registration candidates. Sweeping the narrow list left that block in
         # place while reporting the loader removed.
         $candidates = Get-ShellRcRemovalCandidate @splat
 
@@ -1679,16 +1856,26 @@ function Invoke-TerminalStylesShellInit {
         # "nothing was registered", so the user was told the loader was gone
         # while every new shell still sourced it.
         #
+        # A file it could not read is neither: not a leftover, since nothing
+        # says a block is in it, and not "nothing was registered", since nothing
+        # says one is not.
+        #
         # Projected with ForEach-Object rather than `$candidates.Path`: member
         # access on an empty collection yields one $null, and a list with one
-        # empty path in it is not the same as an empty list.
+        # empty path in it is not the same as an empty list. Unreadable is
+        # filtered for the same reason: @($null) is one element, so a result
+        # without that field would announce an unread file with no path.
         $swept = Remove-ShellLoaderBlock -Path @($candidates | ForEach-Object { $_.Path })
         $removed  = $swept.Removed
         $problems = $swept.Problems
+        $unread   = @($swept.Unreadable | Where-Object { $_ })
         Clear-ShellStyleState
         if ($problems.Count -gt 0) {
             Write-Host ""
             Write-Host "  Shell loader NOT fully removed. See the file(s) above." -ForegroundColor Yellow
+        } elseif ($removed -eq 0 -and $unread.Count -gt 0) {
+            Write-Host ""
+            Write-Host "  No shell loader was removed. See the file(s) above." -ForegroundColor Yellow
         } elseif ($removed -eq 0) {
             Write-Host "  No shell loader was registered." -ForegroundColor Gray
         } else {
@@ -1765,84 +1952,21 @@ function Invoke-TerminalStylesShellInit {
         }
     }
 
-    # WHICH SHELL THE USER ACTUALLY LOGS IN TO. This lived inside the "nothing
-    # existed" fallback below, which fires only when not one rc file was found
-    # -- so on every other path the three decisions that follow (create a login
-    # file, register in ~/.profile, name a file to source) were taken with no
-    # idea which shell the user runs, and all three assumed bash.
-    #
-    # A zsh user with a leftover ~/.bashrc and no ~/.zshrc -- a pre-Catalina Mac,
-    # or any home an nvm/pyenv/conda installer has dropped a .bashrc into; macOS
-    # zsh has no newuser hook, so it never writes a ~/.zshrc for you -- therefore
-    # got two green "added" lines naming bash files, a ~/.bash_profile invented
-    # for them, "source ~/.bashrc", and a new zsh tab with nothing in it at all.
-    #
-    # $env:SHELL is unset on Windows and empty in some daemons, and 'bash' is the
-    # answer both cases had before, so the default keeps them as they were.
-    $loginShell = if ($env:SHELL -and $env:SHELL -match 'zsh') { 'zsh' } else { 'bash' }
+    # WHICH SHELL THE USER ACTUALLY LOGS IN TO, decided once, by Get-LoginShell
+    # (the one reader of $env:SHELL). Everything below -- create a login file,
+    # register one, name a file to source -- follows it. It used to live inside
+    # the "nothing existed" fallback, and on every other path all three
+    # decisions assumed bash: a zsh user with a leftover ~/.bashrc got a
+    # ~/.bash_profile invented for them, "source ~/.bashrc", and a new zsh tab
+    # with nothing in it.
+    $login      = Get-LoginShell
+    $loginShell = $login.Kind
+    $bashrc      = $candidates | Where-Object { $_.Path -like '*.bashrc' }       | Select-Object -First 1
+    $bashProfile = $candidates | Where-Object { $_.Path -like '*.bash_profile' } | Select-Object -First 1
+    $dotProfile  = Join-Path $HomeDir '.profile'
 
-    # A bash user needs the LOGIN file, and it is the one most likely absent.
-    # macOS Terminal.app starts bash as a login shell, which reads
-    # ~/.bash_profile and never ~/.bashrc -- that is why .bash_profile is in the
-    # candidate list at all. But Register-ShellLoader skips a file that does not
-    # exist, and the -Create fallback below only fired when NOTHING was
-    # registered. So a bash user with a .bashrc and no .bash_profile got a green
-    # "added ~/.bashrc", opened a new Terminal window, and saw nothing: default
-    # prompt, default colours, no banner, and no hint that the file the style
-    # needs was never written.
-    #
-    # Created as a source of .bashrc plus the block, which is the conventional
-    # shape -- a bare .bash_profile would stop bash reading ~/.profile, and
-    # would leave their own .bashrc unloaded in login shells exactly as before.
-    #
-    # Gated on the login shell, which it was not: it fired for a zsh user with a
-    # .bashrc too, inventing a ~/.bash_profile they never had (shell-remove
-    # strips the block but leaves the file), or writing into their ~/.profile --
-    # which `tstyles help shell-init` says is touched only "when that is the
-    # only file your login shell reads", and for a zsh login shell it is not.
-    # Registering in rc files that already EXIST stays unconditional; this
-    # branch is the one that creates and reaches past them.
-    $bashrc       = $candidates | Where-Object { $_.Path -like '*.bashrc' }       | Select-Object -First 1
-    $bashProfile  = $candidates | Where-Object { $_.Path -like '*.bash_profile' } | Select-Object -First 1
-    $dotProfile   = Join-Path $HomeDir '.profile'
-    if ($loginShell -eq 'bash' -and
-        $bashrc -and $bashProfile -and
-        (Test-Path -LiteralPath $bashrc.Path) -and
-        -not (Test-Path -LiteralPath $bashProfile.Path)) {
-
-        if (Test-Path -LiteralPath $dotProfile) {
-            # They have a ~/.profile that login bash reads today. Register there
-            # rather than creating a .bash_profile that would shadow it.
-            $action = Register-ShellLoader -Path $dotProfile -Force:$Force
-            if ($action -ne 'skipped') {
-                # Recorded as the LOGIN shell's file, not as sh's. ~/.profile is
-                # sh's by ownership, but the only reason it was written is that
-                # it is what this login shell reads, and that is the question
-                # the closing hint asks of this list.
-                $touched += [pscustomobject]@{ Path = $dotProfile; Shell = $loginShell; Action = $action }
-            }
-        } else {
-            $seed = "# Created by TerminalStyles: bash login shells read this file, never" + [Environment]::NewLine +
-                    "# ~/.bashrc. Sourcing it here is the conventional way to get both." + [Environment]::NewLine +
-                    '[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"' + [Environment]::NewLine
-            try {
-                [System.IO.File]::WriteAllText($bashProfile.Path, $seed, [System.Text.UTF8Encoding]::new($false))
-                $action = Register-ShellLoader -Path $bashProfile.Path -Force:$Force
-                $touched += [pscustomobject]@{ Path = $bashProfile.Path; Shell = 'bash'; Action = $action }
-                Write-Host ""
-                Write-Host ("  Created {0}, which is what bash reads for a login shell" -f $bashProfile.Path) -ForegroundColor DarkGray
-                Write-Host "  (Terminal.app opens one). It sources your ~/.bashrc." -ForegroundColor DarkGray
-            } catch {
-                Write-Host ("  ! could not create {0}: {1}" -f $bashProfile.Path, $_.Exception.Message) -ForegroundColor Yellow
-            }
-        }
-    }
-
-    # The same rescue for zsh, which never got one. Bash's exists because its
-    # login file is the one most likely to be absent; for zsh the ONLY file is
-    # likely to be absent, and then not a single line of the loop above reached
-    # the shell the user opens tabs in. It still printed a green "added" for
-    # whatever bash rc happened to be lying around.
+    # The zsh rescue. For zsh the ONLY file is likely to be absent, and then not
+    # a line of the loop above reached the shell the user opens tabs in.
     #
     # The FIRST zsh candidate is the file zsh will actually read:
     # Get-ShellRcCandidate puts $ZDOTDIR/.zshrc ahead of ~/.zshrc, and zsh reads
@@ -1861,51 +1985,59 @@ function Invoke-TerminalStylesShellInit {
         }
     }
 
-    # Nothing existed to register in. Create the rc file for the login shell
-    # rather than doing nothing and leaving the user to guess.
-    #
-    # The zsh rescue above now always leaves an entry in $touched for a zsh
-    # login shell (it registers the file or reports the failure), so in practice
-    # this is the bash arm. It is left general rather than rewritten as a bash
-    # branch: $loginShell still chooses the target, so if the rescue's condition
-    # ever narrows, this keeps covering what it stops covering.
-    if (-not $touched) {
+    # Nothing existed to register in: create the rc file for a zsh or bash
+    # login shell rather than doing nothing. A POSIX sh, or a shell that is
+    # neither, gets nothing created -- it reads none of these files.
+    if (-not $touched -and $loginShell -in @('zsh', 'bash')) {
         $target = $candidates | Where-Object Shell -eq $loginShell | Select-Object -First 1
         $action = Register-ShellLoader -Path $target.Path -Create
         $touched += [pscustomobject]@{ Path = $target.Path; Shell = $target.Shell; Action = $action }
-        # A bash login shell reads .bash_profile, so creating only .bashrc would
-        # have produced the same silent nothing as above.
-        if ($loginShell -eq 'bash' -and $target.Path -like '*.bashrc') {
-            $bp = $candidates | Where-Object { $_.Path -like '*.bash_profile' } | Select-Object -First 1
-            if ($bp -and -not (Test-Path -LiteralPath $dotProfile)) {
-                $seed = '[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"' + [Environment]::NewLine
-                try {
-                    [System.IO.File]::WriteAllText($bp.Path, $seed, [System.Text.UTF8Encoding]::new($false))
-                    $touched += [pscustomobject]@{ Path = $bp.Path
-                                                   Shell = 'bash'
-                                                   Action = (Register-ShellLoader -Path $bp.Path -Force:$Force) }
-                } catch { }
-            } elseif (Test-Path -LiteralPath $dotProfile) {
-                # ~/.profile exists, so we must not create a .bash_profile: bash
-                # reads the FIRST of .bash_profile, .bash_login, .profile and
-                # stops, and a new .bash_profile would shadow a file they are
-                # already using. The block above declines for that reason -- but
-                # declining was all it did, which left the loader in the .bashrc
-                # just created and login bash reading a ~/.profile that never
-                # sources it. That is the bug this whole branch exists to avoid,
-                # surviving in the one layout the branch did not cover.
-                #
-                # ~/.profile is not a candidate (it is sh's, not bash's, and
-                # registering in it unasked would reach past the shells this tool
-                # claims), so nothing else in this function will have touched it.
-                # Here it is the only file the login shell will read.
-                $action = Register-ShellLoader -Path $dotProfile -Force:$Force
-                if ($action -ne 'skipped') {
-                    $touched += [pscustomobject]@{ Path = $dotProfile; Shell = $loginShell; Action = $action }
+    }
+
+    # THE LOGIN FILE. A login shell -- every Terminal.app window, ssh and tty
+    # logins -- reads its own file, and for bash that is never ~/.bashrc. bash
+    # reads the FIRST of ~/.bash_profile, ~/.bash_login and ~/.profile that
+    # exists. Two branches here used to ask only whether ~/.profile existed, so
+    # a ~/.bash_login was shadowed by a new ~/.bash_profile (measured: an
+    # export in it was set before the run and gone after it, under green
+    # 'added' lines) or passed over for a ~/.profile login bash never opens.
+    #
+    # ~/.bash_profile is a registration candidate, so the loop above already
+    # did it when it is the one. A ~/.bash_login or ~/.profile is registered
+    # here, only when it is the file this login shell reads. With none of them
+    # and a ~/.bashrc, a ~/.bash_profile is created that sources it -- a bare
+    # one would leave their ~/.bashrc unloaded in login shells -- with the seed
+    # and the block in one write, so there is nothing of the user's to back up.
+    if ($loginShell -eq 'bash') {
+        $loginFile = Get-BashLoginFile -HomeDir $HomeDir
+        if ($loginFile -and $bashProfile -and $loginFile -ne $bashProfile.Path) {
+            $action = Register-ShellLoader -Path $loginFile -Force:$Force
+            if ($action -ne 'skipped') {
+                $touched += [pscustomobject]@{ Path = $loginFile; Shell = 'bash'; Action = $action }
+            }
+        } elseif (-not $loginFile -and $bashrc -and $bashProfile -and (Test-Path -LiteralPath $bashrc.Path)) {
+            $action = Register-ShellLoader -Path $bashProfile.Path -Create -Seed (Get-BashLoginSeed) -Force:$Force
+            $touched += [pscustomobject]@{ Path = $bashProfile.Path; Shell = 'bash'; Action = $action }
+            if ($action -eq 'added') {
+                Write-Host ""
+                if ($Platform -eq 'MacOS') {
+                    Write-Host ("  Created {0}, which is what bash reads for a login shell" -f $bashProfile.Path) -ForegroundColor DarkGray
+                    Write-Host "  (Terminal.app opens one). It sources your ~/.bashrc." -ForegroundColor DarkGray
+                } else {
+                    Write-Host ("  Created {0}, which is what bash reads for a login shell." -f $bashProfile.Path) -ForegroundColor DarkGray
+                    Write-Host "  It sources your ~/.bashrc." -ForegroundColor DarkGray
                 }
             }
         }
+    } elseif ($loginShell -eq 'sh' -and (Test-Path -LiteralPath $dotProfile)) {
+        # dash, ash and the ksh family read ~/.profile as a login shell, and
+        # the block is POSIX (`if [ -r '...' ]; then . '...'; fi`).
+        $action = Register-ShellLoader -Path $dotProfile -Force:$Force
+        if ($action -ne 'skipped') {
+            $touched += [pscustomobject]@{ Path = $dotProfile; Shell = 'sh'; Action = $action }
+        }
     }
+    # 'other' (pwsh, fish, tcsh, nu): nothing beyond the files the loop found.
 
     Write-Host ""
     foreach ($t in $touched) {
@@ -1928,45 +2060,53 @@ function Invoke-TerminalStylesShellInit {
         }
     }
     Write-Host ""
-    # Name the file that was actually registered. This was hardcoded to
-    # ~/.zshrc and printed unconditionally, so a bash user who had just had
-    # .bashrc and .bash_profile written was told to source a zsh file they may
-    # not even have.
+    # Name a file that was actually registered, and one the login shell reads.
+    # This was hardcoded to ~/.zshrc, then the first file in candidate order,
+    # which told a zsh user to source ~/.bashrc. The filter is on the statuses
+    # that mean "there is no loader in this file": 'malformed' writes nothing
+    # either, and naming it sent the user to source a file with no loader.
     #
-    # Then it named whichever file came first, which is candidate order, not the
-    # user's order: a zsh user whose ~/.bashrc was registered before their
-    # ~/.zshrc existed was told "source ~/.bashrc" -- advice that does nothing in
-    # the shell they are sitting in. Prefer a file the LOGIN shell reads; fall
-    # back to the first only when none was touched.
-    #
-    # The filter is on the statuses that mean "there is no loader in this file",
-    # not on 'failed' alone: 'malformed' writes nothing either, and naming it
-    # here sent the user to `source` a file that has no loader line in it.
-    #
-    # And $loginShell is not the whole answer either. It says 'bash' for every
-    # $env:SHELL it does not recognise -- deliberately, and the registration
-    # above is right to follow it: the loader block written into ~/.profile is
-    # POSIX (`if [ -r '...' ]; then . '...'; fi`) and a dash or ksh login shell
-    # reads that file. The HINT is what over-claimed. For a dash login shell it
-    # printed `source ~/.bashrc`: a file dash never opens, named with a builtin
-    # dash does not have ("source: not found"), so both halves of the one line
-    # the user is most likely to act on were wrong.
-    #
-    # Decided here, downstream of every write, so nothing about WHICH files get
-    # registered changes -- this is pure selection over what was already done.
-    $shellLeaf = if ($env:SHELL) { Split-Path -Leaf $env:SHELL } else { '' }
-    $posixSh   = [bool]($shellLeaf -and ($shellLeaf -notin @('bash', 'zsh')))
+    # One arm per kind of login shell:
+    # - zsh and bash: a file of that shell if one was written, else the first.
+    # - sh: ~/.profile only, with `.`, because dash has no `source` and never
+    #   reads ~/.bashrc; with no ~/.profile written there is nothing to name.
+    # - other: no claim about which files it reads. Name a zsh or bash file to
+    #   source in one of those, and say which one it reaches.
+    $written = @($touched | Where-Object { $_.Action -notin @('failed', 'malformed') })
+    $shorten = { param([string]$p) if ($p.StartsWith($HomeDir)) { '~' + $p.Substring($HomeDir.Length) } else { $p } }
 
-    $written  = @($touched | Where-Object { $_.Action -notin @('failed', 'malformed') })
-    # No fallback in the POSIX-sh arm, on purpose: falling back to $written
-    # would name a bash rc again, which is the thing being fixed. ~/.profile is
-    # the only file this function writes that such a shell reads, so if it was
-    # not written there is nothing honest to point at.
-    $hintPath = if ($posixSh) {
+    if ($loginShell -eq 'other') {
+        if ($written.Count -eq 0) {
+            Write-Host ("  Nothing was written. Your login shell, {0}, is not zsh or bash, so no rc" -f $login.Name) -ForegroundColor DarkGray
+            Write-Host "  file was created for it -- for a shell that is neither, the loader goes only" -ForegroundColor DarkGray
+            Write-Host "  into zsh and bash rc files you already have." -ForegroundColor DarkGray
+        } else {
+            # Built from what was written, so it promises no shell it did not reach.
+            $zshW   = @($written | Where-Object { $_.Shell -eq 'zsh' })
+            $rcW    = @($written | Where-Object { (Split-Path -Leaf $_.Path) -ceq '.bashrc' })
+            $loginW = @($written | Where-Object { (Split-Path -Leaf $_.Path) -cin @('.bash_profile', '.bash_login') })
+            $reach = @()
+            if ($zshW.Count)   { $reach += 'zsh' }
+            if ($rcW.Count)    { $reach += 'bash' }
+            if ($loginW.Count) { $reach += 'login bash (bash -l)' }
+            $hint = (@($zshW) + @($rcW) + @($loginW) + @($written) | Select-Object -First 1).Path
+            Write-Host ("  Your login shell is {0}, which is not zsh or bash. The loader takes effect" -f $login.Name) -ForegroundColor DarkGray
+            Write-Host ("  in a {0} you start; in one already open, run:  source {1}" -f ($reach -join ' or '), (& $shorten $hint)) -ForegroundColor DarkGray
+        }
+        if ($login.Name -like 'pwsh*') {
+            Write-Host "  pwsh itself is styled through your `$PROFILE: run  tstyles register" -ForegroundColor DarkGray
+        }
+        if ($Platform -eq 'Windows' -and $written.Count) {
+            Write-Host "  The tab will look the same either way -- see the note above." -ForegroundColor DarkGray
+        }
+        Write-Host ""
+        return
+    }
+
+    $hintPath = if ($loginShell -eq 'sh') {
         (@($written | Where-Object { $_.Path -eq $dotProfile }) | Select-Object -First 1).Path
     } else {
-        (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written |
-         Select-Object -First 1).Path
+        (@($written | Where-Object { $_.Shell -eq $loginShell }) + $written | Select-Object -First 1).Path
     }
     # On Windows the sign-off also says what sourcing that file will not do.
     # The closing line is the last thing read and it is where "it worked" gets
@@ -1974,19 +2114,18 @@ function Invoke-TerminalStylesShellInit {
     # finds nothing to paint is the shape this project ships most often: a
     # success line on a path that silently no-opped.
     if ($hintPath) {
-        $shown = if ($hintPath.StartsWith($HomeDir)) { '~' + $hintPath.Substring($HomeDir.Length) } else { $hintPath }
         # `.` is POSIX and works in bash and zsh too, but those two keep
         # `source` so the line the overwhelming majority of users read is
         # byte-identical to what it has always been.
-        $sourceVerb = if ($posixSh) { '.' } else { 'source' }
-        Write-Host ("  Open a new tab, or run:  {0} {1}" -f $sourceVerb, $shown) -ForegroundColor DarkGray
+        $sourceVerb = if ($loginShell -eq 'sh') { '.' } else { 'source' }
+        Write-Host ("  Open a new tab, or run:  {0} {1}" -f $sourceVerb, (& $shorten $hintPath)) -ForegroundColor DarkGray
         if ($Platform -eq 'Windows') {
             Write-Host "  The tab will look the same either way -- see the note above." -ForegroundColor DarkGray
         }
-    } elseif ($posixSh) {
+    } elseif ($loginShell -eq 'sh') {
         # The honest form of "open a new tab": for this shell a new tab picks up
         # nothing, because nothing it reads was written.
-        Write-Host ("  Nothing was written to a file {0} reads -- the loader needs your ~/.profile." -f $shellLeaf) -ForegroundColor DarkGray
+        Write-Host ("  Nothing was written to a file {0} reads -- the loader needs your ~/.profile." -f $login.Name) -ForegroundColor DarkGray
     } else {
         Write-Host "  Open a new tab to pick it up." -ForegroundColor DarkGray
     }
