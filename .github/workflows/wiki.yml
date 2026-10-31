@@ -1,0 +1,63 @@
+# Publish docs/wiki/ to the GitHub wiki.
+#
+# The wiki is a separate git repository that CI never checks out, so text
+# written there directly is text nothing tests. The pages therefore live in
+# this repository, where tests/Get-DocsText.ps1 gives the README tests the
+# README and the wiki together, and tests/Wiki-Links.Tests.ps1 checks every
+# link -- and this job copies them over on every push to main that touches
+# them. The wiki is a mirror: an edit made on GitHub is overwritten by the
+# next sync.
+#
+# Links are written `Page.md` so they also work when browsing docs/wiki/ on
+# GitHub; the wiki serves pages without the extension, so the copy drops it.
+#
+# The wiki repository only exists once its first page has been created in the
+# browser. Until then the clone fails, and so does this job.
+
+name: Wiki
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'docs/wiki/**'
+      - '.github/workflows/wiki.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: wiki
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    name: Sync docs/wiki to the wiki
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Copy the pages into the wiki repository
+        env:
+          TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          git clone --depth 1 "https://x-access-token:${TOKEN}@github.com/${REPO}.wiki.git" wiki
+          find wiki -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+          cp docs/wiki/*.md wiki/
+          # ](Page.md) and ](Page.md#anchor) -> ](Page) and ](Page#anchor).
+          # Only bare page names: absolute URLs keep their .md.
+          sed -E -i 's/\]\(([A-Za-z0-9_-]+)\.md(#[^)]*)?\)/](\1\2)/g' wiki/*.md
+          cd wiki
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already matches docs/wiki at ${SHA}."
+            exit 0
+          fi
+          git -c user.name='github-actions[bot]' \
+              -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+              commit -q -m "Sync from ${REPO}@${SHA}"
+          git push -q origin HEAD

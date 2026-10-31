@@ -13,7 +13,8 @@
 
 BeforeAll {
     $script:Root = Split-Path $PSScriptRoot -Parent
-    $script:Readme = Get-Content (Join-Path $script:Root 'README.md') -Raw
+    . (Join-Path $PSScriptRoot 'Get-DocsText.ps1')
+    $script:Readme = Get-DocsText -Root $script:Root
 
     # The same set publish.ps1 stages, read from its allowlist rather than
     # listed again here -- a second copy of that list is how the package and
@@ -81,7 +82,7 @@ Describe 'the README does not deny its own features' {
         # working tree: '$' matches only before the \n, and with \r sitting
         # in between, '^## Background image$' matched nothing there. macOS and
         # Linux passed; the two Windows jobs did not.
-        $bg = [regex]::Match($script:Readme, '(?sm)^## Background image\r?$.*?(?=\r?\n## )').Value
+        $bg = [regex]::Match($script:Readme, '(?sm)^## Background image\r?$.*?(?=\r?\n## |\z)').Value
         $bg | Should -Not -BeNullOrEmpty -Because 'the section has to be found before it can be checked'
         $bg | Should -Match 'WezTerm' -Because 'the section about background images has to mention the terminal that shows them best'
         $bg | Should -Not -Match 'no other terminal gets one yet'

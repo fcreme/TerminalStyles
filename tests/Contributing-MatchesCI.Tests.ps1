@@ -111,9 +111,8 @@ Describe 'README claims that the code can settle' {
     # README statements a reader would act on, each pinned to the thing that
     # makes it true or false.
     BeforeAll {
-        $script:readme = [System.IO.File]::ReadAllText(
-            (Join-Path (Split-Path $PSScriptRoot -Parent) 'README.md'),
-            [System.Text.UTF8Encoding]::new($false))
+        . (Join-Path $PSScriptRoot 'Get-DocsText.ps1')
+        $script:readme = Get-DocsText -Root (Split-Path $PSScriptRoot -Parent)
     }
 
     It 'does not claim the picker skips the rolling backup' {
@@ -138,7 +137,7 @@ Describe 'README claims that the code can settle' {
         # extracts, so the two bound the same sentences from both sides: that
         # one requires the section to NAME the picker among the writers, this
         # one requires it not to deny that it writes.
-        $section = ([regex]::Match($script:readme, '(?ms)^### Recovering.*?(?=^#{2,3} )')).Value
+        $section = ([regex]::Match($script:readme, '(?ms)^### Recovering.*?(?=^#{2,3} |\z)')).Value
         $section | Should -Not -BeNullOrEmpty -Because 'the recovery recipe is what this test is about'
         $section | Should -Match '(?i)picker' `
             -Because 'a section that never mentions the picker would make the check below vacuous'
@@ -186,7 +185,7 @@ Describe 'README claims that the code can settle' {
         @($writers | Where-Object { -not $commandFor.ContainsKey($_) }) -join ', ' |
             Should -BeNullOrEmpty -Because 'a new writer of the single rolling .bak needs a name in the README recipe'
 
-        $section = ([regex]::Match($script:readme, '(?ms)^### Recovering.*?(?=^#{2,3} )')).Value
+        $section = ([regex]::Match($script:readme, '(?ms)^### Recovering.*?(?=^#{2,3} |\z)')).Value
         $section | Should -Not -BeNullOrEmpty -Because 'the recovery recipe is what this test is about'
         foreach ($w in $writers) {
             $section | Should -BeLike "*$($commandFor[$w])*" `
@@ -284,7 +283,7 @@ Describe 'README claims that the code can settle' {
         }
         @($created) | Should -BeNullOrEmpty -Because "Terminal.app's reset is an escape sequence; it writes nothing"
 
-        $section = ([regex]::Match($script:readme, '(?ms)^### Resetting a profile.*?(?=^#{2,3} )')).Value
+        $section = ([regex]::Match($script:readme, '(?ms)^### Resetting a profile.*?(?=^#{2,3} |\z)')).Value
         $section | Should -Not -BeNullOrEmpty -Because 'the section this test is about must still exist'
         if ($section -match 'settings\.json\.bak') {
             # NOT '(?i)windows terminal' among the alternatives, however natural
