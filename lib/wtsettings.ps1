@@ -614,6 +614,52 @@ function Get-BackupFailureNote {
     return "Warning: could not write backup ($Reason); proceeding anyway."
 }
 
+function Show-SettingsRestoreFailure {
+    <#
+    .SYNOPSIS
+    What the picker and the tuner print, in place of "Reverted.", when
+    settings.json could not be put back the way they found it.
+
+    .DESCRIPTION
+    Both put the file back on Esc, an aborted save and in their finally, and
+    both printed "Reverted." whether or not that write landed. It now stops at
+    the writer's own error, so the exit can say which happened.
+
+    -BackupTaken says the session took settings.json.bak when it opened, so
+    that copy is the file as it found it, and this prints the Copy-Item that
+    puts it back. Without it, the .bak still holds the last real apply's state,
+    and pointing at it would undo more than the session. -Unchecked is for a
+    put-back the tuner could not read back afterwards: it cannot say whether
+    the file is back. Paths are single-quoted with any ' doubled, so the line
+    pastes as it is.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Reason,
+        [Parameter(Mandatory)][string]$SettingsPath,
+        [Parameter(Mandatory)][ValidateSet('picker', 'tuner')][string]$By,
+        [switch]$BackupTaken,
+        [switch]$Unchecked
+    )
+
+    Write-Host "  $Reason" -ForegroundColor Red
+    if ($Unchecked) {
+        Write-Host "  settings.json could not be read back, so the $By cannot say whether it is as it" -ForegroundColor Yellow
+        Write-Host "  found it." -ForegroundColor Yellow
+    } else {
+        Write-Host "  settings.json is not back as the $By found it." -ForegroundColor Yellow
+    }
+    if ($BackupTaken) {
+        $quote = { param([string]$s) "'" + $s.Replace("'", "''") + "'" }
+        Write-Host "  The copy it took when it opened is settings.json.bak, beside it. To put that back:" -ForegroundColor Yellow
+        Write-Host ("    Copy-Item -LiteralPath {0} -Destination {1} -Force" -f
+                    (& $quote ($SettingsPath + '.bak')), (& $quote $SettingsPath)) -ForegroundColor Cyan
+    } else {
+        Write-Host "  And settings.json.bak could not be taken when it opened," -ForegroundColor Yellow
+        Write-Host "  so it does not hold that copy either." -ForegroundColor Yellow
+    }
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
@@ -830,6 +876,9 @@ function Write-SettingsAtomic {
     # complete new bytes -- never a truncated middle. Falls back to a direct copy
     # if Replace/Move is unsupported (e.g. an odd filesystem). UTF-8, keeping the
     # byte-order mark the live file already had and adding none to a new file.
+    # On macOS and Linux Replace is a bare rename(2): it keeps nothing of the
+    # file it replaces and asks only the directory, so Initialize-ReplaceTemp
+    # runs first.
     param([Parameter(Mandatory)][string]$Path, [Parameter(Mandatory)][AllowEmptyString()][string]$Json)
 
     # Whether settings.json starts with a BOM is the FILE's property, not this
@@ -868,42 +917,71 @@ function Write-SettingsAtomic {
 
     $enc = [System.Text.UTF8Encoding]::new($hadBom)
 
-    # A symlinked settings.json is written THROUGH, never replaced -- the same
-    # rule install.ps1's Write-TextFileAtomic now applies to a symlinked
-    # $PROFILE, and for the same reason. Keeping settings.json in a dotfiles
-    # repo and linking it into LocalState is the ordinary arrangement on
-    # Windows; [System.IO.File]::Replace below would swap that link for a
-    # regular file on every apply, preview, tuner keystroke and font write,
-    # silently detaching the repo copy. See Test-PathIsSymlink.
-    if (Test-PathIsSymlink -Path $Path) {
-        [System.IO.File]::WriteAllText($Path, $Json, $enc)
-        return
-    }
-
-    $tmp = "$Path.tstmp"
-    [System.IO.File]::WriteAllText($tmp, $Json, $enc)
+    # A failure is ONE error of this function's own, "Could not write <path>:
+    # <why>", thrown. A .NET exception here only ends its own statement, so
+    # with no try above it -- an interactive pwsh -- the caller's next line
+    # ran: apply printed "Style applied" and recorded a style over a file it
+    # never wrote, reset cleared the record, font said "Applied".
     try {
-        if (Test-Path -LiteralPath $Path) {
-            # backupFileName = [NullString]::Value: replace without keeping a
-            # copy. A bare $null is coerced by PowerShell to '' here, which makes
-            # Replace throw "path is empty" on PS7 and silently fall back to the
-            # non-atomic in-place write below; [NullString]::Value passes a true
-            # null so the atomic same-volume rename actually runs.
-            [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
-        } else {
-            [System.IO.File]::Move($tmp, $Path)
+        # A symlinked settings.json is written THROUGH, never replaced -- the
+        # same rule install.ps1's Write-TextFileAtomic applies to a symlinked
+        # $PROFILE, and for the same reason. Keeping settings.json in a dotfiles
+        # repo and linking it into LocalState is the ordinary arrangement on
+        # Windows; [System.IO.File]::Replace below would swap that link for a
+        # regular file on every apply, preview, tuner keystroke and font write,
+        # silently detaching the repo copy. See Test-PathIsSymlink.
+        if (Test-PathIsSymlink -Path $Path) {
+            [System.IO.File]::WriteAllText($Path, $Json, $enc)
+            return
+        }
+
+        # One temp per process. It was one name, settings.json.tstmp, for every
+        # writer: a second tstyles holding it, or a temp that could not be
+        # written, fell through to Replace (swapping in another writer's
+        # half-written copy) or to the in-place write below, the one this
+        # function exists to avoid.
+        $tmp = '{0}.{1}.tstmp' -f $Path, $PID
+        # On macOS and Linux Replace is a bare rename(2): it keeps nothing of
+        # the file it replaces and asks only the directory. See
+        # Initialize-ReplaceTemp.
+        Initialize-ReplaceTemp -Path $Path -TempPath $tmp
+        # Nothing has touched settings.json yet, and a failure here keeps it
+        # that way: no Replace of a partial or foreign temp, no truncating
+        # fallback. Only a regular file at that name is ours to remove.
+        try {
+            [System.IO.File]::WriteAllText($tmp, $Json, $enc)
+        } catch {
+            $why = $_.Exception.GetBaseException().Message
+            if ([System.IO.File]::Exists($tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            throw ("its temporary copy {0} could not be written: {1}" -f $tmp, $why)
+        }
+        try {
+            if (Test-Path -LiteralPath $Path) {
+                # backupFileName = [NullString]::Value: replace without keeping a
+                # copy. A bare $null is coerced by PowerShell to '' here, which
+                # makes Replace throw "path is empty" on PS7 and silently fall
+                # back to the non-atomic in-place write below; [NullString]::Value
+                # passes a true null so the atomic same-volume rename actually runs.
+                [System.IO.File]::Replace($tmp, $Path, [NullString]::Value)
+            } else {
+                [System.IO.File]::Move($tmp, $Path)
+            }
+        } catch {
+            # Best-effort fallback (Replace unsupported by the filesystem, etc.).
+            # The cleanup is in a finally because the fallback can throw too --
+            # on Windows a read-only or locked settings.json fails BOTH the
+            # Replace and the WriteAllText, and the exception then escaped past
+            # the cleanup line, leaving a temp beside the user's settings.json on
+            # every attempt. On macOS and Linux a read-only one never gets here:
+            # Initialize-ReplaceTemp refuses it before the temp exists.
+            try {
+                [System.IO.File]::WriteAllText($Path, $Json, $enc)
+            } finally {
+                if ([System.IO.File]::Exists($tmp)) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
+            }
         }
     } catch {
-        # Best-effort fallback (cross-volume temp, Replace unsupported, etc.).
-        # The cleanup is in a finally because the fallback can throw too -- a
-        # read-only or locked settings.json fails BOTH the Replace and the
-        # WriteAllText, and the exception then escaped past the cleanup line,
-        # leaving a .tstmp beside the user's settings.json on every attempt.
-        try {
-            [System.IO.File]::WriteAllText($Path, $Json, $enc)
-        } finally {
-            if (Test-Path -LiteralPath $tmp) { Remove-Item -LiteralPath $tmp -Force -ErrorAction SilentlyContinue }
-        }
+        throw ("Could not write {0}: {1}" -f $Path, $_.Exception.GetBaseException().Message)
     }
 }
 

@@ -1220,7 +1220,9 @@ function Test-PathIsSymlink {
     file or overwrites it, taking our block with it. Replace also only needs
     write permission on the CONTAINING directory, so it succeeded on a link
     pointing into a read-only nix store -- a permission barrier the module half
-    correctly refuses at.
+    correctly refuses at. On macOS and Linux a regular file had the same
+    exposure, since Replace is a bare rename(2) there; Initialize-ReplaceTemp
+    closes it.
 
     `-Force` on Get-Item is load-bearing, and is the reason this is a function
     rather than an inline test: without it a dotfile on Unix comes back as
@@ -1246,6 +1248,68 @@ function Test-PathIsSymlink {
         return (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq
                 [System.IO.FileAttributes]::ReparsePoint)
     } catch { return $false }
+}
+
+function Initialize-ReplaceTemp {
+    <#
+    .SYNOPSIS
+    Start the temp a temp-plus-Replace writer swaps in as a copy of the file it
+    replaces, after asking the file itself whether it may be written.
+
+    .DESCRIPTION
+    Both atomic writers -- Write-SettingsAtomic here, Write-TextFileAtomic in
+    install.ps1 -- write a temp sibling and swap it in with
+    `[System.IO.File]::Replace`. On Windows that is ReplaceFile, which keeps the
+    replaced file's ACL and refuses a read-only target. On macOS and Linux it is
+    a bare rename(2), and that had two consequences:
+
+    - The file left in place is the temp, created 0666 less the umask, with no
+      ACL or extended attributes. A `$PROFILE` or settings.json made 0600 came
+      back 0644.
+    - rename(2) asks only the DIRECTORY for permission. A file made read-only
+      (chmod 444, chezmoi's `readonly_`) was rewritten and left writable, where
+      every in-place writer in this repo refuses it.
+
+    So off Windows, before the temp exists, this opens the file for writing
+    without truncating it: that refuses exactly what a plain write refuses (mode
+    bits, an ACL deny, the immutable flag, a read-only mount) and lets root
+    through as a plain write would. Opening for writing also takes .NET's
+    advisory lock on Unix, so a file another .NET process holds unshared is
+    refused too -- the answer the in-place writers give. Then it copies the file
+    to the temp with `[System.IO.File]::Copy`, which carries the permission bits
+    (and on macOS the ACL and extended attributes); the writer's WriteAllText
+    then truncates and refills the temp, keeping all of that, and the swap
+    changes only the content. Not Get/SetUnixFileMode: they need .NET 7 and carry
+    no ACL. Not a write in place: the swap is what keeps a reader from ever
+    seeing a half-written file.
+
+    Still lost on Linux: extended attributes and POSIX ACLs (File.Copy carries
+    only the mode there). Owner and group become the writer's, as before.
+
+    Throws an IOException naming the file, with the OS error as its
+    InnerException, so a caller that reports GetBaseException() does not repeat
+    the prefix. A temp the copy left half-written is removed first.
+
+    NOTE: install.ps1 carries a twin, compared token for token by
+    tests/Bootstrap-ModuleSync.Tests.ps1 -- keep them in sync.
+    #>
+    param(
+        [Parameter(Mandatory)][string]$Path,
+        [Parameter(Mandatory)][string]$TempPath
+    )
+    if ((Get-TStylesPlatform) -eq 'Windows') { return }
+    if (-not [System.IO.File]::Exists($Path)) { return }
+    try {
+        [System.IO.File]::Open($Path, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Write,
+                               [System.IO.FileShare]::ReadWrite).Dispose()
+        [System.IO.File]::Copy($Path, $TempPath, $true)
+    } catch {
+        $reason = $_.Exception.GetBaseException()
+        if ([System.IO.File]::Exists($TempPath)) {
+            Remove-Item -LiteralPath $TempPath -Force -ErrorAction SilentlyContinue
+        }
+        throw [System.IO.IOException]::new(("Could not write {0}: {1}" -f $Path, $reason.Message), $reason)
+    }
 }
 
 function Save-FirstTouchBackup {

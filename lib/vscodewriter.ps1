@@ -124,11 +124,9 @@ function Write-VSCodeState {
     # Throws on failure, on purpose: a caller about to touch settings.json has
     # to know its record did not land first. Through Write-SettingsAtomic, so a
     # crash mid-write leaves the old file or the new one, never half of either.
-    #
-    # A .NET exception from inside Write-SettingsAtomic is only
-    # statement-terminating -- with no try/catch around the call it is printed
-    # and the caller's next line still runs, record unsaved -- so any failure is
-    # rethrown here as an error of our own, which stops the caller.
+    # Write-SettingsAtomic's own error names the file and stops a caller with
+    # no try; this used to wrap it for that effect, and then printed the path
+    # twice.
     [CmdletBinding()]
     param([Parameter(Mandatory)][hashtable]$Entries)
 
@@ -141,12 +139,7 @@ function Write-VSCodeState {
             record       = $e.record
         }
     }
-    $path = Get-VSCodeStatePath
-    try {
-        Write-SettingsAtomic -Path $path -Json ($out | ConvertTo-Json -Depth 10)
-    } catch {
-        throw ("Could not write {0}: {1}" -f $path, $_.Exception.GetBaseException().Message)
-    }
+    Write-SettingsAtomic -Path (Get-VSCodeStatePath) -Json ($out | ConvertTo-Json -Depth 10)
 }
 
 function Set-VSCodeStateEntry {
