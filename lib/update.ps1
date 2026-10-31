@@ -1359,7 +1359,8 @@ function Invoke-TerminalStylesUninstall {
     # `tstyles` command could no longer load the module. That left hand-editing
     # ~/.zshrc as the only recovery.
     # The removal superset, not the registration list: shell-init can register
-    # into ~/.profile, and sweeping the narrow list orphaned that block forever.
+    # into ~/.bash_login or ~/.profile, and sweeping the narrow list orphaned
+    # that block forever.
     #
     # Through the same helper `tstyles shell-remove` uses. This loop used to be
     # its own copy of the rule, comparing the four-state status against exactly

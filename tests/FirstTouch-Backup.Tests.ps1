@@ -89,6 +89,68 @@ Describe 'shell-init keeps a copy of the rc file it edits' {
         }
         AfterEach { $script:TStylesDataRoot = $script:savedDataRoot }
 
+        # The ~/.bash_profile shell-init CREATES. Its seed was written by a
+        # second writer, then Register-ShellLoader found an existing file with
+        # no block and copied it as "your original"; after shell-remove left
+        # the seed, every later init copied it again.
+        It 'does not back up the ~/.bash_profile it is creating, for the <label> layout' -ForEach @(
+            @{ label = '.bashrc only';   files = @('.bashrc'); bashrcBaks = 1 }
+            @{ label = 'nothing at all'; files = @();          bashrcBaks = 0 }
+        ) {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            foreach ($f in $files) { [System.IO.File]::WriteAllText((Join-Path $h $f), "# mine`n") }
+            $bp = Join-Path $h '.bash_profile'
+
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                $out = Invoke-TerminalStylesShellInit -HomeDir $h 6>&1 | Out-String -Width 500
+            } finally { $env:SHELL = $prev }
+
+            [System.IO.File]::ReadAllText($bp) | Should -Match 'TerminalStyles BEGIN' -Because 'the create path ran'
+            @(Get-ChildItem -LiteralPath $h -Filter '.bash_profile.bak-*' -Force).Count | Should -Be 0
+            $out | Should -Not -Match ('backed up your original to: ' + [regex]::Escape($bp))
+            @(Get-ChildItem -LiteralPath $h -Filter '.bashrc.bak-*' -Force).Count | Should -Be $bashrcBaks `
+                -Because "the user's own file is still copied"
+        }
+
+        It 'takes away the ~/.bash_profile it made on shell-remove, and backs up nothing on the next init' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $h '.bashrc'), "# mine`n")
+            $bp = Join-Path $h '.bash_profile'
+
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $h *> $null
+                [System.IO.File]::ReadAllText($bp) | Should -Match 'Created by TerminalStyles'
+                Invoke-TerminalStylesShellInit -HomeDir $h -Remove *> $null
+                [System.IO.File]::Exists($bp) | Should -BeFalse `
+                    -Because 'it held nothing but the lines shell-init wrote, and left in place it shadows ~/.bash_login'
+                $out2 = Invoke-TerminalStylesShellInit -HomeDir $h 6>&1 | Out-String -Width 500
+            } finally { $env:SHELL = $prev }
+
+            [System.IO.File]::ReadAllText($bp) | Should -Match 'TerminalStyles BEGIN' -Because 'the second init ran'
+            @(Get-ChildItem -LiteralPath $h -Filter '.bash_profile.bak-*' -Force).Count | Should -Be 0
+            $out2 | Should -Not -Match ('backed up your original to: ' + [regex]::Escape($bp))
+        }
+
+        It 'keeps a ~/.bash_profile that holds anything of the user''s besides the seed' {
+            $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $h -Force | Out-Null
+            $bp = Join-Path $h '.bash_profile'
+            # The bare line users write themselves: never taken for ours.
+            [System.IO.File]::WriteAllText($bp, '[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"' + "`n")
+            Register-ShellLoader -Path $bp | Should -Be 'added'
+
+            Invoke-TerminalStylesShellInit -HomeDir $h -Remove *> $null
+
+            [System.IO.File]::Exists($bp) | Should -BeTrue
+            [System.IO.File]::ReadAllText($bp) | Should -Not -Match 'TerminalStyles BEGIN'
+        }
+
         It 'backs up an existing .zshrc before adding the loader' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null

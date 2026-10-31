@@ -273,7 +273,7 @@ Describe 'shell-init and uninstall agree on where the loader lives' {
             $uninstall | Should -Match 'Get-ShellRcRemovalCandidate'
         }
 
-        It 'the removal list is a superset of the registration list, plus ~/.profile' {
+        It 'the removal list is a superset of the registration list, plus ~/.bash_login and ~/.profile' {
             $h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             New-Item -ItemType Directory -Path $h -Force | Out-Null
 
@@ -285,6 +285,8 @@ Describe 'shell-init and uninstall agree on where the loader lives' {
             }
             $rem | Should -Contain (Join-Path $h '.profile') `
                 -Because 'shell-init registers there when it is the only file login bash reads'
+            $rem | Should -Contain (Join-Path $h '.bash_login') `
+                -Because 'shell-init registers there when it is the file login bash reads'
         }
 
         It 'Get-ShellRcCandidate covers zsh and both bash rc files' {
@@ -653,6 +655,76 @@ Describe 'both rc-removal callers report every file they could not strip' {
             $after = [System.IO.File]::ReadAllText($script:clean, [System.Text.UTF8Encoding]::new($false))
             $after | Should -Not -Match 'TerminalStyles BEGIN'
             $after | Should -Match 'export MINE=1'
+        }
+    }
+}
+
+Describe 'a loader in ~/.bash_login comes back out' {
+    # shell-init now registers in ~/.bash_login when that is the file login bash
+    # reads, so both removal callers have to sweep it. The fixture is planted
+    # inside each It, so the round trip below starts from a clean home.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:h = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:data = Join-Path $script:h 'data'
+            New-Item -ItemType Directory -Path $script:data -Force | Out-Null
+            $script:savedData = $script:TStylesDataRoot
+            $script:TStylesDataRoot = $script:data
+            Mock Get-TStylesDataRoot { $script:data }
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+            Mock Get-PowerShellProfileTarget { @() }
+            Mock Confirm-Action { $true }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It '<caller> takes it out of ~/.bash_login' -ForEach @(
+            @{ caller = 'shell-remove' }
+            @{ caller = 'uninstall' }
+        ) {
+            $bl = Join-Path $script:h '.bash_login'
+            [System.IO.File]::WriteAllText($bl, "# original .bash_login`nexport MINE=1`n", [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $bl | Should -Be 'added' -Because 'the fixture must plant a real block'
+
+            $out = if ($caller -eq 'uninstall') {
+                Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+            } else {
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove 6>&1 | Out-String -Width 500
+            }
+
+            $text = [System.IO.File]::ReadAllText($bl, [System.Text.UTF8Encoding]::new($false))
+            $text | Should -Not -Match 'TerminalStyles BEGIN'
+            $text | Should -Match 'export MINE=1'
+            $out | Should -Match ('removed the loader from ' + [regex]::Escape($bl))
+        }
+
+        It 'leaves login bash reading the ~/.bash_login it found, after init and remove, for the <label> layout' -ForEach @(
+            @{ label = '.bashrc + .bash_login';            files = @('.bashrc', '.bash_login') }
+            @{ label = '.bash_login only';                 files = @('.bash_login') }
+            @{ label = '.bashrc + .bash_login + .profile'; files = @('.bashrc', '.bash_login', '.profile') }
+        ) {
+            foreach ($f in $files) {
+                [System.IO.File]::WriteAllText((Join-Path $script:h $f), "# original $f`nexport MINE=1`n",
+                    [System.Text.UTF8Encoding]::new($false))
+            }
+            $bl = Join-Path $script:h '.bash_login'
+            $before = [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($bl))
+
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Force *> $null
+                [System.IO.File]::ReadAllText($bl, [System.Text.UTF8Encoding]::new($false)) |
+                    Should -Match 'TerminalStyles BEGIN' -Because 'init must have registered the file login bash reads'
+                Invoke-TerminalStylesShellInit -HomeDir $script:h -Remove *> $null
+            } finally { $env:SHELL = $prev }
+
+            $left = @(Get-ChildItem -LiteralPath $script:h -File -Force |
+                Where-Object { [System.IO.File]::ReadAllText($_.FullName) -match 'TerminalStyles BEGIN' } |
+                ForEach-Object { $_.Name })
+            $left -join ', ' | Should -BeNullOrEmpty
+            [System.IO.File]::Exists((Join-Path $script:h '.bash_profile')) | Should -BeFalse
+            [Convert]::ToBase64String([System.IO.File]::ReadAllBytes($bl)) | Should -BeExactly $before
         }
     }
 }

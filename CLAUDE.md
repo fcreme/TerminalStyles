@@ -7,7 +7,7 @@ the things that are non-obvious and have actually cost this project a release.
 ## Sandboxing: overriding the data root is NOT enough
 
 The most important rule in this file. This codebase edits files the user owns and
-that predate it — `~/.zshrc`, `~/.bashrc`, `~/.profile`, `~/.bash_profile`, the
+that predate it — `~/.zshrc`, `~/.bashrc`, `~/.profile`, `~/.bash_profile`, `~/.bash_login`, the
 PowerShell `$PROFILE`, Windows Terminal's `settings.json`, and a VS Code-family
 editor's `settings.json`.
 

@@ -141,7 +141,7 @@ tstyles trash                     # List deleted styles, and how long each one h
 tstyles restore [name]            # Put a deleted style back; never overwrites a live one
 tstyles font [name]               # List coding fonts, or install one and apply it
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to each engine's $PROFILE
-tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zshrc, ~/.bashrc, ~/.bash_profile
+tstyles shell-init                # Style zsh/bash too: add the loader to the rc files those shells read
 tstyles shell-remove              # Remove that zsh/bash loader again
 tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
 tstyles vscode [on|off]           # VS Code: show, allow (on) or undo and stop (off) saving styles to settings.json
@@ -520,7 +520,10 @@ up the palette. The prompt and banner need one extra step:
 tstyles shell-init
 ```
 
-That adds a small loader to `~/.zshrc`, `~/.bashrc` and `~/.bash_profile`. New
+That adds a small loader to `~/.zshrc`, `~/.bashrc` and `~/.bash_profile` — or,
+where your login shell reads `~/.bash_login` or `~/.profile` instead of
+`~/.bash_profile`, to that file — and to `$ZDOTDIR/.zshrc` if you keep zsh config
+there. It creates a missing rc file only when your login shell is zsh or bash. New
 zsh/bash tabs then come up in the full style — palette, window title, banner,
 and the style's prompt — and those shells get a `tstyles` command of their own:
 
