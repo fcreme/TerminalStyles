@@ -1442,7 +1442,18 @@ function Register-ShellLoader {
             $existing = [regex]::Match($content, $pattern, 'Singleline').Value
             if ($existing.Trim() -eq $block.Trim()) { return 'unchanged' }
         }
-        $updated = [regex]::Replace($content, $pattern, $block.Trim(), 'Singleline')
+        # The block goes in as it is. This overload reads its third argument as
+        # a .NET REPLACEMENT string, where `$` is special, and the block carries
+        # the data-root path: a `$_` there put the whole rc file into the quoted
+        # path, `$&`, `$0`, `${0}` and `$+` the old block, `` $` `` and `$'` the
+        # text either side of it, and `$$` wrote a path one `$` short. Each said
+        # 'updated', on the one path that takes no backup, and the five that copy
+        # text compounded on every later run. `$$` is the grammar's own escape
+        # for a literal `$`, so doubling every one leaves nothing to expand. The
+        # append below joins strings and never had this problem;
+        # ConvertTo-WezTermLuaString (lib/wezterm.ps1) met the same grammar from
+        # the backslash side.
+        $updated = [regex]::Replace($content, $pattern, $block.Trim().Replace('$', '$$'), 'Singleline')
         try { [System.IO.File]::WriteAllText($Path, $updated, $enc) } catch { return 'failed' }
         return 'updated'
     }
