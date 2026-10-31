@@ -23,6 +23,13 @@ BeforeAll {
         @{ Name = 'docs/index.html'; Text = (Get-Content (Join-Path $script:Root 'docs/index.html') -Raw) }
     )
 
+    # The wiki pages count too wherever they count at all (the Styles page
+    # opens with one), but are not each required to.
+    . (Join-Path $PSScriptRoot 'Get-DocsText.ps1')
+    $script:CountingPages = @($script:Pages) + @(Get-DocsPage -Root $script:Root |
+        Where-Object { $_.Name -ne 'README.md' } |
+        ForEach-Object { @{ Name = $_.Name; Text = $_.Text } })
+
     $script:Words = @{
         one = 1; two = 2; three = 3; four = 4; five = 5; six = 6; seven = 7; eight = 8
         nine = 9; ten = 10; eleven = 11; twelve = 12; thirteen = 13; fourteen = 14
@@ -50,7 +57,7 @@ Describe 'the README counts the themes it ships' {
         # one sentence only ever guards that sentence.
         $pattern = '(?i)\b(\d+|' + (($script:Words.Keys | Sort-Object) -join '|') + ')\s+themes\b'
         $wrong = @()
-        foreach ($page in $script:Pages) {
+        foreach ($page in $script:CountingPages) {
             foreach ($match in [regex]::Matches($page.Text, $pattern)) {
                 $raw = $match.Groups[1].Value
                 $n = 0
