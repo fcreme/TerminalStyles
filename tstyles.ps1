@@ -5,7 +5,8 @@
 #   * Auto-loads the currently selected style's profile.ps1 on shell startup.
 #
 # All write operations restore on Escape; the original settings.json bytes are
-# snapshotted on entry so a cancel is byte-exact.
+# snapshotted on entry so a cancel is byte-exact -- unless settings.json cannot
+# be written at that moment, which the cancel then says in place of "Reverted.".
 
 #Requires -Version 5.1
 
@@ -1158,7 +1159,7 @@ function Invoke-TerminalStyle {
     # scriptblock's own child scope and never be seen out here. The finally
     # block needs to know whether the revert already happened, and the revert
     # needs to know whether there is anything to revert.
-    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false; VSCodeRestore = $null; VSCodeDone = $false }
+    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false; VSCodeRestore = $null; VSCodeDone = $false; SettingsRestoreError = $null }
 
     # Single choke point for every settings.json write in the picker. Off
     # Windows Terminal this is a no-op, so the loop below reads the same in
@@ -1993,8 +1994,15 @@ function Invoke-TerminalStyle {
         # ONE emit path for both answers, and it is Write-HostOscPacket: the
         # else arm wrote straight to [Console]::Out, which skips the redirected-
         # stream guard that function exists to enforce.
+        #
+        # The settings.json put-back is caught HERE, not in
+        # $restoreOriginalSettings: mid-session (a style with nothing to
+        # preview) that one must still throw and end the picker, or Enter would
+        # confirm one style over another's preview. On the way out, a put-back
+        # that fails must not skip the WezTerm and VS Code restores or the
+        # revert packet; the exit prints the reason in place of "Reverted.".
         $restoreOriginalLook = {
-            & $restoreOriginalSettings
+            try { & $restoreOriginalSettings } catch { $pickerState.SettingsRestoreError = "$_" }
             & $restoreWezTerm
             & $restoreVSCode
             Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$useSettingsFile `
@@ -2051,7 +2059,12 @@ function Invoke-TerminalStyle {
 
         if ($result.Outcome -eq 'cancelled') {
             Clear-Host
-            Write-Host "Reverted." -ForegroundColor Yellow
+            if ($pickerState.SettingsRestoreError) {
+                Show-SettingsRestoreFailure -Reason $pickerState.SettingsRestoreError -SettingsPath $settingsPath `
+                    -By picker -BackupTaken:(-not $backupNote)
+            } else {
+                Write-Host "Reverted." -ForegroundColor Yellow
+            }
             Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
             # On THIS exit too. The check above was paid and its 24-hour stamp
             # written whichever key ends the picker, so printing the notice only
@@ -2312,6 +2325,10 @@ function Invoke-TerminalStyle {
             # Escape already did it.
             if (-not $pickerState.Reverted -and $restoreOriginalLook) {
                 try { & $restoreOriginalLook } catch { }
+                if ($pickerState.SettingsRestoreError) {
+                    Show-SettingsRestoreFailure -Reason $pickerState.SettingsRestoreError -SettingsPath $settingsPath `
+                        -By picker -BackupTaken:(-not $backupNote)
+                }
                 Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
             }
         }

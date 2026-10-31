@@ -996,10 +996,20 @@ function Restore-TuneBaseLook {
     and Windows Terminal watches the file and reloads on the change".
 
     $State is the caller's own hashtable, so the flag survives the scriptblock
-    scopes the tuner calls this from. Returns 'reverted' or 'already' rather
-    than a bool: "it put things back" and "there was nothing left to put back"
-    are different answers, and collapsing a status into a boolean is how this
-    project has lost the difference before.
+    scopes the tuner calls this from. Returns 'reverted', 'already' or 'failed'
+    rather than a bool: "it put things back", "there was nothing left to put
+    back" and "settings.json could not be put back" are different answers, and
+    collapsing a status into a boolean is how this project has lost the
+    difference before.
+
+    A put-back that fails is reported, not thrown: the palette packet, the
+    window title and the scratch cleanup behind it still have to run. The
+    writer's error goes in $State.SettingsRestoreError for the exit to print.
+    Before calling it failed, this reads the file back: the tuner's preview
+    writes swallow their own failures, so a settings.json that could not be
+    written for the whole session never took a preview, and is already as the
+    tuner found it. A read-back that itself fails sets
+    $State.SettingsRestoreUnchecked: the exit then cannot say either way.
 
     -OpenedScheme is the style the user OPENED, not the working base -- on a
     tuned style those are different files. Which packet that implies is
@@ -1015,11 +1025,29 @@ function Restore-TuneBaseLook {
     )
 
     if ($State.Reverted) { return 'already' }
-    if ($UseSettingsFile) { Write-SettingsAtomic -Path $SettingsPath -Json $OriginalJson }
+    $status = 'reverted'
+    if ($UseSettingsFile) {
+        try {
+            Write-SettingsAtomic -Path $SettingsPath -Json $OriginalJson
+        } catch {
+            $reason = "$_"
+            $intact = $false
+            $checked = $true
+            # Read the way the tuner took its snapshot.
+            try {
+                $intact = ([System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)) -ceq $OriginalJson)
+            } catch { $checked = $false }
+            if (-not $intact) {
+                $State.SettingsRestoreError = $reason
+                $State.SettingsRestoreUnchecked = (-not $checked)
+                $status = 'failed'
+            }
+        }
+    }
     Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$UseSettingsFile `
         -HadStartingStyle:($null -ne $OpenedScheme) -StartingScheme $OpenedScheme) | Out-Null
     $State.Reverted = $true
-    return 'reverted'
+    return $status
 }
 
 function Invoke-TerminalStyleTune {
@@ -1471,10 +1499,12 @@ function Invoke-TerminalStyleTune {
     # A hashtable rather than a plain variable, for the reason the picker's
     # $pickerState is one: an assignment inside a scriptblock lands in the
     # scriptblock's own child scope and is never seen out here.
-    $tuneState = @{ Reverted = $false }
+    $tuneState = @{ Reverted = $false; SettingsRestoreError = $null; SettingsRestoreUnchecked = $false }
+    # Answers 'reverted', 'already' or 'failed'; every exit reads it, so a
+    # put-back that failed is never reported as "Reverted.".
     $restoreBaseLook = {
         Restore-TuneBaseLook -State $tuneState -UseSettingsFile:$tuneUsesSettings `
-            -SettingsPath $settingsPath -OriginalJson $originalJson -OpenedScheme $openedScheme | Out-Null
+            -SettingsPath $settingsPath -OriginalJson $originalJson -OpenedScheme $openedScheme
     }
     $showPendingUpdate = {
         if ($pendingUpdate) {
@@ -1553,9 +1583,14 @@ function Invoke-TerminalStyleTune {
                         $confirmed = $true; continue
                     }
                     'Escape' {
-                        & $restoreBaseLook
+                        $revert = & $restoreBaseLook
                         Clear-Host
-                        Write-Host "Reverted." -ForegroundColor Yellow
+                        if ($revert -eq 'failed') {
+                            Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
+                                -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
+                        } else {
+                            Write-Host "Reverted." -ForegroundColor Yellow
+                        }
                         & $showPendingUpdate
                         return
                     }
@@ -1670,8 +1705,14 @@ function Invoke-TerminalStyleTune {
 
         if (-not $saveName) {
             # Treat an aborted save like a cancel: revert and exit.
-            & $restoreBaseLook
-            Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
+            $revert = & $restoreBaseLook
+            if ($revert -eq 'failed') {
+                Write-Host "  Nothing saved." -ForegroundColor Yellow
+                Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
+                    -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
+            } else {
+                Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
+            }
             & $showPendingUpdate
             return
         }
@@ -1691,8 +1732,10 @@ function Invoke-TerminalStyleTune {
         # apply resolves the host terminal itself.
         #
         # $applied gates the finally block's revert, so it has to mean "the style
-        # really went on", not "we reached this line". Apply-StyleDirect's failure
-        # modes are all Write-Error, which is non-terminating: setting $applied
+        # really went on", not "we reached this line". A settings.json write that
+        # fails is not a Write-Error: it throws out of Apply-StyleDirect, which
+        # leaves this try before $applied is set, and the finally reverts. Its
+        # other failure modes are Write-Error, which is non-terminating: setting $applied
         # unconditionally meant a failed apply skipped the OSC reset and left the
         # tuner's preview colors painted over an already-restored settings.json.
         # Filtered on Activity, not just "any error": Apply-StyleDirect's three
@@ -1717,9 +1760,16 @@ function Invoke-TerminalStyleTune {
             # On those two explicit paths this is now a no-op rather than a
             # second write: Restore-TuneBaseLook answers 'already' once
             # $tuneState.Reverted is set, so the safety net stays a safety net.
-            if ($restoreBaseLook) { & $restoreBaseLook }
+            # The title goes back first, as in the picker, and the revert is
+            # guarded, so nothing it throws skips the scratch cleanup below.
             if (Test-ShouldRestoreWindowTitle -Title $originalTitle) {
                 $Host.UI.RawUI.WindowTitle = $originalTitle
+            }
+            $finalRevert = $null
+            if ($restoreBaseLook) { try { $finalRevert = & $restoreBaseLook } catch { } }
+            if ($finalRevert -eq 'failed') {
+                Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
+                    -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
             }
         }
         # Recursive and forced, so prove the target is really under the scratch

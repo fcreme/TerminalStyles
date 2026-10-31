@@ -2,7 +2,9 @@
 # same-directory temp file + atomic replace so a crash/kill mid-write can never
 # leave a truncated settings.json, and never leaves the temp file behind. On
 # macOS and Linux the swap also keeps the file's mode and refuses a file the
-# account cannot write (see Initialize-ReplaceTemp).
+# account cannot write (see Initialize-ReplaceTemp). The temp is per process
+# (<path>.<pid>.tstmp), and a failure is one error of the writer's own, proved
+# to stop a caller with no try in a fresh runspace.
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
@@ -70,7 +72,9 @@ Describe 'Write-SettingsAtomic' {
         It 'leaves no temp file behind' {
             $f = Join-Path $TestDrive 'settings.json'
             Write-SettingsAtomic -Path $f -Json '{"a":1}'
-            Test-Path -LiteralPath "$f.tstmp" | Should -BeFalse
+            # Any temp name, not one literal: a check on a name nothing writes
+            # any more would pass while measuring nothing.
+            @([System.IO.Directory]::GetFiles($TestDrive, 'settings.json*tstmp')).Count | Should -Be 0
         }
 
         It 'replaces an existing file atomically (swaps in a new file, never rewrites in place)' {
@@ -198,6 +202,105 @@ Describe 'Write-SettingsAtomic' {
             [Convert]::ToString([int][System.IO.File]::GetUnixFileMode($f), 8) | Should -Be '600'
             [System.IO.File]::ReadAllText($link, $enc) | Should -BeExactly '{"v":"OLD"}' `
                 -Because 'the mode must cross a real swap, not be kept by a write in place'
+        }
+    }
+}
+
+Describe 'Write-SettingsAtomic when the write fails' {
+    # Pester runs every It inside a try, and a try turns a statement-terminating
+    # .NET error into a thrown one -- so inside an It a caller can never be seen
+    # carrying on past a failed write. An interactive pwsh has no try: there the
+    # caller's next line ran, and apply printed "Style applied" over a file it
+    # never wrote. So the two cases that matter run in a fresh runspace, at its
+    # top level, the way tests/Read-RcFileText.Tests.ps1 proves its read.
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:defs = @(foreach ($n in 'Get-TStylesPlatform', 'Test-PathIsSymlink',
+                                         'Initialize-ReplaceTemp', 'Write-SettingsAtomic') {
+                $sb = (Get-Command $n -CommandType Function).ScriptBlock
+                "function $n {`n$sb`n}"
+            }) -join "`n"
+            $script:quote = { param([string]$s) "'" + $s.Replace("'", "''") + "'" }
+            # Runs $Script after the definitions, at the runspace's top level;
+            # answers the error it threw (or $null) and what it output.
+            $script:runBare = {
+                param([string]$Script)
+                $ps = [powershell]::Create()
+                try {
+                    $good = Join-Path $TestDrive ('ok-' + [guid]::NewGuid().Guid.Substring(0,8) + '.json')
+                    [void]$ps.AddScript($script:defs + "`nWrite-SettingsAtomic -Path " + (& $script:quote $good) +
+                                        " -Json '{}'; [System.IO.File]::ReadAllText(" + (& $script:quote $good) + ")")
+                    $first = @($ps.Invoke())
+                    $first.Count | Should -Be 1 -Because "the definitions must load there (errors: $(@($ps.Streams.Error) -join '; '))"
+                    $first[0] | Should -Be '{}'
+
+                    $ps.Commands.Clear()
+                    [void]$ps.AddScript($Script)
+                    $err = $null; $out = @()
+                    try { $out = @($ps.Invoke()) } catch { $err = $_ }
+                    return [pscustomobject]@{ Error = $err; Output = $out }
+                } finally { $ps.Dispose() }
+            }
+            $script:errText = {
+                param($e)
+                if (-not $e) { return '' }
+                $x = $e.Exception
+                $t = [string]$x.Message
+                if ($x.InnerException) { $t += ' | ' + [string]$x.InnerException.Message }
+                return $t
+            }
+        }
+
+        It 'stops a caller with no try when settings.json can be neither replaced nor rewritten, and names the file' {
+            $folder = Join-Path $TestDrive ([guid]::NewGuid().Guid)
+            $dir = Join-Path $folder 'settings.json'
+            [void][System.IO.Directory]::CreateDirectory($dir)
+
+            $r = & $script:runBare ("Write-SettingsAtomic -Path " + (& $script:quote $dir) + " -Json '{}'; 'CONTINUED'")
+
+            $r.Error | Should -Not -BeNullOrEmpty -Because "a caller with no try must stop (it printed: $($r.Output -join ', '))"
+            (& $script:errText $r.Error).Contains("Could not write $dir") | Should -BeTrue -Because (& $script:errText $r.Error)
+            $r.Output | Should -Not -Contain 'CONTINUED'
+            @([System.IO.Directory]::GetFiles($folder, 'settings.json*tstmp')).Count | Should -Be 0
+        }
+
+        It 'ends at a temp copy it cannot write, before settings.json is touched' {
+            $enc = [System.Text.UTF8Encoding]::new($false)
+            $folder = Join-Path $TestDrive ([guid]::NewGuid().Guid)
+            [void][System.IO.Directory]::CreateDirectory($folder)
+            $f = Join-Path $folder 'settings.json'
+            [System.IO.File]::WriteAllText($f, '{"v":"OLD"}', $enc)
+            $link = Join-Path $folder 'settings.hardlink.json'
+            try { New-Item -ItemType HardLink -Path $link -Target $f -ErrorAction Stop | Out-Null }
+            catch { Set-ItResult -Skipped -Because 'this filesystem cannot make a hard link'; return }
+            # The per-process name, and the one name every writer shared before,
+            # so the case reproduces on either tree. The in-process runspace
+            # shares this process's $PID.
+            foreach ($t in @(('{0}.{1}.tstmp' -f $f, $PID), "$f.tstmp")) {
+                [void][System.IO.Directory]::CreateDirectory($t)
+                [System.IO.Directory]::Exists($t) | Should -BeTrue
+            }
+
+            $r = & $script:runBare ("Write-SettingsAtomic -Path " + (& $script:quote $f) + " -Json '{`"v`":`"NEW`"}'; 'CONTINUED'")
+
+            $r.Error | Should -Not -BeNullOrEmpty -Because "a caller with no try must stop (it printed: $($r.Output -join ', '))"
+            (& $script:errText $r.Error).Contains("Could not write $f") | Should -BeTrue -Because (& $script:errText $r.Error)
+            $r.Output | Should -Not -Contain 'CONTINUED'
+            [System.IO.File]::ReadAllText($f, $enc)    | Should -BeExactly '{"v":"OLD"}'
+            [System.IO.File]::ReadAllText($link, $enc) | Should -BeExactly '{"v":"OLD"}' `
+                -Because 'an in-place write shows through the hard link'
+        }
+
+        It 'names the file when a symlinked settings.json cannot be written through' {
+            $folder = Join-Path $TestDrive ([guid]::NewGuid().Guid)
+            $target = Join-Path $folder 'a-directory'
+            [void][System.IO.Directory]::CreateDirectory($target)
+            $link = Join-Path $folder 'settings.json'
+            try { New-Item -ItemType SymbolicLink -Path $link -Target $target -ErrorAction Stop | Out-Null }
+            catch { Set-ItResult -Skipped -Because 'this platform or account cannot create symlinks'; return }
+
+            { Write-SettingsAtomic -Path $link -Json '{}' } |
+                Should -Throw -ExpectedMessage ([WildcardPattern]::Escape("Could not write $link") + ': *')
         }
     }
 }

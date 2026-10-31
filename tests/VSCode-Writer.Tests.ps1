@@ -137,9 +137,16 @@ Describe 'the VS Code state store' {
             # under a caller with no try of its own, is printed and then stepped
             # over, record unsaved. Only our own words prove the conversion ran.
             # A directory cannot be written as a file, which is how this fails.
-            New-Item -ItemType Directory -Path (Get-VSCodeStatePath) -Force | Out-Null
-            { Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' } |
-                Should -Throw -ExpectedMessage 'Could not write*'
+            # The prefix must appear exactly once: Write-SettingsAtomic now names
+            # the file itself, and a second wrapper here printed it twice.
+            $state = Get-VSCodeStatePath
+            New-Item -ItemType Directory -Path $state -Force | Out-Null
+            $err = $null
+            try { Set-VSCodeStateEntry -Variant 'Code' -Consent 'yes' } catch { $err = $_ }
+            $err | Should -Not -BeNullOrEmpty
+            $msg = [string]$err.Exception.Message
+            $msg.StartsWith("Could not write $state") | Should -BeTrue -Because $msg
+            ([regex]::Matches($msg, 'Could not write ')).Count | Should -Be 1 -Because $msg
         }
 
         It 'changes one editor and leaves the others as they were' {
@@ -1669,7 +1676,17 @@ Describe 'the picker wires the VS Code session in' {
         }
 
         It 'reverts through the one revert block Esc and the finally share' {
-            $script:picker | Should -Match '(?s)\$restoreOriginalLook = \{\s*& \$restoreOriginalSettings\s*& \$restoreWezTerm\s*& \$restoreVSCode'
+            # The settings.json put-back is wrapped in a try there (a failed one
+            # must not skip the rest), so the order is pinned, not the layout.
+            $m = [regex]::Match($script:picker, '(?s)\$restoreOriginalLook = \{(.*?)\n        \}')
+            $m.Success | Should -BeTrue
+            $body = $m.Groups[1].Value
+            $settings = $body.IndexOf('& $restoreOriginalSettings')
+            $wez      = $body.IndexOf('& $restoreWezTerm')
+            $vscode   = $body.IndexOf('& $restoreVSCode')
+            $settings | Should -BeGreaterOrEqual 0
+            $wez      | Should -BeGreaterThan $settings
+            $vscode   | Should -BeGreaterThan $wez
         }
 
         It 'opens the session below the console guard, so nobody is asked into a pipe' {
@@ -1690,7 +1707,12 @@ Describe 'the picker wires the VS Code session in' {
         }
 
         It 'says what Esc did after it says Reverted' {
-            $script:picker | Should -Match '(?s)Write-Host "Reverted\." -ForegroundColor Yellow\s*Show-VSCodeRestoreResult'
+            # The cancelled branch says "Reverted." or why settings.json is not
+            # back, and then what happened to VS Code's file.
+            $m = [regex]::Match($script:picker, "(?s)if \(\`$result\.Outcome -eq 'cancelled'\) \{(.*?)Show-VSCodeRestoreResult")
+            $m.Success | Should -BeTrue
+            $m.Groups[1].Value | Should -Match 'Write-Host "Reverted\." -ForegroundColor Yellow'
+            $m.Groups[1].Value | Should -Match 'Show-SettingsRestoreFailure'
         }
 
         It 'takes the preview back out when an error after Enter skips the commit' {
@@ -1721,7 +1743,7 @@ Describe 'the picker wires the VS Code session in' {
         }
 
         It 'says what Ctrl+C put back' {
-            $script:picker | Should -Match '(?s)try \{ & \$restoreOriginalLook \} catch \{ \}\s*Show-VSCodeRestoreResult' `
+            $script:picker | Should -Match '(?s)try \{ & \$restoreOriginalLook \} catch \{ \}\s*(if \(\$pickerState\.SettingsRestoreError\) \{[^}]*\}\s*)?Show-VSCodeRestoreResult' `
                 -Because 'Ctrl+C and errors leave through the finally, which would otherwise say nothing about a merged or failed restore'
         }
     }
