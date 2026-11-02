@@ -257,7 +257,10 @@ if ($isPwshTarget) {
     $promptStatus = Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt
     if ($promptStatus -eq 'installed') {
         Write-Host "Updated current-style.ps1 with $Style's prompt; `$PROFILE was not changed." -ForegroundColor Green
-        Write-Host "A new tab loads it when its `$PROFILE imports TerminalStyles -- 'tstyles register' adds that line." -ForegroundColor Gray
+        # A clone run by path is not on PSModulePath, so `tstyles` and the
+        # by-name import exist only once the module is installed.
+        Write-Host "A new tab loads it when its `$PROFILE imports TerminalStyles. With the module installed" -ForegroundColor Gray
+        Write-Host "(Install-PSResource TerminalStyles, or install.ps1), 'tstyles register' adds that line." -ForegroundColor Gray
     } elseif ($promptStatus -eq 'removed') {
         Write-Host "Removed current-style.ps1 (the previous style's prompt), so new tabs load no style's prompt." -ForegroundColor Gray
     }

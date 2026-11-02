@@ -66,7 +66,7 @@ if ($splat.ContainsKey('KeepPrompt')) { $splat['KeepPrompt'] = [bool]$splat['Kee
 '@, $script:utf8)
 
     $script:envNames = @('HOME', 'ZDOTDIR', 'LOCALAPPDATA', 'XDG_DATA_HOME', 'XDG_CONFIG_HOME',
-                         'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'TSTYLES_DATA', 'POWERSHELL_TELEMETRY_OPTOUT')
+                         'XDG_CACHE_HOME', 'XDG_STATE_HOME', 'POWERSHELL_TELEMETRY_OPTOUT')
 
     # One apply.ps1 run in its own sandbox. -Seed runs with the data root made
     # and before the child starts.
@@ -87,7 +87,6 @@ if ($splat.ContainsKey('KeepPrompt')) { $splat['KeepPrompt'] = [bool]$splat['Kee
             [Environment]::SetEnvironmentVariable('XDG_CONFIG_HOME', (Join-Path $root 'xdg-config'))
             [Environment]::SetEnvironmentVariable('XDG_CACHE_HOME', (Join-Path $root 'xdg-cache'))
             [Environment]::SetEnvironmentVariable('XDG_STATE_HOME', (Join-Path $root 'xdg-state'))
-            [Environment]::SetEnvironmentVariable('TSTYLES_DATA', (Join-Path $root 'tstyles-data'))
             [Environment]::SetEnvironmentVariable('POWERSHELL_TELEMETRY_OPTOUT', '1')
 
             # The module's own rule, asked with the environment pinned and the
