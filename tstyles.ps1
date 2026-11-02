@@ -2082,7 +2082,6 @@ function Invoke-TerminalStyle {
 
         # Confirmed -- maybe install profile.ps1
         $selectedStyle = $styles[$idx]
-        $styleProfile  = Join-Path $selectedStyle.FullName 'profile.ps1'
 
         # "Is the target a PowerShell profile?" is a Windows Terminal question:
         # it decides whether writing a PowerShell prompt into that WT profile
@@ -2214,25 +2213,10 @@ function Invoke-TerminalStyle {
                                        -StyleDir $selectedStyle.FullName -Kind $termKind)
         }
 
-        # -KeepPrompt means "this style's colors, my prompt". Copying the
-        # style's profile.ps1 over current-style.ps1 is what installs its
-        # prompt, so under -KeepPrompt it must not happen -- the direct-apply
-        # path has always honoured that (see Apply-StyleDirect); the picker
-        # used to overwrite regardless.
-        #
-        # The guard belongs on the INNER condition, exactly as in
-        # Apply-StyleDirect and Apply-StyleNonWT. Hoisting it to the outer `if`
-        # would also skip the elseif, leaving the PREVIOUS style's
-        # current-style.ps1 in place -- which then gets dot-sourced below and
-        # makes Get-CurrentStyleName report the old style. -KeepPrompt's
-        # contract is that current-style.ps1 ends up ABSENT, not stale; the
-        # record fallback at Get-CurrentStyleName exists because of it.
+        # The prompt rule, and why -KeepPrompt must not guard this call:
+        # Set-CurrentStylePrompt.
         if ($isPwshTarget) {
-            if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
-                Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
-            } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
-                Remove-Item -LiteralPath $script:TStylesCurrent -Force
-            }
+            [void](Set-CurrentStylePrompt -StyleDir $selectedStyle.FullName -KeepPrompt:$KeepPrompt)
         }
 
         Clear-Host

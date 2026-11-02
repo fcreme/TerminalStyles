@@ -89,6 +89,16 @@ Describe 'bundled style READMEs describe what they ship' {
         }
     }
 
+    It "<Name>'s README does not say profile.ps1 replaces `$PROFILE" -ForEach $script:StyleCases {
+        # Nothing replaces $PROFILE: every apply path puts the prompt in
+        # current-style.ps1 (Set-CurrentStylePrompt). apply.ps1 used to, and
+        # four style READMEs described that. Scoped to the Includes bullet, so
+        # a README that says profile.ps1 "never replaces $PROFILE" stays legal.
+        $readme = [System.IO.File]::ReadAllText(
+            (Join-Path $Dir 'README.md'), [System.Text.UTF8Encoding]::new($false))
+        $readme | Should -Not -Match '\*\*profile\.ps1\*\*\s*\S+\s*replaces'
+    }
+
     It '<Name> does not deny a file it ships' -ForEach $script:StyleCases {
         # Named for what it measures, which is one direction: a README must not
         # say "No `profile.ps1`" while shipping one. The other direction --

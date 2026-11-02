@@ -108,14 +108,6 @@ Describe 'apply.ps1 routes the merge through the module' {
         $src | Should -Match '-BackgroundImageProvided\s+\$bgProvided'
         $src | Should -Match '\$bgProvided\s*=\s*\$PSBoundParameters\.ContainsKey\('
     }
-
-    It 'writes current-style.ps1 where the module reads it from' {
-        # It used to write beside the script, which only coincides with the data
-        # root for bootstrap installs; on PSGallery the module looked elsewhere.
-        $src = [System.IO.File]::ReadAllText($script:applyPath, [System.Text.UTF8Encoding]::new($false))
-        $src | Should -Match '\$currentStyleDest\s*=\s*\$script:TStylesCurrent'
-        $src | Should -Not -Match "Join-Path\s+\`$repoRoot\s+'current-style\.ps1'"
-    }
 }
 
 Describe 'apply.ps1 still loads standalone' {

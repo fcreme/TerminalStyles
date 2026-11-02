@@ -151,8 +151,8 @@ tstyles eva -KeepPrompt        # eva's look; your prompt stays
 The scriptable `apply.ps1` accepts the same flag (`apply.ps1 -KeepPrompt`,
 with `-NoProfile` kept as an alias). A `-KeepPrompt` apply is still reported by
 `tstyles current` and the `*` in `tstyles list`: detection normally byte-compares
-the installed prompt, which this flag deliberately leaves alone, so it falls back
-to the style record that every apply writes.
+the installed prompt, and this flag installs none, so it falls back to the style
+record that every apply writes.
 
 ### Which profile a style lands on (`-Target`)
 

@@ -7,7 +7,7 @@ with:
 <name>/
 ├── scheme.json        # Windows Terminal color scheme (required)
 ├── theme.json         # profile-level overrides (optional)
-├── profile.ps1        # custom pwsh $PROFILE (optional)
+├── profile.ps1        # PowerShell prompt/banner (optional)
 ├── prompt.sh          # the same prompt for zsh/bash (optional)
 ├── background.gif     # default background image (optional, .png/.jpg/.jpeg also accepted)
 └── README.md          # description (optional)

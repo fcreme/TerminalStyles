@@ -15,7 +15,7 @@ in spirit to a Ghibli / Miyazaki rainscape than a sci-fi terminal.
   Code **regular** weight (not semi-bold; the lighter weight reads
   more contemplative), padding 14, GIF at 0.4 opacity uniformToFill
   centered.
-- **profile.ps1** — replaces `$PROFILE` with:
+- **profile.ps1** — becomes the active prompt (`current-style.ps1`) when the style is applied:
   - 2-line prompt: `[TRAVELER // RAIN] [LOC: <path>]` / `>`
   - Startup banner: a field-journal entry, three lines
   - PSReadLine syntax colors tuned to the palette (no screaming reds)

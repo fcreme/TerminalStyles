@@ -446,13 +446,12 @@ function Test-StyledHost {
 }
 
 function Get-CurrentStyleRecordPath {
-    # Where the "which style is applied" record lives off Windows.
-    #
-    # On Windows Terminal the applied style is recoverable by reading the
-    # colorScheme name back out of settings.json, so no separate record is kept.
-    # Terminals driven by OSC have no such readback -- the escape sequences are
-    # fire-and-forget -- so the choice is recorded here instead. This is also
-    # what the startup re-emit reads to restore colors in a new tab.
+    # Where the "which style is applied" record lives. Every apply writes it,
+    # on Windows Terminal too (Apply-StyleDirect, the picker, apply.ps1):
+    # Get-CurrentStyleName falls back to it when current-style.ps1 has nothing
+    # to byte-compare (-KeepPrompt, or a style with no profile.ps1). Off
+    # Windows Terminal it is also what the startup re-emit reads to restore
+    # colors in a new tab.
     Join-Path $script:TStylesDataRoot 'current-style.json'
 }
 
