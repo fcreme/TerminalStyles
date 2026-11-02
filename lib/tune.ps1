@@ -300,7 +300,11 @@ function Save-TunedStyle {
     # Materializes a tuned style into $DataRoot\styles\$SaveName\:
     #   scheme.json (adjusted colors, name = $SaveName)
     #   theme.json  (base theme + colorScheme/opacity/font overrides)
-    #   profile.ps1 (copied from base if present)
+    #   profile.ps1 (the base's, only when it has one: every byte kept except
+    #               the trailing CR/LF, which is trimmed, and an earlier
+    #               `# tstyles-tuned:` line, which is removed; then one marker
+    #               line. In a UTF-16 or UTF-32 file a code unit that does not
+    #               decode becomes U+FFFD.)
     #   tune.json   (deltas + base name, for re-tuning)
     param(
         [Parameter(Mandatory)]$AdjustedScheme,
@@ -380,21 +384,38 @@ function Save-TunedStyle {
         Remove-Item -LiteralPath $profileDst -Force -ErrorAction SilentlyContinue
     }
     if (Test-Path -LiteralPath $profileSrc) {
-        # Append a per-style marker so the materialized profile is byte-distinct
-        # from the base's (we copied it verbatim). Without this, Get-CurrentStyleName
-        # -- which byte-compares current-style.ps1 against each style's profile.ps1
-        # and returns the alphabetically-first match -- would attribute this tuned
-        # style to its base. The marker is an inert comment (profile is dot-sourced).
-        $profileContent = [System.IO.File]::ReadAllText($profileSrc, [System.Text.UTF8Encoding]::new($false))
+        # The base's own bytes, plus one line: a per-style marker, so the
+        # materialized profile is byte-distinct from the base's. Without it,
+        # Get-CurrentStyleName -- which compares current-style.ps1 against each
+        # style's profile.ps1 and returns the alphabetically-first match -- would
+        # attribute this tuned style to its base. The marker is an inert comment
+        # (profile is dot-sourced).
+        #
+        # Through Read-RcFileText, and written back with its Encoding, because on an
+        # Overwrite the base IS the destination: this reads the whole of a file the
+        # user wrote and writes the whole of it back. Since the tuner shipped in
+        # 0.3.0 this went through UTF-8 both ways: a byte that is not valid UTF-8
+        # -- a profile saved in the ANSI code page -- came back as U+FFFD for good,
+        # and a UTF-8 or UTF-16 byte-order mark was dropped, the mark Windows
+        # PowerShell 5.1 needs to read UTF-8 text in a .ps1.
+        $read = Read-RcFileText -Path $profileSrc
         # Strip any marker a previous save left, so re-tuning appends exactly one
-        # rather than accumulating a line per save. Idempotent either way.
-        $profileContent = [regex]::Replace($profileContent,
+        # rather than accumulating a line per save. Idempotent either way. CR and LF
+        # only: on text read one byte per character a bare TrimEnd() also takes 0x85
+        # and 0xA0, the last byte of a UTF-8 star or a-grave.
+        $profileContent = [regex]::Replace($read.Text,
             '(\r?\n)?^[ \t]*#[ \t]*tstyles-tuned:.*$', '', 'Multiline').TrimEnd("`r", "`n")
         $marker = [Environment]::NewLine + "# tstyles-tuned: $SaveName" + [Environment]::NewLine
-        [System.IO.File]::WriteAllText(
-            (Join-Path $destDir 'profile.ps1'),
-            ($profileContent + $marker),
-            [System.Text.UTF8Encoding]::new($false))
+        # Read one byte per character, the text goes back out the same way, so the
+        # marker goes in as the UTF-8 bytes it has always had. Unconverted, a name
+        # that is not ASCII -- an Overwrite keeps the name of a folder the user
+        # made -- would come out as Latin-1 bytes, and as '?' above U+00FF.
+        if ($read.Encoding.CodePage -eq (Get-RcFileEncoding).CodePage) {
+            $marker = $read.Encoding.GetString([System.Text.UTF8Encoding]::new($false).GetBytes($marker))
+        }
+        # In place, not through a temp and a rename: truncate-and-write keeps the
+        # file's mode and owner and writes through a symlink.
+        [System.IO.File]::WriteAllText($profileDst, ($profileContent + $marker), $read.Encoding)
     }
 
     # The zsh/bash prompt, copied verbatim. It needs no per-style marker: unlike

@@ -1178,9 +1178,10 @@ function Get-ShellRcRemovalCandidate {
 function Get-RcFileEncoding {
     <#
     .SYNOPSIS
-    The encoding a user's rc file or $PROFILE is decoded and written back with,
-    unless it opens with a UTF-16 or UTF-32 byte-order mark, and the one a file
-    this module creates is written in.
+    The encoding a file the user owns -- an rc file, a $PROFILE, a style's
+    profile.ps1 -- is decoded and written back with, unless it opens with a
+    UTF-16 or UTF-32 byte-order mark, and the one a file this module creates is
+    written in.
 
     .DESCRIPTION
     ISO-8859-1 maps every byte 0-255 to one character and back, so decoding a
@@ -1190,7 +1191,10 @@ function Get-RcFileEncoding {
     path, enc) looks for a byte-order mark first and decodes by it whatever enc
     says, so a profile saved as UTF-8 with a BOM, or as UTF-16, came back with
     every character above U+00FF as '?' or an ASCII look-alike, and no BOM. The
-    markers and loader block this module cares about are pure ASCII either way.
+    markers this module looks for are pure ASCII either way. Text a caller
+    adds goes out one byte per character too: Save-TunedStyle converts its
+    marker line to UTF-8 bytes first; the loader writers do not yet, so a data
+    root or module path that is not ASCII lands as ISO-8859-1 bytes.
 
     It used to be UTF-8. Both halves read the WHOLE file and write the WHOLE
     file back, so a single byte that is not valid UTF-8 -- a latin-1 comment, a
@@ -1205,8 +1209,8 @@ function Get-RcFileEncoding {
 function Read-RcFileText {
     <#
     .SYNOPSIS
-    A user's rc file or $PROFILE as text, and the encoding that writes that text
-    back to the same bytes.
+    A file the user owns -- an rc file, a $PROFILE, a style's profile.ps1 -- as
+    text, and the encoding that writes that text back to the same bytes.
 
     .DESCRIPTION
     The one decoder for a file the USER owns. Register-ShellLoader and
@@ -1215,6 +1219,8 @@ function Read-RcFileText {
     whole file back, so they read through this and write with the Encoding it
     returns. The read-only checks that must agree with them about a file --
     Test-ShellLoaderPresent and Test-WezTermStyleWired -- read through it too.
+    So does Save-TunedStyle, for a style's profile.ps1: an Overwrite of a style
+    the user wrote reads that file and writes it back over itself.
     install.ps1 carries a twin, Read-ProfileFileText, for the reason it carries
     Get-ProfileFileEncoding; tests/Bootstrap-ModuleSync.Tests.ps1 compares the
     two token for token.

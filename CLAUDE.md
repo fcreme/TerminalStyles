@@ -105,6 +105,9 @@ the other half in the same change.
   silently corrupting the user's own content. ISO-8859-1 round-trips every byte 0-255,
   but only when the file's RAW BYTES are decoded through it. Read with `Read-RcFileText`
   (install.ps1: `Read-ProfileFileText`) and write back with the `Encoding` it returns.
+  A style's `profile.ps1` counts, the one style file whose text is carried through: a
+  tuner Overwrite reads a hand-made style's `profile.ps1` and writes it back over itself
+  (`Save-TunedStyle`). `scheme.json` and `theme.json` are regenerated from parsed JSON.
   Never use `[System.IO.File]::ReadAllText(path, (Get-RcFileEncoding))`: it looks for a
   byte-order mark first and decodes by it whatever encoding it is handed. A UTF-16 or
   UTF-32 file is decoded and written back in its own encoding, BOM first.
