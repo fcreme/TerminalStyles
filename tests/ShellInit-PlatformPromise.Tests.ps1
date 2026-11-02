@@ -161,7 +161,13 @@ Describe 'shell-init says what it can deliver before it writes anything' {
         AfterEach { $script:TStylesDataRoot = $script:savedRoot }
 
         It 'warns before the first rc file is written, on Windows' {
-            $out = Invoke-TerminalStylesShellInit -Platform 'Windows' -HomeDir $script:home 6>&1 | Out-String -Width 500
+            # SHELL pinned: what an empty home gets depends on the login shell,
+            # and a fish or dash contributor would get nothing written.
+            $prev = $env:SHELL
+            try {
+                $env:SHELL = '/bin/bash'
+                $out = Invoke-TerminalStylesShellInit -Platform 'Windows' -HomeDir $script:home 6>&1 | Out-String -Width 500
+            } finally { $env:SHELL = $prev }
 
             $out | Should -Match 'does not produce a styled zsh/bash tab' `
                 -Because 'the limit belongs where consent is given, not after the files are written'

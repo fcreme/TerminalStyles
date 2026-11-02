@@ -570,9 +570,9 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
             try {
                 $env:SHELL = $Shell
                 if ($PSBoundParameters.ContainsKey('ZDotDir')) {
-                    Invoke-TerminalStylesShellInit -HomeDir $HomeDir -ZDotDir $ZDotDir -Force 6>&1 | Out-String
+                    Invoke-TerminalStylesShellInit -HomeDir $HomeDir -ZDotDir $ZDotDir -Force 6>&1 | Out-String -Width 500
                 } else {
-                    Invoke-TerminalStylesShellInit -HomeDir $HomeDir -Force 6>&1 | Out-String
+                    Invoke-TerminalStylesShellInit -HomeDir $HomeDir -Force 6>&1 | Out-String -Width 500
                 }
             } finally { $env:SHELL = $prev }
         }
@@ -586,8 +586,8 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
             #
             # A DIRECTORY where .bashrc should be, between .zshrc and
             # .bash_profile in Get-ShellRcCandidate's order: ReadAllBytes refuses
-            # one on every platform, with no chmod or ACL. Not InitAs, whose bare
-            # Out-String wraps a long path on 5.1.
+            # one on every platform, with no chmod or ACL. Not InitAs: this one
+            # runs without -Force.
             $h = script:New-Home @('.zshrc', '.bash_profile')
             $bashrc = Join-Path $h '.bashrc'
             New-Item -ItemType Directory -Path $bashrc -Force | Out-Null
@@ -720,12 +720,11 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
 
         # THE CLOSING HINT, for a login shell that is neither bash nor zsh.
         #
-        # $loginShell answers 'bash' for every $env:SHELL it does not recognise,
-        # and the REGISTRATION is right to follow it: the block written into
-        # ~/.profile is POSIX (`if [ -r '...' ]; then . '...'; fi`) and a dash or
-        # ksh login shell reads that file -- shell/tstyles.sh's header describes
-        # exactly this user. The HINT reused the same answer and was wrong
-        # twice: it named ~/.bashrc, which dash never opens, with `source`,
+        # Get-LoginShell answers 'sh' for dash and the ksh family, and the
+        # registration follows it into ~/.profile: the block is POSIX
+        # (`if [ -r '...' ]; then . '...'; fi`) and that is the file such a login
+        # shell reads -- shell/tstyles.sh's header describes exactly this user.
+        # The HINT, when it reused the bash answer, was wrong twice: it named ~/.bashrc, which dash never opens, with `source`,
         # which dash does not have (measured on this machine:
         # `echo 'source /dev/null' | /bin/dash` -> "source: not found", while
         # /bin/ksh accepts the verb and still never reads ~/.bashrc).
@@ -753,10 +752,9 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
         }
 
         It 'says nothing was written when no file a dash login shell reads was' {
-            # No ~/.profile in this layout, so the bash rescue seeds a
-            # ~/.bash_profile and registers ~/.bashrc -- two files dash will
-            # never open. "Open a new tab to pick it up" would be false for this
-            # user, and naming either file would be worse.
+            # No ~/.profile in this layout: ~/.bashrc is registered, a file dash
+            # will never open. "Open a new tab to pick it up" would be false for
+            # this user, and naming that file would be worse.
             $h   = script:New-Home @('.bashrc')
             $out = script:InitAs '/bin/dash' $h
 
@@ -781,6 +779,136 @@ Describe 'shell-init reaches the shell the user actually logs in to' {
 
             [System.IO.File]::Exists((Join-Path $h '.zshrc')) | Should -BeFalse `
                 -Because 'they log into bash; a zsh rc file is not ours to create'
+        }
+
+        # BASH'S OWN ORDER. Login bash reads the first of ~/.bash_profile,
+        # ~/.bash_login and ~/.profile that exists, and stops. Both branches
+        # that created or chose a login file asked only about ~/.profile, so a
+        # ~/.bash_login was shadowed by a new ~/.bash_profile, or passed over for
+        # a ~/.profile login bash never opens.
+        It 'keeps login bash reading ~/.bash_login, for the <label> layout' -ForEach @(
+            @{ label = '.bash_login only';      files = @('.bash_login') }
+            @{ label = '.bashrc + .bash_login'; files = @('.bashrc', '.bash_login') }
+        ) {
+            $h = script:New-Home $files
+            script:InitAs '/bin/bash' $h | Out-Null
+
+            [System.IO.File]::Exists((Join-Path $h '.bash_profile')) | Should -BeFalse `
+                -Because 'a new ~/.bash_profile would be read instead of ~/.bash_login'
+            script:RcText (Join-Path $h '.bash_login') | Should -Match 'TerminalStyles BEGIN'
+            script:RcText (Join-Path $h '.bash_login') | Should -Match '# original \.bash_login'
+        }
+
+        It 'puts the loader in ~/.bash_login, not in the ~/.profile login bash never opens' {
+            $h = script:New-Home @('.bashrc', '.bash_login', '.profile')
+            script:InitAs '/bin/bash' $h | Out-Null
+
+            script:RcText (Join-Path $h '.bash_login') | Should -Match 'TerminalStyles BEGIN'
+            script:RcText (Join-Path $h '.profile') | Should -Not -Match 'TerminalStyles BEGIN'
+            [System.IO.File]::Exists((Join-Path $h '.bash_profile')) | Should -BeFalse
+        }
+
+        It 'registers the file a <label> login shell reads even with no ~/.bashrc' -ForEach @(
+            @{ label = 'dash'; shell = '/bin/dash'; files = @('.zshrc', '.profile');    login = '.profile' }
+            @{ label = 'bash'; shell = '/bin/bash'; files = @('.zshrc', '.bash_login'); login = '.bash_login' }
+        ) {
+            $h = script:New-Home $files
+            script:InitAs $shell $h | Out-Null
+
+            script:RcText (Join-Path $h $login) | Should -Match 'TerminalStyles BEGIN'
+            [System.IO.File]::Exists((Join-Path $h '.bash_profile')) | Should -BeFalse
+        }
+
+        It 'gives the ~/.bash_profile it creates in an empty home the commented seed, and says it created it' {
+            $h = script:New-Home @()
+            $out = script:InitAs '/bin/bash' $h
+
+            $bp = script:RcText (Join-Path $h '.bash_profile')
+            $bp | Should -Match 'Created by TerminalStyles'
+            $bp | Should -Match '\. "\$HOME/\.bashrc"'
+            $bp | Should -Match 'TerminalStyles BEGIN'
+            $out | Should -Match ('Created ' + [regex]::Escape((Join-Path $h '.bash_profile')))
+        }
+
+        It 'takes a bash whose path contains zsh for bash' {
+            $h = script:New-Home @('.bashrc')
+            script:InitAs '/opt/zsh-tools/bin/bash' $h | Out-Null
+
+            [System.IO.File]::Exists((Join-Path $h '.zshrc')) | Should -BeFalse
+            script:RcText (Join-Path $h '.bash_profile') | Should -Match 'TerminalStyles BEGIN'
+        }
+
+        # A LOGIN SHELL THAT IS NEITHER. The writes took pwsh, fish and tcsh for
+        # bash (inventing a ~/.bash_profile, registering ~/.profile) and the
+        # closing line took them for a POSIX sh.
+        It 'creates no file for a <leaf> login shell in an empty home' -ForEach @(
+            @{ shell = '/usr/local/bin/pwsh';    leaf = 'pwsh' }
+            @{ shell = '/opt/homebrew/bin/fish'; leaf = 'fish' }
+            @{ shell = '/bin/tcsh';              leaf = 'tcsh' }
+        ) {
+            $h = script:New-Home @()
+            $out = script:InitAs $shell $h
+
+            $out | Should -Match ('Your login shell, ' + $leaf + ', is not zsh or bash') -Because 'the run reached its last line'
+            @(Get-ChildItem -LiteralPath $h -Force).Count | Should -Be 0
+            $out | Should -Not -Match 'Open a new tab'
+        }
+
+        It 'registers what exists, invents no login file, and names a zsh or bash file to source, for a <leaf> login shell' -ForEach @(
+            @{ shell = '/usr/local/bin/pwsh';    leaf = 'pwsh' }
+            @{ shell = '/opt/homebrew/bin/fish'; leaf = 'fish' }
+            @{ shell = '/bin/tcsh';              leaf = 'tcsh' }
+        ) {
+            $h = script:New-Home @('.zshrc', '.bashrc')
+            $out = script:InitAs $shell $h
+
+            script:RcText (Join-Path $h '.zshrc')  | Should -Match 'TerminalStyles BEGIN'
+            script:RcText (Join-Path $h '.bashrc') | Should -Match 'TerminalStyles BEGIN'
+            [System.IO.File]::Exists((Join-Path $h '.bash_profile')) | Should -BeFalse
+            $out | Should -Match ('Your login shell is ' + $leaf + ', which is not zsh or bash')
+            $out | Should -Match 'run:\s+source ~[\\/]\.zshrc'
+            $out | Should -Not -Match 'loader needs your'
+        }
+
+        It 'does not promise bash to a <leaf> login shell when only a zsh rc was written' -ForEach @(
+            @{ shell = '/usr/local/bin/pwsh'; leaf = 'pwsh' }
+        ) {
+            $h = script:New-Home @('.zshrc')
+            $out = script:InitAs $shell $h
+
+            $out | Should -Match ('Your login shell is ' + $leaf) -Because 'the run reached its last line'
+            $out | Should -Not -Match '(?i)\bbash you start' -Because 'no bash rc was written'
+            $out | Should -Match 'zsh you start'
+        }
+
+        It 'leaves ~/.profile alone for a <leaf> login shell' -ForEach @(
+            @{ shell = '/usr/local/bin/pwsh';    leaf = 'pwsh' }
+            @{ shell = '/opt/homebrew/bin/fish'; leaf = 'fish' }
+            @{ shell = '/bin/tcsh';              leaf = 'tcsh' }
+        ) {
+            $h = script:New-Home @('.bashrc', '.profile')
+            script:InitAs $shell $h | Out-Null
+
+            script:RcText (Join-Path $h '.profile') | Should -Not -Match 'TerminalStyles BEGIN'
+            script:RcText (Join-Path $h '.bashrc')  | Should -Match 'TerminalStyles BEGIN' -Because 'the layout was registered'
+        }
+
+        It 'creates no bash file for a dash login shell, for the <label> layout' -ForEach @(
+            @{ label = '.bashrc only';   files = @('.bashrc');  absent = @('.bash_profile') }
+            @{ label = 'nothing at all'; files = @();           absent = @('.bashrc', '.bash_profile') }
+            @{ label = '.profile only';  files = @('.profile'); absent = @('.bashrc', '.bash_profile') }
+        ) {
+            $h = script:New-Home $files
+            $out = script:InitAs '/bin/dash' $h
+
+            foreach ($f in $absent) {
+                [System.IO.File]::Exists((Join-Path $h $f)) | Should -BeFalse -Because "dash never reads $f"
+            }
+            if ($files -contains '.profile') {
+                script:RcText (Join-Path $h '.profile') | Should -Match 'TerminalStyles BEGIN'
+            } else {
+                $out | Should -Match '(?i)nothing was written to a file dash reads' -Because 'the run reached its end'
+            }
         }
     }
 }
@@ -905,7 +1033,9 @@ Describe 'Register-ShellLoader refuses a BEGIN with no matching END' {
 
         It 'gives the same answer as Unregister-ShellLoader on the same bytes' {
             # One file, one state, one name for it. The status vocabulary exists
-            # so the two halves of the pair cannot disagree about what happened.
+            # so the two halves of the pair cannot disagree about what happened
+            # -- about what the bytes say, that is: a file neither half can read
+            # is named differently on purpose (see Register-ShellLoader's header).
             $status = Register-ShellLoader -Path $script:rc
             $status | Should -Be (Unregister-ShellLoader -Path $script:rc)
         }

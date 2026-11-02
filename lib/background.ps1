@@ -84,7 +84,7 @@ function Get-StyleBackgroundAbsence {
     the background, on the one command whose entire purpose is the background.
 
     Three answers rather than a boolean, for the reason Unregister-ShellLoader
-    returns four:
+    returns a status:
 
       absent       every extension answered 404. The style ships no image.
       unreachable  the network did not answer. Nothing is known about the image.

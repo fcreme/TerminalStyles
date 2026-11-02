@@ -540,7 +540,7 @@ function Show-MissingBackgroundForNewWindow {
     # retrying, and "no marker" means the cache could not even be written, which
     # is the user's disk rather than their network. Collapsing them into one
     # blanket line would be the boolean this project has already been burned by
-    # -- see Unregister-ShellLoader's removed/none/malformed/failed.
+    # -- see Unregister-ShellLoader's statuses.
     param(
         [Parameter(Mandatory)][string]$StyleName,
         [Parameter(Mandatory)][string]$StyleDir

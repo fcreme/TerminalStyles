@@ -116,6 +116,15 @@ Describe 'Get-UninstallShellRcTarget' {
               ForEach-Object { Split-Path $_ -Leaf }) | Should -Be @('.profile')
         }
 
+        It 'names ~/.bash_login, which the registration list deliberately omits' {
+            # Projected before .Path: member access on an empty result is one
+            # $null, and Split-Path then throws instead of failing the assertion.
+            script:New-Rc $script:h '.bash_login' -WithBlock | Out-Null
+
+            @(Get-UninstallShellRcTarget -HomeDir $script:h | ForEach-Object { Split-Path $_.Path -Leaf }) |
+                Should -Be @('.bash_login')
+        }
+
         It 'names nothing when no rc file carries a block' {
             script:New-Rc $script:h '.zshrc'  | Out-Null
             script:New-Rc $script:h '.bashrc' | Out-Null
@@ -192,6 +201,19 @@ Describe 'the uninstall consent listing names what it will change' {
             $rc = script:New-Rc $script:h '.profile' -WithBlock
             $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
             $out | Should -Match ([regex]::Escape($rc))
+        }
+
+        It 'says it will delete a ~/.bash_profile shell-init created, and only that one' {
+            $bp = Join-Path $script:h '.bash_profile'
+            [System.IO.File]::WriteAllText($bp, (Get-BashLoginSeed), [System.Text.UTF8Encoding]::new($false))
+            Register-ShellLoader -Path $bp | Should -Be 'added'
+            $rc = script:New-Rc $script:h '.zshrc' -WithBlock
+
+            $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+            $out | Should -Match ([regex]::Escape($bp) + '\s+\(and delete it: shell-init created it')
+            ([regex]::Matches($out, 'and delete it')).Count | Should -Be 1 -Because "the user's own .zshrc is only stripped"
+            [System.IO.File]::Exists($bp) | Should -BeTrue -Because 'consent was refused'
         }
 
         It 'says nothing about shell rc files when none carry a block' {
@@ -308,6 +330,15 @@ Describe 'help describes the files these commands really touch' {
                       Where-Object Name -eq 'shell-init').Detail -join ' '
                 $d | Should -Match '~/\.profile' `
                     -Because "shell-init can write ~/.profile on $platform, so the topic must name it"
+            }
+        }
+
+        It 'shell-init help names ~/.bash_login, which it can write to' {
+            foreach ($platform in @('MacOS', 'Linux')) {
+                $d = (Get-TerminalStyleHelpData -Platform $platform |
+                      Where-Object Name -eq 'shell-init').Detail -join ' '
+                $d | Should -Match '~/\.bash_login' `
+                    -Because "shell-init can write ~/.bash_login on $platform, so the topic must name it"
             }
         }
     }
