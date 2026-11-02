@@ -6,18 +6,28 @@ menu), there's a direct script:
 ```powershell
 # apply.ps1 ships inside the module, whose location differs by install
 # method (and changes with every update on a PSGallery install), so ask
-# the module where it is rather than hard-coding a path:
-$base = Split-Path (Get-Module -ListAvailable TerminalStyles |
-                    Sort-Object Version -Descending |
-                    Select-Object -First 1).Path -Parent
+# the module where it is rather than hard-coding a path. Ask the LOADED
+# module first: a bootstrap install is not on PSModulePath, so
+# Get-Module -ListAvailable cannot see it.
+$ts = Get-Module TerminalStyles | Select-Object -First 1
+if (-not $ts) {
+    $ts = Get-Module -ListAvailable TerminalStyles | Sort-Object Version -Descending | Select-Object -First 1
+}
+# The last fallback is a Windows bootstrap install, in a session without the loader.
+$base = if ($ts) { $ts.ModuleBase } else { Join-Path $env:LOCALAPPDATA 'TerminalStyles' }
 pwsh -File (Join-Path $base 'apply.ps1') -Style umbrella -Target "PowerShell" -BackgroundImage "C:\img.gif"
 ```
 
-`apply.ps1` is the same logic as the interactive picker but driven
-entirely by flags. It writes a timestamped `settings.json.bak-<timestamp>`
-(and a `$PROFILE.bak-<timestamp>` when overwriting one) before applying,
-keeping a full audit trail of every run. See `apply.ps1 -?` for the
-full parameter list.
+`apply.ps1` is the flag-driven way to apply a style to Windows Terminal.
+Like `tstyles <name>` there, it puts the style's scheme and theme into
+`settings.json`, and, for a PowerShell profile or `defaults`, its prompt
+into `current-style.ps1` (none with `-KeepPrompt`); it records the style
+for `tstyles current`. It never edits `$PROFILE`: a new tab shows the
+prompt when its `$PROFILE` imports TerminalStyles (the line in
+[Install](Install.md#install), which `tstyles register` adds). Where `tstyles` rolls
+one `settings.json.bak`, it takes a timestamped
+`settings.json.bak-<timestamp>` before each change, keeping a full audit
+trail of every run. See `apply.ps1 -?` for the full parameter list.
 
 It edits the `settings.json` of the Windows Terminal it runs in, as
 `tstyles` does. Run outside one — from a scheduled task, say — on a machine

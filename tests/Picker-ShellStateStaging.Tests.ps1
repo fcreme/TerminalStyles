@@ -188,38 +188,93 @@ Describe 'the picker stages shell state on confirm' {
     }
 }
 
-Describe 'the picker honours -KeepPrompt' {
+Describe 'every apply path takes the prompt rule from Set-CurrentStylePrompt' {
+    # One rule, four places: the picker, Apply-StyleDirect, Apply-StyleNonWT and
+    # apply.ps1. Each used to write it out inline, and apply.ps1's copy drifted:
+    # it put -KeepPrompt on the OUTER guard, so the previous style's
+    # current-style.ps1 survived, got dot-sourced at every import, and
+    # Get-CurrentStyleName reported the old style. The rule now lives in the
+    # helper; these pin that every path calls it, and calls it unguarded.
 
-    It 'guards the current-style.ps1 COPY on -KeepPrompt' {
-        # -KeepPrompt means "this style's colors, my prompt". Copying the style's
-        # profile.ps1 over current-style.ps1 is exactly what installs its prompt,
-        # so the picker doing it unconditionally made the flag a no-op there --
-        # while the direct-apply path honoured it.
-        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
-        $fn.Extent.Text | Should -Match '-not\s+\$KeepPrompt\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$styleProfile\)'
-    }
-
-    It 'does NOT hoist the guard above the elseif that clears a stale file' {
-        # The guard belongs on the inner condition. Hoisted to the outer `if`
-        # it also skips `elseif { Remove-Item $script:TStylesCurrent }`, so the
-        # PREVIOUS style's current-style.ps1 survives, gets dot-sourced, and
-        # Get-CurrentStyleName then reports the old style -- a worse bug than
-        # the one the guard was added to fix, because -KeepPrompt's contract is
-        # that the file ends up ABSENT rather than stale.
-        $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
-        $fn.Extent.Text | Should -Not -Match '\$isPwshTarget\s+-and\s+-not\s+\$KeepPrompt'
-    }
-
-    It 'shapes the guard the same way both direct-apply paths do' {
-        # Apply-StyleDirect and Apply-StyleNonWT are the reference. Pin all
-        # three to one shape so the picker cannot drift from them again.
-        foreach ($name in 'Invoke-TerminalStyle', 'Apply-StyleDirect', 'Apply-StyleNonWT') {
-            $f = script:Get-FunctionAst -Name $name
-            $f | Should -Not -BeNullOrEmpty -Because "$name should exist"
-            $f.Extent.Text |
-                Should -Match '-not\s+\$KeepPrompt\s+-and\s+\(Test-Path\s+-LiteralPath\s+\$styleProfile\)' `
-                -Because "$name must guard the copy, not the whole block"
+    BeforeAll {
+        $repoRoot = Split-Path $PSScriptRoot -Parent
+        $script:applyAst = [System.Management.Automation.Language.Parser]::ParseFile(
+            (Join-Path $repoRoot 'apply.ps1'), [ref]$null, [ref]$null)
+        $script:callSites = @(
+            @{ Name = 'Invoke-TerminalStyle'; Ast = (script:Get-FunctionAst -Name 'Invoke-TerminalStyle') }
+            @{ Name = 'Apply-StyleDirect';    Ast = (script:Get-FunctionAst -Name 'Apply-StyleDirect') }
+            @{ Name = 'Apply-StyleNonWT';     Ast = (script:Get-FunctionAst -Name 'Apply-StyleNonWT') }
+            @{ Name = 'apply.ps1';            Ast = $script:applyAst }
+        )
+        $script:promptCalls = {
+            param($Ast)
+            @($Ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Set-CurrentStylePrompt' }, $true))
         }
+    }
+
+    It 'calls it with -StyleDir and -KeepPrompt in each of the four' {
+        $script:callSites.Count | Should -Be 4
+        foreach ($site in $script:callSites) {
+            $site.Ast | Should -Not -BeNullOrEmpty -Because "$($site.Name) should exist"
+            $calls = & $script:promptCalls $site.Ast
+            $calls.Count | Should -BeGreaterThan 0 -Because "$($site.Name) must take the rule from the helper"
+            foreach ($c in $calls) {
+                $params = @($c.CommandElements |
+                    Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] } |
+                    ForEach-Object { $_.ParameterName })
+                $params | Should -Contain 'StyleDir'
+                $params | Should -Contain 'KeepPrompt'
+            }
+        }
+    }
+
+    It 'does NOT hoist the -KeepPrompt guard around the call in any of the four' {
+        # The guard belongs inside the helper, on the copy. Hoisted to an `if`
+        # around the call it also skips the removal, so the PREVIOUS style's
+        # current-style.ps1 survives -- the drift apply.ps1 shipped with.
+        # -KeepPrompt's contract is that the file ends up ABSENT, not stale.
+        $checked = 0
+        foreach ($site in $script:callSites) {
+            foreach ($c in (& $script:promptCalls $site.Ast)) {
+                # The conditions that gate the call: its own clause's and every
+                # clause before it (all of them, for a call in the else). A
+                # later elseif beside the call does not gate it.
+                $child = $c; $p = $c.Parent
+                while ($p) {
+                    if ($p -is [System.Management.Automation.Language.IfStatementAst]) {
+                        foreach ($clause in $p.Clauses) {
+                            $clause.Item1.Extent.Text | Should -Not -Match 'KeepPrompt' `
+                                -Because "$($site.Name) must not skip the call under -KeepPrompt"
+                            if ($clause.Item2 -eq $child) { break }
+                        }
+                    }
+                    $child = $p; $p = $p.Parent
+                }
+                $checked++
+            }
+        }
+        $checked | Should -BeGreaterOrEqual 4 -Because 'the check must have call sites to look at'
+    }
+
+    It 'leaves no copy to current-style.ps1 outside the helper' {
+        # A fifth inline copy of the rule is how the next drift would start.
+        $files = @($script:modulePaths) + @(Join-Path (Split-Path $PSScriptRoot -Parent) 'apply.ps1')
+        $owners = foreach ($f in $files) {
+            $a = [System.Management.Automation.Language.Parser]::ParseFile($f, [ref]$null, [ref]$null)
+            $copies = @($a.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'Copy-Item' -and $n.Extent.Text -match 'TStylesCurrent' }, $true))
+            foreach ($c in $copies) {
+                $scope = $c.Parent
+                while ($scope -and -not ($scope -is [System.Management.Automation.Language.FunctionDefinitionAst])) {
+                    $scope = $scope.Parent
+                }
+                if ($scope) { $scope.Name } else { '<file scope>' }
+            }
+        }
+        (@($owners | Sort-Object -Unique) -join ',') | Should -BeExactly 'Set-CurrentStylePrompt'
     }
 }
 

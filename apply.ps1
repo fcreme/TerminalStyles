@@ -8,8 +8,10 @@
 #   pwsh -File .\apply.ps1 -Style kitty -Target "PowerShell" -KeepPrompt
 #   pwsh -File .\apply.ps1 -Style umbrella -Target "PowerShell" -SettingsPath "<settings.json>"   # choose the file yourself
 #
-# Always backs up settings.json (and $PROFILE if overwriting one) before
-# making changes.
+# Backs up settings.json, timestamped, before every change to it. Never edits
+# $PROFILE: like `tstyles <name>`, it puts the style's prompt in
+# current-style.ps1 in the data root, which a tab loads when its $PROFILE
+# imports TerminalStyles.
 
 #Requires -Version 5.1
 
@@ -19,7 +21,8 @@ param(
     [string]$Target,
     [string]$BackgroundImage,
     [string]$SettingsPath,
-    # Apply visuals but not the style's prompt/banner. -NoProfile is the
+    # Apply visuals but not the style's prompt/banner: current-style.ps1 is
+    # removed, so no style's prompt loads in new tabs. -NoProfile is the
     # original name, kept as an alias for back-compat.
     [Alias('NoProfile')]
     [switch]$KeepPrompt
@@ -43,6 +46,12 @@ $ErrorActionPreference = 'Stop'
 #   where that directory belongs to the installed module. It also wrote the old
 #   undated marker format, which 0.8.6 reads as expired, so the two had diverged
 #   on where the cache lives AND what a marker means.
+#
+#   The prompt step never got the module's inner-guard fix: -KeepPrompt sat on
+#   the outer `if`, so it skipped removing the previous style's
+#   current-style.ps1, and "has a loader" was decided by the BEGIN marker
+#   alone, so a $PROFILE importing TerminalStyles by hand was replaced. It is
+#   Set-CurrentStylePrompt now, and it never writes $PROFILE.
 #
 # $TStylesNoAutoLoad keeps the load from re-emitting the currently applied
 # style's palette, which would repaint the terminal with the old style just
@@ -133,8 +142,9 @@ $settings = ConvertFrom-JsoncText ([System.IO.File]::ReadAllText($SettingsPath, 
 # refuse.
 $profileNames = @((Get-WTProfileShape -Settings $settings).Available)
 if (-not $profileNames.Count) {
-    # Asked before the prompt, because a menu of nothing is not a question.
-    throw (Get-WTTargetNotFoundMessage -ResolvedTarget $null -TargetName $Target)
+    # Asked before the prompt, because a menu of nothing is not a question --
+    # and asked of the resolver, so the refusal can say which shape it is.
+    throw (Get-WTTargetNotFoundMessage -ResolvedTarget (Resolve-WTProfileTarget -Settings $settings -TargetName $Target) -TargetName $Target)
 }
 if (-not $Target) {
     $Target = Read-Choice 'Which Windows Terminal profile to apply this style to?' $profileNames -Flag '-Target'
@@ -223,64 +233,45 @@ if ($payload.Ok) {
     Write-Host "'$Style' ships no theme.json, so settings.json was not changed." -ForegroundColor DarkGray
 }
 
-# --- Install profile.ps1 (if applicable) ---
-$profilePs1 = Join-Path $styleDir 'profile.ps1'
-$hasProfile = Test-Path -LiteralPath $profilePs1
-if ($hasProfile -and -not $KeepPrompt) {
-    $isPwshTarget = $false
-    if ($Target -eq 'defaults') {
+# --- The prompt ---
+# Through Set-CurrentStylePrompt, the helper every apply path uses; this script
+# never writes $PROFILE. It used to replace any $PROFILE without the BEGIN
+# marker -- the README's own hand-added Import-Module line included -- with the
+# style's profile.ps1, and it was the RUNNING engine's $PROFILE, not the
+# target's. current-style.ps1 needs no such choice: both engines' loaders read
+# it. A tab shows the prompt when its $PROFILE imports TerminalStyles.
+$isPwshTarget = $false
+if ($Target -eq 'defaults') {
+    $isPwshTarget = $true
+} else {
+    # Shared resolver, as in the module's own apply path.
+    $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Entry
+    $cmd = "$($entry.commandline)"
+    $src = "$($entry.source)"
+    if ($src -eq 'Windows.Terminal.PowershellCore' -or $cmd -match '(?i)\bpwsh\.exe\b' -or $cmd -match '(?i)\bpowershell\.exe\b') {
         $isPwshTarget = $true
-    } else {
-        # Shared resolver, as in the module's own apply path.
-        $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Entry
-        $cmd = "$($entry.commandline)"
-        $src = "$($entry.source)"
-        if ($src -eq 'Windows.Terminal.PowershellCore' -or $cmd -match '(?i)\bpwsh\.exe\b' -or $cmd -match '(?i)\bpowershell\.exe\b') {
-            $isPwshTarget = $true
-        }
-    }
-
-    if ($isPwshTarget) {
-        $profileDest = $PROFILE
-        $destDir = Split-Path $profileDest -Parent
-        if (-not (Test-Path -LiteralPath $destDir)) {
-            New-Item -ItemType Directory -Force -Path $destDir | Out-Null
-        }
-
-        # If $PROFILE already contains the tstyles loader block (from
-        # install.ps1), this user is on the loader-managed install path:
-        # writing the theme's profile.ps1 over $PROFILE would obliterate
-        # the loader and break `tstyles`, live-reload, and update-check.
-        # Write to current-style.ps1 instead -- the same target the
-        # interactive picker uses for live reload.
-        $hasLoader = $false
-        if (Test-Path -LiteralPath $profileDest) {
-            $profileContent = [System.IO.File]::ReadAllText($profileDest, [System.Text.UTF8Encoding]::new($false))
-            if ($profileContent -match '(?m)^# =+ TerminalStyles BEGIN =+') {
-                $hasLoader = $true
-            }
-        }
-
-        if ($hasLoader) {
-            # The data root, which is where the module READS it from. This used
-            # to write beside the script, which only coincides for bootstrap
-            # installs -- on PSGallery the module looked somewhere else entirely.
-            $currentStyleDest = $script:TStylesCurrent
-            Copy-Item -LiteralPath $profilePs1 -Destination $currentStyleDest -Force
-            Write-Host "Updated current-style.ps1 (tstyles loader detected; `$PROFILE left intact)" -ForegroundColor Green
-        } else {
-            if (Test-Path -LiteralPath $profileDest) {
-                $profileBak = "$profileDest.bak-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
-                Copy-Item -LiteralPath $profileDest -Destination $profileBak
-                Write-Host "Backed up existing profile to: $profileBak" -ForegroundColor Gray
-            }
-            Copy-Item -LiteralPath $profilePs1 -Destination $profileDest -Force
-            Write-Host "Installed profile.ps1 to: $profileDest" -ForegroundColor Green
-        }
-    } else {
-        Write-Host "Note: '$Target' is not a PowerShell profile -- skipping profile.ps1 install." -ForegroundColor Yellow
     }
 }
+
+if ($isPwshTarget) {
+    $promptStatus = Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt
+    if ($promptStatus -eq 'installed') {
+        Write-Host "Updated current-style.ps1 with $Style's prompt; `$PROFILE was not changed." -ForegroundColor Green
+        # A clone run by path is not on PSModulePath, so `tstyles` and the
+        # by-name import exist only once the module is installed.
+        Write-Host "A new tab loads it when its `$PROFILE imports TerminalStyles. With the module installed" -ForegroundColor Gray
+        Write-Host "(Install-PSResource TerminalStyles, or install.ps1), 'tstyles register' adds that line." -ForegroundColor Gray
+    } elseif ($promptStatus -eq 'removed') {
+        Write-Host "Removed current-style.ps1 (the previous style's prompt), so new tabs load no style's prompt." -ForegroundColor Gray
+    }
+} elseif ((Test-Path -LiteralPath (Join-Path $styleDir 'profile.ps1')) -and -not $KeepPrompt) {
+    Write-Host "Note: '$Target' is not a PowerShell profile -- skipping profile.ps1 install." -ForegroundColor Yellow
+}
+
+# Last, so a failed write above (this script runs under Stop) records nothing.
+# -Kind explicitly: the default describes whatever runs this script, and a
+# scheduled task or a non-WT console is not Windows Terminal.
+Set-CurrentStyleRecord -StyleName $Style -Kind 'WindowsTerminal'
 
 Write-Host ""
 Write-Host "Done. Open a new '$Target' tab in Windows Terminal to see the result." -ForegroundColor Cyan

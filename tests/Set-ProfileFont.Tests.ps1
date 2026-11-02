@@ -39,6 +39,35 @@ Describe 'Set-ProfileFont' {
             $s.profiles.defaults.font.face | Should -Be 'Hack'
         }
 
+        It 'sets font.face on a defaults block whose key holds null' {
+            [System.IO.File]::WriteAllText($script:settings,
+                '{"profiles":{"defaults":null,"list":[{"name":"PowerShell","guid":"{g}"}]}}', $script:enc)
+            $ok = Set-ProfileFont -SettingsPath $script:settings -TargetName 'defaults' -Family 'Hack'
+            $ok | Should -BeTrue
+            ([System.IO.File]::ReadAllText($script:settings, $script:enc) | ConvertFrom-Json).profiles.defaults.font.face |
+                Should -Be 'Hack'
+        }
+
+        It 'returns false and leaves the file untouched when profiles.defaults holds <case>' -ForEach @(
+            @{ case = 'a string'; value = '"x"' }
+            @{ case = 'an array'; value = '[]' }
+        ) {
+            $json = '{"profiles":{"defaults":' + $value + ',"list":[{"name":"PowerShell","guid":"{g}"}]}}'
+            [System.IO.File]::WriteAllText($script:settings, $json, $script:enc)
+            $ok = Set-ProfileFont -SettingsPath $script:settings -TargetName 'defaults' -Family 'Hack'
+            $ok | Should -BeFalse
+            [System.IO.File]::ReadAllText($script:settings, $script:enc) | Should -Be $json
+        }
+
+        It 'sets font.face on a profile whose font key holds null' {
+            [System.IO.File]::WriteAllText($script:settings,
+                '{"profiles":{"list":[{"name":"PowerShell","guid":"{g}","font":null}]}}', $script:enc)
+            $ok = Set-ProfileFont -SettingsPath $script:settings -TargetName 'PowerShell' -Family 'Hack'
+            $ok | Should -BeTrue
+            (([System.IO.File]::ReadAllText($script:settings, $script:enc) | ConvertFrom-Json).profiles.list |
+                Where-Object name -eq 'PowerShell').font.face | Should -Be 'Hack'
+        }
+
         It 'preserves existing font sub-properties when setting face' {
             [System.IO.File]::WriteAllText($script:settings,
                 '{"profiles":{"list":[{"name":"PowerShell","guid":"{g}","font":{"size":14}}]}}', $script:enc)

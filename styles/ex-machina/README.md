@@ -13,7 +13,7 @@ sessions. Pale cyan default text on near-black, vintage cursor.
 - **theme.json** — vintage cursor, Cascadia Code semi-bold, no retro
   effect or acrylic so the GIF carries the mood. Background image
   stretched to fill, centered.
-- **profile.ps1** — replaces `$PROFILE` with:
+- **profile.ps1** — becomes the active prompt (`current-style.ps1`) when the style is applied:
   - 2-line prompt: `[AVA // BLUEBOOK] [LOC: <path>]` / `>`
   - Startup banner: BLUEBOOK research session readout
   - PSReadLine syntax colors tuned to the palette

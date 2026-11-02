@@ -49,6 +49,19 @@ Describe 'Merge-StyleIntoSettings' {
             $entry.opacity     | Should -Be 90
         }
 
+        It 'treats <case> as no scheme' -ForEach @(
+            @{ case = '"schemes": null';                    value = 'null';                 expected = 'eva' }
+            @{ case = 'a null element in schemes[]';        value = '[null,{"name":"keep"}]'; expected = 'keep,eva' }
+        ) {
+            Mock Get-StyleBundledBackground { $null }
+            $s = ('{"profiles":{"list":[{"name":"PowerShell","guid":"{x}"}]},"schemes":' + $value + '}') | ConvertFrom-Json
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `
+                -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
+            (@($out.schemes | ForEach-Object { if ($null -eq $_) { '<null>' } else { $_.name } }) -join ',') |
+                Should -Be $expected -Because 'a null passes `$_.name -ne`, so [null, {...}] was written'
+            ($out.profiles.list | Where-Object name -eq 'PowerShell').colorScheme | Should -Be 'eva'
+        }
+
         It 'does NOT inject an orphan scheme when the named target does not exist' {
             $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @([pscustomobject]@{ name = 'PowerShell'; guid = '{x}' }) } }
             $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `

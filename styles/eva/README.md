@@ -13,7 +13,7 @@ directly from Asuka / Unit-02 stills.
   semi-bold, GIF scaled to the window's height (`uniform`) and centered at
   0.35 opacity. Covering would crop the chin and the EXT3 label; the GIF's own
   edges are near-black, so the bars either side read as part of the frame.
-- **profile.ps1** — replaces `$PROFILE` with:
+- **profile.ps1** — becomes the active prompt (`current-style.ps1`) when the style is applied:
   - 2-line prompt: `[PILOT // EVA-02] [LOC: <path>]` / `>`
   - Startup banner: NERV operations readout with Asuka's signature line
   - PSReadLine syntax colors tuned to the palette

@@ -30,6 +30,13 @@
 # This is the same failure the -Target guard was added for in 0.8.17, re-entered
 # through the one target the resolver declared always addressable.
 #
+# And re-entered once more through the VALUE of the key. The guard asked
+# whether `profiles` was an object and nothing about the `defaults` inside it,
+# so `"defaults": null` passed -- and both lazy creations made the block only
+# where the KEY was absent, so they wrote into nothing: the comments went, the
+# style did not arrive, and "Style applied" printed. A string, number, boolean
+# or array there has nothing to write into and is refused.
+#
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
@@ -96,6 +103,41 @@ and hands the settings to a merge that cannot write this shape.
             $r.Available  | Should -Contain 'Ubuntu'
         }
 
+        It "refuses -Target defaults when profiles.defaults holds <case>" -ForEach @(
+            @{ case = 'a string'; value = '"x"' }
+            @{ case = 'a number'; value = '0' }
+            @{ case = 'a boolean'; value = 'false' }
+            @{ case = 'an array'; value = '[]' }
+        ) {
+            $s = ('{"profiles":{"defaults":' + $value + ',"list":[{"guid":"{a}","name":"PowerShell"}]}}') | ConvertFrom-Json
+            $r = Resolve-WTProfileTarget -Settings $s -TargetName 'defaults'
+
+            $r.Ok | Should -BeFalse -Because 'there is nothing to write into, and the value is not ours to replace'
+            $r.Entry | Should -BeNullOrEmpty
+            $r.Available | Should -Not -Contain 'defaults'
+            $r.Available | Should -Contain 'PowerShell' -Because 'refusing defaults must not cost the named profiles'
+            Get-WTTargetNotFoundMessage -ResolvedTarget $r -TargetName 'defaults' |
+                Should -Match "'defaults' under 'profiles' is not an object"
+        }
+
+        It 'names a defaults that is not an object when nothing else can be targeted either' {
+            $s = '{"profiles":{"defaults":"x"}}' | ConvertFrom-Json
+            $r = Resolve-WTProfileTarget -Settings $s -TargetName 'PowerShell'
+            $msg = Get-WTTargetNotFoundMessage -ResolvedTarget $r -TargetName 'PowerShell'
+
+            @($r.Available).Count | Should -Be 0
+            $msg | Should -Match "'defaults' under 'profiles' is not an object"
+            $msg | Should -Not -Match "'profiles' key is" -Because "'profiles' IS an object here"
+        }
+
+        It "calls 'defaults' addressable where the key holds null" {
+            $s = '{"profiles":{"defaults":null,"list":[{"guid":"{a}","name":"PowerShell"}]}}' | ConvertFrom-Json
+            $r = Resolve-WTProfileTarget -Settings $s -TargetName 'defaults'
+            $r.Ok        | Should -BeTrue -Because 'Windows Terminal loads a null defaults as a missing one'
+            $r.Entry     | Should -BeNullOrEmpty
+            $r.Available | Should -Contain 'defaults'
+        }
+
         It 'reports no addressable target at all when profiles is missing' {
             $r = Resolve-WTProfileTarget -Settings ('{"schemes":[]}' | ConvertFrom-Json) -TargetName 'PowerShell'
             @($r.Available).Count | Should -Be 0
@@ -153,6 +195,39 @@ Describe 'Merge-StyleIntoSettings makes the same judgement as the resolver' {
 Add-Member unrolls an array: the flat-array form grafted a defaults block onto
 every profile in the list and wrote the whole theme where WT ignores it.
 '@
+        }
+
+        It 'creates profiles.defaults where the key holds null, where it stood' {
+            $json = '{"profiles":{"defaults":null,"list":[{"guid":"{a}","name":"PowerShell"}]}}'
+            $before = @(($json | ConvertFrom-Json).profiles.PSObject.Properties | ForEach-Object { $_.Name })
+            $before | Should -Contain 'defaults' -Because 'the parser must keep the null-valued key for this case to mean anything'
+            $s = $json | ConvertFrom-Json
+            (Resolve-WTProfileTarget -Settings $s -TargetName 'defaults').Ok | Should -BeTrue
+
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:shapeStyle `
+                -TargetName 'defaults' -BackgroundImage '' -BackgroundImageProvided $false
+
+            $out.profiles.defaults.colorScheme | Should -Be 'shapescheme'
+            $out.profiles.defaults.opacity     | Should -Be 90
+            @($out.schemes | Where-Object { $null -ne $_ -and $_.name -eq 'shapescheme' }).Count | Should -Be 1
+            (@($out.profiles.PSObject.Properties | ForEach-Object { $_.Name }) -join ',') |
+                Should -Be ($before -join ',') -Because 'a null is replaced in place, not re-added after list'
+        }
+
+        It 'leaves a profiles.defaults holding <case> as it was, and adds no scheme' -ForEach @(
+            @{ case = 'a string'; value = '"x"' }
+            @{ case = 'an array'; value = '[]' }
+        ) {
+            $json = '{"profiles":{"defaults":' + $value + ',"list":[{"guid":"{a}","name":"PowerShell"}]},"schemes":[]}'
+            $expected = $json | ConvertFrom-Json | ConvertTo-Json -Depth 10 -Compress
+            $s = $json | ConvertFrom-Json
+            (Resolve-WTProfileTarget -Settings $s -TargetName 'defaults').Ok | Should -BeFalse
+
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:shapeStyle `
+                -TargetName 'defaults' -BackgroundImage '' -BackgroundImageProvided $false
+
+            $out | ConvertTo-Json -Depth 10 -Compress | Should -Be $expected `
+                -Because 'a scheme no profile references is one Reset can never remove'
         }
 
         It 'still creates and styles profiles.defaults on an ordinary settings.json' {
@@ -222,6 +297,13 @@ Describe 'an apply to a settings.json that has no profiles object costs the user
     "profiles": [ { "guid": "{a}", "name": "PowerShell" } ]
 }
 '@ }
+            @{ case = 'a profiles.defaults that is not an object'
+               live = @'
+{
+    // I keep my notes in here
+    "profiles": { "defaults": [], "list": [ { "guid": "{a}", "name": "PowerShell" } ] }
+}
+'@ }
         ) {
             [System.IO.File]::WriteAllText($script:sPath, $live, [System.Text.UTF8Encoding]::new($false))
 
@@ -272,6 +354,26 @@ already dropped every comment, so any write at all deletes the user's own notes.
             Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Style applied' }
             [System.IO.File]::ReadAllText("$script:sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
                 Should -Be $live -Because 'a real apply is exactly when the rolling backup SHOULD be spent'
+        }
+
+        It 'applies to profiles.defaults where the key holds null' {
+            $live = @'
+{
+    // I keep my notes in here
+    "profiles": { "defaults": null, "list": [ { "guid": "{a}", "name": "PowerShell" }, ] },
+    "schemes": []
+}
+'@
+            [System.IO.File]::WriteAllText($script:sPath, $live, [System.Text.UTF8Encoding]::new($false))
+
+            Apply-StyleDirect -StyleName 'shape' -Target 'defaults'
+
+            $after = [System.IO.File]::ReadAllText($script:sPath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            $after.profiles.defaults.colorScheme | Should -Be 'shapescheme' -Because '"Style applied" is a claim about this file'
+            @($after.schemes | Where-Object { $null -ne $_ -and $_.name -eq 'shapescheme' }).Count | Should -Be 1
+            Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Style applied' }
+            [System.IO.File]::ReadAllText("$script:sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
+                Should -Be $live -Because 'the .bak holds the file as it was, comments and all: the documented way back'
         }
 
         It 'does not write settings.json when the merge fails part-way' {

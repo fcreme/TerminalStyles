@@ -138,6 +138,22 @@ Describe 'Invoke-TerminalStyleFont' {
                 [System.IO.File]::ReadAllText("$sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
                     Should -Be $live -Because 'and the line must name a copy it actually made'
             }
+
+            It 'applies to a null profiles.defaults, and prints Applied only with the face in the file' {
+                # Set-ProfileFont runs for real here: its lazy creation of the
+                # block is what used to write into nothing.
+                $sPath = Join-Path $TestDrive 'settings.json'
+                [System.IO.File]::WriteAllText($sPath,
+                    '{ "profiles": { "defaults": null, "list": [ { "name": "P", "guid": "{1}" } ] } }',
+                    [System.Text.UTF8Encoding]::new($false))
+                Mock Find-WTSettingsPath { $sPath }
+
+                Invoke-TerminalStyleFont -Name 'Hack' -Target 'defaults'
+
+                ([System.IO.File]::ReadAllText($sPath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json).profiles.defaults.font.face |
+                    Should -Be 'Hack'
+                Should -Invoke Write-Host -ParameterFilter { "$Object" -match "Applied 'Hack' to 'defaults'" }
+            }
         }
     }
 }

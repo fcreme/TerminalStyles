@@ -11,7 +11,7 @@ banner that reads like a save-room readout.
 - **scheme.json** — dark blood-red / bone-white Windows Terminal color scheme.
 - **theme.json** — vintage cursor, Cascadia Code semi-bold, no retro/acrylic
   effects (lets the GIF carry the mood). GIF stretched to fill, centered.
-- **profile.ps1** — replaces `$PROFILE` with:
+- **profile.ps1** — becomes the active prompt (`current-style.ps1`) when the style is applied:
   - 3-line prompt: `[UMBRELLA // OPERATOR: <user>]` / `[CWD: <path>]` / `>`
   - Startup banner with "CLEARANCE: PERSONAL :: STATUS: FINE"
   - PSReadLine syntax colors tuned to the palette

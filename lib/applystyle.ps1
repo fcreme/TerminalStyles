@@ -734,6 +734,49 @@ function Publish-StyleWezTermConfig {
     return $path
 }
 
+function Set-CurrentStylePrompt {
+    <#
+    .SYNOPSIS
+    Put a style's prompt in current-style.ps1, or take the previous one out.
+
+    .DESCRIPTION
+    The one rule for what current-style.ps1 holds after an apply. Every apply
+    path calls it: Apply-StyleDirect, Apply-StyleNonWT, the picker and apply.ps1.
+
+    It ends up holding the style's profile.ps1, or ABSENT -- never stale. Under
+    -KeepPrompt, or for a style that ships no profile.ps1, the previous style's
+    file is removed: the loader sits at the end of $PROFILE, so a stale file
+    loads that style's banner and prompt over Oh My Posh or Starship in every
+    new tab, and Get-CurrentStyleName byte-matches it before the record. The
+    guard belongs on the copy, not around this call -- apply.ps1's inline copy
+    put it on the outer `if` and skipped the removal with it.
+
+    The copy is a byte copy, so a BOM or a tuned style's bytes arrive unchanged
+    and the byte-compare still matches. It never touches $PROFILE: apply.ps1's
+    copy replaced any $PROFILE without the BEGIN marker, and the running
+    engine's rather than the target's. current-style.ps1 needs no such choice;
+    both engines' loaders read it.
+
+    Returns 'installed', 'removed' or 'none'. The status assumes the copy or
+    removal succeeded; a failure is the caller's error preference's to report.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$StyleDir,
+        [switch]$KeepPrompt
+    )
+    $styleProfile = Join-Path $StyleDir 'profile.ps1'
+    if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
+        Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
+        return 'installed'
+    }
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        Remove-Item -LiteralPath $script:TStylesCurrent -Force
+        return 'removed'
+    }
+    return 'none'
+}
+
 function Apply-StyleNonWT {
     # Apply a style on a terminal that is not Windows Terminal.
     #
@@ -801,20 +844,13 @@ function Apply-StyleNonWT {
     # function printed "Style applied".
     $staged = Set-ShellStyleState -StyleName $StyleName -StyleDir $StyleDir -Scheme $scheme -KeepPrompt:$KeepPrompt
 
-    # Prompt/banner: same contract as the Windows Terminal path.
-    $styleProfile = Join-Path $StyleDir 'profile.ps1'
-    # Recorded, not assumed: the colour notice below used to end "so only the
-    # prompt was applied" unconditionally, and a style that ships no profile.ps1
-    # -- or an apply run with -KeepPrompt -- had no prompt applied either. On
-    # that path nothing at all reached the session while the note named the one
-    # thing that had supposedly worked.
-    $promptApplied = $false
-    if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
-        Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
-        $promptApplied = $true
-    } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
-        Remove-Item -LiteralPath $script:TStylesCurrent -Force
-    }
+    # Prompt/banner: same contract as the Windows Terminal path
+    # (Set-CurrentStylePrompt). Recorded, not assumed: the colour notice below
+    # used to end "so only the prompt was applied" unconditionally, and a style
+    # that ships no profile.ps1 -- or an apply run with -KeepPrompt -- had no
+    # prompt applied either. On that path nothing at all reached the session
+    # while the note named the one thing that had supposedly worked.
+    $promptApplied = ((Set-CurrentStylePrompt -StyleDir $StyleDir -KeepPrompt:$KeepPrompt) -eq 'installed')
 
     Write-Host ""
     Write-Host "  Style applied: " -NoNewline
@@ -1079,13 +1115,9 @@ function Apply-StyleDirect {
         }
     }
 
-    $styleProfile = Join-Path $styleDir 'profile.ps1'
+    # The prompt rule: Set-CurrentStylePrompt.
     if ($isPwshTarget) {
-        if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
-            Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
-        } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
-            Remove-Item -LiteralPath $script:TStylesCurrent -Force
-        }
+        [void](Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt)
     }
 
     # Record the choice. Get-CurrentStyleName answers by byte-comparing
@@ -1422,18 +1454,19 @@ function Reset-StyleDirect {
         # still uses. Through the shared shape for that reason: a direct read of
         # .list finds nothing on the legacy flat-array form, where the profiles
         # are the array itself -- and those profiles are now resolvable, so
-        # reset can reach them.
+        # reset can reach them. The defaults block through the shape's
+        # Defaults, not the key: `"defaults": null` put a $null among the
+        # profiles and the colorScheme test threw on it.
         $shape = Get-WTProfileShape -Settings $settings
         $allProfiles = @()
-        if ($shape.HasDefaultsSlot -and $settings.profiles.PSObject.Properties.Match('defaults').Count) {
-            $allProfiles += $settings.profiles.defaults
-        }
+        if ($null -ne $shape.Defaults) { $allProfiles += $shape.Defaults }
         $allProfiles += @($shape.List)
         $stillUsed = @($allProfiles | Where-Object {
             $_.PSObject.Properties.Match('colorScheme').Count -and $_.colorScheme -eq $schemeName
         }).Count -gt 0
         if (-not $stillUsed) {
-            $settings.schemes = @($settings.schemes | Where-Object { $_.name -ne $schemeName })
+            # The same null filter as the merge's upsert.
+            $settings.schemes = @($settings.schemes | Where-Object { $null -ne $_ -and $_.name -ne $schemeName })
         }
     }
 
