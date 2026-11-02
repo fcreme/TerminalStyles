@@ -494,16 +494,13 @@ function Set-ProfileFont {
 
     $entry = $null
     if ($TargetName -eq 'defaults') {
-        # Same guard, same reason, as the merge's lazy creation: Add-Member has
-        # nothing to add `defaults` to unless `profiles` is an object, and on
-        # the legacy flat-array form it silently grafts the block onto every
-        # profile instead. $false is the answer this function already has for "a
-        # target that is not there", and it leaves settings.json untouched.
-        if (-not (Get-WTProfileShape -Settings $settings).HasDefaultsSlot) { return $false }
-        if (-not $settings.profiles.PSObject.Properties.Match('defaults').Count) {
-            $settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
-        }
-        $entry = $settings.profiles.defaults
+        # Through the merge's own lazy creation, so the two cannot drift again:
+        # both created the block only where the key was absent, so a null
+        # defaults passed and the face was set on nothing. $false is the answer
+        # this function already has for "a target that is not there", and it
+        # leaves settings.json untouched.
+        $entry = Initialize-WTDefaultsEntry -Settings $settings
+        if (-not $entry) { return $false }
     } else {
         # Shared resolver: with two profiles of the same name, first-match put
         # the font on whichever came first in the list rather than the one the
@@ -512,8 +509,14 @@ function Set-ProfileFont {
         if (-not $entry) { return $false }
     }
 
-    if (-not $entry.PSObject.Properties.Match('font').Count) {
-        $entry | Add-Member -NotePropertyName font -NotePropertyValue ([pscustomobject]@{})
+    # From the value, as for defaults: `"font": null` kept its key, so the face
+    # was set on nothing and the file written back without it.
+    if ($null -eq $entry.font) {
+        if ($entry.PSObject.Properties.Match('font').Count) {
+            $entry.font = [pscustomobject]@{}
+        } else {
+            $entry | Add-Member -NotePropertyName font -NotePropertyValue ([pscustomobject]@{})
+        }
     }
     if ($entry.font.PSObject.Properties.Match('face').Count) {
         $entry.font.face = $Family

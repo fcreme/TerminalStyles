@@ -133,8 +133,9 @@ $settings = ConvertFrom-JsoncText ([System.IO.File]::ReadAllText($SettingsPath, 
 # refuse.
 $profileNames = @((Get-WTProfileShape -Settings $settings).Available)
 if (-not $profileNames.Count) {
-    # Asked before the prompt, because a menu of nothing is not a question.
-    throw (Get-WTTargetNotFoundMessage -ResolvedTarget $null -TargetName $Target)
+    # Asked before the prompt, because a menu of nothing is not a question --
+    # and asked of the resolver, so the refusal can say which shape it is.
+    throw (Get-WTTargetNotFoundMessage -ResolvedTarget (Resolve-WTProfileTarget -Settings $settings -TargetName $Target) -TargetName $Target)
 }
 if (-not $Target) {
     $Target = Read-Choice 'Which Windows Terminal profile to apply this style to?' $profileNames -Flag '-Target'

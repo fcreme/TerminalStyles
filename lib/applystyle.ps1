@@ -1422,18 +1422,19 @@ function Reset-StyleDirect {
         # still uses. Through the shared shape for that reason: a direct read of
         # .list finds nothing on the legacy flat-array form, where the profiles
         # are the array itself -- and those profiles are now resolvable, so
-        # reset can reach them.
+        # reset can reach them. The defaults block through the shape's
+        # Defaults, not the key: `"defaults": null` put a $null among the
+        # profiles and the colorScheme test threw on it.
         $shape = Get-WTProfileShape -Settings $settings
         $allProfiles = @()
-        if ($shape.HasDefaultsSlot -and $settings.profiles.PSObject.Properties.Match('defaults').Count) {
-            $allProfiles += $settings.profiles.defaults
-        }
+        if ($null -ne $shape.Defaults) { $allProfiles += $shape.Defaults }
         $allProfiles += @($shape.List)
         $stillUsed = @($allProfiles | Where-Object {
             $_.PSObject.Properties.Match('colorScheme').Count -and $_.colorScheme -eq $schemeName
         }).Count -gt 0
         if (-not $stillUsed) {
-            $settings.schemes = @($settings.schemes | Where-Object { $_.name -ne $schemeName })
+            # The same null filter as the merge's upsert.
+            $settings.schemes = @($settings.schemes | Where-Object { $null -ne $_ -and $_.name -ne $schemeName })
         }
     }
 

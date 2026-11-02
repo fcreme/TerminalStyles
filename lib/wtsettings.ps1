@@ -281,7 +281,9 @@ function Get-WTProfileShape {
     a hand-minimised settings.json can have no `profiles` key at all,
     `"profiles": null` parses to nothing, an interrupted or truncated write
     leaves a zero-byte file (so $Settings ITSELF is $null), and the legacy flat
-    form `"profiles": [ ... ]` is an array.
+    form `"profiles": [ ... ]` is an array. Inside an object, `defaults` can be
+    missing, `null` (which Windows Terminal loads as a missing block, and which
+    a template with an empty key produces), or a value that is not an object.
 
     HasDefaultsSlot is the load-bearing one, because 'defaults' is the single
     target that does not have to exist yet: an apply creates the block lazily
@@ -292,9 +294,19 @@ function Get-WTProfileShape {
     grafts a `defaults` NoteProperty onto every profile IN it -- so the whole
     theme is written inside the first profile, where Windows Terminal ignores it.
 
-    One question, four readers -- Resolve-WTProfileTarget decides Ok and
-    Available from it, Merge-StyleIntoSettings and Set-ProfileFont guard their
-    lazy creation with it, Reset-StyleDirect enumerates profiles with it.
+    So HasDefaultsSlot means a block exists, or can be created, at
+    profiles.defaults: `profiles` is an object and its `defaults` is absent,
+    null or an object. It is decided from the VALUE, not the key: deciding from
+    `profiles` alone let `"defaults": null` through, the resolver said yes, the
+    .bak was spent, and both lazy creations -- which made the block only where
+    the key was absent -- wrote into nothing under "Style applied". Defaults is
+    the block or $null, so no reader reaches into `profiles` and meets a null
+    or a string; DefaultsNotObject says why 'defaults' was refused.
+
+    One question, three readers -- Resolve-WTProfileTarget decides Ok, Entry
+    and Available from it, Initialize-WTDefaultsEntry makes the lazy creation
+    for Merge-StyleIntoSettings and Set-ProfileFont, and Reset-StyleDirect's
+    sweep enumerates Defaults and List.
     Sharing it is the point: the resolver answering "yes, addressable" while the
     merge assumed a shape the file did not have is what spent the user's rolling
     backup and then wrote a comment-stripped settings.json back over their own
@@ -314,12 +326,31 @@ function Get-WTProfileShape {
     $profiles = $null
     try { $profiles = $Settings.profiles } catch { $profiles = $null }
 
-    $hasSlot = ($null -ne $profiles -and
-                $profiles -isnot [System.Collections.IEnumerable] -and
-                $profiles -isnot [System.ValueType])
+    $isObject = { param($Value)
+        $null -ne $Value -and
+        $Value -isnot [System.Collections.IEnumerable] -and
+        $Value -isnot [System.ValueType]
+    }
+    $profilesIsObject = & $isObject $profiles
+
+    $hasSlot = $false
+    $defaults = $null
+    $defaultsNotObject = $false
+    if ($profilesIsObject) {
+        $value = $null
+        if ($profiles.PSObject.Properties.Match('defaults').Count) { $value = $profiles.defaults }
+        if ($null -eq $value) {
+            $hasSlot = $true
+        } elseif (& $isObject $value) {
+            $hasSlot = $true
+            $defaults = $value
+        } else {
+            $defaultsNotObject = $true
+        }
+    }
 
     $list = @()
-    if ($hasSlot) {
+    if ($profilesIsObject) {
         # @($null) is a one-element array holding $null, not an empty one, so a
         # profiles object with no `list` key would otherwise report one profile.
         $list = @($profiles.list | Where-Object { $null -ne $_ })
@@ -336,10 +367,42 @@ function Get-WTProfileShape {
     $available += @($list | ForEach-Object { $_.name } | Where-Object { $_ })
 
     return [pscustomobject]@{
-        HasDefaultsSlot = $hasSlot
-        List            = $list
-        Available       = $available
+        HasDefaultsSlot   = $hasSlot
+        Defaults          = $defaults
+        DefaultsNotObject = $defaultsNotObject
+        List              = $list
+        Available         = $available
     }
+}
+
+function Initialize-WTDefaultsEntry {
+    <#
+    .SYNOPSIS
+    The profiles.defaults block to write into, created if it is absent or null.
+
+    .DESCRIPTION
+    The one lazy creation. Merge-StyleIntoSettings and Set-ProfileFont each had
+    a copy, and both made the block only where the KEY was absent -- so a
+    `"defaults": null` passed the shape guard and both wrote into nothing.
+
+    Absent or null means created. A null is replaced where it stands, so
+    `defaults` keeps its place before `list` (Add-Member -Force re-adds the
+    member at the end). Returns $null for every shape that cannot carry the
+    block, which is each caller's existing "no target" answer.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()]$Settings)
+
+    $shape = Get-WTProfileShape -Settings $Settings
+    if (-not $shape.HasDefaultsSlot) { return $null }
+    if ($null -ne $shape.Defaults)   { return $shape.Defaults }
+    $block = [pscustomobject]@{}
+    if ($Settings.profiles.PSObject.Properties.Match('defaults').Count) {
+        $Settings.profiles.defaults = $block
+    } else {
+        $Settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue $block
+    }
+    return $block
 }
 
 function Resolve-WTProfileTarget {
@@ -358,7 +421,8 @@ function Resolve-WTProfileTarget {
     $true with no Entry -- and reset has nothing to strip from a profile that is
     not there. Callers that write want Ok; callers that modify an existing entry
     want Entry. Addressable is not unconditional, though: it needs a `profiles`
-    object to create the block on, which is Get-WTProfileShape's question.
+    object and a `defaults` that is absent, null or an object --
+    Get-WTProfileShape's question.
 
     Available is for the caller's error message, so every one of them can name
     the same set of real profiles.
@@ -396,18 +460,19 @@ function Resolve-WTProfileTarget {
         # serialized it: every JSONC comment in the user's file deleted, "Style
         # applied" in green, and no profile touched. Run it twice and the .bak
         # -- the one copy that still had the comments -- was overwritten with
-        # the stripped file. See Get-WTProfileShape for the four shapes.
-        $entry = $null
-        if ($shape.HasDefaultsSlot -and $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
-            $entry = $Settings.profiles.defaults
-        }
+        # the stripped file. See Get-WTProfileShape for the shapes.
+        #
+        # The same failure came back through `"defaults": null`: the guard asked
+        # about `profiles`, and both lazy creations asked whether the KEY
+        # existed. Ok and Entry now come from the value, through the shape.
         return [pscustomobject]@{
-            Ok         = $shape.HasDefaultsSlot
-            Entry      = $entry
-            IsDefaults = $true
-            Available  = $available
-            Ambiguous  = $false
-            TieBreak   = $null
+            Ok                = $shape.HasDefaultsSlot
+            Entry             = $shape.Defaults
+            IsDefaults        = $true
+            Available         = $available
+            Ambiguous         = $false
+            TieBreak          = $null
+            DefaultsNotObject = $shape.DefaultsNotObject
         }
     }
 
@@ -450,6 +515,9 @@ function Resolve-WTProfileTarget {
 
     return [pscustomobject]@{
         Ok = [bool]$entry; Entry = $entry; IsDefaults = $false; Available = $available
+        # A fact about the file, like Available: carried so the one message
+        # function can name why 'defaults' is not on offer.
+        DefaultsNotObject = $shape.DefaultsNotObject
         # True when the name alone was not enough to identify a profile.
         Ambiguous = ($named.Count -gt 1)
         # 'Session', 'First', or $null when there was no tie to break.
@@ -470,6 +538,10 @@ function Get-WTTargetNotFoundMessage {
     JSONC comments (no `profiles` key, a null one, a zero-byte file). Refusing
     it is the fix; refusing it with a sentence that stops mid-air would only
     move the confusion.
+
+    A `defaults` that is present but not an object gets its own sentence:
+    "not found" is false about a key the user can see, and "'profiles' key is
+    missing" is false about a `profiles` object.
     #>
     [CmdletBinding()]
     param(
@@ -478,7 +550,22 @@ function Get-WTTargetNotFoundMessage {
     )
 
     $available = @()
-    if ($ResolvedTarget) { $available = @($ResolvedTarget.Available) }
+    $defaultsNotObject = $false
+    if ($ResolvedTarget) {
+        $available = @($ResolvedTarget.Available)
+        $defaultsNotObject = [bool]$ResolvedTarget.DefaultsNotObject
+    }
+    # Concatenated, never passed through -f: the sentences carry {}.
+    if ($defaultsNotObject -and $TargetName -eq 'defaults') {
+        $msg = "Windows Terminal's settings.json cannot take -Target defaults: its 'defaults' under " +
+               "'profiles' is not an object, so there is nothing to write into. Make it {} or remove it."
+        if ($available.Count) { $msg += " Available: $($available -join ', ')" }
+        return $msg
+    }
+    if ($defaultsNotObject -and -not $available.Count) {
+        return ("Windows Terminal's settings.json has no profile to apply to: it lists none, and its " +
+                "'defaults' under 'profiles' is not an object. Make it {} or remove it.")
+    }
     if (-not $available.Count) {
         # "not an object" rather than "empty": `"profiles": {}` IS usable -- the
         # defaults block can be created in it -- so this list names only the
@@ -700,7 +787,8 @@ function Merge-StyleIntoSettings {
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
     $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
 
-    # The lazy creation, guarded rather than assumed. Add-Member needs a
+    # The lazy creation, guarded rather than assumed (Initialize-WTDefaultsEntry,
+    # shared with Set-ProfileFont; it covers an absent key and a null). Add-Member needs a
     # `profiles` OBJECT to add the block to: on a missing key or a null this
     # line threw, and on the legacy flat-array form it unrolled the array and
     # grafted `defaults` onto every profile in it without a word. The resolver
@@ -710,22 +798,15 @@ function Merge-StyleIntoSettings {
     # picker's preview and the tuner). Falling through to the existing
     # `if (-not $entry)` keeps the no-target contract: settings returned
     # untouched, and no orphan scheme, since the scheme is upserted below.
-    $entry = if ($TargetName -eq 'defaults') {
-        if ((Get-WTProfileShape -Settings $Settings).HasDefaultsSlot) {
-            if (-not $Settings.profiles.PSObject.Properties.Match('defaults').Count) {
-                $Settings.profiles | Add-Member -NotePropertyName defaults -NotePropertyValue ([pscustomobject]@{})
-            }
-            $Settings.profiles.defaults
-        }
-    } else {
-        $namedEntry
-    }
+    $entry = if ($TargetName -eq 'defaults') { Initialize-WTDefaultsEntry -Settings $Settings } else { $namedEntry }
     if (-not $entry) { return $Settings }
 
     if (-not $Settings.PSObject.Properties.Match('schemes').Count) {
         $Settings | Add-Member -NotePropertyName schemes -NotePropertyValue @()
     }
-    $Settings.schemes = @($Settings.schemes | Where-Object { $_.name -ne $scheme.name }) + $scheme
+    # $null -ne $_ first: a null `schemes` pipes one $null down, `$_.name -ne`
+    # lets it through, and that wrote [null, {...}].
+    $Settings.schemes = @($Settings.schemes | Where-Object { $null -ne $_ -and $_.name -ne $scheme.name }) + $scheme
 
     # Resolve effective background:
     #   1. User passed -BackgroundImage <path>  -> use that

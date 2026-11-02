@@ -172,6 +172,35 @@ Describe 'Reset-StyleDirect' {
             $w.PSObject.Properties.Match('colorScheme').Count | Should -Be 0
             $w.PSObject.Properties.Match('opacity').Count     | Should -Be 0
         }
+        It 'sweeps the orphan scheme on a settings.json whose profiles.defaults is null' {
+            # The sweep read the block by its KEY, so a null joined the profiles
+            # and the colorScheme test threw on it, above "Reset ... to its
+            # unstyled default".
+            $script:written = $null
+            [System.IO.File]::WriteAllText($script:fakeSettings,
+                '{"schemes":[{"name":"eva"},{"name":"other"}],"profiles":{"defaults":null,"list":[{"name":"PowerShell","guid":"{x}","colorScheme":"eva","opacity":80}]}}',
+                [System.Text.UTF8Encoding]::new($false))
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            Should -Invoke Write-SettingsFile -Times 1 -Exactly
+            (@($script:written.schemes | ForEach-Object { if ($null -eq $_) { '<null>' } else { $_.name } }) -join ',') |
+                Should -Be 'other'
+        }
+
+        It 'drops a null left in schemes[] when it removes the orphan' {
+            $script:written = $null
+            [System.IO.File]::WriteAllText($script:fakeSettings,
+                '{"schemes":[null,{"name":"eva"},{"name":"other"}],"profiles":{"list":[{"name":"PowerShell","guid":"{x}","colorScheme":"eva"}]}}',
+                [System.Text.UTF8Encoding]::new($false))
+
+            Reset-StyleDirect -Target 'PowerShell'
+
+            Should -Invoke Write-SettingsFile -Times 1 -Exactly
+            (@($script:written.schemes | ForEach-Object { if ($null -eq $_) { '<null>' } else { $_.name } }) -join ',') |
+                Should -Be 'other' -Because 'a null passes `$_.name -ne` and was kept forever'
+        }
+
         It 'strips a style the caller has already proved is ours but the disk no longer has' {
             # The ownership marker asks Get-AvailableStyles whether the
             # profile's colorScheme names a style. `tstyles delete` calls this
