@@ -297,8 +297,12 @@ function Invoke-AppleTerminalScript {
 function ConvertTo-AppleScriptString {
     # A double-quoted AppleScript literal. Style names are validated upstream,
     # but a settings-set name read back from Terminal.app is not ours to trust.
+    # String.Replace, not -replace: a replacement string is literal except for
+    # `$`, so -replace '\\', '\\\\' wrote four backslashes for one (see
+    # ConvertTo-WezTermLuaString). Backslashes first, so the quote's own
+    # escape is not doubled.
     param([AllowEmptyString()][AllowNull()][string]$Value)
-    '"' + (($Value -replace '\\', '\\\\') -replace '"', '\"') + '"'
+    '"' + "$Value".Replace('\', '\\').Replace('"', '\"') + '"'
 }
 
 function Get-AppleTerminalSettingsSetName {

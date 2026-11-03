@@ -43,6 +43,19 @@ Describe 'Test-StyleNameValid' {
             Test-StyleNameValid -Name ('a' * 65)     | Should -BeFalse
             Test-StyleNameValid -Name ('a' * 64)     | Should -BeTrue
         }
+        It 'rejects the Kelvin sign and the dotted capital I, which case-fold into the class' {
+            # -match ignores case, and .NET folds U+212A to 'k' and U+0130 to
+            # 'i', so both passed a class that lists only ASCII letters.
+            foreach ($c in [char]0x212A, [char]0x0130) {
+                $n = 'night' + $c
+                Test-StyleNameValid -Name $n | Should -BeFalse -Because ('U+{0:X4} is not one of A-Z a-z 0-9 . _ -' -f [int]$c)
+            }
+            foreach ($c in [char]0x212A, [char]0x0130) {
+                ('night' + $c) -match '^[A-Za-z0-9._-]+$' | Should -BeTrue -Because ('control: the case-insensitive match admits U+{0:X4}' -f [int]$c)
+            }
+            Test-StyleNameValid -Name 'NightK' | Should -BeTrue
+            Test-StyleNameValid -Name 'nightI' | Should -BeTrue
+        }
     }
 }
 

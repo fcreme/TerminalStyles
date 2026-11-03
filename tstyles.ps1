@@ -650,7 +650,10 @@ function Test-StyleNameValid {
     # A subcommand name produces a style that can never be applied: the dispatch
     # arm for it runs first, so `tstyles <name>` does the subcommand instead.
     if ($script:TStylesSubcommands -contains $Name.ToLowerInvariant()) { return $false }
-    return ($Name -match '^[A-Za-z0-9._-]+$')
+    # -cmatch: -match ignores case, and .NET folds the Kelvin sign (U+212A) to
+    # 'k' and the dotted capital I (U+0130) to 'i', so both passed. The class
+    # already lists both cases of every letter it means.
+    return ($Name -cmatch '^[A-Za-z0-9._-]+$')
 }
 
 function Get-StyleDir {

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`ConvertTo-AppleScriptString` doubles a backslash once.** It quotes a profile name for the AppleScript that asks Terminal.app about a profile, deletes it or opens a window on it, and it doubled each backslash with `-replace '\\', '\\\\'`. A `-replace` replacement string is literal except for `$`, so that wrote four backslashes for one, and AppleScript read them as two: the script would have named a profile that does not exist. Every caller passes a style name or a numbered copy of one, neither of which can hold a backslash, so no release reached this; the name is now escaped with `String.Replace`, as the WezTerm writer's quoting has been since it hit the same thing.
+
+- **`tstyles shell-init` refreshes a loader whose data-root path changed only in case.** `Register-ShellLoader` compared the block in the file with the one it would write using `-eq`, which ignores case. After a home folder was renamed from `/home/Jo` to `/home/jo` on a case-sensitive volume, the old block was reported `unchanged` and left in place, its `[ -r ... ]` guard failed in every new zsh or bash, and the shell runtime never loaded. The compare is now `-ceq`.
+
+- **The tuner's Save As refuses a name with the Kelvin sign or a dotted capital I in it.** `Test-StyleNameValid` allows only `A-Z a-z 0-9 . _ -`, and checked with `-match`, which ignores case. .NET folds the Kelvin sign (U+212A) to `k` and `İ` (U+0130) to `i`, so `night` followed by either passed, and the tuner created a style folder whose name looks like plain ASCII and is not. The check is now `-cmatch`.
+
 ## [0.9.4] - 2026-11-03
 
 ### Changed
