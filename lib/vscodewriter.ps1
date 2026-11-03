@@ -23,8 +23,10 @@
 #   the other, whichever goes first.
 #
 #   REFUSE RATHER THAN GUESS. An editor that cannot be identified, a settings
-#   folder that does not exist, a file that does not parse and a state file
-#   that cannot be read all stop the write and say which.
+#   folder that does not exist, a file that does not parse, an edit that would
+#   change one of its comments or would not read back as written, and a state
+#   file that cannot be read all stop the write and say which. 'wontparse'
+#   means that refusal: nothing written, record kept.
 
 function Get-VSCodeStatePath {
     # Where the per-editor consent and undo records live. One file for every
@@ -479,10 +481,7 @@ function Publish-StyleVSCodeConfig {
     $a = Invoke-VSCodeStyleApply -Text $base -StyleDir $StyleDir -StyleName $StyleName -PreviousRecord $onDisk
     if ($a.Status -ne 'applied') {
         $result.Status = 'wontparse'
-        $result.Detail = switch ($a.Status) {
-            'parentnotobject' { 'workbench.colorCustomizations in it is not an object' }
-            default           { 'it does not parse as a JSON object' }
-        }
+        $result.Detail = Get-VSCodeRefusalDetail -Status $a.Status -Key $a.Key
         return $result
     }
 
@@ -536,6 +535,22 @@ function Publish-StyleVSCodeConfig {
     $result.Replaced  = $split.Replaced
     $result.Overrides = $overrides
     return $result
+}
+
+function Get-VSCodeRefusalDetail {
+    # The one wording for a refusal from the JSONC engine, after "Could not
+    # edit <path> safely:" or "Could not put <path> back:". Each status gets
+    # its own true sentence: the fallback, "does not parse", was printed about
+    # a file that parses when the refusal was a comment's.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Status, [string]$Key)
+    switch ($Status) {
+        'parentnotobject' { return 'workbench.colorCustomizations in it is not an object' }
+        'parentmissing'   { return "$Key in it could not be reached" }
+        'commentchanged'  { return "changing $Key in it would have changed a comment too" }
+        'notreadback'     { return "$Key would not have read back from it as written" }
+        default           { return 'it does not parse as a JSON object' }
+    }
 }
 
 function Show-VSCodeWriteResult {
@@ -625,8 +640,9 @@ function Reset-StyleVSCodeConfig {
 
     Returns @{ Status; Variant; Path; Kept; Restored; Removed; Detail }, Status
     one of reset, norecord, unknownvariant, statecorrupt, wontparse,
-    writefailed. Detail says why for wontparse: the file could not be read, or
-    does not parse. On reset it is set when the file was put back but the
+    writefailed. Detail says why for wontparse: the file could not be read,
+    does not parse, or holds a comment inside one of the style's keys that
+    taking it out would change -- nothing written, record kept. On reset it is set when the file was put back but the
     record could not be cleared afterwards.
     #>
     [CmdletBinding()]
@@ -659,6 +675,13 @@ function Reset-StyleVSCodeConfig {
     }
 
     $r = Invoke-VSCodeStyleReset -Text $text -Record $entry.record
+    # Refused before any write or record change: the style stays, and so does
+    # the record of what to take out.
+    if ($r.Status -ne 'reset' -and $r.Status -ne 'norecord') {
+        $result.Status = 'wontparse'
+        $result.Detail = Get-VSCodeRefusalDetail -Status $r.Status -Key $r.Key
+        return $result
+    }
     if ($r.Text -cne $text) {
         try {
             Write-SettingsAtomic -Path $entry.settingsPath -Json $r.Text
@@ -925,7 +948,9 @@ function Restore-VSCodePreview {
     if even that cannot be written.
 
     A file that no longer parses is not undone at all. The record's offsets no
-    longer mean what the record thinks, so this fails rather than splices.
+    longer mean what the record thinks, so this fails rather than splices. So
+    does a preview that cannot come out without changing a comment written
+    inside one of its keys.
 
     On failure the stored record is left naming the preview, because the
     preview is what the file still holds: `tstyles reset` can then take it
@@ -1008,6 +1033,10 @@ function Restore-VSCodePreview {
                 throw 'it changed while the picker was open and no longer parses as a JSON object'
             }
             $undo = Invoke-VSCodeStyleReset -Text $now -Record $Session.OnDiskRecord
+            # No record has moved yet, so the preview's stays on file.
+            if ($undo.Status -ne 'reset' -and $undo.Status -ne 'norecord') {
+                throw (Get-VSCodeRefusalDetail -Status $undo.Status -Key $undo.Key)
+            }
             $text = $undo.Text
             $record = $null
             $startStyle = $null
@@ -1147,8 +1176,7 @@ function Show-VSCodeRestoreResult {
             if ($Result.Detail) {
                 Write-Host ("  The preview is still in it, and {0}, so tstyles reset cannot take it out." -f $Result.Detail) -ForegroundColor Red
             } else {
-                Write-Host "  The preview is still in it; tstyles reset takes it out once the file" -ForegroundColor Red
-                Write-Host "  parses and can be written." -ForegroundColor Red
+                Write-Host "  The preview is still in it; once that is fixed, tstyles reset takes it out." -ForegroundColor Red
             }
         }
     }

@@ -406,3 +406,106 @@ Describe 'Invoke-JsoncSplice' {
         }
     }
 }
+
+Describe 'a new member never lands inside a block comment' {
+    # The end of a line is not always outside every comment: a block comment
+    # that opens there and closes on a later line contains it. Set-JsoncLiteral
+    # wrote a new member at the end of the line and so inside the comment, and
+    # nothing checked. Fixtures are built with -join, so every CI leg sees the
+    # same bytes.
+    InModuleScope TerminalStyles {
+
+        It 'writes a new member below a block comment that opens on the brace line (<Label>)' -ForEach @(
+            @{ Label = 'LF'; Eol = "`n" }
+            @{ Label = 'CRLF'; Eol = "`r`n" }
+        ) {
+            $before = @('{', '  "w": { /* per-theme overrides', '      go in here */', '  }', '}') -join $Eol
+            $r = Set-JsoncValue -Text $before -Path @('w', 'k') -Value 'v'
+            $r.Status | Should -Be 'inserted'
+            $r.Text | Should -BeExactly (@('{', '  "w": { /* per-theme overrides', '      go in here */', '    "k": "v"', '  }', '}') -join $Eol)
+            Get-JsoncValueLiteral -Text $r.Text -Path @('w', 'k') | Should -BeExactly '"v"'
+            Test-JsoncCommentsIntact -Before $before -After $r.Text | Should -BeTrue
+            (Remove-JsoncValue -Text $r.Text -Path @('w', 'k')).Text | Should -BeExactly $before
+        }
+
+        It "writes a new member below a block comment that opens on the last member's line, with the comma at the value" {
+            $before = @('{', '  "a": 1 /* tried these, reverting:', '      16, 18 */', '}') -join "`n"
+            $r = Set-JsoncValue -Text $before -Path @('b') -Value 2
+            $r.Text | Should -BeExactly (@('{', '  "a": 1, /* tried these, reverting:', '      16, 18 */', '  "b": 2', '}') -join "`n")
+            Get-JsoncValueLiteral -Text $r.Text -Path @('b') | Should -BeExactly '2'
+            Test-JsoncCommentsIntact -Before $before -After $r.Text | Should -BeTrue
+            (Remove-JsoncValue -Text $r.Text -Path @('b')).Text | Should -BeExactly $before
+        }
+
+        It 'writes a new member below such a comment when that member already carries its comma' {
+            $before = @('{', '  "a": 1, /* note', '     more */', '}') -join "`n"
+            $r = Set-JsoncValue -Text $before -Path @('b') -Value 2
+            $r.Text | Should -BeExactly (@('{', '  "a": 1, /* note', '     more */', '  "b": 2', '}') -join "`n")
+            Get-JsoncValueLiteral -Text $r.Text -Path @('b') | Should -BeExactly '2'
+            Test-JsoncCommentsIntact -Before $before -After $r.Text | Should -BeTrue
+        }
+
+        It 'moves past every comment that closes on a line where another one opens' {
+            $before = @('{', '  "w": { /* one', '   two */ /* three', '   four */ // five', '  }', '}') -join "`n"
+            $r = Set-JsoncValue -Text $before -Path @('w', 'k') -Value 'v'
+            $r.Text | Should -BeExactly (@('{', '  "w": { /* one', '   two */ /* three', '   four */ // five', '    "k": "v"', '  }', '}') -join "`n")
+            Get-JsoncValueLiteral -Text $r.Text -Path @('w', 'k') | Should -BeExactly '"v"'
+            Test-JsoncCommentsIntact -Before $before -After $r.Text | Should -BeTrue
+        }
+
+        It "stops at the object's '}' when the comment closes on that line" {
+            # VS Code's Toggle Block Comment, with the selection ending before
+            # the '}'.
+            $before = @('{', '  "w": {/* ', '    "x": 1', ' */  }', '}') -join "`n"
+            $r = Set-JsoncValue -Text $before -Path @('w', 'k') -Value 'v'
+            $r.Status | Should -Be 'inserted'
+            Get-JsoncValueLiteral -Text $r.Text -Path @('w', 'k') | Should -BeExactly '"v"'
+            Test-JsoncCommentsIntact -Before $before -After $r.Text | Should -BeTrue
+        }
+
+        It 'keeps a // comment whole in a CRLF file, and in one whose anchor line ends in LF alone' -ForEach @(
+            @{ Label = 'uniform CRLF'; Lines = @('{', '  "w": { // my overrides', '  }', '}'); Joins = @("`r`n", "`r`n", "`r`n") }
+            @{ Label = 'mixed'; Lines = @('{', '  "w": { // my overrides', '  }', '}'); Joins = @("`r`n", "`n", "`r`n") }
+        ) {
+            $before = $Lines[0] + $Joins[0] + $Lines[1] + $Joins[1] + $Lines[2] + $Joins[2] + $Lines[3]
+            $r = Set-JsoncValue -Text $before -Path @('w', 'k') -Value 'v'
+            $r.Status | Should -Be 'inserted' -Because "$Label"
+            Get-JsoncValueLiteral -Text $r.Text -Path @('w', 'k') | Should -BeExactly '"v"'
+            Test-JsoncCommentsIntact -Before $before -After $r.Text | Should -BeTrue
+            (Remove-JsoncValue -Text $r.Text -Path @('w', 'k')).Text | Should -BeExactly $before
+        }
+    }
+}
+
+Describe 'every splice is checked before it is kept' {
+    InModuleScope TerminalStyles {
+
+        It 'refuses an update that would delete a comment inside the value it replaces' {
+            $before = @('{', '  "a": { /* odd */ }', '}') -join "`n"
+            $r = Set-JsoncLiteral -Text $before -Path @('a') -Literal '"x"'
+            $r.Status | Should -Be 'commentchanged'
+            $r.Changed | Should -BeFalse
+            $r.Text | Should -BeExactly $before
+        }
+
+        It 'refuses a removal that would delete a comment between the key and its value' {
+            $before = @('{', '  "a" /* why */ : 1,', '  "b": 2', '}') -join "`n"
+            $r = Remove-JsoncValue -Text $before -Path @('a')
+            $r.Status | Should -Be 'commentchanged'
+            $r.Changed | Should -BeFalse
+            $r.Text | Should -BeExactly $before
+        }
+
+        It 'refuses an insert that does not read back where it was written' {
+            # A stray string with a raw line break after the last value: the
+            # end of that line is inside a string, and no comment is involved,
+            # so only the read-back can refuse.
+            $before = @('{', '  "a": 1 "x', '  y"', '}') -join "`n"
+            (Get-JsoncCommentText -Text $before).Count | Should -Be 0
+            $r = Set-JsoncValue -Text $before -Path @('b') -Value 2
+            $r.Status | Should -Be 'notreadback'
+            $r.Changed | Should -BeFalse
+            $r.Text | Should -BeExactly $before
+        }
+    }
+}

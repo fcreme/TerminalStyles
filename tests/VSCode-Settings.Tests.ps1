@@ -601,3 +601,72 @@ Describe 'applying and resetting a style in settings.json text' {
         }
     }
 }
+
+Describe 'a style goes in as settings, never inside a comment, and refuses rather than lose one' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:live = {
+                param($Applied)
+                @(@($Applied.Record.Wrote) | Where-Object { (Get-JsoncValueLiteral -Text $Applied.Text -Path $_.Path) -cne $_.Literal } |
+                    ForEach-Object { $_.Path -join '/' })
+            }
+        }
+
+        It "writes every key live under a block comment on the colour block's brace line, and comes back after a chain of styles" {
+            $user = @('{', '  "workbench.colorCustomizations": { /* per-theme overrides', '      go in here */', '  }', '}') -join "`n"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            @($a.Record.Wrote).Count | Should -BeGreaterThan 20
+            $dead = & $script:live $a
+            $dead.Count | Should -Be 0 -Because ($dead -join ', ')
+            Test-JsoncCommentsIntact -Before $user -After $a.Text | Should -BeTrue
+            $r = $a
+            foreach ($n in 'sober', 'koholint', 'eva') {
+                $r = Invoke-VSCodeStyleApply -Text $r.Text -StyleDir (Get-StyleDir -StyleName $n) -StyleName $n -PreviousRecord $r.Record
+                $r.Status | Should -Be 'applied'
+            }
+            (Invoke-VSCodeStyleReset -Text $r.Text -Record $r.Record).Text | Should -BeExactly $user
+        }
+
+        It "writes every key live when the comment opens on the last setting's line of a file with no colour block" {
+            $user = @('{', '  "editor.fontSize": 14 /* tried these, reverting:', '      16, 18 */', '}') -join "`n"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $a.Status | Should -Be 'applied'
+            @($a.Record.Wrote).Count | Should -BeGreaterThan 20
+            (& $script:live $a).Count | Should -Be 0
+            (Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record).Text | Should -BeExactly $user
+        }
+
+        It 'refuses, naming the key, when a key the style writes holds a comment inside its value' {
+            $user = @('{', '  "terminal.integrated.fontFamily": { /* odd */ }', '}') -join "`n"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $a.Status | Should -Be 'commentchanged'
+            $a.Key | Should -Be 'terminal.integrated.fontFamily'
+            $a.Text | Should -BeExactly $user
+            $a.Record | Should -BeNullOrEmpty
+        }
+
+        Context 'a comment written inside a key the outgoing style added' {
+            BeforeEach {
+                $script:a = Invoke-VSCodeStyleApply -Text (@('{', '  "editor.fontSize": 13', '}') -join "`n") `
+                    -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+                $script:annot = $script:a.Text.Replace('"terminal.integrated.fontFamily": ', '"terminal.integrated.fontFamily" /* mine */ : ')
+                $script:annot | Should -Not -BeExactly $script:a.Text -Because 'the fixture must hold the comment'
+            }
+
+            It 'refuses a switch whose undo would delete it' {
+                $b = Invoke-VSCodeStyleApply -Text $script:annot -StyleDir (Get-StyleDir -StyleName 'koholint') -StyleName 'koholint' -PreviousRecord $script:a.Record
+                $b.Status | Should -Be 'commentchanged'
+                $b.Key | Should -Be 'terminal.integrated.fontFamily'
+                $b.Text | Should -BeExactly $script:annot
+                $b.Record | Should -BeNullOrEmpty
+            }
+
+            It 'refuses a reset that would delete it, and hands the text back unchanged' {
+                $r = Invoke-VSCodeStyleReset -Text $script:annot -Record $script:a.Record
+                $r.Status | Should -Be 'commentchanged'
+                $r.Key | Should -Be 'terminal.integrated.fontFamily'
+                $r.Text | Should -BeExactly $script:annot
+            }
+        }
+    }
+}

@@ -468,7 +468,10 @@ function Invoke-VSCodeStyleApply {
 
     .DESCRIPTION
     Pure: text in, text out, no file touched. Every write goes through
-    lib/jsonctext.ps1, so comments and formatting survive.
+    lib/jsonctext.ps1, so comments and formatting survive. When the editor
+    refuses an edit -- the undo of the previous style, the colour block, or
+    a key -- the whole apply refuses: the text comes back unchanged, Record
+    is $null, Status is the editor's and Key names the key.
 
     The RECORD is the point. For every key it writes, it keeps the literal it
     wrote and the literal that was there BEFORE -- or $null when the key was
@@ -510,6 +513,12 @@ function Invoke-VSCodeStyleApply {
     # another style, not a reset.
     if ($PreviousRecord) {
         $undo = Invoke-VSCodeStyleReset -Text $current -Record $PreviousRecord
+        # A refused undo refuses the apply: taking the previous style out
+        # would have changed a comment, and applying over it would record its
+        # values as the user's.
+        if ($undo.Status -ne 'reset' -and $undo.Status -ne 'norecord') {
+            return @{ Text = $Text; Record = $null; Changed = $false; Status = $undo.Status; Key = $undo.Key }
+        }
         $current = $undo.Text
         $carriedKept = $undo.Kept
     }
@@ -527,7 +536,7 @@ function Invoke-VSCodeStyleApply {
             if ($null -eq (Get-JsoncValueLiteral -Text $current -Path $parentPath)) {
                 $mk = Set-JsoncLiteral -Text $current -Path $parentPath -Literal '{}'
                 if (-not $mk.Changed) {
-                    return @{ Text = $Text; Record = $null; Changed = $false; Status = $mk.Status }
+                    return @{ Text = $Text; Record = $null; Changed = $false; Status = $mk.Status; Key = ($parentPath -join '/') }
                 }
                 $current = $mk.Text
                 $created.Add($parentPath)
@@ -537,9 +546,10 @@ function Invoke-VSCodeStyleApply {
         $had = Get-JsoncValueLiteral -Text $current -Path $entry.Path
         $literal = ConvertTo-JsoncLiteral -Value $entry.Value
         $r = Set-JsoncLiteral -Text $current -Path $entry.Path -Literal $literal
-        if ($r.Status -eq 'rootnotobject' -or $r.Status -eq 'parentnotobject' -or
-            $r.Status -eq 'parentmissing' -or $r.Status -eq 'unterminated') {
-            return @{ Text = $Text; Record = $null; Changed = $false; Status = $r.Status }
+        # An allowlist: no status, today's or a future one, may reach the
+        # record of what was written unless the text holds it.
+        if ($r.Status -ne 'inserted' -and $r.Status -ne 'updated' -and $r.Status -ne 'same') {
+            return @{ Text = $Text; Record = $null; Changed = $false; Status = $r.Status; Key = ($entry.Path -join '/') }
         }
         $current = $r.Text
         $wrote.Add(@{ Path = $entry.Path; Literal = $literal; Had = $had })
@@ -584,6 +594,11 @@ function Invoke-VSCodeStyleReset {
     Comparison is ORDINAL (-cne). '#F5F5F5' is the same colour as '#f5f5f5' and
     is not the same text; if the bytes differ, something other than us wrote
     them, and the safe reading of that is "leave it alone".
+
+    An edit the JSONC editor refuses -- one that would change a comment
+    written inside a key we added -- refuses the whole reset: the text comes
+    back unchanged, with Status the editor's ('commentchanged') and Key the
+    key, so the caller keeps the record and can name it.
     #>
     [CmdletBinding()]
     param(
@@ -608,10 +623,15 @@ function Invoke-VSCodeStyleReset {
 
         if ($null -eq $w.Had) {
             $r = Remove-JsoncValue -Text $current -Path $w.Path
-            if ($r.Changed) { $current = $r.Text; $removed.Add($name) }
         } else {
             $r = Set-JsoncLiteral -Text $current -Path $w.Path -Literal $w.Had
-            if ($r.Changed) { $current = $r.Text; $restored.Add($name) }
+        }
+        if ($r.Status -ne 'removed' -and $r.Status -ne 'updated' -and $r.Status -ne 'same') {
+            return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Status = $r.Status; Key = $name }
+        }
+        if ($r.Changed) {
+            $current = $r.Text
+            if ($null -eq $w.Had) { $removed.Add($name) } else { $restored.Add($name) }
         }
     }
 

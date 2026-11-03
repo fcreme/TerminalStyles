@@ -2158,3 +2158,99 @@ Describe 'Show-VSCodeResetResult during uninstall' {
         }
     }
 }
+
+Describe 'the VS Code writer refuses rather than lose a comment' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            [System.IO.File]::WriteAllText($script:sPath, "{`n  `"editor.fontSize`": 13`n}", [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            $script:eva      = Get-StyleDir -StyleName 'eva'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            # A comment written inside a key the style added.
+            $script:annotate = {
+                $t = [System.IO.File]::ReadAllText($script:sPath)
+                $n = $t.Replace('"terminal.integrated.fontFamily": ', '"terminal.integrated.fontFamily" /* mine */ : ')
+                $n | Should -Not -BeExactly $t -Because 'the fixture must hold the comment'
+                [System.IO.File]::WriteAllText($script:sPath, $n, [System.Text.UTF8Encoding]::new($false))
+                return $n
+            }
+            $script:why = 'changing terminal.integrated.fontFamily in it would have changed a comment too'
+        }
+
+        It "saves every key live under a block comment on the colour block's brace line, and reset takes all of it out byte for byte" {
+            $user = @('{', '  "workbench.colorCustomizations": { /* per-theme overrides', '      go in here */', '  }', '}') -join "`n"
+            [System.IO.File]::WriteAllText($script:sPath, $user, [System.Text.UTF8Encoding]::new($false))
+            $r = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode'
+            $r.Status | Should -Be 'written'
+            $rec = (Read-VSCodeState).Entries['Code'].record
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            @($rec.Wrote).Count | Should -BeGreaterThan 20
+            @(@($rec.Wrote) | Where-Object { (Get-JsoncValueLiteral -Text $text -Path $_.Path) -cne $_.Literal }).Count | Should -Be 0
+            Test-JsoncCommentsIntact -Before $user -After $text | Should -BeTrue
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $user
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'writes nothing, keeps the record and names the key when switching would delete a comment written inside a key' {
+            Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' | Out-Null
+            $annot = & $script:annotate
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            Show-VSCodeWriteResult -Result $r
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -BeExactly $script:why
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $annot
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva'
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -cmatch 'Saved to' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match ([regex]::Escape("safely: $script:why.")) }
+        }
+
+        It 'reset keeps the file and the record, and says why, when the style cannot come out without deleting a comment' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $annot = & $script:annotate
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -BeExactly $script:why
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $annot
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+            Show-VSCodeResetResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'so the style was left in it' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Took the style back out' }
+        }
+
+        It 'Esc will not take a preview out through a comment written inside it, and keeps the preview''s record' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            $annot = & $script:annotate
+            $r = Restore-VSCodePreview -Session $s
+            Show-VSCodeRestoreResult -Result $r
+            $r.Status | Should -Be 'failed'
+            $r.Reason | Should -BeExactly $script:why
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $annot
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'once that is fixed, tstyles reset takes it out' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'parses and can be written' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+        }
+    }
+}
+
+Describe 'Get-VSCodeRefusalDetail' {
+    InModuleScope TerminalStyles {
+        It 'words <Status> in its own terms' -ForEach @(
+            @{ Status = 'parentnotobject'; Expected = 'workbench.colorCustomizations in it is not an object' }
+            @{ Status = 'parentmissing';   Expected = 'k in it could not be reached' }
+            @{ Status = 'commentchanged';  Expected = 'changing k in it would have changed a comment too' }
+            @{ Status = 'notreadback';     Expected = 'k would not have read back from it as written' }
+            @{ Status = 'unterminated';    Expected = 'it does not parse as a JSON object' }
+        ) {
+            Get-VSCodeRefusalDetail -Status $Status -Key 'k' | Should -BeExactly $Expected
+        }
+    }
+}

@@ -26,12 +26,21 @@
 # An orphaned comment is litter the user can delete in two seconds. A deleted
 # comment is their writing, gone, with no undo. Those are not comparable, so
 # the rule never has to weigh them. Test-JsoncCommentsIntact turns it into an
-# invariant that is CHECKED rather than intended.
+# invariant that is CHECKED rather than intended: Set-JsoncLiteral and
+# Remove-JsoncValue run it on every splice and refuse ('commentchanged') an
+# edit that would change a comment -- including one written in "the text
+# between" a member's key and value, which that member's removal would take.
+# Set-JsoncLiteral also reads the value back from the result ('notreadback').
+# The header said "checked" from 0.9.0 while nothing called the check.
 #
 # The other trap the review found: a separating comma must be written at the
 # value's end offset, never at the end of the line. A line ending in a comment
 # puts the comma inside the comment, which silently removes the separator and
 # breaks the file at the NEXT member.
+#
+# And the end of a line is not always outside every comment: a block comment
+# that opens there and closes on a later line contains it. A new member written
+# at the end of the line went inside that comment (Get-JsoncInsertAnchor).
 
 function Get-JsoncToken {
     <#
@@ -235,7 +244,9 @@ function Get-JsoncObjectMember {
     object and are found by asking again with its own open token.
 
     Comments are legal between any two of these pieces and are simply skipped,
-    so `"a" /* why */ : 1` parses and its comment is not part of any span.
+    so `"a" /* why */ : 1` parses. Its comment lies inside [KeyStart, ValueEnd),
+    the span Remove-JsoncValue deletes, which is why that removal refuses
+    ('commentchanged') rather than taking the comment with it.
     #>
     [CmdletBinding()]
     param(
@@ -245,13 +256,14 @@ function Get-JsoncObjectMember {
     )
 
     $members = [System.Collections.Generic.List[object]]::new()
-    $significant = { param($k) $k -ne 'Whitespace' -and $k -ne 'LineComment' -and $k -ne 'BlockComment' }
+    # The significance test is written out at each use rather than called as a
+    # scriptblock: this loop runs per token, and the call was most of its cost.
 
     $i = $OpenIndex + 1
     $depth = 0
     while ($i -lt $Tokens.Count) {
         $t = $Tokens[$i]
-        if (-not (& $significant $t.Kind)) { $i++; continue }
+        if ($t.Kind -eq 'Whitespace' -or $t.Kind -eq 'LineComment' -or $t.Kind -eq 'BlockComment') { $i++; continue }
         if ($t.Kind -eq 'BraceClose') { break }
         if ($t.Kind -eq 'Comma') { $i++; continue }
         if ($t.Kind -ne 'String') { $i++; continue }   # junk: skip, do not guess
@@ -261,12 +273,12 @@ function Get-JsoncObjectMember {
 
         # colon
         $i++
-        while ($i -lt $Tokens.Count -and -not (& $significant $Tokens[$i].Kind)) { $i++ }
+        while ($i -lt $Tokens.Count -and ($Tokens[$i].Kind -eq 'Whitespace' -or $Tokens[$i].Kind -eq 'LineComment' -or $Tokens[$i].Kind -eq 'BlockComment')) { $i++ }
         if ($i -ge $Tokens.Count -or $Tokens[$i].Kind -ne 'Colon') { continue }
 
         # value
         $i++
-        while ($i -lt $Tokens.Count -and -not (& $significant $Tokens[$i].Kind)) { $i++ }
+        while ($i -lt $Tokens.Count -and ($Tokens[$i].Kind -eq 'Whitespace' -or $Tokens[$i].Kind -eq 'LineComment' -or $Tokens[$i].Kind -eq 'BlockComment')) { $i++ }
         if ($i -ge $Tokens.Count) { break }
 
         $valueStartToken = $Tokens[$i]
@@ -287,7 +299,7 @@ function Get-JsoncObjectMember {
 
         # the comma that separates this member, if there is one
         $j = $i + 1
-        while ($j -lt $Tokens.Count -and -not (& $significant $Tokens[$j].Kind)) { $j++ }
+        while ($j -lt $Tokens.Count -and ($Tokens[$j].Kind -eq 'Whitespace' -or $Tokens[$j].Kind -eq 'LineComment' -or $Tokens[$j].Kind -eq 'BlockComment')) { $j++ }
         $commaOffset = -1
         if ($j -lt $Tokens.Count -and $Tokens[$j].Kind -eq 'Comma') {
             $commaOffset = $Tokens[$j].Start
@@ -395,11 +407,16 @@ function Invoke-JsoncSplice {
 function Get-JsoncCommentText {
     # Every comment in the text, in order, as source strings. The evidence for
     # the ownership rule: an edit that loses one of these is rejected.
+    # -Tokens reuses a tokenization the caller already holds.
     [CmdletBinding()]
-    param([Parameter(Mandatory)][AllowEmptyString()][string]$Text)
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [AllowNull()][object[]]$Tokens
+    )
 
+    if ($null -eq $Tokens) { $Tokens = Get-JsoncToken -Text $Text }
     $out = [System.Collections.Generic.List[string]]::new()
-    foreach ($t in (Get-JsoncToken -Text $Text)) {
+    foreach ($t in $Tokens) {
         if ($t.Kind -eq 'LineComment' -or $t.Kind -eq 'BlockComment') {
             $out.Add($Text.Substring($t.Start, $t.Length))
         }
@@ -420,16 +437,20 @@ function Test-JsoncCommentsIntact {
 
     This is a CHECK, not a convention. The four designs reviewed for this each
     intended to preserve comments and each destroyed one in a case its author
-    had not thought of, so intent is not the thing to rely on.
+    had not thought of, so intent is not the thing to rely on. Set-JsoncLiteral
+    and Remove-JsoncValue run it on every splice. -BeforeTokens/-AfterTokens
+    reuse tokenizations the caller already holds.
     #>
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Before,
-        [Parameter(Mandatory)][AllowEmptyString()][string]$After
+        [Parameter(Mandatory)][AllowEmptyString()][string]$After,
+        [AllowNull()][object[]]$BeforeTokens,
+        [AllowNull()][object[]]$AfterTokens
     )
 
-    $b = Get-JsoncCommentText -Text $Before
-    $a = Get-JsoncCommentText -Text $After
+    $b = Get-JsoncCommentText -Text $Before -Tokens $BeforeTokens
+    $a = Get-JsoncCommentText -Text $After -Tokens $AfterTokens
     # An ORDINAL dictionary, not @{}. A PowerShell hashtable compares string
     # keys case-insensitively, so '// mine' and '// MINE' would be the same
     # comment and an edit that rewrote one into the other would pass this
@@ -516,6 +537,47 @@ function Get-JsoncLineBound {
     return @{ Start = $start; ContentEnd = $contentEnd; End = $end }
 }
 
+function Get-JsoncInsertAnchor {
+    <#
+    .SYNOPSIS
+    Where a new member goes after the line holding -Offset: the end of that
+    line, unless a block comment is open there.
+
+    .DESCRIPTION
+    Pure. A // comment always ends at its line's end, but a block comment that
+    opens on the line and closes on a later one contains it. Writing there put
+    the member inside the comment: an apply of a style under
+    `{ /* per-theme overrides` / `go in here */` said "Saved" with 4 of its 24
+    keys live, and reset could not find the other 20. So the anchor moves to
+    the end of the line the comment closes on -- repeatedly, for a comment
+    closing where another opens -- which keeps the comment where it was and
+    each new key on a line of its own. Clamped to -CloseOffset, the object's
+    '}', for a comment that closes on the '}' line.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tokens,
+        [Parameter(Mandatory)][int]$Offset,
+        [Parameter(Mandatory)][int]$CloseOffset
+    )
+
+    $anchor = (Get-JsoncLineBound -Text $Text -Offset $Offset).ContentEnd
+    while ($anchor -lt $CloseOffset) {
+        # The last token starting before the anchor: the one that would hold it.
+        $lo = 0; $hi = $Tokens.Count - 1; $idx = -1
+        while ($lo -le $hi) {
+            $mid = [int][Math]::Floor(($lo + $hi) / 2)
+            if ($Tokens[$mid].Start -lt $anchor) { $idx = $mid; $lo = $mid + 1 } else { $hi = $mid - 1 }
+        }
+        if ($idx -lt 0) { break }
+        $t = $Tokens[$idx]
+        if ($t.Kind -ne 'BlockComment' -or ($t.Start + $t.Length) -le $anchor) { break }
+        $anchor = (Get-JsoncLineBound -Text $Text -Offset ($t.Start + $t.Length - 1)).ContentEnd
+    }
+    return [Math]::Min($anchor, $CloseOffset)
+}
+
 function Test-JsoncRangeBlank {
     # Is everything in [Start, End) whitespace? Used to decide whether a line
     # held anything besides the member being removed. A comment is NOT
@@ -546,7 +608,14 @@ function Set-JsoncValue {
 
     An inserted member follows the file: its indentation is the indentation of
     the member above it, and an object written on ONE line stays on one line
-    rather than being helpfully expanded.
+    rather than being helpfully expanded. It goes on a line of its own after
+    the last member's line -- or after the line a block comment open there
+    closes on (Get-JsoncInsertAnchor).
+
+    Every splice is checked before it is kept: 'commentchanged' when it would
+    change one of the file's comments (an update replacing an object value
+    with a comment inside it, say), 'notreadback' when the value would not
+    read back from the result as written. Both leave the text unchanged.
 
     The separating comma is written at the previous value's END OFFSET, never
     at the end of its line. A line that ends in a comment would otherwise get
@@ -589,7 +658,8 @@ function Get-JsoncValueLiteral {
 function Set-JsoncLiteral {
     # Set a key to a value given as JSONC SOURCE TEXT, with no encoding step.
     # Writing back a value exactly as it was found is what a restore needs, and
-    # re-encoding a parsed value cannot promise that.
+    # re-encoding a parsed value cannot promise that. Refuses, unchanged, an
+    # edit that would change a comment or not read back (see Set-JsoncValue).
     [CmdletBinding()]
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
@@ -617,7 +687,7 @@ function Set-JsoncLiteral {
         $new = Invoke-JsoncSplice -Text $Text -Edits @(
             @{ Start = $m.ValueStart; Length = ($m.ValueEnd - $m.ValueStart); Text = $literal }
         )
-        return @{ Text = $new; Changed = $true; Status = 'updated' }
+        return (Confirm-JsoncLiteralSplice -Text $Text -Tokens $tokens -New $new -Path $Path -Literal $literal -Status 'updated')
     }
 
     # Absent: insert.
@@ -646,34 +716,69 @@ function Set-JsoncLiteral {
             }
         }
     } else {
+        # The break goes in as the anchor line's own terminator: in a file of
+        # mixed endings, a CRLF written before an LF-only line's break would be
+        # taken into a // comment ending there (a line comment runs to the LF).
+        $breakAt = {
+            param([int]$At)
+            if ($At -lt $Text.Length -and $Text[$At] -eq "`r") { return "`r`n" }
+            if ($At -lt $Text.Length -and $Text[$At] -eq "`n") { return "`n" }
+            return $eol
+        }
         if ($members.Count -eq 0) {
             $anchorLine = Get-JsoncLineBound -Text $Text -Offset $openTok.Start
-            $anchor = [Math]::Min($anchorLine.ContentEnd, $closeOff)
+            $anchor = Get-JsoncInsertAnchor -Text $Text -Tokens $tokens -Offset $openTok.Start -CloseOffset $closeOff
             $braceIndent = [regex]::Match($Text.Substring($anchorLine.Start), '^[ \t]*').Value
-            $edits += @{ Start = $anchor; Length = 0; Text = $eol + $braceIndent + $unit + $keyText }
+            $edits += @{ Start = $anchor; Length = 0; Text = (& $breakAt $anchor) + $braceIndent + $unit + $keyText }
         } else {
             $last = $members[$members.Count - 1]
             $tailOffset = if ($last.CommaOffset -ge 0) { $last.CommaOffset } else { $last.ValueEnd }
             $lastLine = Get-JsoncLineBound -Text $Text -Offset $tailOffset
-            $anchor = [Math]::Min($lastLine.ContentEnd, $closeOff)
+            $anchor = Get-JsoncInsertAnchor -Text $Text -Tokens $tokens -Offset $tailOffset -CloseOffset $closeOff
+            $eolHere = & $breakAt $anchor
             $indent = [regex]::Match($Text.Substring($lastLine.Start), '^[ \t]*').Value
             $needComma = ($last.CommaOffset -lt 0)
 
             if ($needComma -and $last.ValueEnd -eq $anchor) {
                 # Nothing between the value and the end of the line, so one
                 # edit carries both and there is no ordering question.
-                $edits += @{ Start = $anchor; Length = 0; Text = ',' + $eol + $indent + $keyText }
+                $edits += @{ Start = $anchor; Length = 0; Text = ',' + $eolHere + $indent + $keyText }
             } else {
                 if ($needComma) {
                     $edits += @{ Start = $last.ValueEnd; Length = 0; Text = ',' }
                 }
-                $edits += @{ Start = $anchor; Length = 0; Text = $eol + $indent + $keyText }
+                $edits += @{ Start = $anchor; Length = 0; Text = $eolHere + $indent + $keyText }
             }
         }
     }
 
     $new = Invoke-JsoncSplice -Text $Text -Edits $edits
-    return @{ Text = $new; Changed = $true; Status = 'inserted' }
+    return (Confirm-JsoncLiteralSplice -Text $Text -Tokens $tokens -New $new -Path $Path -Literal $literal -Status 'inserted')
+}
+
+function Confirm-JsoncLiteralSplice {
+    # Keep a Set-JsoncLiteral splice only if it changed no comment and the
+    # value reads back from the result as written -- the same read a later
+    # reset makes. One tokenization of the result serves both checks.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Tokens,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$New,
+        [Parameter(Mandatory)][string[]]$Path,
+        [Parameter(Mandatory)][string]$Literal,
+        [Parameter(Mandatory)][string]$Status
+    )
+    $newTokens = Get-JsoncToken -Text $New
+    if (-not (Test-JsoncCommentsIntact -Before $Text -After $New -BeforeTokens $Tokens -AfterTokens $newTokens)) {
+        return @{ Text = $Text; Changed = $false; Status = 'commentchanged' }
+    }
+    $back = Resolve-JsoncPath -Text $New -Tokens $newTokens -Path $Path
+    if (-not $back.Member -or
+        $New.Substring($back.Member.ValueStart, $back.Member.ValueEnd - $back.Member.ValueStart) -cne $Literal) {
+        return @{ Text = $Text; Changed = $false; Status = 'notreadback' }
+    }
+    return @{ Text = $New; Changed = $true; Status = $Status }
 }
 
 function Find-JsoncCloseBrace {
@@ -713,6 +818,10 @@ function Remove-JsoncValue {
     the member goes and the comment remains, orphaned. That is deliberate: an
     orphan comment is two seconds of tidying, and a deleted comment is the
     user's writing with no undo.
+
+    A comment INSIDE the span -- `"a" /* why */ : 1`, or inside an object value
+    -- would go with it, so that removal is refused ('commentchanged') and the
+    text is returned unchanged.
     #>
     [CmdletBinding()]
     param(
@@ -779,5 +888,10 @@ function Remove-JsoncValue {
 
     $edits += @{ Start = $delStart; Length = ($delEnd - $delStart); Text = '' }
     $new = Invoke-JsoncSplice -Text $Text -Edits $edits
+    # No read-back here: with duplicate keys, removing the last one rightly
+    # makes an earlier one visible.
+    if (-not (Test-JsoncCommentsIntact -Before $Text -After $new -BeforeTokens $tokens)) {
+        return @{ Text = $Text; Changed = $false; Status = 'commentchanged' }
+    }
     return @{ Text = $new; Changed = $true; Status = 'removed' }
 }
