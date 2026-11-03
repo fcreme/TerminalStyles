@@ -376,6 +376,10 @@ function Get-TuneSavePlan {
     return [pscustomobject]@{
         Name           = $SaveName
         DestDir        = $destDir
+        # What it was decided for, so Save-TunedStyle can tell a plan made for
+        # another base or another opened style from its own.
+        BaseStyleDir   = $BaseStyleDir
+        OpenedStyleDir = $OpenedStyleDir
         IsStyle        = [bool]$isStyle
         SameStyle      = [bool]$sameStyle
         Replacing      = [bool]$replacing
@@ -423,11 +427,15 @@ function Save-TunedStyle {
         [string]$FontFace, [int]$FontSize,
         # The plan the user was asked about (Get-TuneSavePlan), so the save does
         # what the question said. Computed here when absent or for another
-        # folder.
+        # folder, base or opened style.
         $Plan
     )
     $destDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $SaveName
-    if (-not $Plan -or -not [string]::Equals("$($Plan.DestDir)", $destDir, [System.StringComparison]::Ordinal)) {
+    $samePlan = $Plan -and
+        [string]::Equals("$($Plan.DestDir)", $destDir, [System.StringComparison]::Ordinal) -and
+        [string]::Equals("$($Plan.BaseStyleDir)", $BaseStyleDir, [System.StringComparison]::Ordinal) -and
+        [string]::Equals("$($Plan.OpenedStyleDir)", $OpenedStyleDir, [System.StringComparison]::Ordinal)
+    if (-not $samePlan) {
         # Before the folder is made, so IsStyle is the folder as it was.
         $Plan = Get-TuneSavePlan -SaveName $SaveName -BaseStyleDir $BaseStyleDir -OpenedStyleDir $OpenedStyleDir
     }
@@ -634,15 +642,17 @@ function Get-TuneReplaceWarning {
 
     $name  = $Plan.Name
     $parts = @()
-    if ($Plan.IsStyle -and $Plan.SameStyle) {
-        $parts += "'$name' will be replaced and cannot be undone."
-    } elseif ($Plan.IsStyle) {
-        $sentence = "'$name' already exists and will be REPLACED."
+    if ($Plan.IsStyle) {
+        $sentence = if ($Plan.SameStyle) { "'$name' will be replaced and cannot be undone." }
+                    else                 { "'$name' already exists and will be REPLACED." }
+        # Every file the save removes, so the question says no less than the
+        # save does: a re-tune from a base with no profile.ps1 removes the
+        # style's own.
         $removes = @($Plan.Removes)
         $images  = @($removes | Where-Object { $_ -like 'background.*' }).Count
         $items   = @()
         if ($images -eq 1) { $items += 'background image' } elseif ($images -gt 1) { $items += 'background images' }
-        foreach ($own in 'meta.json', 'README.md') { if ($removes -contains $own) { $items += $own } }
+        foreach ($own in 'profile.ps1', 'prompt.sh', 'meta.json', 'README.md') { if ($removes -contains $own) { $items += $own } }
         if ($items.Count) {
             $verb = if ($items.Count -eq 1 -and $images -le 1) { 'goes' } else { 'go' }
             $sentence += " Its $(Join-TuneNameList $items) $verb with it."

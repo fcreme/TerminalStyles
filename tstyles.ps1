@@ -1489,7 +1489,12 @@ function Invoke-TerminalStyle {
     if ($wantsBackgrounds) {
         foreach ($s in $styles) {
             if (-not (Test-StyleResolved -StyleDir $s.FullName)) {
-                $missingPaths += $s.FullName
+                # A tuned style's image is its base's (Get-StyleBundledBackground),
+                # and the job fetches by folder name: fetching under the tuned
+                # name would fill a cache the resolver does not read for it.
+                $fetchDir = Get-TunedBaseDir -StyleDir $s.FullName
+                if (-not $fetchDir) { $fetchDir = $s.FullName }
+                if ($missingPaths -notcontains $fetchDir) { $missingPaths += $fetchDir }
             }
         }
     }

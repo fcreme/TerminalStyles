@@ -168,6 +168,31 @@ Describe 'Get-TuneSavePlan: the question names what the save then does' {
                 Should -BeExactly "  'mine' already exists and will be REPLACED. Its background image goes with it. Continue? [y/N]"
         }
 
+        It "names the style's own profile.ps1 and prompt.sh when a re-tune removes them" {
+            [void](New-Folder $script:mine @{ 'scheme.json' = '{"name":"mine"}'; 'profile.ps1' = '# mine'; 'prompt.sh' = '# mine'
+                                              'tune.json' = '{"schemaVersion":1,"base":"forest"}' })
+            $before = Snapshot $script:mine
+            $plan = Get-TuneSavePlan -SaveName 'mine' -BaseStyleDir $script:forest -OpenedStyleDir $script:mine
+            $q = Get-TuneReplaceWarning -Plan $plan
+
+            $q | Should -BeExactly "  'mine' will be replaced and cannot be undone. Its profile.ps1 and prompt.sh go with it. Continue? [y/N]"
+            Invoke-PlannedSave $plan 'mine' $script:forest $script:mine
+            Assert-PlanKept $plan $before (Snapshot $script:mine) $q
+        }
+
+        It 'does not carry out a plan made for another base' {
+            # A plan built against the opened style, when the base has no
+            # profile.ps1: it would keep the style's own, which the real base
+            # says goes. The save recomputes rather than trust it.
+            [void](New-Folder $script:mine @{ 'scheme.json' = '{"name":"mine"}'; 'profile.ps1' = '# mine'
+                                              'tune.json' = '{"schemaVersion":1,"base":"forest"}' })
+            $stale = Get-TuneSavePlan -SaveName 'mine' -BaseStyleDir $script:mine -OpenedStyleDir $script:mine
+            @($stale.Removes) | Should -Not -Contain 'profile.ps1' -Because 'the fixture must be a plan that disagrees'
+
+            Invoke-PlannedSave $stale 'mine' $script:forest $script:mine
+            [System.IO.File]::Exists((Join-Path $script:mine 'profile.ps1')) | Should -BeFalse
+        }
+
         It 'asks Test-SameStyleDirectory whether the base is the destination' {
             # The volume-aware helper, not an inline -eq: on Linux `Eva` and
             # `eva` are two directories.

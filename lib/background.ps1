@@ -361,8 +361,9 @@ function Get-StyleBundledBackground {
     #   2. For a style tuned from ANOTHER style, that base's answer -- and it is
     #      final, $null included. The cache and the gifs branch are keyed by
     #      NAME, so asking them first made a tune of forest saved as 'eva' paint
-    #      eva's cached wallpaper, or download it, while the tuner's preview had
-    #      shown forest's. One hop: the base is resolved with -NoInherit.
+    #      eva's cached wallpaper -- or, when forest had no image or could not
+    #      be reached, download eva's -- while the tuner's preview had shown
+    #      forest's. One hop: the base is resolved with -NoInherit.
     #   3. Cached file under $DataRoot\cache\<name>\ (writable, persistent)
     #   4. Lazy-fetch from gifs branch -> write to $DataRoot\cache\<name>\
     #
