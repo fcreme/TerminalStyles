@@ -468,7 +468,10 @@ function Invoke-VSCodeStyleApply {
 
     .DESCRIPTION
     Pure: text in, text out, no file touched. Every write goes through
-    lib/jsonctext.ps1, so comments and formatting survive.
+    lib/jsonctext.ps1, so comments and formatting survive. When the editor
+    refuses an edit -- the undo of the previous style, the colour block, or
+    a key -- the whole apply refuses: the text comes back unchanged, Record
+    is $null, Status is the editor's and Key names the key.
 
     The RECORD is the point. For every key it writes, it keeps the literal it
     wrote and the literal that was there BEFORE -- or $null when the key was
@@ -489,11 +492,17 @@ function Invoke-VSCodeStyleApply {
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
         [Parameter(Mandatory)][string]$StyleDir,
         [string]$StyleName,
-        [AllowNull()]$PreviousRecord
+        [AllowNull()]$PreviousRecord,
+        # Keys, named the way the undo names them (Path joined with '/'), this
+        # apply neither writes nor records. The picker's Esc passes the
+        # starting style's keys the user had already changed by hand, so
+        # putting that style back does not write over them.
+        [string[]]$Leave
     )
 
     $current = $Text
     $carriedKept = @()
+    $carriedGone = @()
 
     # Undo the style that is already on before applying this one. Without it,
     # switching styles leaves the previous one's keys behind AND poisons this
@@ -510,8 +519,15 @@ function Invoke-VSCodeStyleApply {
     # another style, not a reset.
     if ($PreviousRecord) {
         $undo = Invoke-VSCodeStyleReset -Text $current -Record $PreviousRecord
+        # A refused undo refuses the apply: taking the previous style out
+        # would have changed a comment, and applying over it would record its
+        # values as the user's.
+        if ($undo.Status -ne 'reset' -and $undo.Status -ne 'norecord') {
+            return @{ Text = $Text; Record = $null; Changed = $false; Status = $undo.Status; Key = $undo.Key }
+        }
         $current = $undo.Text
         $carriedKept = $undo.Kept
+        $carriedGone = $undo.Gone
     }
 
     $plan = Get-VSCodeStylePlan -StyleDir $StyleDir
@@ -519,6 +535,9 @@ function Invoke-VSCodeStyleApply {
     $created = [System.Collections.Generic.List[object]]::new()
 
     foreach ($entry in $plan) {
+        # Before the parent is made: a block is created only for a key that is
+        # written. -ccontains, because JSON keys are case-sensitive.
+        if (@($Leave) -ccontains ($entry.Path -join '/')) { continue }
         # A nested key needs its parent object to exist. Creating it is
         # recorded, so a reset that empties it again can take it away rather
         # than leaving an empty block behind.
@@ -527,7 +546,7 @@ function Invoke-VSCodeStyleApply {
             if ($null -eq (Get-JsoncValueLiteral -Text $current -Path $parentPath)) {
                 $mk = Set-JsoncLiteral -Text $current -Path $parentPath -Literal '{}'
                 if (-not $mk.Changed) {
-                    return @{ Text = $Text; Record = $null; Changed = $false; Status = $mk.Status }
+                    return @{ Text = $Text; Record = $null; Changed = $false; Status = $mk.Status; Key = ($parentPath -join '/') }
                 }
                 $current = $mk.Text
                 $created.Add($parentPath)
@@ -537,9 +556,10 @@ function Invoke-VSCodeStyleApply {
         $had = Get-JsoncValueLiteral -Text $current -Path $entry.Path
         $literal = ConvertTo-JsoncLiteral -Value $entry.Value
         $r = Set-JsoncLiteral -Text $current -Path $entry.Path -Literal $literal
-        if ($r.Status -eq 'rootnotobject' -or $r.Status -eq 'parentnotobject' -or
-            $r.Status -eq 'parentmissing' -or $r.Status -eq 'unterminated') {
-            return @{ Text = $Text; Record = $null; Changed = $false; Status = $r.Status }
+        # An allowlist: no status, today's or a future one, may reach the
+        # record of what was written unless the text holds it.
+        if ($r.Status -ne 'inserted' -and $r.Status -ne 'updated' -and $r.Status -ne 'same') {
+            return @{ Text = $Text; Record = $null; Changed = $false; Status = $r.Status; Key = ($entry.Path -join '/') }
         }
         $current = $r.Text
         $wrote.Add(@{ Path = $entry.Path; Literal = $literal; Had = $had })
@@ -559,13 +579,15 @@ function Invoke-VSCodeStyleApply {
         # user had changed it since. Carried out so a caller can say so rather
         # than leaving it to be discovered.
         Kept    = $carriedKept
+        # What that undo found already taken out.
+        Gone    = $carriedGone
     }
 }
 
 function Invoke-VSCodeStyleReset {
     <#
     .SYNOPSIS
-    Undo an apply, using its record. Returns @{ Text; Restored; Removed; Kept; Status }.
+    Undo an apply, using its record. Returns @{ Text; Restored; Removed; Kept; Gone; Status }.
 
     .DESCRIPTION
     Pure. Walks the record and, for each key we wrote:
@@ -580,10 +602,19 @@ function Invoke-VSCodeStyleReset {
         overwrote it, so putting it back is the undo. Deleting it would be a
         second, uninvited change.
       - there was no key before                      -> REMOVED.
+      - the key is not there any more                -> GONE, untouched:
+        somebody took it out after we wrote it. Named apart from KEPT --
+        there is no value of theirs to name, and nothing to restore -- but a
+        caller putting a style back must not put it back either.
 
     Comparison is ORDINAL (-cne). '#F5F5F5' is the same colour as '#f5f5f5' and
     is not the same text; if the bytes differ, something other than us wrote
     them, and the safe reading of that is "leave it alone".
+
+    An edit the JSONC editor refuses -- one that would change a comment
+    written inside a key we added -- refuses the whole reset: the text comes
+    back unchanged, with Status the editor's ('commentchanged') and Key the
+    key, so the caller keeps the record and can name it.
     #>
     [CmdletBinding()]
     param(
@@ -592,47 +623,57 @@ function Invoke-VSCodeStyleReset {
     )
 
     if (-not $Record -or -not $Record.Wrote) {
-        return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Status = 'norecord' }
+        return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Gone = @(); Status = 'norecord' }
     }
 
     $current = $Text
     $restored = [System.Collections.Generic.List[string]]::new()
     $removed  = [System.Collections.Generic.List[string]]::new()
     $kept     = [System.Collections.Generic.List[string]]::new()
+    $gone     = [System.Collections.Generic.List[string]]::new()
 
     foreach ($w in $Record.Wrote) {
         $name = ($w.Path -join '/')
         $now = Get-JsoncValueLiteral -Text $current -Path $w.Path
-        if ($null -eq $now) { continue }                 # already gone; nothing to undo
+        if ($null -eq $now) { $gone.Add($name); continue }   # already gone; nothing to undo
         if ($now -cne $w.Literal) { $kept.Add($name); continue }
 
         if ($null -eq $w.Had) {
             $r = Remove-JsoncValue -Text $current -Path $w.Path
-            if ($r.Changed) { $current = $r.Text; $removed.Add($name) }
         } else {
             $r = Set-JsoncLiteral -Text $current -Path $w.Path -Literal $w.Had
-            if ($r.Changed) { $current = $r.Text; $restored.Add($name) }
+        }
+        if ($r.Status -ne 'removed' -and $r.Status -ne 'updated' -and $r.Status -ne 'same') {
+            return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Gone = @(); Status = $r.Status; Key = $name }
+        }
+        if ($r.Changed) {
+            $current = $r.Text
+            if ($null -eq $w.Had) { $removed.Add($name) } else { $restored.Add($name) }
         }
     }
 
     # A parent object this apply created, and which is empty again, goes too --
     # an orphan {} left in a config we were asked to clean out is the same
     # defect as an orphan colour scheme in Windows Terminal's settings.
+    #
+    # Empty means BLANK between the braces, not "no members". A comment the user
+    # wrote inside the block -- a note, a colour of the style commented out --
+    # is no member, and taking the block with it deleted their writing on every
+    # reset and every switch. Such a block holds the user's writing and stays;
+    # Remove-JsoncValue's own comment check is the backstop.
     foreach ($parentPath in @($Record.CreatedParents)) {
         if (-not $parentPath) { continue }
         $tokens = Get-JsoncToken -Text $current
         $found = Resolve-JsoncPath -Text $current -Tokens $tokens -Path $parentPath
         if (-not $found.Member -or $found.Member.ValueOpen -lt 0) { continue }
-        # NOT @(...) around this call. Get-JsoncObjectMember returns ,$arr to
-        # stop a one-member object unrolling into a bare hashtable -- and a
-        # comma-wrapped return put back inside @() is an array of ONE, whatever
-        # it holds. Wrapping it here reported an empty object as having one
-        # member, so the emptied colour block was never taken away.
-        $members = Get-JsoncObjectMember -Text $current -Tokens $tokens -OpenIndex $found.Member.ValueOpen
-        if (@($members).Count -eq 0 -or $null -eq $members -or $members.Count -eq 0) {
-            $r = Remove-JsoncValue -Text $current -Path $parentPath
-            if ($r.Changed) { $current = $r.Text; $removed.Add(($parentPath -join '/')) }
-        }
+        $open = $found.Member.ValueOpen
+        # We created an object; a value turned into anything else is not ours to take.
+        if ($tokens[$open].Kind -ne 'BraceOpen') { continue }
+        $close = Find-JsoncCloseBrace -Tokens $tokens -OpenIndex $open
+        if ($close -lt 0) { continue }
+        if (-not (Test-JsoncRangeBlank -Text $current -Start ($tokens[$open].Start + 1) -End $close)) { continue }
+        $r = Remove-JsoncValue -Text $current -Path $parentPath
+        if ($r.Changed) { $current = $r.Text; $removed.Add(($parentPath -join '/')) }
     }
 
     return @{
@@ -640,6 +681,7 @@ function Invoke-VSCodeStyleReset {
         Restored = $restored.ToArray()
         Removed  = $removed.ToArray()
         Kept     = $kept.ToArray()
+        Gone     = $gone.ToArray()
         Status   = 'reset'
     }
 }

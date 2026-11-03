@@ -2158,3 +2158,343 @@ Describe 'Show-VSCodeResetResult during uninstall' {
         }
     }
 }
+
+Describe 'the VS Code writer refuses rather than lose a comment' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            [System.IO.File]::WriteAllText($script:sPath, "{`n  `"editor.fontSize`": 13`n}", [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            $script:eva      = Get-StyleDir -StyleName 'eva'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            # A comment written inside a key the style added.
+            $script:annotate = {
+                $t = [System.IO.File]::ReadAllText($script:sPath)
+                $n = $t.Replace('"terminal.integrated.fontFamily": ', '"terminal.integrated.fontFamily" /* mine */ : ')
+                $n | Should -Not -BeExactly $t -Because 'the fixture must hold the comment'
+                [System.IO.File]::WriteAllText($script:sPath, $n, [System.Text.UTF8Encoding]::new($false))
+                return $n
+            }
+            $script:why = 'changing terminal.integrated.fontFamily in it would have changed a comment too'
+        }
+
+        It "saves every key live under a block comment on the colour block's brace line, and reset takes all of it out byte for byte" {
+            $user = @('{', '  "workbench.colorCustomizations": { /* per-theme overrides', '      go in here */', '  }', '}') -join "`n"
+            [System.IO.File]::WriteAllText($script:sPath, $user, [System.Text.UTF8Encoding]::new($false))
+            $r = Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode'
+            $r.Status | Should -Be 'written'
+            $rec = (Read-VSCodeState).Entries['Code'].record
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            @($rec.Wrote).Count | Should -BeGreaterThan 20
+            @(@($rec.Wrote) | Where-Object { (Get-JsoncValueLiteral -Text $text -Path $_.Path) -cne $_.Literal }).Count | Should -Be 0
+            Test-JsoncCommentsIntact -Before $user -After $text | Should -BeTrue
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $user
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'writes nothing, keeps the record and names the key when switching would delete a comment written inside a key' {
+            Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode' | Out-Null
+            $annot = & $script:annotate
+            $r = Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode'
+            Show-VSCodeWriteResult -Result $r
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -BeExactly $script:why
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $annot
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva'
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -cmatch 'Saved to' }
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match ([regex]::Escape("safely: $script:why.")) }
+        }
+
+        It 'reset keeps the file and the record, and says why, when the style cannot come out without deleting a comment' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            $annot = & $script:annotate
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'wontparse'
+            $r.Detail | Should -BeExactly $script:why
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $annot
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+            Show-VSCodeResetResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'so the style was left in it' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Took the style back out' }
+        }
+
+        It 'Esc will not take a preview out through a comment written inside it, and keeps the preview''s record' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Out-Null
+            $annot = & $script:annotate
+            $r = Restore-VSCodePreview -Session $s
+            Show-VSCodeRestoreResult -Result $r
+            $r.Status | Should -Be 'failed'
+            $r.Reason | Should -BeExactly $script:why
+            [System.IO.File]::ReadAllText($script:sPath) | Should -BeExactly $annot
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'koholint'
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -match 'once that is fixed, tstyles reset takes it out' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'parses and can be written' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -match 'Your edit is still there' }
+        }
+    }
+}
+
+Describe 'Get-VSCodeRefusalDetail' {
+    InModuleScope TerminalStyles {
+        It 'words <Status> in its own terms' -ForEach @(
+            @{ Status = 'parentnotobject'; Expected = 'workbench.colorCustomizations in it is not an object' }
+            @{ Status = 'parentmissing';   Expected = 'k in it could not be reached' }
+            @{ Status = 'commentchanged';  Expected = 'changing k in it would have changed a comment too' }
+            @{ Status = 'notreadback';     Expected = 'k would not have read back from it as written' }
+            @{ Status = 'unterminated';    Expected = 'it does not parse as a JSON object' }
+        ) {
+            Get-VSCodeRefusalDetail -Status $Status -Key 'k' | Should -BeExactly $Expected
+        }
+    }
+}
+
+Describe 'a note written inside the colour block a style created survives every door' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            [System.IO.File]::WriteAllText($script:sPath, "{`n  // mine`n  `"editor.fontSize`": 13`n}", [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            $script:eva      = Get-StyleDir -StyleName 'eva'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            $script:note = '// NOTE(me): bg was #101010 before'
+            $script:annotate = {
+                $t = [System.IO.File]::ReadAllText($script:sPath)
+                $head = '"workbench.colorCustomizations": {'
+                $at = $t.IndexOf($head, [System.StringComparison]::Ordinal)
+                $at | Should -BeGreaterThan -1
+                $n = $t.Insert($at + $head.Length, "`n    $script:note`n    ")
+                [System.IO.File]::WriteAllText($script:sPath, $n, [System.Text.UTF8Encoding]::new($false))
+            }
+        }
+
+        It 'Reset-StyleVSCodeConfig keeps it' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            ((Read-VSCodeState).Entries['Code'].record.CreatedParents | ForEach-Object { $_ -join '/' }) | Should -Be 'workbench.colorCustomizations'
+            & $script:annotate
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'reset'
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            $text.Contains($script:note) | Should -BeTrue
+            $text.Contains('// mine') | Should -BeTrue
+            Get-JsoncValueLiteral -Text $text -Path @('workbench.colorCustomizations', 'terminal.background') | Should -BeNullOrEmpty
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'a switch keeps it' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            & $script:annotate
+            (Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode').Status | Should -Be 'written'
+            [System.IO.File]::ReadAllText($script:sPath).Contains($script:note) | Should -BeTrue
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva'
+        }
+
+        It 'Esc after you write it into the block a preview created keeps it, as it says' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            & $script:annotate
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'merged'
+            Show-VSCodeRestoreResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -cmatch 'Your edit is still there' }
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            $text.Contains($script:note) | Should -BeTrue
+            Get-JsoncValueLiteral -Text $text -Path @('workbench.colorCustomizations', 'terminal.background') | Should -BeNullOrEmpty
+        }
+    }
+}
+
+Describe 'the picker and a key changed by hand under the style it opened on' {
+    # Each preview is built by undoing the starting style, and that undo found
+    # the keys the user had changed by hand -- then each preview kept only its
+    # text and record. So Enter named none of them, and Esc's merge wrote the
+    # starting style back over them and said "Your edit is still there."
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            $script:enc = [System.Text.UTF8Encoding]::new($false)
+            [System.IO.File]::WriteAllText($script:sPath, "{`n  `"editor.fontSize`": 13`n}", $script:enc)
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+
+            foreach ($f in @(
+                @{ n = 'hand-start'; bg = '#101010'; theme = '{"font":{"face":"Start Mono"},"cursorShape":"bar"}' }
+                @{ n = 'hand-next';  bg = '#202020'; theme = '{"font":{"face":"Next Mono"},"cursorShape":"underscore"}' }
+                @{ n = 'hand-plain'; bg = '#303030'; theme = $null }
+            )) {
+                $d = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $f.n
+                New-Item -ItemType Directory -Path $d -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'),
+                    ('{"name":"' + $f.n + '","background":"' + $f.bg + '","foreground":"#f0f0f0"}'), $script:enc)
+                if ($f.theme) { [System.IO.File]::WriteAllText((Join-Path $d 'theme.json'), $f.theme, $script:enc) }
+            }
+            $script:save = { param($Name) Publish-StyleVSCodeConfig -StyleName $Name -StyleDir (Get-StyleDir -StyleName $Name) -Kind 'VSCode' }
+            $script:setKey = {
+                param($Path, $Literal)
+                $t = [System.IO.File]::ReadAllText($script:sPath)
+                $n = if ($null -eq $Literal) { (Remove-JsoncValue -Text $t -Path $Path).Text } else { (Set-JsoncLiteral -Text $t -Path $Path -Literal $Literal).Text }
+                $n | Should -Not -BeExactly $t
+                [System.IO.File]::WriteAllText($script:sPath, $n, $script:enc)
+            }
+            $script:read = { param($Path) Get-JsoncValueLiteral -Text ([System.IO.File]::ReadAllText($script:sPath)) -Path $Path }
+            $script:ff = @('terminal.integrated.fontFamily')
+        }
+
+        It 'Enter after a preview names it as a direct apply does (<label>)' -ForEach @(
+            @{ label = 'the chosen style writes over it'; commit = 'hand-next';  named = 'Replaced'; other = 'Kept'
+               line = 'Replaced terminal\.integrated\.fontFamily, which you had changed by hand; tstyles reset puts yours back\.' }
+            @{ label = 'the chosen style leaves it';      commit = 'hand-plain'; named = 'Kept';     other = 'Replaced'
+               line = 'Left terminal\.integrated\.fontFamily as you set it' }
+        ) {
+            (& $script:save 'hand-start').Status | Should -Be 'written'
+            & $script:setKey $script:ff '"Mine Mono"'
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName $commit -StyleDir (Get-StyleDir -StyleName $commit) | Should -Be 'written'
+            $r = Publish-StyleVSCodeConfig -StyleName $commit -StyleDir (Get-StyleDir -StyleName $commit) -Kind 'VSCode' -Session $s
+            Show-VSCodeWriteResult -Result $r
+            $r.Status | Should -Be 'written'
+            (@($r[$named]) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily' -Because 'tstyles <name> from the same start names it'
+            @($r[$other] | Where-Object { $_ }).Count | Should -Be 0
+            Should -Invoke Write-Host -Times 1 -Exactly -Scope It -ParameterFilter { "$Object" -cmatch $line }
+        }
+
+        It 'Enter names it once when you change it again while the picker is open' {
+            & $script:save 'hand-start' | Out-Null
+            & $script:setKey $script:ff '"Mine Mono"'
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') | Should -Be 'written'
+            & $script:setKey $script:ff '"Other Mono"'
+            $r = Publish-StyleVSCodeConfig -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') -Kind 'VSCode' -Session $s
+            (@($r.Replaced) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily'
+        }
+
+        It 'Enter before any preview has landed names only what the file holds now' {
+            & $script:save 'hand-start' | Out-Null
+            & $script:setKey $script:ff '"Mine Mono"'
+            $s = New-VSCodePreviewSession
+            & $script:setKey $script:ff '"Start Mono"'
+            Invoke-VSCodePreview -Session $s -StyleName 'hand-plain' -StyleDir (Get-StyleDir -StyleName 'hand-plain') | Should -Be 'changed'
+            $r = Publish-StyleVSCodeConfig -StyleName 'hand-plain' -StyleDir (Get-StyleDir -StyleName 'hand-plain') -Kind 'VSCode' -Session $s
+            @($r.Kept | Where-Object { $_ }).Count | Should -Be 0 -Because 'the undo took the style''s own value back out'
+            & $script:read $script:ff | Should -BeNullOrEmpty
+        }
+
+        It 'Esc after an outside edit leaves it as you had it (<label>)' -ForEach @(
+            @{ label = 'the previewed style writes it too'; preview = 'hand-next' }
+            @{ label = 'the previewed style does not';      preview = 'hand-plain' }
+        ) {
+            & $script:save 'hand-start' | Out-Null
+            & $script:setKey $script:ff '"Mine Mono"'
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName $preview -StyleDir (Get-StyleDir -StyleName $preview) | Should -Be 'written'
+            & $script:setKey @('editor.fontSize') '15'
+            $r = Restore-VSCodePreview -Session $s
+            Show-VSCodeRestoreResult -Result $r
+            $r.Status | Should -Be 'merged'
+            & $script:read $script:ff | Should -BeExactly '"Mine Mono"' -Because 'Esc is a cancel'
+            & $script:read @('editor.fontSize') | Should -BeExactly '15'
+            & $script:read @('terminal.integrated.cursorStyle') | Should -BeExactly '"line"' -Because 'the rest of the starting style is back'
+            Should -Invoke Write-Host -Times 1 -Exactly -Scope It -ParameterFilter { "$Object" -cmatch 'Your edit is still there' }
+            Should -Invoke Write-Host -Times 0 -Scope It -ParameterFilter { "$Object" -cmatch '^\s*(Replaced|Left) ' }
+            $reset = Reset-StyleVSCodeConfig -Variant 'Code'
+            (@($reset.Kept) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily' -Because 'it is still a hand edit to the record'
+        }
+
+        It 'Esc after an outside edit does not put back a key you took out' {
+            & $script:save 'hand-start' | Out-Null
+            & $script:setKey $script:ff $null
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') | Should -Be 'written'
+            & $script:setKey @('editor.fontSize') '15'
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'merged'
+            & $script:read $script:ff | Should -BeNullOrEmpty -Because 'you took it out before the picker opened'
+            & $script:read @('terminal.integrated.cursorStyle') | Should -BeExactly '"line"'
+            Reset-StyleVSCodeConfig -Variant 'Code' | Out-Null
+            & $script:read $script:ff | Should -BeNullOrEmpty
+        }
+
+        It 'Esc after an outside edit keeps your new value for a key you had already changed, and calls it left' {
+            & $script:save 'hand-start' | Out-Null
+            & $script:setKey $script:ff '"Mine Mono"'
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') | Should -Be 'written'
+            & $script:setKey $script:ff '"Other Mono"'
+            $r = Restore-VSCodePreview -Session $s
+            Show-VSCodeRestoreResult -Result $r
+            & $script:read $script:ff | Should -BeExactly '"Other Mono"'
+            (@($r.Kept) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily'
+            @($r.Replaced | Where-Object { $_ }).Count | Should -Be 0
+            Should -Invoke Write-Host -Times 1 -Exactly -Scope It -ParameterFilter { "$Object" -cmatch 'Left terminal\.integrated\.fontFamily as you set it\.' }
+        }
+
+        It "Esc keeps the starting style's created colour block in its record, so a later reset still takes it away" {
+            & $script:save 'hand-start' | Out-Null
+            $bgPath = @('workbench.colorCustomizations', 'terminal.background')
+            $styleBg = & $script:read $bgPath
+            & $script:setKey $bgPath '"#ababab"'
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') | Should -Be 'written'
+            & $script:setKey @('editor.fontSize') '15'
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'merged'
+            & $script:read $bgPath | Should -BeExactly '"#ababab"'
+            # Set back to the style's own value: now the reset may take it, and
+            # the block it leaves blank.
+            & $script:setKey $bgPath $styleBg
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            & $script:read @('workbench.colorCustomizations') | Should -BeNullOrEmpty
+        }
+
+        Context 'nothing of the starting style goes back in' {
+            BeforeEach {
+                & $script:save 'hand-plain' | Out-Null
+                & $script:setKey @('workbench.colorCustomizations') $null
+                $script:atOpen = [System.IO.File]::ReadAllText($script:sPath)
+                $script:s = New-VSCodePreviewSession
+                Invoke-VSCodePreview -Session $script:s -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') | Should -Be 'written'
+                & $script:setKey @('editor.fontSize') '15'
+            }
+
+            It 'Esc puts the file back before the record' {
+                $script:atWrite = 'never written'
+                Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+                Mock Write-SettingsAtomic {
+                    $script:atWrite = (Read-VSCodeState).Entries['Code'].record.Style
+                    [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false))
+                } -ParameterFilter { $Path -eq $script:sPath }
+                $r = Restore-VSCodePreview -Session $script:s
+                $r.Status | Should -Be 'merged'
+                [System.IO.File]::ReadAllText($script:sPath) |
+                    Should -BeExactly (Set-JsoncLiteral -Text $script:atOpen -Path @('editor.fontSize') -Literal '15').Text
+                $script:atWrite | Should -Be 'hand-next' -Because 'this write only takes the preview out, so the file goes first'
+                (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'hand-plain'
+            }
+
+            It 'Esc says the record could not be saved when that write fails after the file' {
+                Mock Write-VSCodeState { throw 'state locked' }
+                $r = Restore-VSCodePreview -Session $script:s
+                Show-VSCodeRestoreResult -Result $r
+                $r.Status | Should -Be 'merged'
+                $r.Detail | Should -Be 'its record could not be saved'
+                [System.IO.File]::ReadAllText($script:sPath) |
+                    Should -BeExactly (Set-JsoncLiteral -Text $script:atOpen -Path @('editor.fontSize') -Literal '15').Text
+                Should -Invoke Write-Host -Times 1 -Exactly -Scope It -ParameterFilter { "$Object" -cmatch 'But its record could not be saved' }
+            }
+        }
+    }
+}
