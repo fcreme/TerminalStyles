@@ -492,11 +492,17 @@ function Invoke-VSCodeStyleApply {
         [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
         [Parameter(Mandatory)][string]$StyleDir,
         [string]$StyleName,
-        [AllowNull()]$PreviousRecord
+        [AllowNull()]$PreviousRecord,
+        # Keys, named the way the undo names them (Path joined with '/'), this
+        # apply neither writes nor records. The picker's Esc passes the
+        # starting style's keys the user had already changed by hand, so
+        # putting that style back does not write over them.
+        [string[]]$Leave
     )
 
     $current = $Text
     $carriedKept = @()
+    $carriedGone = @()
 
     # Undo the style that is already on before applying this one. Without it,
     # switching styles leaves the previous one's keys behind AND poisons this
@@ -521,6 +527,7 @@ function Invoke-VSCodeStyleApply {
         }
         $current = $undo.Text
         $carriedKept = $undo.Kept
+        $carriedGone = $undo.Gone
     }
 
     $plan = Get-VSCodeStylePlan -StyleDir $StyleDir
@@ -528,6 +535,9 @@ function Invoke-VSCodeStyleApply {
     $created = [System.Collections.Generic.List[object]]::new()
 
     foreach ($entry in $plan) {
+        # Before the parent is made: a block is created only for a key that is
+        # written. -ccontains, because JSON keys are case-sensitive.
+        if (@($Leave) -ccontains ($entry.Path -join '/')) { continue }
         # A nested key needs its parent object to exist. Creating it is
         # recorded, so a reset that empties it again can take it away rather
         # than leaving an empty block behind.
@@ -569,13 +579,15 @@ function Invoke-VSCodeStyleApply {
         # user had changed it since. Carried out so a caller can say so rather
         # than leaving it to be discovered.
         Kept    = $carriedKept
+        # What that undo found already taken out.
+        Gone    = $carriedGone
     }
 }
 
 function Invoke-VSCodeStyleReset {
     <#
     .SYNOPSIS
-    Undo an apply, using its record. Returns @{ Text; Restored; Removed; Kept; Status }.
+    Undo an apply, using its record. Returns @{ Text; Restored; Removed; Kept; Gone; Status }.
 
     .DESCRIPTION
     Pure. Walks the record and, for each key we wrote:
@@ -590,6 +602,10 @@ function Invoke-VSCodeStyleReset {
         overwrote it, so putting it back is the undo. Deleting it would be a
         second, uninvited change.
       - there was no key before                      -> REMOVED.
+      - the key is not there any more                -> GONE, untouched:
+        somebody took it out after we wrote it. Named apart from KEPT --
+        there is no value of theirs to name, and nothing to restore -- but a
+        caller putting a style back must not put it back either.
 
     Comparison is ORDINAL (-cne). '#F5F5F5' is the same colour as '#f5f5f5' and
     is not the same text; if the bytes differ, something other than us wrote
@@ -607,18 +623,19 @@ function Invoke-VSCodeStyleReset {
     )
 
     if (-not $Record -or -not $Record.Wrote) {
-        return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Status = 'norecord' }
+        return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Gone = @(); Status = 'norecord' }
     }
 
     $current = $Text
     $restored = [System.Collections.Generic.List[string]]::new()
     $removed  = [System.Collections.Generic.List[string]]::new()
     $kept     = [System.Collections.Generic.List[string]]::new()
+    $gone     = [System.Collections.Generic.List[string]]::new()
 
     foreach ($w in $Record.Wrote) {
         $name = ($w.Path -join '/')
         $now = Get-JsoncValueLiteral -Text $current -Path $w.Path
-        if ($null -eq $now) { continue }                 # already gone; nothing to undo
+        if ($null -eq $now) { $gone.Add($name); continue }   # already gone; nothing to undo
         if ($now -cne $w.Literal) { $kept.Add($name); continue }
 
         if ($null -eq $w.Had) {
@@ -664,6 +681,7 @@ function Invoke-VSCodeStyleReset {
         Restored = $restored.ToArray()
         Removed  = $removed.ToArray()
         Kept     = $kept.ToArray()
+        Gone     = $gone.ToArray()
         Status   = 'reset'
     }
 }

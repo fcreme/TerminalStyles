@@ -748,3 +748,50 @@ Describe 'what you write inside the colour block a style created is yours' {
         }
     }
 }
+
+Describe 'what an undo found taken out, and what an apply is told to leave' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:K = Get-StyleDir -StyleName 'koholint'
+            $script:bare = "{`n  `"editor.fontSize`": 13`n}"
+        }
+
+        It 'names a key it wrote that the file no longer has as gone, apart from one changed by hand' {
+            $a = Invoke-VSCodeStyleApply -Text $script:bare -StyleDir $script:K -StyleName 'koholint'
+            $t = (Remove-JsoncValue -Text $a.Text -Path @('terminal.integrated.fontFamily')).Text
+            $t = (Set-JsoncLiteral -Text $t -Path @('terminal.integrated.fontSize') -Literal '20').Text
+            $b = Invoke-VSCodeStyleReset -Text $t -Record $a.Record
+            (@($b.Gone) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily'
+            (@($b.Kept) -join ',') | Should -BeExactly 'terminal.integrated.fontSize'
+            Get-JsoncValueLiteral -Text $b.Text -Path @('terminal.integrated.fontFamily') | Should -BeNullOrEmpty
+        }
+
+        It "carries out what the outgoing style's undo found taken out, as it carries what it kept" {
+            $a = Invoke-VSCodeStyleApply -Text $script:bare -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $gone = (Remove-JsoncValue -Text $a.Text -Path @('terminal.integrated.fontFamily')).Text
+            $b = Invoke-VSCodeStyleApply -Text $gone -StyleDir $script:K -StyleName 'koholint' -PreviousRecord $a.Record
+            (@($b.Gone) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily'
+            @($b.Kept | Where-Object { $_ }).Count | Should -Be 0
+        }
+
+        It 'leaves a key it is told to leave as it is, and keeps it out of the record' {
+            $mine = (Set-JsoncLiteral -Text $script:bare -Path @('terminal.integrated.fontFamily') -Literal '"Mine Mono"').Text
+            $a = Invoke-VSCodeStyleApply -Text $mine -StyleDir $script:K -StyleName 'koholint' -Leave @('terminal.integrated.fontFamily')
+            $names = @($a.Record.Wrote | ForEach-Object { @($_.Path) -join '/' })
+            $a.Status | Should -Be 'applied'
+            Get-JsoncValueLiteral -Text $a.Text -Path @('terminal.integrated.fontFamily') | Should -BeExactly '"Mine Mono"'
+            $names | Should -Not -Contain 'terminal.integrated.fontFamily'
+            $names | Should -Contain 'terminal.integrated.cursorStyle' -Because 'the rest of the style is written'
+        }
+
+        It 'creates no colour block when it is told to leave every colour' {
+            $plan = Get-VSCodeStylePlan -StyleDir $script:K
+            $ids = @($plan | Where-Object { $_.Path.Count -eq 2 } | ForEach-Object { $_.Path -join '/' })
+            $ids.Count | Should -Be 20
+            $a = Invoke-VSCodeStyleApply -Text $script:bare -StyleDir $script:K -StyleName 'koholint' -Leave $ids
+            Get-JsoncValueLiteral -Text $a.Text -Path @('workbench.colorCustomizations') | Should -BeNullOrEmpty
+            @($a.Record.CreatedParents | Where-Object { $_ }).Count | Should -Be 0
+            Get-JsoncValueLiteral -Text $a.Text -Path @('terminal.integrated.fontFamily') | Should -Not -BeNullOrEmpty
+        }
+    }
+}
