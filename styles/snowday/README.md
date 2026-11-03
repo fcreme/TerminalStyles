@@ -8,3 +8,9 @@ stream-blue keywords.
 
 No banner — gentle for long sessions, in the same vein as forest
 and golden-forest, but with a colder palette and warmer accent.
+
+## Credits
+
+The animated snowy-forest background is pixel art by **@anasabdin**. The
+version shipped here is cropped at the bottom; the artwork itself is
+theirs, not covered by this repo's MIT license.
