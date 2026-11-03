@@ -53,8 +53,9 @@
 # body that runs them), which are different scopes; a copy in each is a second
 # implementation of the rule this file exists to enforce.
 $script:RenamedTwins = @{
-    'Get-ProfileFileEncoding' = 'Get-RcFileEncoding'
-    'Read-ProfileFileText'    = 'Read-RcFileText'
+    'Get-ProfileFileEncoding'   = 'Get-RcFileEncoding'
+    'Read-ProfileFileText'      = 'Read-RcFileText'
+    'ConvertTo-ProfileFileText' = 'ConvertTo-RcFileText'
 }
 
 BeforeDiscovery {
@@ -109,8 +110,9 @@ BeforeAll {
     # per-function test for the twin is never generated, which the same
     # assertion catches.
     $script:RenamedTwins = @{
-        'Get-ProfileFileEncoding' = 'Get-RcFileEncoding'
-        'Read-ProfileFileText'    = 'Read-RcFileText'
+        'Get-ProfileFileEncoding'   = 'Get-RcFileEncoding'
+        'Read-ProfileFileText'      = 'Read-RcFileText'
+        'ConvertTo-ProfileFileText' = 'ConvertTo-RcFileText'
     }
     $script:SharedFns = @(
         @($iNames | Where-Object { $mNames -contains $_ }) +
@@ -160,7 +162,7 @@ Describe 'install.ps1 duplicates the module faithfully' {
         foreach ($n in 'Get-TStylesPlatform', 'Get-TStylesDataRoot', 'Get-PowerShellEngineCandidate',
                        'Get-ProfileFileEncoding', 'Read-ProfileFileText', 'Test-PathIsSymlink',
                        'Get-StyleContentHash', 'Get-InstalledStyleHash', 'Test-StyleDirectoryIsUsers',
-                       'Initialize-ReplaceTemp') {
+                       'Initialize-ReplaceTemp', 'ConvertTo-ProfileFileText') {
             $script:SharedFns | Should -Contain $n -Because (
                 "$n is duplicated into install.ps1 and this file is what compares the two copies")
         }

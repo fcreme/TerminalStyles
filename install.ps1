@@ -506,6 +506,19 @@ function Read-ProfileFileText {
     [pscustomobject]@{ Text = $enc.GetString($bytes, $skip, $n - $skip); Encoding = $enc }
 }
 
+function ConvertTo-ProfileFileText {
+    # NOTE: a deliberate twin of terminals.ps1's ConvertTo-RcFileText, for the
+    # reason Read-ProfileFileText is one. Text added to a file read one byte per
+    # character goes out as its UTF-8 bytes, so a non-ASCII install path in the
+    # loader line is not written as Latin-1.
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][System.Text.Encoding]$Encoding
+    )
+    if ($Encoding.CodePage -ne (Get-ProfileFileEncoding).CodePage) { return $Text }
+    return $Encoding.GetString([System.Text.UTF8Encoding]::new($false).GetBytes($Text))
+}
+
 function Get-StyleContentHash {
     # NOTE: duplicated from tstyles.ps1 -- keep in sync. The bootstrap cannot
     # dot-source the library, and this is half of the evidence that decides
@@ -798,7 +811,8 @@ function Register-LoaderInProfile {
     # decodes the bytes 0x85 and 0xA0 to -- the last byte of a UTF-8 a-grave,
     # Er or star -- so a profile whose last line ended in one lost that byte.
     $asciiSpace = "`t`n`v`f`r ".ToCharArray()
-    $final = ($existing.TrimEnd($asciiSpace) + "`r`n`r`n" + $LoaderBody + "`r`n").TrimStart($asciiSpace)
+    $final = ($existing.TrimEnd($asciiSpace) + "`r`n`r`n" +
+        (ConvertTo-ProfileFileText -Text $LoaderBody -Encoding $profileEncoding) + "`r`n").TrimStart($asciiSpace)
     Write-TextFileAtomic -Path $ProfilePath -Content $final -Encoding $profileEncoding
 }
 

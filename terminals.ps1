@@ -1192,9 +1192,9 @@ function Get-RcFileEncoding {
     says, so a profile saved as UTF-8 with a BOM, or as UTF-16, came back with
     every character above U+00FF as '?' or an ASCII look-alike, and no BOM. The
     markers this module looks for are pure ASCII either way. Text a caller
-    adds goes out one byte per character too: Save-TunedStyle converts its
-    marker line to UTF-8 bytes first; the loader writers do not yet, so a data
-    root or module path that is not ASCII lands as ISO-8859-1 bytes.
+    adds would go out one byte per character too, so it goes through
+    ConvertTo-RcFileText first, which turns it into the characters of its UTF-8
+    bytes.
 
     It used to be UTF-8. Both halves read the WHOLE file and write the WHOLE
     file back, so a single byte that is not valid UTF-8 -- a latin-1 comment, a
@@ -1281,6 +1281,34 @@ function Read-RcFileText {
     }
     $skip = $enc.GetPreamble().Length
     [pscustomobject]@{ Text = $enc.GetString($bytes, $skip, $n - $skip); Encoding = $enc }
+}
+
+function ConvertTo-RcFileText {
+    <#
+    .SYNOPSIS
+    Text TerminalStyles adds to a file the user owns, in the form that writes it
+    out as UTF-8 through the Encoding Read-RcFileText returned.
+
+    .DESCRIPTION
+    A file read one byte per character (Get-RcFileEncoding) is written back the
+    same way, so text added to it goes out one byte per character too: a path
+    under /Users/jos<e-acute> landed as the single byte E9, not C3 A9, and
+    anything above U+00FF as '?'. zsh, bash and pwsh read those files as UTF-8,
+    so the loader then named a path that does not exist. Converted here, the
+    added text is the characters its UTF-8 bytes decode to through ISO-8859-1,
+    and the write puts those bytes down. A UTF-16 or UTF-32 file is read as
+    text and takes the text as it is.
+
+    Every writer that adds text to such a file calls this: Register-ShellLoader,
+    Invoke-TerminalStylesRegister and Save-TunedStyle. install.ps1 carries a
+    twin, ConvertTo-ProfileFileText, for Register-LoaderInProfile.
+    #>
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Text,
+        [Parameter(Mandatory)][System.Text.Encoding]$Encoding
+    )
+    if ($Encoding.CodePage -ne (Get-RcFileEncoding).CodePage) { return $Text }
+    return $Encoding.GetString([System.Text.UTF8Encoding]::new($false).GetBytes($Text))
 }
 
 function Test-PathIsSymlink {
@@ -1505,6 +1533,9 @@ function Register-ShellLoader {
         $content = $read.Text
         $enc     = $read.Encoding
     }
+    # In the form the write turns into UTF-8, and compared in that form below,
+    # so a block an earlier release wrote as Latin-1 is refreshed.
+    $block = ConvertTo-RcFileText -Text $block -Encoding $enc
 
     if ($content -match [regex]::Escape($begin)) {
         # The span is TEMPERED -- it may not cross a second BEGIN -- and that is

@@ -469,7 +469,8 @@ function Invoke-TerminalStylesRegister {
     # came back as U+FFFD. Through [System.IO.File]::ReadAllText, even with
     # ISO-8859-1, a profile saved with a byte-order mark was decoded by its BOM,
     # and every character above U+00FF came back as '?' or an ASCII look-alike.
-    # The markers and the loader line are ASCII either way.
+    # The markers are ASCII either way; the loader line can carry a module path
+    # that is not, which goes in through ConvertTo-RcFileText.
 
     # By NAME only when the module is somewhere PowerShell will look. A
     # bootstrap install is not on $env:PSModulePath -- which is exactly why
@@ -553,6 +554,7 @@ $loaderEnd
     foreach ($t in $targets) {
         $malformed  = $false
         $unreadable = $null
+        $stale      = $false
         if ($t.Exists) {
             # Read through Read-RcFileText, guarded, and $content reset for every
             # target. It was neither: a $PROFILE that could not be read kept the
@@ -562,8 +564,21 @@ $loaderEnd
             # consent screen lists what will be written, and a file already
             # known to be unreadable is not one of them.
             $content = ''
-            try { $content = (Read-RcFileText -Path $t.ProfilePath).Text } catch { $unreadable = $_.Exception.Message }
+            $read = $null
+            try { $read = Read-RcFileText -Path $t.ProfilePath; $content = $read.Text } catch { $unreadable = $_.Exception.Message }
             $t.HasLoader = ($content -match $blockPattern)
+            # A block that is not the one this run would write is out of date,
+            # and is replaced without -Force, as shell-init refreshes an rc
+            # file's: one an earlier release wrote with a non-ASCII module path
+            # as Latin-1 bytes was otherwise "Already registered" while every
+            # new tab failed to load the module. Compared in the form the write
+            # puts down, case-sensitively, and without CR: the installer joins
+            # the same three lines with CR LF.
+            if ($t.HasLoader -and $read) {
+                $have = ([regex]::Match($content, $blockPattern).Value -replace "`r", '').Trim()
+                $want = ((ConvertTo-RcFileText -Text $loaderBody -Encoding $read.Encoding) -replace "`r", '').Trim()
+                $stale = ($have -cne $want)
+            }
             # A BEGIN marker with no END to close it: the state
             # Register-ShellLoader and Unregister-ShellLoader both call
             # 'malformed', on the rc half of this same job. This half had no
@@ -580,6 +595,7 @@ $loaderEnd
         }
         $t | Add-Member -NotePropertyName Malformed  -NotePropertyValue $malformed  -Force
         $t | Add-Member -NotePropertyName Unreadable -NotePropertyValue $unreadable -Force
+        $t | Add-Member -NotePropertyName Stale      -NotePropertyValue $stale      -Force
     }
 
     # Decide what to do per target
@@ -600,9 +616,12 @@ $loaderEnd
             $refused += $t
             continue
         }
-        if ($t.HasLoader -and -not $Force) {
+        if ($t.HasLoader -and -not $Force -and -not $t.Stale) {
             Write-Host "  Already registered in $($t.ProfilePath) (use -Force to replace)" -ForegroundColor Gray
             continue
+        }
+        if ($t.HasLoader -and $t.Stale -and -not $Force) {
+            Write-Host "  The loader in $($t.ProfilePath) is not the current one; it will be replaced." -ForegroundColor Gray
         }
         $toWrite += $t
     }
@@ -688,7 +707,8 @@ $loaderEnd
             # last byte of a UTF-8 a-grave, Er or star -- so a profile whose last
             # line ended in one lost that byte.
             $asciiSpace = "`t`n`v`f`r ".ToCharArray()
-            $final = ($existing.TrimEnd($asciiSpace) + "`r`n`r`n" + $loaderBody + "`r`n").TrimStart($asciiSpace)
+            $final = ($existing.TrimEnd($asciiSpace) + "`r`n`r`n" +
+                (ConvertTo-RcFileText -Text $loaderBody -Encoding $profileEncoding) + "`r`n").TrimStart($asciiSpace)
             # Same first-touch rule the bootstrap installer has always applied to
             # $PROFILE. The module half never did, so `tstyles register` rewrote a
             # hand-maintained profile with no copy kept.

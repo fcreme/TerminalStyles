@@ -495,9 +495,7 @@ function Save-TunedStyle {
         # marker goes in as the UTF-8 bytes it has always had. Unconverted, a name
         # that is not ASCII -- an Overwrite keeps the name of a folder the user
         # made -- would come out as Latin-1 bytes, and as '?' above U+00FF.
-        if ($read.Encoding.CodePage -eq (Get-RcFileEncoding).CodePage) {
-            $marker = $read.Encoding.GetString([System.Text.UTF8Encoding]::new($false).GetBytes($marker))
-        }
+        $marker = ConvertTo-RcFileText -Text $marker -Encoding $read.Encoding
         # In place, not through a temp and a rename: truncate-and-write keeps the
         # file's mode and owner and writes through a symlink.
         [System.IO.File]::WriteAllText($profileDst, ($profileContent + $marker), $read.Encoding)
