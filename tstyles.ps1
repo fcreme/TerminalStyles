@@ -2124,6 +2124,9 @@ function Invoke-TerminalStyle {
         # What Enter did to VS Code's settings.json. Computed with the other
         # publishers, shown below the Clear-Host for the reason above.
         $vscodeResult = $null
+        # What Publish-StyleBackgroundProfile said, from the non-WT arm, for the
+        # same reason.
+        $backgroundNotes = @()
         if ($useSettingsFile) {
             # The commit, first: the preview on disk is the style when the file
             # still holds it; a file that changed while the picker was open has
@@ -2203,10 +2206,15 @@ function Invoke-TerminalStyle {
             #
             # The fetch is free here: this terminal reports BackgroundImage, so
             # the prefetch above has already resolved every style's image.
-            Publish-StyleBackgroundProfile -StyleName $selectedStyle.Name `
+            #
+            # What it says is kept and printed below the Clear-Host, which also
+            # clears scrollback: printed here, every -NewWindow note was erased
+            # before it could be read.
+            $backgroundNotes = @(Publish-StyleBackgroundProfile -StyleName $selectedStyle.Name `
                                            -StyleDir $selectedStyle.FullName `
                                            -Scheme $schemes[$idx] `
-                                           -Kind $termKind -NewWindow:$NewWindow | Out-Null
+                                           -Kind $termKind -NewWindow:$NewWindow 6>&1 |
+                                 Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
 
             # ...and the WezTerm module, for the same reason and in the same
             # breath. Every publisher the direct path calls has to be called
@@ -2299,6 +2307,12 @@ function Invoke-TerminalStyle {
         # a separate fix, told every other terminal twice.
         if (@($unsupportedFields).Count -gt 0) {
             Show-UnsupportedStyleField -Field $unsupportedFields -Kind $termKind
+            Write-Host ""
+        }
+
+        # What Publish-StyleBackgroundProfile said, kept from before the clear.
+        if (@($backgroundNotes).Count -gt 0) {
+            Write-HostRecord -Record $backgroundNotes
             Write-Host ""
         }
 
