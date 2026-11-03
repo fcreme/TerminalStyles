@@ -38,8 +38,8 @@
 # --- Data root -------------------------------------------------------------
 # Mirrors Get-TStylesDataRoot in tstyles.ps1 -- keep in sync.
 if [ -z "${TSTYLES_DATA-}" ]; then
-    case "$(uname -s)" in
-        Darwin) TSTYLES_DATA="$HOME/Library/Application Support/TerminalStyles" ;;
+    case "${OSTYPE:-$(uname -s)}" in
+        darwin*|Darwin) TSTYLES_DATA="$HOME/Library/Application Support/TerminalStyles" ;;
         *)      TSTYLES_DATA="${XDG_DATA_HOME:-$HOME/.local/share}/TerminalStyles" ;;
     esac
 fi

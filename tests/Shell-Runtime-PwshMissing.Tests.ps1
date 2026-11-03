@@ -67,6 +67,7 @@ BeforeAll {
 
         $errFile = Join-Path $case 'err.txt'
         $body = @"
+unset OSTYPE
 . '$($script:runtime)'
 printf 'DATA[%s]\n' "`$TSTYLES_DATA"
 printf 'PWSH[%s%s]\n' "`$(command -v pwsh)" "`$(command -v pwsh-preview)"
@@ -158,6 +159,28 @@ Describe 'the PowerShell-not-found message names a route that exists on this pla
         } else { 0 }
         $calls | Should -Be 0 `
             -Because 'sourcing the runtime must spend no subprocess on the platform question'
+    }
+
+    It 'derives the data root from $OSTYPE without running uname' -Skip:$script:NoBash {
+        # Same cost rule, for the common case: TSTYLES_DATA unset. bash and zsh
+        # set $OSTYPE themselves, so the stub must never be asked.
+        $case = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+        $bin  = Join-Path $case 'bin'
+        $home2 = Join-Path $case 'home'
+        New-Item -ItemType Directory -Path $bin   -Force | Out-Null
+        New-Item -ItemType Directory -Path $home2 -Force | Out-Null
+
+        $tally = Join-Path $case 'uname-calls.txt'
+        $uname = Join-Path $bin 'uname'
+        [System.IO.File]::WriteAllText($uname, "#!/bin/sh`nprintf 'called\n' >> '$tally'`nprintf 'Linux\n'`n")
+        & chmod +x $uname
+
+        $body = ". '$($script:runtime)'`nprintf 'SOURCED\n'"
+        $out = & env -i "HOME=$home2" "PATH=$bin" 'TERM=dumb' `
+                   (Get-Command bash).Source -c $body 2>&1 | Out-String
+        $out | Should -Match 'SOURCED'
+        Test-Path -LiteralPath $tally | Should -BeFalse `
+            -Because 'bash sets $OSTYPE, so the data root needs no uname subprocess'
     }
 }
 

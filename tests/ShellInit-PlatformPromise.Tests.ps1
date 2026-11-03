@@ -77,7 +77,7 @@ Describe 'shell-init promises a styled tab exactly where the two halves agree' {
                 $lines = @(
                     "HOME='$HomeDir'"
                     "uname() { printf '%s\n' '$Uname'; }"
-                    'unset TSTYLES_DATA'
+                    'unset TSTYLES_DATA OSTYPE'
                     ". '$(Join-Path (Join-Path $script:repoRoot 'shell') 'tstyles.sh')' >/dev/null 2>&1"
                     'printf "%s\n" "$TSTYLES_DATA"'
                 )
