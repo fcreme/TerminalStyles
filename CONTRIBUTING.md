@@ -32,6 +32,8 @@ lib/                  the rest of the library, one file per subsystem:
   deletestyle.ps1       style deletion, and the bundled-vs-yours question
   tune.ps1              `tstyles tune` and the style it saves
   picker.ps1            the picker's testable pieces
+  previewsession.ps1    whole-file previews recorded on disk: the picker's and
+                        tuner's settings.json, the picker's WezTerm module
   help.ps1              `tstyles help`
   update.ps1            install kind, update check, register / uninstall
   vscode.ps1            VS Code's settings.json as text: merge, undo, which editor

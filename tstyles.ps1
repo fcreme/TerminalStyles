@@ -1058,9 +1058,14 @@ function Invoke-TerminalStyle {
     $useSettingsFile = ($termKind -eq 'WindowsTerminal')
 
     $settingsPath = $null
+    $pickerRecovered = $null
     if ($useSettingsFile) {
         $settingsPath = Find-WTSettingsPath
         if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
+        # A preview a closed picker or tuner left goes back before the file is
+        # read; said now, and again at the exits the screen clear would erase.
+        $pickerRecovered = Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $settingsPath
+        Show-FilePreviewResult -Result $pickerRecovered
     }
 
     # Enumerate via the shared helper so the picker shows user + tuned styles
@@ -1128,8 +1133,14 @@ function Invoke-TerminalStyle {
 
     $originalJson     = $null
     $originalSettings = $null
+    $settingsSession  = $null
     if ($useSettingsFile) {
-        $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+        # The session reads the file once; every preview is built from that
+        # text, recorded on disk before it is written, and written only over
+        # what the session last left there (the preview session). The text
+        # alone in memory was the only undo, and a closed tab lost it.
+        $settingsSession = New-FilePreviewSession -Kind WindowsTerminal -Path $settingsPath -By picker
+        $originalJson = $settingsSession.OriginalText
         $originalSettings = ConvertFrom-JsoncText $originalJson
 
         if (-not $Target) { $Target = Get-CurrentWTProfileName -Settings $originalSettings }
@@ -1146,7 +1157,8 @@ function Invoke-TerminalStyle {
     # scriptblock's own child scope and never be seen out here. The finally
     # block needs to know whether the revert already happened, and the revert
     # needs to know whether there is anything to revert.
-    $pickerState = @{ Reverted = $false; SettingsWritten = $false; WezWritten = $false; VSCodeRestore = $null; VSCodeDone = $false; SettingsRestoreError = $null }
+    $pickerState = @{ Reverted = $false; VSCodeRestore = $null; VSCodeDone = $false; SettingsRestoreError = $null
+                      SettingsRestore = $null; WezRestore = $null; SettingsCommit = $null }
 
     # Single choke point for every settings.json write in the picker. Off
     # Windows Terminal this is a no-op, so the loop below reads the same in
@@ -1156,8 +1168,7 @@ function Invoke-TerminalStyle {
     $writeSettings = {
         param([string]$Json)
         if ($useSettingsFile -and $Json) {
-            Write-SettingsAtomic -Path $settingsPath -Json $Json
-            $pickerState.SettingsWritten = $true
+            [void](Write-FilePreview -Session $settingsSession -Text $Json)
         }
     }
 
@@ -1191,19 +1202,23 @@ function Invoke-TerminalStyle {
     #     predicates agree about an expired marker.
     #   * Esc must put back exactly what was there, INCLUDING the case where
     #     there was nothing -- a first-ever picker run on a machine with no
-    #     module must not leave one behind. $originalWezLua is $null for that,
-    #     which is why the restore branches on the flag rather than on the bytes.
+    #     module must not leave one behind. The session knows whether it
+    #     existed, and Restore-FilePreview removes one it created.
     #
     # It is quiet by design: Publish-StyleWezTermConfig prints the not-wired
     # notice and resolves backgrounds, which is right once on confirm and wrong
     # sixty times a minute.
     $wezPreviewable = ($termKind -eq 'WezTerm') -and (Test-WezTermStyleWired)
-    $originalWezLua = $null
+    $wezSession = $null
+    $wezRecovered = $null
     if ($wezPreviewable) {
         $wezModulePath = Get-WezTermModulePath
-        if (Test-Path -LiteralPath $wezModulePath) {
-            try { $originalWezLua = [System.IO.File]::ReadAllBytes($wezModulePath) } catch { $wezPreviewable = $false }
-        }
+        # A module a closed picker left goes back first; then the session reads
+        # what is there now, including that it may not exist at all.
+        $wezRecovered = Restore-AbandonedFilePreview -Kind WezTerm -Path $wezModulePath
+        Show-FilePreviewResult -Result $wezRecovered
+        try { $wezSession = New-FilePreviewSession -Kind WezTerm -Path $wezModulePath -By picker }
+        catch { $wezPreviewable = $false }
     }
 
     # Layout is PINNED for the whole preview session, to whatever is applied now.
@@ -1252,9 +1267,8 @@ function Invoke-TerminalStyle {
             # -LayoutTheme is bound explicitly, $null included: this is a
             # preview, and "no layout" is a real answer here rather than the
             # absence of one.
-            $status = Write-WezTermStyleModule -StyleName $styles[$i].Name -Scheme $schemes[$i] `
-                          -Theme $theme -BackgroundImage $bg -LayoutTheme $wezLayoutTheme
-            if ($status -ne 'failed') { $pickerState.WezWritten = $true }
+            [void](Write-WezTermStyleModule -StyleName $styles[$i].Name -Scheme $schemes[$i] `
+                          -Theme $theme -BackgroundImage $bg -LayoutTheme $wezLayoutTheme -Session $wezSession)
         } catch {
             # A preview that cannot be written is not worth taking the picker
             # down for; the OSC retint has already carried the colours.
@@ -1263,16 +1277,9 @@ function Invoke-TerminalStyle {
     }
 
     $restoreWezTerm = {
-        if (-not $pickerState.WezWritten) { return }
-        try {
-            $path = Get-WezTermModulePath
-            if ($null -ne $originalWezLua) {
-                [System.IO.File]::WriteAllBytes($path, $originalWezLua)
-            } elseif (Test-Path -LiteralPath $path) {
-                Remove-Item -LiteralPath $path -Force
-            }
-            $pickerState.WezWritten = $false
-        } catch { }
+        if (-not $wezSession) { return }
+        $wr = Restore-FilePreview -Session $wezSession -End
+        if ($wr.Status -ne 'none') { $pickerState.WezRestore = $wr }
     }
 
     # VS Code: the same full preview, through the session vscodewriter.ps1
@@ -1298,11 +1305,30 @@ function Invoke-TerminalStyle {
         if ($vr.Status -ne 'none') { $pickerState.VSCodeRestore = $vr }
     }
 
+    # Ends the session unless -KeepSession: the mid-session call (a style with
+    # nothing to preview) puts the file back and keeps previewing. Throws on a
+    # put-back that failed, so that call still ends the picker rather than let
+    # Enter confirm one style over another's preview; Esc catches it.
     $restoreOriginalSettings = {
-        if ($pickerState.SettingsWritten) {
-            & $writeSettings $originalJson
-            $pickerState.SettingsWritten = $false
+        param([switch]$KeepSession)
+        if (-not $settingsSession) { return }
+        $sr = Restore-FilePreview -Session $settingsSession -End:(-not $KeepSession)
+        if ($sr.Status -ne 'none') { $pickerState.SettingsRestore = $sr }
+        if ($sr.Status -eq 'failed') { throw $sr.Reason }
+    }
+    # What the put-backs did, and the recoveries said as the picker opened,
+    # below the screen clear that erased them.
+    $showPreviewResults = {
+        # A failed put-back is Show-SettingsRestoreFailure's, with its .bak
+        # line -- except on the merge arm, where restoring the .bak would throw
+        # the change away, so the session's own wording says it.
+        $sr = $pickerState.SettingsRestore
+        if ($sr -and ($sr.Status -ne 'failed' -or $sr.Arm -eq 'merge')) {
+            Show-FilePreviewResult -Result $sr
         }
+        Show-FilePreviewResult -Result $pickerState.WezRestore
+        Show-FilePreviewResult -Result $pickerRecovered
+        Show-FilePreviewResult -Result $wezRecovered
     }
 
     # What the picker header names as the thing being styled. On Windows
@@ -1674,6 +1700,7 @@ function Invoke-TerminalStyle {
             # no theme.json rewrote settings.json from the parsed object (every
             # // and /* */ comment gone), wrote nothing of the style, and then
             # reported success.
+            $settingsSession.TargetName = $Target
             $initialJson = Get-StylePreviewJson -OriginalJson $originalJson -StyleDir $styles[$idx].FullName `
                                -TargetName $Target -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
             & $writeSettings $initialJson
@@ -1957,7 +1984,7 @@ function Invoke-TerminalStyle {
                     # one's name. The style's contribution to settings.json is
                     # the user's own file, so put that back. (A no-op when the
                     # picker has not written; see $restoreOriginalSettings.)
-                    & $restoreOriginalSettings
+                    & $restoreOriginalSettings -KeepSession
                 }
             }
             if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
@@ -2051,13 +2078,14 @@ function Invoke-TerminalStyle {
 
         if ($result.Outcome -eq 'cancelled') {
             Clear-Host
-            if ($pickerState.SettingsRestoreError) {
+            if ($pickerState.SettingsRestoreError -and -not ($pickerState.SettingsRestore -and $pickerState.SettingsRestore.Arm -eq 'merge')) {
                 Show-SettingsRestoreFailure -Reason $pickerState.SettingsRestoreError -SettingsPath $settingsPath `
                     -By picker -BackupTaken:(-not $backupNote)
-            } else {
+            } elseif (-not $pickerState.SettingsRestoreError) {
                 Write-Host "Reverted." -ForegroundColor Yellow
             }
             Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
+            & $showPreviewResults
             # On THIS exit too. The check above was paid and its 24-hour stamp
             # written whichever key ends the picker, so printing the notice only
             # on confirm meant an Esc silently spent the day's check -- and
@@ -2094,6 +2122,32 @@ function Invoke-TerminalStyle {
         # publishers, shown below the Clear-Host for the reason above.
         $vscodeResult = $null
         if ($useSettingsFile) {
+            # The commit, first: the preview on disk is the style when the file
+            # still holds it; a file that changed while the picker was open has
+            # the preview taken out and the chosen style merged in, as
+            # `tstyles <name>` would. One that cannot be written applies
+            # nothing -- no record, no prompt, no "Style applied".
+            $pickedDir = $selectedStyle.FullName
+            $pickerState.SettingsCommit = Complete-FilePreview -Session $settingsSession -Merge {
+                param($b)
+                Get-StylePreviewJson -OriginalJson $b -StyleDir $pickedDir -TargetName $Target `
+                    -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided
+            }
+            $pickerState.SettingsCommit.Style = $selectedStyle.Name
+            if ($pickerState.SettingsCommit.Status -eq 'failed') {
+                # Nothing applied, so everything the preview put on goes back:
+                # the file, the palette, the title.
+                try { & $restoreOriginalLook } catch { }
+                if (Test-ShouldRestoreWindowTitle -Title $originalTitle) { $Host.UI.RawUI.WindowTitle = $originalTitle }
+                Clear-Host
+                Write-Host ""
+                Show-FilePreviewResult -Result $pickerState.SettingsCommit
+                Show-FilePreviewResult -Result $pickerState.SettingsRestore
+                Write-Host "  Nothing was applied." -ForegroundColor Yellow
+                Write-Host ""
+                & $showPendingUpdate
+                return
+            }
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
                 $isPwshTarget = $true
@@ -2172,6 +2226,8 @@ function Invoke-TerminalStyle {
                                        -StyleDir $selectedStyle.FullName `
                                        -Scheme $schemes[$idx] `
                                        -Theme $wtTheme -Kind $termKind | Out-Null
+            # The publish owns the module now; the preview session is over.
+            [void](Complete-FilePreview -Session $wezSession)
 
             # ...and VS Code's settings.json, the fourth writer. With the
             # session, so the commit undoes the PREVIEW on disk rather than the
@@ -2216,6 +2272,9 @@ function Invoke-TerminalStyle {
         Write-Host "  Style applied: " -NoNewline
         Write-Host $selectedStyle.Name -ForegroundColor Green
         Write-Host ""
+        Show-FilePreviewResult -Result $pickerState.SettingsCommit
+        Show-FilePreviewResult -Result $pickerRecovered
+        Show-FilePreviewResult -Result $wezRecovered
 
         # The same notice `tstyles <name>` prints, from the same function, so the
         # two doors say the same thing about the same failure. This is the door
@@ -2301,13 +2360,26 @@ function Invoke-TerminalStyle {
             # Escape already did it.
             if (-not $pickerState.Reverted -and $restoreOriginalLook) {
                 try { & $restoreOriginalLook } catch { }
-                if ($pickerState.SettingsRestoreError) {
+                if ($pickerState.SettingsRestoreError -and -not ($pickerState.SettingsRestore -and $pickerState.SettingsRestore.Arm -eq 'merge')) {
                     Show-SettingsRestoreFailure -Reason $pickerState.SettingsRestoreError -SettingsPath $settingsPath `
                         -By picker -BackupTaken:(-not $backupNote)
                 }
                 Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
+                $srf = $pickerState.SettingsRestore
+                if ($srf -and ($srf.Status -ne 'failed' -or $srf.Arm -eq 'merge')) {
+                    Show-FilePreviewResult -Result $srf
+                }
+                Show-FilePreviewResult -Result $pickerState.WezRestore
             }
         }
+        # An error after Enter but before a commit settled: the preview on
+        # disk was what was chosen, so its record goes rather than be taken
+        # back out by the next command. Complete-FilePreview with no -Merge
+        # does exactly that when the file still holds it.
+        if ($confirmed -and $settingsSession -and -not $pickerState.SettingsCommit) {
+            [void](Complete-FilePreview -Session $settingsSession)
+        }
+        if ($confirmed -and $wezSession) { [void](Complete-FilePreview -Session $wezSession) }
         # Enter sets $confirmed before the VS Code commit runs, so an error in
         # between skips both the Esc revert and the block above, and would leave
         # the preview in settings.json, recorded but never committed. Restore

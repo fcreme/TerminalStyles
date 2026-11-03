@@ -1125,13 +1125,12 @@ function Restore-TuneBaseLook {
     difference before.
 
     A put-back that fails is reported, not thrown: the palette packet, the
-    window title and the scratch cleanup behind it still have to run. The
-    writer's error goes in $State.SettingsRestoreError for the exit to print.
-    Before calling it failed, this reads the file back: the tuner's preview
-    writes swallow their own failures, so a settings.json that could not be
-    written for the whole session never took a preview, and is already as the
-    tuner found it. A read-back that itself fails sets
-    $State.SettingsRestoreUnchecked: the exit then cannot say either way.
+    window title and the scratch cleanup behind it still have to run. The put
+    back is the session's (Restore-FilePreview): the bytes the tuner found go
+    back when the file still holds its preview; a file that changed while the
+    tuner was open has the preview taken out of it instead, the change kept.
+    What it did goes in $State.SettingsRestore for the exit to print, and a
+    failure's reason in $State.SettingsRestoreError.
 
     -OpenedScheme is the style the user OPENED, not the working base -- on a
     tuned style those are different files. Which packet that implies is
@@ -1141,29 +1140,19 @@ function Restore-TuneBaseLook {
     param(
         [Parameter(Mandatory)][hashtable]$State,
         [switch]$UseSettingsFile,
-        [AllowNull()][AllowEmptyString()][string]$SettingsPath,
-        [AllowNull()][AllowEmptyString()][string]$OriginalJson,
+        [AllowNull()][hashtable]$Session,
         $OpenedScheme
     )
 
     if ($State.Reverted) { return 'already' }
     $status = 'reverted'
-    if ($UseSettingsFile) {
-        try {
-            Write-SettingsAtomic -Path $SettingsPath -Json $OriginalJson
-        } catch {
-            $reason = "$_"
-            $intact = $false
-            $checked = $true
-            # Read the way the tuner took its snapshot.
-            try {
-                $intact = ([System.IO.File]::ReadAllText($SettingsPath, [System.Text.UTF8Encoding]::new($false)) -ceq $OriginalJson)
-            } catch { $checked = $false }
-            if (-not $intact) {
-                $State.SettingsRestoreError = $reason
-                $State.SettingsRestoreUnchecked = (-not $checked)
-                $status = 'failed'
-            }
+    if ($UseSettingsFile -and $Session) {
+        $r = Restore-FilePreview -Session $Session -End
+        if ($r.Status -ne 'none') { $State.SettingsRestore = $r }
+        if ($r.Status -eq 'failed') {
+            $State.SettingsRestoreError = $r.Reason
+            $State.SettingsRestoreUnchecked = $false
+            $status = 'failed'
         }
     }
     Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$UseSettingsFile `
@@ -1225,9 +1214,14 @@ function Invoke-TerminalStyleTune {
     }
 
     $settingsPath = $null
+    $tuneRecovered = $null
     if ($tuneUsesSettings) {
         $settingsPath = Find-WTSettingsPath
         if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
+        # A preview a closed picker or tuner left goes back before the file is
+        # read; said now, and again at the exit the screen clear would erase.
+        $tuneRecovered = Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $settingsPath
+        Show-FilePreviewResult -Result $tuneRecovered
     }
 
     # The tuner is a keyboard-driven UI: it polls [Console]::KeyAvailable, which
@@ -1325,14 +1319,20 @@ function Invoke-TerminalStyleTune {
     # --- Target WT profile ---
     $originalJson = $null
     $target = $null
+    $settingsSession = $null
     if ($tuneUsesSettings) {
-        $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
+        # The session reads the file once; every preview is built from that
+        # text, recorded before it is written, and written only over what the
+        # session last left (lib/previewsession.ps1).
+        $settingsSession = New-FilePreviewSession -Kind WindowsTerminal -Path $settingsPath -By tuner
+        $originalJson = $settingsSession.OriginalText
         $originalSettings = ConvertFrom-JsoncText $originalJson
         $target = Get-CurrentWTProfileName -Settings $originalSettings
         if (-not $target) {
             Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
             return
         }
+        $settingsSession.TargetName = $target
     } else {
         # Set expectations before the screen is taken over: the two color knobs
         # move on screen, the other three are only recorded.
@@ -1432,7 +1432,7 @@ function Invoke-TerminalStyleTune {
         $preview = ConvertFrom-JsoncText $originalJson
         $preview = Merge-StyleIntoSettings -Settings $preview -StyleDir $scratchDir `
             -TargetName $target -BackgroundImage '' -BackgroundImageProvided $false
-        Write-SettingsAtomic -Path $settingsPath -Json ($preview | ConvertTo-Json -Depth 100)
+        [void](Write-FilePreview -Session $settingsSession -Text ($preview | ConvertTo-Json -Depth 100))
     }
 
     $bar = {
@@ -1621,12 +1621,23 @@ function Invoke-TerminalStyleTune {
     # A hashtable rather than a plain variable, for the reason the picker's
     # $pickerState is one: an assignment inside a scriptblock lands in the
     # scriptblock's own child scope and is never seen out here.
-    $tuneState = @{ Reverted = $false; SettingsRestoreError = $null; SettingsRestoreUnchecked = $false }
+    $tuneState = @{ Reverted = $false; SettingsRestoreError = $null; SettingsRestoreUnchecked = $false; SettingsRestore = $null }
+    # What Esc's or the save's put-back did, and the recovery said at the start,
+    # printed below the screen clear.
+    $showTuneRestore = {
+        # As the picker's: a failed put-back is Show-SettingsRestoreFailure's,
+        # except on the merge arm, where its .bak line would undo the change.
+        $sr = $tuneState.SettingsRestore
+        if ($sr -and ($sr.Status -ne 'failed' -or $sr.Arm -eq 'merge')) {
+            Show-FilePreviewResult -Result $sr
+        }
+        Show-FilePreviewResult -Result $tuneRecovered
+    }
     # Answers 'reverted', 'already' or 'failed'; every exit reads it, so a
     # put-back that failed is never reported as "Reverted.".
     $restoreBaseLook = {
         Restore-TuneBaseLook -State $tuneState -UseSettingsFile:$tuneUsesSettings `
-            -SettingsPath $settingsPath -OriginalJson $originalJson -OpenedScheme $openedScheme
+            -Session $settingsSession -OpenedScheme $openedScheme
     }
     $showPendingUpdate = {
         if ($pendingUpdate) {
@@ -1707,12 +1718,13 @@ function Invoke-TerminalStyleTune {
                     'Escape' {
                         $revert = & $restoreBaseLook
                         Clear-Host
-                        if ($revert -eq 'failed') {
+                        if ($revert -eq 'failed' -and -not ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Arm -eq 'merge')) {
                             Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
                                 -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
-                        } else {
+                        } elseif ($revert -ne 'failed') {
                             Write-Host "Reverted." -ForegroundColor Yellow
                         }
+                        & $showTuneRestore
                         & $showPendingUpdate
                         return
                     }
@@ -1815,13 +1827,16 @@ function Invoke-TerminalStyleTune {
         if (-not $saveName) {
             # Treat an aborted save like a cancel: revert and exit.
             $revert = & $restoreBaseLook
-            if ($revert -eq 'failed') {
+            if ($revert -eq 'failed' -and -not ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Arm -eq 'merge')) {
                 Write-Host "  Nothing saved." -ForegroundColor Yellow
                 Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
                     -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
-            } else {
+            } elseif ($revert -ne 'failed') {
                 Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
+            } else {
+                Write-Host "  Nothing saved." -ForegroundColor Yellow
             }
+            & $showTuneRestore
             & $showPendingUpdate
             return
         }
@@ -1836,7 +1851,11 @@ function Invoke-TerminalStyleTune {
             -Brightness $brightness -Saturation $saturation -Opacity $opacity `
             -FontFace $fontFace -FontSize $fontSize | Out-Null
 
-        if ($tuneUsesSettings) { Write-SettingsAtomic -Path $settingsPath -Json $originalJson }
+        # The preview comes out first, through the session: the bytes the tuner
+        # found go back, or, in a file that changed, the preview is taken out of
+        # it. The record goes with it, before Apply-StyleDirect's own recovery.
+        $saveRestore = $null
+        if ($tuneUsesSettings) { $saveRestore = Restore-FilePreview -Session $settingsSession -End }
         # -Target is a Windows Terminal profile name; off WT it is $null and the
         # apply resolves the host terminal itself.
         #
@@ -1857,6 +1876,13 @@ function Invoke-TerminalStyleTune {
         if ($tuneUsesSettings) { Apply-StyleDirect -StyleName $saveName -Target $target -ErrorVariable applyErr }
         else { Apply-StyleDirect -StyleName $saveName -ErrorVariable applyErr }
         $applied = -not @($applyErr | Where-Object { $_.CategoryInfo.Activity -eq 'Write-Error' }).Count
+        # The save landed: a record the failed put-back left would make the
+        # next command call this a tuner closed without Enter.
+        if ($applied -and $settingsSession) {
+            Remove-FilePreviewRecord -Kind WindowsTerminal -Path $settingsPath -SessionId $settingsSession.Id
+        }
+        Show-FilePreviewResult -Result $saveRestore
+        Show-FilePreviewResult -Result $tuneRecovered
         # The third exit path. Esc and the aborted save print it too.
         & $showPendingUpdate
     } finally {
@@ -1876,7 +1902,7 @@ function Invoke-TerminalStyleTune {
             }
             $finalRevert = $null
             if ($restoreBaseLook) { try { $finalRevert = & $restoreBaseLook } catch { } }
-            if ($finalRevert -eq 'failed') {
+            if ($finalRevert -eq 'failed' -and -not ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Arm -eq 'merge')) {
                 Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
                     -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
             }

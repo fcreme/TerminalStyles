@@ -42,142 +42,102 @@ BeforeAll {
 }
 
 Describe 'Restore-TuneBaseLook' {
+    # The put-back is the preview session's (lib/previewsession.ps1): driven
+    # here against a real settings.json in $TestDrive, with the data root there
+    # too, so the record and copy the session keeps stay in the sandbox.
     InModuleScope TerminalStyles {
         BeforeEach {
+            $script:savedRoot = $script:TStylesDataRoot
+            $sand = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesDataRoot = Join-Path $sand 'data'
+            [void][System.IO.Directory]::CreateDirectory($script:TStylesDataRoot)
             $script:tuneState = @{ Reverted = $false }
             $script:opened    = [pscustomobject]@{
                 background = '#0a0006'; foreground = '#ffe8e8'; cursorColor = '#ff3d5a'
             }
-            # A path under $TestDrive even though the write is mocked: if the
-            # mock is ever dropped, this fails loudly in a sandbox instead of
-            # quietly rewriting something real.
-            $script:settingsPath = Join-Path $TestDrive 'settings.json'
+            $script:settingsPath = Join-Path $sand 'settings.json'
+            $script:original = '{ "profiles": { "list": [ { "guid": "{a}", "name": "PowerShell", "colorScheme": "Campbell" } ] } }'
+            [System.IO.File]::WriteAllText($script:settingsPath, $script:original, [System.Text.UTF8Encoding]::new($false))
+            $script:preview = '{ "profiles": { "list": [ { "guid": "{a}", "name": "PowerShell", "colorScheme": "eva", "opacity": 70 } ] } }'
+            $script:newSession = {
+                $s = New-FilePreviewSession -Kind WindowsTerminal -Path $script:settingsPath -By tuner -TargetName 'PowerShell'
+                Write-FilePreview -Session $s -Text $script:preview | Should -Be 'written'
+                $s
+            }
+            Mock Write-HostOscPacket { $true }
         }
+        AfterEach { $script:TStylesDataRoot = $script:savedRoot }
 
         It 'restores settings.json and the palette once, however many exits ask' {
-            Mock Write-SettingsAtomic {}
-            Mock Write-HostOscPacket { $true }
+            $s = & $script:newSession
+            $first  = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $script:opened
+            $t = [System.IO.File]::GetLastWriteTimeUtc($script:settingsPath)
+            $second = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $script:opened
 
-            # Escape, then the finally behind it -- the sequence a cancel runs.
-            $first = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                -SettingsPath $script:settingsPath -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
-            $second = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                -SettingsPath $script:settingsPath -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
-
-            # The counts first: they are the defect, and an assertion that
-            # throws earlier would hide them.
-            Should -Invoke Write-SettingsAtomic -Times 1 -Exactly `
-                -Because "a second byte-identical write bumps the mtime of a file the user owns, and Windows Terminal reloads on it"
-            Should -Invoke Write-HostOscPacket  -Times 1 -Exactly `
-                -Because 'the terminal was already handed its colours back'
-
+            [System.IO.File]::GetLastWriteTimeUtc($script:settingsPath) | Should -Be $t `
+                -Because 'a second write bumps the mtime of a file the user owns, and Windows Terminal reloads on it'
+            Should -Invoke Write-HostOscPacket -Times 1 -Exactly -Because 'the terminal was already handed its colours back'
             $first  | Should -Be 'reverted'
-            $second | Should -Be 'already' `
-                -Because 'there was nothing left to put back, and saying so is not the same as doing it again'
+            $second | Should -Be 'already'
+            [System.IO.File]::ReadAllText($script:settingsPath) | Should -BeExactly $script:original
         }
 
         It 'records that it ran on the state the caller passed in' {
-            # The flag has to live in the CALLER's hashtable: the tuner invokes
-            # this from inside scriptblocks, and a plain variable assigned there
-            # lands in the scriptblock's own child scope and is never seen again
-            # -- which is the same reason the picker keeps $pickerState.
-            Mock Write-SettingsAtomic {}
-            Mock Write-HostOscPacket { $true }
-
+            $s = & $script:newSession
             $script:tuneState.Reverted | Should -BeFalse
-            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                -SettingsPath $script:settingsPath -OriginalJson '{}' -OpenedScheme $script:opened | Out-Null
+            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $script:opened | Out-Null
             $script:tuneState.Reverted | Should -BeTrue
         }
 
         It 'writes no settings.json off Windows Terminal, and still reverts the palette' {
-            # There is no settings.json to restore there; the OSC packet is the
-            # whole revert.
             Mock Write-SettingsAtomic { throw 'there is no settings.json to write off Windows Terminal' }
-            Mock Write-HostOscPacket { $true }
-
-            Restore-TuneBaseLook -State $script:tuneState -SettingsPath $null -OriginalJson $null `
-                -OpenedScheme $script:opened | Should -Be 'reverted'
+            Restore-TuneBaseLook -State $script:tuneState -Session $null -OpenedScheme $script:opened | Should -Be 'reverted'
             Should -Invoke Write-SettingsAtomic -Times 0 -Exactly
             Should -Invoke Write-HostOscPacket  -Times 1 -Exactly
         }
 
         It 'a fresh session reverts again -- the flag is per session, not global' {
-            Mock Write-SettingsAtomic {}
-            Mock Write-HostOscPacket { $true }
-
-            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                -SettingsPath $script:settingsPath -OriginalJson '{}' -OpenedScheme $script:opened | Out-Null
-            Restore-TuneBaseLook -State @{ Reverted = $false } -UseSettingsFile `
-                -SettingsPath $script:settingsPath -OriginalJson '{}' -OpenedScheme $script:opened |
+            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session (& $script:newSession) -OpenedScheme $script:opened | Out-Null
+            Restore-TuneBaseLook -State @{ Reverted = $false } -UseSettingsFile -Session (& $script:newSession) -OpenedScheme $script:opened |
                 Should -Be 'reverted'
-            Should -Invoke Write-SettingsAtomic -Times 2 -Exactly
+            Should -Invoke Write-HostOscPacket -Times 2 -Exactly
+            [System.IO.File]::ReadAllText($script:settingsPath) | Should -BeExactly $script:original
         }
 
-        Context 'when settings.json cannot be put back' {
-            # The real writer, not a mock: a mocked throw is script-terminating
-            # already and would say nothing about what the tuner does with the
-            # writer's own error.
-            BeforeEach {
-                $script:folder = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
-                [void][System.IO.Directory]::CreateDirectory($script:folder)
-                $script:blockTemps = {
-                    param([string]$f)
-                    foreach ($t in @(('{0}.{1}.tstmp' -f $f, $PID), "$f.tstmp")) {
-                        [void][System.IO.Directory]::CreateDirectory($t)
-                    }
-                }
-            }
+        It 'keeps an edit made while the tuner was open, and still hands the palette back, once' {
+            $s = & $script:newSession
+            $o = [System.IO.File]::ReadAllText($script:settingsPath) | ConvertFrom-Json
+            $o | Add-Member -NotePropertyName copyOnSelect -NotePropertyValue $true
+            [System.IO.File]::WriteAllText($script:settingsPath, ($o | ConvertTo-Json -Depth 10), [System.Text.UTF8Encoding]::new($false))
 
-            It 'finishes the revert, and answers failed' {
-                Mock Write-HostOscPacket { $true }
-                $dir = Join-Path $script:folder 'settings.json'
-                [void][System.IO.Directory]::CreateDirectory($dir)
+            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $null | Should -Be 'reverted'
+            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $null | Should -Be 'already'
+            $after = [System.IO.File]::ReadAllText($script:settingsPath) | ConvertFrom-Json
+            $after.copyOnSelect | Should -BeTrue
+            @($after.profiles.list)[0].colorScheme | Should -Be 'Campbell'
+            $script:tuneState.SettingsRestore.Status | Should -Be 'merged'
+            Should -Invoke Write-HostOscPacket -Times 1 -Exactly
+        }
 
-                $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                    -SettingsPath $dir -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
+        It 'a settings.json that never took a preview is not touched, and not a failure' {
+            $s = New-FilePreviewSession -Kind WindowsTerminal -Path $script:settingsPath -By tuner
+            $t = [System.IO.File]::GetLastWriteTimeUtc($script:settingsPath)
+            Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $script:opened | Should -Be 'reverted'
+            $script:tuneState.SettingsRestoreError | Should -BeNullOrEmpty
+            [System.IO.File]::GetLastWriteTimeUtc($script:settingsPath) | Should -Be $t
+        }
 
-                $r | Should -Be 'failed'
-                Should -Invoke Write-HostOscPacket -Times 1 -Exactly -Because 'the palette goes back whatever the file did'
-                $script:tuneState.Reverted | Should -BeTrue
-                ([string]$script:tuneState.SettingsRestoreError).Contains("Could not write $dir") | Should -BeTrue `
-                    -Because "the reason is what the exit prints: $($script:tuneState.SettingsRestoreError)"
+        It 'finishes the revert, and answers failed, when the put-back cannot be written' {
+            $s = & $script:newSession
+            Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }
+            Mock Write-SettingsAtomic { throw "Could not write ${Path}: denied" } -ParameterFilter { $Path -eq $script:settingsPath }
 
-                Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                    -SettingsPath $dir -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened | Should -Be 'already'
-                Should -Invoke Write-HostOscPacket -Times 1 -Exactly
-            }
-
-            It 'a settings.json that never took a preview is not reported as a failed revert' {
-                Mock Write-HostOscPacket { $true }
-                $f = Join-Path $script:folder 'settings.json'
-                [System.IO.File]::WriteAllText($f, '{ "x": 1 }', [System.Text.UTF8Encoding]::new($false))
-                $before = [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($f))
-                & $script:blockTemps $f
-
-                $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                    -SettingsPath $f -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
-
-                $r | Should -Be 'reverted' -Because 'the file is already as the tuner found it'
-                $script:tuneState.SettingsRestoreError | Should -BeNullOrEmpty
-                Should -Invoke Write-HostOscPacket -Times 1 -Exactly
-                [System.Convert]::ToBase64String([System.IO.File]::ReadAllBytes($f)) | Should -BeExactly $before
-            }
-
-            It 'still reports a put-back that failed over a preview' {
-                Mock Write-HostOscPacket { $true }
-                $f = Join-Path $script:folder 'settings.json'
-                [System.IO.File]::WriteAllText($f, '{ "preview": true }', [System.Text.UTF8Encoding]::new($false))
-                & $script:blockTemps $f
-
-                $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile `
-                    -SettingsPath $f -OriginalJson '{ "x": 1 }' -OpenedScheme $script:opened
-
-                $r | Should -Be 'failed'
-                $script:tuneState.SettingsRestoreError | Should -Not -BeNullOrEmpty
-                [System.IO.File]::ReadAllText($f) | Should -BeExactly '{ "preview": true }'
-                Should -Invoke Write-HostOscPacket -Times 1 -Exactly
-            }
+            $r = Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $script:opened
+            $r | Should -Be 'failed'
+            Should -Invoke Write-HostOscPacket -Times 1 -Exactly -Because 'the palette goes back whatever the file did'
+            $script:tuneState.Reverted | Should -BeTrue
+            ([string]$script:tuneState.SettingsRestoreError) | Should -Match 'denied'
+            [System.IO.File]::ReadAllText($script:settingsPath) | Should -BeExactly $script:preview
         }
     }
 }

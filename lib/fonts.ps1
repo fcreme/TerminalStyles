@@ -958,6 +958,10 @@ function Invoke-TerminalStyleFont {
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
+    # A preview a closed picker or tuner left goes back before the file is read
+    # or its .bak rolled, or the .bak would copy that preview over the user's
+    # only copy (Restore-AbandonedFilePreview).
+    Show-FilePreviewResult -Result (Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $settingsPath)
     # Parsed once and reused: the auto-detect below and the target check share it.
     $settingsJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $settingsObj  = ConvertFrom-JsoncText $settingsJson

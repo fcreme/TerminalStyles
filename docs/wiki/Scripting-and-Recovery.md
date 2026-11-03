@@ -70,11 +70,25 @@ added, but it cannot put back what the style overwrote — your own
 apply drops when it re-serializes the file. The `.bak` is the only
 route back to those.
 
-A crash mid-pick or mid-tune is recoverable from the same file. Pressing
-Esc in the picker or the tuner reverts in-memory to the exact prior bytes
-without needing it — unless `settings.json` cannot be written at that
-moment, when it says so instead of "Reverted." and prints the `Copy-Item`
-that puts this `.bak` back. If you want a full history of changes rather than just "undo
+The picker and the tuner do not need this file to undo a preview: Esc puts
+back the exact bytes they found — unless `settings.json` cannot be written
+at that moment, when it says so instead of "Reverted." and prints the
+`Copy-Item` that puts this `.bak` back. If one ends without Enter or Esc —
+the tab is closed, or the process is killed — the copy it keeps of the file
+it found is still in the data root, and the next tstyles command that writes
+`settings.json` puts that file back before it reads it or rolls this backup,
+and says so. If `settings.json` has changed since, it is left as it is, and
+the file the picker found is moved beside it as
+`settings.json.preview-<timestamp>`.
+
+If `settings.json` changes while the picker or the tuner is open — Windows
+Terminal's Settings UI saves it, or another tstyles command writes it — no
+further preview is written into it. Esc then takes the preview back out of
+the file as it is now instead of putting the old file back, and Enter merges
+the chosen style into it as `tstyles <name>` would; the tuner's save takes
+its preview out before it applies. The change stays, except where the style
+you chose sets the same key; a value the preview set that was changed again
+is left as it is, and named. If you want a full history of changes rather than just "undo
 the most recent write", use `apply.ps1` — it keeps a timestamped backup
 per run.
 

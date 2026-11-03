@@ -633,7 +633,9 @@ function Write-WezTermStyleModule {
     hard way: "it failed" and "there was nothing to do" must not be the same
     answer to the caller.
 
-    The write itself, and the encoding, are Write-WezTermModuleText's.
+    The write itself, and the encoding, are Write-WezTermModuleText's. With a
+    picker's -Session it goes through Write-FilePreview instead, which records
+    the preview first and refuses a module someone else rewrote ('changed').
     #>
     [CmdletBinding()]
     param(
@@ -644,7 +646,8 @@ function Write-WezTermStyleModule {
         [string]$HomeDir,
         # Forwarded by what the caller BOUND, so "unbound" still means "this
         # style's own layout" and an explicit $null still means "omit it".
-        $LayoutTheme
+        $LayoutTheme,
+        [AllowNull()][hashtable]$Session
     )
 
     $splat = @{}
@@ -666,6 +669,11 @@ function Write-WezTermStyleModule {
     if ($PSBoundParameters.ContainsKey('LayoutTheme')) { $layoutSplat.LayoutTheme = $LayoutTheme }
     $lua = Get-WezTermStyleLua -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
                                -BackgroundImage $BackgroundImage @layoutSplat
+    if ($Session) {
+        $r = Write-FilePreview -Session $Session -Text $lua
+        if ($r -eq 'current') { return 'unchanged' }
+        return $r
+    }
     return (Write-WezTermModuleText -Path $path -Text $lua)
 }
 
@@ -678,11 +686,10 @@ function Write-WezTermModuleText {
     The one place the module is written as text, so a change to how it is
     written has one place to land. Through here: an apply
     (Write-WezTermStyleModule), the picker's preview (which calls
-    Write-WezTermStyleModule), and reset (Clear-WezTermStyleModule). NOT through
-    here: the picker's Esc restore ($restoreWezTerm in tstyles.ps1), which puts
-    back the bytes it read with WriteAllBytes, or removes a module its own
-    session created. A change to how the file is written has to reach that
-    block too.
+    Write-WezTermStyleModule), the picker's preview and Esc (Write-FilePreview
+    and Restore-FilePreview), and reset (Clear-WezTermStyleModule). Only the
+    removal of a module a picker session itself created does not go through
+    here.
 
     UTF-8 without BOM, not Get-RcFileEncoding. The file belongs wholly to
     TerminalStyles: it is written whole, and read back only by TerminalStyles --

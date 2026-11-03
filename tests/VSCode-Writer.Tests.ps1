@@ -1743,7 +1743,7 @@ Describe 'the picker wires the VS Code session in' {
         }
 
         It 'says what Ctrl+C put back' {
-            $script:picker | Should -Match '(?s)try \{ & \$restoreOriginalLook \} catch \{ \}\s*(if \(\$pickerState\.SettingsRestoreError\) \{[^}]*\}\s*)?Show-VSCodeRestoreResult' `
+            $script:picker | Should -Match '(?s)try \{ & \$restoreOriginalLook \} catch \{ \}\s*(if \(\$pickerState\.SettingsRestoreError[^{]*\{[^}]*\}\s*)?Show-VSCodeRestoreResult' `
                 -Because 'Ctrl+C and errors leave through the finally, which would otherwise say nothing about a merged or failed restore'
         }
     }

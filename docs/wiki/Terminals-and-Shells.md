@@ -114,6 +114,11 @@ prints the line above until it can see it in your config. `tstyles reset`, run
 in WezTerm, rewrites the same file to one that applies nothing, and the same
 reload takes the style back off (the tab you applied a style in can keep its
 colors; see [Resetting a profile](Using-tstyles.md#resetting-a-profile)). `tstyles uninstall` deletes the file.
+The picker previews by rewriting the same file as you arrow. Esc puts back
+the module it found — unless another tstyles command rewrote it meanwhile,
+which it then leaves, and says so. A picker closed without Enter or Esc is
+put right by the next picker, which restores the module it found, or by the
+next apply or reset.
 
 The module carries the rest of the style too: the palette as a named color
 scheme, the font and its size, the interior padding, the cursor shape, the tab
