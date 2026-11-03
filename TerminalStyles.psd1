@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.3'
+    ModuleVersion     = '0.9.4'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.3: Six fixes from a full audit. In a Windows Terminal Preview or Canary tab, a style now goes into that build''s settings.json, not Stable''s; $env:TSTYLES_WT_SETTINGS names a file yourself when the build cannot be told. A $PROFILE or shell rc file saved with a byte-order mark keeps its text through register, uninstall, shell-init and every update. tstyles <style> -NewWindow no longer takes over, or later deletes, a Terminal.app profile it did not import. pwsh inside WSL under Windows Terminal applies colors instead of failing, and a VS Code opened from another terminal is styled as VS Code. tstyles reset in WezTerm takes the style out of the generated module. The test suite no longer opens prompts or writes real settings when run from a terminal.'
+            ReleaseNotes = 'v0.9.4: Fixes from the second half of a full audit. Closing the tab while the picker or the tuner is open no longer costs you settings.json, and an edit made to it while they are open is kept. tstyles <style> -NewWindow no longer deletes the Terminal.app profile you made your default or startup profile, and tstyles profiles -Clean deletes only the copies it recorded making. In VS Code a style never goes inside one of your comments, reset keeps notes written in the colour block, and the picker no longer overwrites a setting you changed by hand. A tuner Save As fully replaces the style it names, and a save keeps profile.ps1 in its own encoding. apply.ps1 never writes $PROFILE. -Target defaults works on a settings.json whose defaults is null. shell-init respects ~/.bash_login and login shells that are not bash, and writes keep a file''s permissions. The documentation moved to the GitHub wiki.'
         }
     }
 }
