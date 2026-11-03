@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.4] - 2026-11-03
+
 ### Changed
 
 - **Sourcing `shell/tstyles.sh` no longer runs `uname` on every new zsh/bash tab.** With `TSTYLES_DATA` unset (the normal case) the runtime ran `uname -s` to tell macOS from Linux, a subprocess its own header says it must not spend at startup. It now reads `$OSTYPE`, which bash and zsh set themselves (`darwin*` is macOS), and falls back to `uname -s` only where the variable is missing, as in dash or ksh. The second `uname -s`, in the PowerShell-not-found branch, is unchanged. Tests that stub `uname` now `unset OSTYPE` so they still exercise the fallback.
@@ -1681,7 +1683,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.3...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.4...HEAD
+[0.9.4]: https://github.com/fcreme/TerminalStyles/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/fcreme/TerminalStyles/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/fcreme/TerminalStyles/compare/v0.9.1...v0.9.2
 [0.9.1]: https://github.com/fcreme/TerminalStyles/compare/v0.9.0...v0.9.1
