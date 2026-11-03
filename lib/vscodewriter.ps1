@@ -1102,13 +1102,21 @@ function Restore-VSCodePreview {
                     # that the re-apply found already standing (a left key
                     # holds it up) is still one a later reset may take away
                     # once it is blank, as a reset at picker open would.
-                    $parents = @(@($re.Record.CreatedParents) | Where-Object { $_ })
-                    foreach ($cp in @($Session.StartRecord.CreatedParents)) {
-                        if (-not $cp) { continue }
-                        $id = @($cp) -join '/'
-                        if (-not @($parents | Where-Object { (@($_) -join '/') -ceq $id })) { $parents += ,$cp }
+                    # A List and foreach, no pipeline: a pipeline unrolls a
+                    # path that is itself an array.
+                    $parents = [System.Collections.Generic.List[object]]::new()
+                    $ids = [System.Collections.Generic.List[string]]::new()
+                    foreach ($set in @($re.Record.CreatedParents), @($Session.StartRecord.CreatedParents)) {
+                        foreach ($cp in $set) {
+                            if ($null -eq $cp) { continue }
+                            $path = [string[]]@(foreach ($k in @($cp)) { [string]$k })
+                            $id = $path -join '/'
+                            if (-not $id -or $ids.Contains($id)) { continue }
+                            $ids.Add($id)
+                            $parents.Add($path)
+                        }
                     }
-                    $record = @{ Style = $re.Record.Style; Wrote = @(@($re.Record.Wrote) + $carried); CreatedParents = $parents }
+                    $record = @{ Style = $re.Record.Style; Wrote = @(@($re.Record.Wrote) + $carried); CreatedParents = $parents.ToArray() }
                 }
             }
             if ($rewrote -and @($rewrote.Wrote).Count -gt 0) {
