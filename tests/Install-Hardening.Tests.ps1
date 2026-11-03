@@ -773,6 +773,34 @@ Describe 'install.ps1 hardens its download' {
             -Because 'both preferences are the caller''s, so both restore on the same path'
     }
 
+    It 'saves console encodings before the UTF-8 switch' {
+        # Setting [Console]::OutputEncoding also flips the console code page.
+        # Save both encodings before that switch so the finally can restore them
+        # without a second `chcp`.
+        $script:installSrc | Should -Match '\$tstylesPrevOutputEncoding\s*=\s*\[Console\]::OutputEncoding'
+        $script:installSrc | Should -Match '\$tstylesPrevInputEncoding\s*=\s*\[Console\]::InputEncoding'
+        $script:installSrc.IndexOf('$tstylesPrevOutputEncoding') |
+            Should -BeLessThan $script:installSrc.IndexOf('[Console]::OutputEncoding = [System.Text.UTF8Encoding]') `
+            -Because 'the previous encodings must be captured before the UTF-8 assignment'
+    }
+
+    It 'restores console encodings in the same finally as preferences' {
+        $restoring = @($script:installAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.TryStatementAst] -and
+            $n.Finally -and
+            $n.Finally.Extent.Text -match '\$ErrorActionPreference\s*=\s*\$tstylesPrevEAP' }, $true))
+        @($restoring).Count | Should -BeGreaterThan 0
+        $restoring[0].Finally.Extent.Text |
+            Should -Match '\[Console\]::OutputEncoding\s*=\s*\$tstylesPrevOutputEncoding'
+        $restoring[0].Finally.Extent.Text |
+            Should -Match '\[Console\]::InputEncoding\s*=\s*\$tstylesPrevInputEncoding'
+        # No second chcp to undo the first — restoring OutputEncoding is enough.
+        $chcp = @($script:installAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and
+            $n.GetCommandName() -eq 'chcp' }, $true))
+        @($chcp).Count | Should -Be 1
+    }
+
     It 'runs chcp only on Windows' {
         # chcp is a Windows console command. `$null = & chcp ... 2>&1` does NOT
         # swallow its absence: a missing native command is a PowerShell error,

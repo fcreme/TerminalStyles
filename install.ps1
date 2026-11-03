@@ -1250,13 +1250,20 @@ function Resolve-ExecutionPolicy {
 # `iwr | iex` run never sets the var, so main runs.
 if (-not $TStylesInstallNoRun) {
 
-    # Force UTF-8 console output as defense-in-depth (see header note).
+    # Force UTF-8 console output as defense-in-depth for install messaging.
     # Windows only: chcp is a Windows console command, and `$null = & chcp ... 2>&1`
     # does not swallow its absence -- a missing NATIVE COMMAND is a PowerShell
     # error, not stderr output, so on macOS and Linux this printed a red
     # "The term 'chcp' is not recognized" block as the very first thing anyone
     # running the documented `iwr | iex` one-liner saw. The install worked; it
     # just looked like it had failed before it started.
+    #
+    # Save the caller's console encodings first: `iwr | iex` runs in their
+    # session, and setting [Console]::OutputEncoding also flips the console
+    # code page, so restoring OutputEncoding (and InputEncoding) puts both
+    # back. Do not undo with a second `chcp`.
+    $tstylesPrevOutputEncoding = [Console]::OutputEncoding
+    $tstylesPrevInputEncoding  = [Console]::InputEncoding
     if ((Get-TStylesPlatform) -eq 'Windows') {
         $null = & chcp 65001 2>&1
     }
@@ -1430,5 +1437,7 @@ if (-not $TStylesInstallNoRun) {
         if ($null -ne $tstylesPrevTls) {
             try { [Net.ServicePointManager]::SecurityProtocol = $tstylesPrevTls } catch { }
         }
+        [Console]::OutputEncoding = $tstylesPrevOutputEncoding
+        [Console]::InputEncoding  = $tstylesPrevInputEncoding
     }
 }
