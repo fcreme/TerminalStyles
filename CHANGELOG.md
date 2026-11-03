@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.5] - 2026-11-04
+
 ### Fixed
 
 - **In the picker, `-NewWindow`'s notes stay on screen.** On Terminal.app the picker writes the profile that carries a style's background, and with `-NewWindow` opens it, before it clears the screen to print "Style applied", and pwsh's `Clear-Host` clears the scrollback too. So everything that step said was gone before it could be read: "Opening a new window with the background image...", that Terminal.app shows a GIF's first frame, why there was no window, and whether the Terminal.app profile was kept or replaced and what that cost. The picker now keeps those lines and prints them, in their colours, below "Style applied". Without `-NewWindow` that includes, for the first time in the picker, the line saying the style ships a background image and that `tstyles <style> -NewWindow` shows it. `tstyles <style>` prints all of it as before.
@@ -1703,7 +1705,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.4...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.5...HEAD
+[0.9.5]: https://github.com/fcreme/TerminalStyles/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/fcreme/TerminalStyles/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/fcreme/TerminalStyles/compare/v0.9.2...v0.9.3
 [0.9.2]: https://github.com/fcreme/TerminalStyles/compare/v0.9.1...v0.9.2
