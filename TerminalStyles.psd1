@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.4'
+    ModuleVersion     = '0.9.5'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.4: Fixes from the second half of a full audit. Closing the tab while the picker or the tuner is open no longer costs you settings.json, and an edit made to it while they are open is kept. tstyles <style> -NewWindow no longer deletes the Terminal.app profile you made your default or startup profile, and tstyles profiles -Clean deletes only the copies it recorded making. In VS Code a style never goes inside one of your comments, reset keeps notes written in the colour block, and the picker no longer overwrites a setting you changed by hand. A tuner Save As fully replaces the style it names, and a save keeps profile.ps1 in its own encoding. apply.ps1 never writes $PROFILE. -Target defaults works on a settings.json whose defaults is null. shell-init respects ~/.bash_login and login shells that are not bash, and writes keep a file''s permissions. The documentation moved to the GitHub wiki.'
+            ReleaseNotes = 'v0.9.5: Eight fixes from the audit''s follow-ups. A data root or install folder whose path is not ASCII goes into rc files and $PROFILE as UTF-8, so the loader finds it, and tstyles register replaces an out-of-date loader. tstyles font refuses a profile whose font is not an object instead of saying Applied. An apply says so when current-style.ps1 could not be written, instead of claiming the prompt changed. In the picker, -NewWindow''s notes stay on screen. -NewWindow forgets a Terminal.app profile it imported once it is gone. shell-init refreshes a loader whose path changed only in case, and the tuner refuses style names with look-alike letters.'
         }
     }
 }
