@@ -91,6 +91,13 @@ means depends on where the style lives, and the prompt says which: for a
 comes back if you delete your copy; for a theme that exists only in your
 user-styles dir it *replaces* that theme, so it asks first.
 
+A **Save as** under the name of a style you already have replaces that
+style -- its own background image, `meta.json` and `README.md` included --
+and the question it asks first names whichever of those are there. A folder
+under that name that is not a style yet (it has no `scheme.json`) keeps
+everything in it; if the save would overwrite a file there, it asks first
+and names it.
+
 Either way the result lands in your user-styles dir as a full style — so it
 shows up in `tstyles list`, the picker, and tab-completion, and survives
 `tstyles update` and `tstyles uninstall` even when it carries a bundled

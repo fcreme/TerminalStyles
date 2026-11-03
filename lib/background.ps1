@@ -94,11 +94,13 @@ function Get-StyleBackgroundAbsence {
     Read AFTER Get-StyleBundledBackground returns $null: that call either wrote
     a fresh marker or was suppressed by an unexpired one, so the marker on disk
     is the reason for the $null the caller is holding. Asked on its own it is a
-    cache reading, not a probe -- it never touches the network.
+    cache reading, not a probe -- it never touches the network. For a tuned
+    style the marker is its base's (Get-StyleBackgroundCacheDir), since the
+    base's resolution is the one that returned $null.
     #>
     param([Parameter(Mandatory)][string]$StyleDir)
 
-    $cacheDir = Get-StyleCacheDir -StyleName (Split-Path -Leaf $StyleDir)
+    $cacheDir = Get-StyleBackgroundCacheDir -StyleDir $StyleDir
     $markerPath = Join-Path $cacheDir '.no-background'
     if (-not (Test-Path -LiteralPath $markerPath)) { return 'unknown' }
 
@@ -208,11 +210,20 @@ function Get-BackgroundFileIn {
     # kept its background.png, so a style the user had just been told was
     # REPLACED went on painting the replaced style's wallpaper. The removal
     # list and the resolution list are now the same list.
-    param([Parameter(Mandatory)][string]$Directory)
+    #
+    # -All returns every one present, in that order, for the removal: README
+    # allows several, and removing only the first left the next one to paint.
+    # Unrolled, so a caller wraps it in @().
+    param([Parameter(Mandatory)][string]$Directory, [switch]$All)
+    $found = @()
     foreach ($ext in 'gif','png','jpg','jpeg') {
         $candidate = Join-Path $Directory "background.$ext"
-        if (Test-Path -LiteralPath $candidate) { return $candidate }
+        if (Test-Path -LiteralPath $candidate) {
+            if (-not $All) { return $candidate }
+            $found += $candidate
+        }
     }
+    if ($All) { return $found }
     return $null
 }
 
@@ -335,11 +346,26 @@ function Update-CachedBackground {
     }
 }
 
+function Get-StyleBackgroundCacheDir {
+    # The cache dir that holds the answer for $StyleDir's background: its
+    # base's, for a style tuned from another (Get-TunedBaseDir), else its own.
+    param([Parameter(Mandatory)][string]$StyleDir)
+    $baseDir = Get-TunedBaseDir -StyleDir $StyleDir
+    if ($baseDir) { return (Get-StyleCacheDir -StyleName (Split-Path -Leaf $baseDir)) }
+    return (Get-StyleCacheDir -StyleName (Split-Path -Leaf $StyleDir))
+}
+
 function Get-StyleBundledBackground {
-    # Three-tier resolution:
-    #   1. Bundled file under $StyleDir (module root, read-only-ish on PSGallery)
-    #   2. Cached file under $DataRoot\cache\<name>\ (writable, persistent)
-    #   3. Lazy-fetch from gifs branch -> write to $DataRoot\cache\<name>\
+    # Resolution, in order:
+    #   1. A file in $StyleDir itself (bundled, or one the user placed there)
+    #   2. For a style tuned from ANOTHER style, that base's answer -- and it is
+    #      final, $null included. The cache and the gifs branch are keyed by
+    #      NAME, so asking them first made a tune of forest saved as 'eva' paint
+    #      eva's cached wallpaper -- or, when forest had no image or could not
+    #      be reached, download eva's -- while the tuner's preview had shown
+    #      forest's. One hop: the base is resolved with -NoInherit.
+    #   3. Cached file under $DataRoot\cache\<name>\ (writable, persistent)
+    #   4. Lazy-fetch from gifs branch -> write to $DataRoot\cache\<name>\
     #
     # The negative-cache marker (.no-background) lives in the cache dir, never
     # in the bundled dir, so we can write it on PSGallery installs.
@@ -359,14 +385,21 @@ function Get-StyleBundledBackground {
         [switch]$NoFetch
     )
 
-    # 1. Bundled (under module root)
+    # 1. In the style's own folder
     $bundled = Get-BackgroundFileIn -Directory $StyleDir
     if ($bundled) { return $bundled }
+
+    # 2. A tuned style's base, final. -NoInherit suppresses this (used when
+    # resolving a base, so inheritance is strictly one hop -- no cycles).
+    if (-not $NoInherit) {
+        $baseDir = Get-TunedBaseDir -StyleDir $StyleDir
+        if ($baseDir) { return (Get-StyleBundledBackground -StyleDir $baseDir -NoInherit -NoFetch:$NoFetch) }
+    }
 
     $styleName = Split-Path -Leaf $StyleDir
     $cacheDir  = Get-StyleCacheDir -StyleName $styleName
 
-    # 2. Cached (under data root)
+    # 3. Cached (under data root)
     $cached = Get-BackgroundFileIn -Directory $cacheDir
     if ($cached) {
         # Revalidated, but only where reaching for the network is allowed at
@@ -380,15 +413,6 @@ function Get-StyleBundledBackground {
         }
         return $cached
     }
-    # 2b. Inheritance: a tuned style inherits its base's background. For a
-    # non-tuned style this returns $null instantly (no tune.json), so the
-    # normal path is unaffected. -NoInherit suppresses this (used when
-    # resolving a base, so inheritance is strictly one hop -- no cycles).
-    if (-not $NoInherit) {
-        $inherited = Get-TunedBaseBackground -StyleDir $StyleDir -NoFetch:$NoFetch
-        if ($inherited) { return $inherited }
-    }
-
     $markerPath = Join-Path $cacheDir '.no-background'
     if (Test-Path -LiteralPath $markerPath) {
         $markerText = ''
@@ -398,7 +422,7 @@ function Get-StyleBundledBackground {
         if (Test-BackgroundProbeSuppressed -MarkerText $markerText) { return $null }
     }
 
-    # 3. Lazy-fetch into cache
+    # 4. Lazy-fetch into cache
     if ($NoFetch) { return $null }
     if (-not (Test-Path -LiteralPath $cacheDir)) {
         New-Item -ItemType Directory -Path $cacheDir -Force | Out-Null

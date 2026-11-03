@@ -863,10 +863,18 @@ function Test-StyleResolved {
     # A style is "resolved" if we know its background state -- either a
     # bundled background.<ext> exists under $StyleDir (module root), or a
     # cached background.<ext> exists under $DataRoot\cache\<name>\, or a
-    # .no-background marker there is STILL IN DATE.
+    # .no-background marker there is STILL IN DATE. Asked in the resolver's
+    # order (Get-StyleBundledBackground): a style tuned from another is
+    # resolved exactly when its base is, before any cache keyed by its own
+    # name. -NoInherit (the recursive base call) keeps it one hop, so a cyclic
+    # tune.json (A->B->A) cannot recurse.
     param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
     foreach ($ext in 'gif','png','jpg','jpeg') {
         if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
+    }
+    if (-not $NoInherit) {
+        $baseDir = Get-TunedBaseDir -StyleDir $StyleDir
+        if ($baseDir) { return (Test-StyleResolved -StyleDir $baseDir -NoInherit) }
     }
     $styleName = Split-Path -Leaf $StyleDir
     $cacheDir = Get-StyleCacheDir -StyleName $styleName
@@ -906,27 +914,6 @@ function Test-StyleResolved {
         if (Test-BackgroundProbeSuppressed -MarkerText $markerText) { return $true }
     }
 
-    # Tuned styles inherit resolution from their base. -NoInherit suppresses
-    # this (used on the recursive base call) so a cyclic tune.json (A->B->A)
-    # cannot recurse -- resolution is strictly one hop.
-    if (-not $NoInherit) {
-        $tuneFile = Join-Path $StyleDir 'tune.json'
-        if (Test-Path -LiteralPath $tuneFile) {
-            try {
-                $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                if ($tune.base) {
-                    $baseDir = Get-StyleDir -StyleName $tune.base
-                    # Compared the way the host filesystem compares, so that on a
-                    # case-sensitive volume a base differing from the style only
-                    # in case is still a different directory. See
-                    # Test-SameStyleDirectory for why -eq/-ne is wrong here.
-                    if ($baseDir -and -not (Test-SameStyleDirectory -A $baseDir -B $StyleDir)) {
-                        return (Test-StyleResolved -StyleDir $baseDir -NoInherit)
-                    }
-                }
-            } catch { }
-        }
-    }
     return $false
 }
 
@@ -1502,7 +1489,12 @@ function Invoke-TerminalStyle {
     if ($wantsBackgrounds) {
         foreach ($s in $styles) {
             if (-not (Test-StyleResolved -StyleDir $s.FullName)) {
-                $missingPaths += $s.FullName
+                # A tuned style's image is its base's (Get-StyleBundledBackground),
+                # and the job fetches by folder name: fetching under the tuned
+                # name would fill a cache the resolver does not read for it.
+                $fetchDir = Get-TunedBaseDir -StyleDir $s.FullName
+                if (-not $fetchDir) { $fetchDir = $s.FullName }
+                if ($missingPaths -notcontains $fetchDir) { $missingPaths += $fetchDir }
             }
         }
     }

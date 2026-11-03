@@ -419,6 +419,32 @@ Describe 'Get-StyleBackgroundAbsence' {
             Get-StyleBackgroundAbsence -StyleDir $script:styleDir | Should -Be $_
         }
 
+        It "reads a tuned style's reason from its base, and names the base's cache" {
+            $script:savedModule = $script:TStylesModuleRoot
+            try {
+                $script:TStylesModuleRoot = Join-Path $TestDrive 'abs-module'
+                $eva = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') 'eva'
+                [void][System.IO.Directory]::CreateDirectory($eva)
+                [System.IO.File]::WriteAllText((Join-Path $eva 'scheme.json'), '{"name":"eva"}')
+                $night = Join-Path $TestDrive 'styles/eva-night'
+                [void][System.IO.Directory]::CreateDirectory($night)
+                [System.IO.File]::WriteAllText((Join-Path $night 'tune.json'), '{"schemaVersion":1,"base":"eva"}')
+                $evaCache = Get-StyleCacheDir -StyleName 'eva'
+                [void][System.IO.Directory]::CreateDirectory($evaCache)
+                [System.IO.File]::WriteAllText((Join-Path $evaCache '.no-background'),
+                    ('{{"schemaVersion":1,"kind":"unreachable","at":"{0}"}}' -f [datetime]::UtcNow.ToString('o')))
+
+                Get-StyleBackgroundAbsence -StyleDir $night | Should -BeExactly 'unreachable'
+
+                [System.IO.File]::Delete((Join-Path $evaCache '.no-background'))
+                Mock Write-Host {}
+                Show-MissingBackgroundForNewWindow -StyleName 'eva-night' -StyleDir $night
+                # Exact: cache/eva is a prefix of cache/eva-night.
+                $expected = '  opened. Nothing was cached under {0}.' -f $evaCache
+                Should -Invoke Write-Host -Times 1 -Exactly -ParameterFilter { "$Object" -ceq $expected }
+            } finally { $script:TStylesModuleRoot = $script:savedModule }
+        }
+
         It 'answers unknown when there is no marker at all' {
             Remove-Item -LiteralPath (Join-Path $script:cacheDir '.no-background') -Force -ErrorAction SilentlyContinue
             Get-StyleBackgroundAbsence -StyleDir $script:styleDir | Should -Be 'unknown'

@@ -559,8 +559,9 @@ function Show-MissingBackgroundForNewWindow {
         }
         default {
             Write-Host ("  Could not resolve '{0}'s background image, so no new window was" -f $StyleName) -ForegroundColor Yellow
+            # The base's cache, for a tuned style: that is where the answer was looked for.
             Write-Host ("  opened. Nothing was cached under {0}." -f
-                        (Get-StyleCacheDir -StyleName (Split-Path -Leaf $StyleDir))) -ForegroundColor Yellow
+                        (Get-StyleBackgroundCacheDir -StyleDir $StyleDir)) -ForegroundColor Yellow
         }
     }
 }

@@ -284,38 +284,42 @@ Describe 'the tuner only skips its revert when the style really went on' {
     }
 }
 
-Describe 'the tuner warns about the collision that actually loses work' {
-    InModuleScope TerminalStyles {
+Describe "the tuner asks the plan's question and hands the save that plan" {
+    # Every sentence and decision is tested through Get-TuneSavePlan,
+    # Get-TuneReplaceWarning and Get-TuneOverwriteChoice
+    # (tests/Get-TuneSavePlan.Tests.ps1). The key loop cannot run in CI, so the
+    # wiring is pinned structurally: the save carries out the plan the question
+    # was rendered from, and the tuner keeps no collision sentence of its own --
+    # it used to, a second rule beside the helper's.
+    BeforeAll {
+        $script:tuneAst = InModuleScope TerminalStyles { (Get-Command Invoke-TerminalStyleTune).ScriptBlock.Ast }
+    }
 
-        It 'checks the USER styles dir, which is where a save would land' {
-            # Save-TunedStyle writes to $DataRoot/styles/<name>. A user style of
-            # that name is REPLACED. The prompt only ever checked the module's
-            # bundled dir -- so it warned about the harmless collision (a bundled
-            # style is merely shadowed and comes back) and stayed silent about
-            # the destructive one.
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match "userDir = Join-Path \(Join-Path \`$script:TStylesDataRoot 'styles'\)"
-            # The sentence itself is Get-TuneReplaceWarning's, so ask it rather
-            # than the source text -- it also has to name the background image
-            # it now takes with it, which a literal at the Read-Host could not.
-            $d = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
-            New-Item -ItemType Directory -Path $d -Force | Out-Null
-            Get-TuneReplaceWarning -Name 'mytheme' -DestDir $d | Should -Match 'will be REPLACED'
-        }
+    It 'calls Save-TunedStyle once, with -Plan' {
+        $saves = @($script:tuneAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq 'Save-TunedStyle' }, $true))
+        $saves.Count | Should -Be 1
+        @($saves[0].CommandElements |
+            Where-Object { $_ -is [System.Management.Automation.Language.CommandParameterAst] } |
+            ForEach-Object { $_.ParameterName }) | Should -Contain 'Plan'
+    }
 
-        It 'still mentions shadowing for a bundled name' {
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $src | Should -Match 'shadows bundled'
-        }
+    It 'holds no collision sentence of its own' {
+        $strings = @($script:tuneAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+            $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst] }, $true))
+        $strings.Count | Should -BeGreaterThan 0
+        @($strings | Where-Object { $_.Value -cmatch 'REPLACED|shadows bundled|cannot be undone|goes with it' }).Count | Should -Be 0
+    }
 
-        It 'asks before replacing, rather than after' {
-            # Both branches gate on a y/N answer and `continue` back to the name
-            # prompt, so declining re-asks instead of saving anyway.
-            $src = (Get-Command Invoke-TerminalStyleTune).ScriptBlock.ToString()
-            $block = [regex]::Match($src, '(?s)\$userDir = .*?\n            \}').Value
-            $block | Should -Match "warn -notmatch '\^\(\?i\)y'"
-            ([regex]::Matches($block, 'continue')).Count | Should -BeGreaterOrEqual 2
-        }
+    It 're-asks the name when it is invalid or the question is declined' {
+        $loops = @($script:tuneAst.FindAll({ param($n)
+            $n -is [System.Management.Automation.Language.WhileStatementAst] -and
+            @($n.FindAll({ param($c) $c -is [System.Management.Automation.Language.CommandAst] -and
+                                     $c.GetCommandName() -eq 'Get-TuneReplaceWarning' }, $true)).Count -gt 0 }, $true))
+        $loops.Count | Should -Be 1
+        @($loops[0].FindAll({ param($n) $n -is [System.Management.Automation.Language.ContinueStatementAst] }, $true)).Count |
+            Should -BeGreaterOrEqual 2
     }
 }
 
