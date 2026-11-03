@@ -27,3 +27,9 @@ one — but it does replace whatever prompt was active, so `tstyles golden-fores
 A forest, autumn, or warm-light loop. Works well with cinematic
 landscape GIFs where you want the imagery to feel like a window rather
 than a sticker.
+
+## Credits
+
+The animated forest background is pixel art by **@anasabdin**. The
+version shipped here is cropped at the bottom; the artwork itself is
+theirs, not covered by this repo's MIT license.
