@@ -618,9 +618,13 @@ function Open-AppleTerminalProfile {
     $recordable = ($Name -ceq [System.IO.Path]::GetFileNameWithoutExtension($Path))
 
     if (-not $landsOnName) {
-        $held    = @($installed | Where-Object { $_ -eq $Name })[0]
-        $ours    = $record.ContainsKey($Name)
-        $current = $ours -and $hash -and $record[$Name] -eq $hash
+        # Exactly: the record's keys and -in both ignore case, and a user's
+        # own 'Eva' beside our 'eva' is not ours.
+        $exact   = @($installed) -ccontains $Name
+        $variant = @($installed | Where-Object { $_ -ieq $Name -and $_ -cne $Name })
+        $held    = if ($exact) { $Name } else { @($installed | Where-Object { $_ -ieq $Name })[0] }
+        $ours    = $exact -and (@($record.Keys) -ccontains $Name)
+        $current = $ours -and $hash -and $record[$Name] -ceq $hash
 
         $windowOnIt = @"
 tell application "Terminal"
@@ -630,7 +634,11 @@ end tell
 "@
         $use = $null
         $kept = $false
-        if ($ours -and -not $current) {
+        # A case-variant beside it: whether Terminal.app's delete by name tells
+        # the two apart is not known, so neither is deleted (as -Clean keeps
+        # such a copy).
+        $twinned = $ours -and -not $current -and $variant.Count -gt 0
+        if ($ours -and -not $current -and -not $twinned) {
             $use  = Get-AppleTerminalSettingsSetUse -Name $Name
             $kept = (-not $use.Answered) -or $use.Default -or $use.Startup
         }
@@ -650,6 +658,11 @@ end tell
                 Write-Host "  style was opened beside it as a numbered copy; tstyles profiles -Clean" -ForegroundColor Yellow
                 Write-Host "  removes the numbered copies TerminalStyles has a record of making." -ForegroundColor Yellow
             }
+        } elseif ($twinned) {
+            Write-Host ("  Terminal.app has '{0}' beside TerminalStyles' out-of-date '{1}' profile, and a" -f $variant[0], $held) -ForegroundColor Yellow
+            Write-Host "  delete by name may not tell them apart, so neither was deleted and the" -ForegroundColor Yellow
+            Write-Host "  updated style may be added beside them as a numbered copy. Rename one of" -ForegroundColor Yellow
+            Write-Host "  them in Terminal's Settings > Profiles." -ForegroundColor Yellow
         } elseif ($ours) {
             # Ours, out of date, and not the default or startup profile.
             # Deleting it frees the name so the re-import lands on it -- but

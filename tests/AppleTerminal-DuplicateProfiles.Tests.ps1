@@ -403,6 +403,18 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             $said | Should -Not -Match 'switched'
         }
 
+        It 'deletes neither its out-of-date profile nor a case-variant beside it' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            [void]$script:sets.Insert(0, [pscustomobject]@{ Name = 'Eva'; Content = 'USER' })
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:written.Clear()
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            @($script:scripts | Where-Object { $_ -match 'delete settings set' }).Count | Should -Be 0
+            @($script:sets | Where-Object { $_.Name -ceq 'Eva' } | ForEach-Object { $_.Content }) | Should -Be @('USER')
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v1</plist>')
+            (($script:written -join ' ') -replace '\s+', ' ') | Should -Match "has 'Eva' beside"
+        }
+
         It 'does not trust an import record written before 0.9.3' {
             # 0.8.24-0.9.2 wrote this file after every `open`, so an entry in it
             # may be a claim on a profile TerminalStyles never imported.
@@ -554,6 +566,36 @@ Describe 'Get-AppleTerminalSettingsSetName' {
             $script:answer = $Answer
             Mock Invoke-AppleTerminalScript { $script:answer }
             @(Get-AppleTerminalSettingsSetName).Count | Should -Be 0 -Because '@() counts a returned $null as one name'
+        }
+    }
+}
+
+Describe 'Register-AppleTerminalImportCopy' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedRoot = $script:TStylesDataRoot
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            Mock Start-Sleep { }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedRoot }
+
+        It 'records nothing it cannot attribute: <Label>' -ForEach @(
+            @{ Label = 'two new profiles';     After = @('Basic', 'eva', 'eva 1', 'eva 2') }
+            @{ Label = 'another shape';        After = @('Basic', 'eva', 'Eva 1') }
+            @{ Label = 'nothing new';          After = @('Basic', 'eva') }
+        ) {
+            $script:after = $After
+            Mock Get-AppleTerminalSettingsSetName { $script:after }
+            Register-AppleTerminalImportCopy -Name 'eva' -Hash 'h' -Before @('Basic', 'eva')
+            [System.IO.File]::Exists((Get-AppleTerminalImportRecordPath -Copies)) | Should -BeFalse
+            Should -Invoke Get-AppleTerminalSettingsSetName -Times 1
+        }
+
+        It 'records the one new copy, compared against the list as it was before the open' {
+            Mock Get-AppleTerminalSettingsSetName { @('Basic', 'eva', 'eva 1') }
+            Register-AppleTerminalImportCopy -Name 'eva' -Hash 'h' -Before @('Basic', 'eva')
+            (@((Get-AppleTerminalImportRecord -Copies).Keys) -join ',') | Should -BeExactly 'eva 1'
         }
     }
 }
