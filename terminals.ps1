@@ -1533,9 +1533,11 @@ function Register-ShellLoader {
         if (-not [regex]::IsMatch($content, $pattern, 'Singleline')) { return 'malformed' }
         if (-not $Force) {
             # Already registered. Compare the body so an upgraded data root or
-            # runtime path is picked up without -Force.
+            # runtime path is picked up without -Force. -ceq: a path that
+            # changed only in case (a home folder renamed /home/Jo -> /home/jo)
+            # is a different path on a case-sensitive volume.
             $existing = [regex]::Match($content, $pattern, 'Singleline').Value
-            if ($existing.Trim() -eq $block.Trim()) { return 'unchanged' }
+            if ($existing.Trim() -ceq $block.Trim()) { return 'unchanged' }
         }
         # The block goes in as it is. This overload reads its third argument as
         # a .NET REPLACEMENT string, where `$` is special, and the block carries

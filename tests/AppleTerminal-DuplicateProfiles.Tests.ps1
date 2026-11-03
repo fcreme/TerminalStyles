@@ -632,6 +632,25 @@ Describe 'Get-AppleTerminalSettingsSetUse' {
     }
 }
 
+Describe 'ConvertTo-AppleScriptString' {
+    InModuleScope TerminalStyles {
+        It 'doubles a backslash once' {
+            # A -replace replacement string is literal except for `$`, so
+            # '\\\\' wrote four backslashes for one and the literal named a
+            # profile with two.
+            ConvertTo-AppleScriptString 'a\b' | Should -BeExactly '"a\\b"'
+        }
+        It 'escapes a quote, and a backslash before it' {
+            ConvertTo-AppleScriptString 'say "hi"' | Should -BeExactly '"say \"hi\""'
+            ConvertTo-AppleScriptString 'a\"b' | Should -BeExactly '"a\\\"b"'
+        }
+        It 'leaves a plain name alone, and an empty one empty' {
+            ConvertTo-AppleScriptString 'eva 2' | Should -BeExactly '"eva 2"'
+            ConvertTo-AppleScriptString '' | Should -BeExactly '""'
+        }
+    }
+}
+
 Describe 'Get-AppleTerminalDuplicateProfile' {
     InModuleScope TerminalStyles {
         It 'finds the numbered copies of a known style' {
