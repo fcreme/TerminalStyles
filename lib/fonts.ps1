@@ -478,6 +478,25 @@ public static extern System.IntPtr SendMessageTimeout(System.IntPtr hWnd, uint M
     return $count
 }
 
+function Get-WTFontValueProblem {
+    # Why a profile's "font" cannot take a face, or $null when it can: absent,
+    # null and an object can; anything else cannot. A string -- a hand edit
+    # such as "font": "Cascadia Code" -- took Add-Member on a wrapper of the
+    # string, so nothing landed while Set-ProfileFont answered $true and
+    # `tstyles font` printed "Applied". One answer for the command, which asks
+    # before the backup, and for the writer, which asks again before it writes.
+    param([AllowNull()][object]$Entry, [Parameter(Mandatory)][string]$TargetName)
+    if ($null -eq $Entry -or $null -eq $Entry.font) { return $null }
+    if ($Entry.font -is [System.Management.Automation.PSCustomObject]) { return $null }
+    # A DateTime is a string pwsh 7's JSON reader took for a date.
+    $kind = if ($Entry.font -is [string] -or $Entry.font -is [datetime]) { 'a string' }
+            elseif ($Entry.font -is [bool]) { 'a boolean' }
+            elseif ($Entry.font -is [array]) { 'a list' }
+            else { 'a number' }
+    ("'{0}' has a ""font"" in settings.json that is {1}, not an object, so there is nowhere to put the face. " +
+     "Change it to {{ ""face"": ""<font name>"" }}, or delete it, and run this again.") -f $TargetName, $kind
+}
+
 function Set-ProfileFont {
     # Set $Family as the font.face on the target Windows Terminal profile (or
     # profiles.defaults). Returns $true once the font is written, $false if a
@@ -508,6 +527,9 @@ function Set-ProfileFont {
         $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $TargetName).Entry
         if (-not $entry) { return $false }
     }
+
+    $problem = Get-WTFontValueProblem -Entry $entry -TargetName $TargetName
+    if ($problem) { throw $problem }
 
     # From the value, as for defaults: `"font": null` kept its key, so the face
     # was set on nothing and the file written back without it.
@@ -977,6 +999,10 @@ function Invoke-TerminalStyleFont {
         Write-Host (Get-WTTargetNotFoundMessage -ResolvedTarget $resolvedTarget -TargetName $Target) -ForegroundColor Yellow
         return
     }
+
+    # Before the backup: a refusal leaves both settings.json and its .bak alone.
+    $fontProblem = Get-WTFontValueProblem -Entry $resolvedTarget.Entry -TargetName $Target
+    if ($fontProblem) { Write-Host $fontProblem -ForegroundColor Yellow; return }
 
     # The same tie, the same note as apply and reset. Set-ProfileFont resolves
     # again internally and gets the same answer; this is the one place that can

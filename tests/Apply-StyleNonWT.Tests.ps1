@@ -549,6 +549,39 @@ Describe 'Apply-StyleNonWT names the right culprit for colors that did not land'
 
             $out | Should -Match 'only the prompt was applied'
         }
+
+        It 'does not claim a prompt was applied when current-style.ps1 could not be written' {
+            Mock Write-HostOscPacket { $false }
+            script:Set-Scheme '{"name":"claim","background":"#0a0006"}'
+            [System.IO.File]::WriteAllText((Join-Path $script:sDir 'profile.ps1'), "# claim prompt`n", $script:enc)
+            $blocker = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            [System.IO.File]::WriteAllText($blocker, 'x')
+            $script:TStylesCurrent = Join-Path $blocker 'current-style.ps1'
+
+            $out = script:Get-ApplyOutput 2>$null
+
+            $out | Should -Match 'did not accept live color changes' -Because 'the arm under test must be the one that ran'
+            $out | Should -Not -Match 'only the prompt was applied'
+            $out | Should -Match 'current-style\.ps1' -Because 'the failure names the file'
+        }
+
+        It 'does not load the previous prompt into this tab when it could not be removed' {
+            script:Set-Scheme '{"name":"claim","background":"#0a0006"}'
+            [System.IO.File]::WriteAllText($script:TStylesCurrent, '$global:TSReloadProbe = 1', $script:enc)
+            Mock Remove-Item { Write-Error 'denied' }
+            $global:TSReloadProbe = $null
+            $savedNoAuto = $global:TStylesNoAutoLoad
+            $global:TStylesNoAutoLoad = $false
+            try {
+                $out = Apply-StyleNonWT -StyleName 'claim' -StyleDir $script:sDir -KeepPrompt -OutputRedirected $false 6>&1 2>$null | Out-String
+                $out | Should -Match 'could not be removed'
+                Should -Invoke Remove-Item -Times 1 -Exactly
+                $global:TSReloadProbe | Should -BeNullOrEmpty -Because 'the file still holds the previous style''s prompt'
+            } finally {
+                $global:TStylesNoAutoLoad = $savedNoAuto
+                Remove-Variable -Name TSReloadProbe -Scope Global -ErrorAction SilentlyContinue
+            }
+        }
     }
 }
 

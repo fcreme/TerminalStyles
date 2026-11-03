@@ -257,8 +257,11 @@ if ($Target -eq 'defaults') {
 }
 
 if ($isPwshTarget) {
-    $promptStatus = Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt
-    if ($promptStatus -eq 'installed') {
+    $promptResult = Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt
+    $promptStatus = $promptResult.Status
+    if ($promptStatus -eq 'failed') {
+        Write-Host (Get-CurrentStylePromptFailureNote -Result $promptResult) -ForegroundColor Yellow
+    } elseif ($promptStatus -eq 'installed') {
         Write-Host "Updated current-style.ps1 with $Style's prompt; `$PROFILE was not changed." -ForegroundColor Green
         # A clone run by path is not on PSModulePath, so `tstyles` and the
         # by-name import exist only once the module is installed.
@@ -271,7 +274,9 @@ if ($isPwshTarget) {
     Write-Host "Note: '$Target' is not a PowerShell profile -- skipping profile.ps1 install." -ForegroundColor Yellow
 }
 
-# Last, so a failed write above (this script runs under Stop) records nothing.
+# Last, so a failed settings.json write above (this script runs under Stop)
+# records nothing. A failed prompt step does not stop it: the colours are
+# already written, and Set-CurrentStylePrompt reports that failure itself.
 # -Kind explicitly: the default describes whatever runs this script, and a
 # scheduled task or a non-WT console is not Windows Terminal.
 Set-CurrentStyleRecord -StyleName $Style -Kind 'WindowsTerminal'

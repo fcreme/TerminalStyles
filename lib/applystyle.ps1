@@ -981,8 +981,13 @@ function Set-CurrentStylePrompt {
     engine's rather than the target's. current-style.ps1 needs no such choice;
     both engines' loaders read it.
 
-    Returns 'installed', 'removed' or 'none'. The status assumes the copy or
-    removal succeeded; a failure is the caller's error preference's to report.
+    Returns Status = 'installed', 'removed', 'none' or 'failed', and Reason for
+    'failed'. The copy and the removal run with -ErrorAction Stop: under the
+    module's Continue preference a failure was a non-terminating error, the
+    next line returned 'installed' or 'removed', and Apply-StyleNonWT said
+    "only the prompt was applied" over a current-style.ps1 that still held the
+    previous style's prompt. Each caller prints Get-CurrentStylePromptFailureNote
+    where it will stay on screen; the picker's comes after its Clear-Host.
     #>
     [CmdletBinding()]
     param(
@@ -990,15 +995,28 @@ function Set-CurrentStylePrompt {
         [switch]$KeepPrompt
     )
     $styleProfile = Join-Path $StyleDir 'profile.ps1'
-    if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
-        Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force
-        return 'installed'
+    $status = 'none'
+    try {
+        if (-not $KeepPrompt -and (Test-Path -LiteralPath $styleProfile)) {
+            $status = 'installed'
+            Copy-Item -LiteralPath $styleProfile -Destination $script:TStylesCurrent -Force -ErrorAction Stop
+        } elseif (Test-Path -LiteralPath $script:TStylesCurrent) {
+            $status = 'removed'
+            Remove-Item -LiteralPath $script:TStylesCurrent -Force -ErrorAction Stop
+        }
+    } catch {
+        $verb = if ($status -eq 'installed') { 'replaced' } else { 'removed' }
+        return [pscustomobject]@{ Status = 'failed'; Reason = ('could not be {0}: {1}' -f $verb, $_.Exception.Message) }
     }
-    if (Test-Path -LiteralPath $script:TStylesCurrent) {
-        Remove-Item -LiteralPath $script:TStylesCurrent -Force
-        return 'removed'
-    }
-    return 'none'
+    return [pscustomobject]@{ Status = $status; Reason = $null }
+}
+
+function Get-CurrentStylePromptFailureNote {
+    # What a 'failed' from Set-CurrentStylePrompt means for the next tab. One
+    # wording for every caller, so none of them can claim the prompt changed.
+    param([Parameter(Mandatory)][object]$Result)
+    if ($Result.Status -ne 'failed') { return $null }
+    "  current-style.ps1 $($Result.Reason)`n  New tabs still load the prompt it held before this apply."
 }
 
 function Apply-StyleNonWT {
@@ -1074,13 +1092,16 @@ function Apply-StyleNonWT {
     # that ships no profile.ps1 -- or an apply run with -KeepPrompt -- had no
     # prompt applied either. On that path nothing at all reached the session
     # while the note named the one thing that had supposedly worked.
-    $promptApplied = ((Set-CurrentStylePrompt -StyleDir $StyleDir -KeepPrompt:$KeepPrompt) -eq 'installed')
+    $promptResult  = Set-CurrentStylePrompt -StyleDir $StyleDir -KeepPrompt:$KeepPrompt
+    $promptApplied = ($promptResult.Status -eq 'installed')
 
     Write-Host ""
     Write-Host "  Style applied: " -NoNewline
     Write-Host $StyleName -ForegroundColor Green
     Write-Host "  Terminal:      " -NoNewline
     Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan
+    $promptNote = Get-CurrentStylePromptFailureNote -Result $promptResult
+    if ($promptNote) { Write-Host ""; Write-Host $promptNote -ForegroundColor Yellow }
 
     # The same treatment the OSC half below has always had, for the half that
     # decides every tab AFTER this one. Through the shared notice, so the picker
@@ -1186,8 +1207,10 @@ function Apply-StyleNonWT {
     # half honoured the flag and the picker's did not, so the defect this
     # comment describes stayed live on the other door for several releases.
     # Off Windows Terminal this session IS PowerShell, so -IsPwshTarget is $true.
+    # Not after a failed replace: the file still holds the previous style's
+    # prompt, and loading it here would show that under "Style applied".
     if (Test-ShouldLiveReloadPrompt -IsPwshTarget $true `
-            -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent) `
+            -ProfilePresent ((Test-Path -LiteralPath $script:TStylesCurrent) -and $promptResult.Status -ne 'failed') `
             -AutoLoadSuppressed ([bool]$global:TStylesNoAutoLoad)) {
         . $script:TStylesCurrent
     }
@@ -1344,8 +1367,9 @@ function Apply-StyleDirect {
     }
 
     # The prompt rule: Set-CurrentStylePrompt.
+    $promptResult = $null
     if ($isPwshTarget) {
-        [void](Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt)
+        $promptResult = Set-CurrentStylePrompt -StyleDir $styleDir -KeepPrompt:$KeepPrompt
     }
 
     # Record the choice. Get-CurrentStyleName answers by byte-comparing
@@ -1365,6 +1389,10 @@ function Apply-StyleDirect {
     Write-Host ""
     Write-Host "  Style applied: " -NoNewline
     Write-Host $StyleName -ForegroundColor Green
+    if ($promptResult) {
+        $promptNote = Get-CurrentStylePromptFailureNote -Result $promptResult
+        if ($promptNote) { Write-Host $promptNote -ForegroundColor Yellow }
+    }
     Write-Host ""
 
     # Live reload of the style's prompt into this session. Reached only with
@@ -1373,7 +1401,8 @@ function Apply-StyleDirect {
     # used to, through Test-InWindowsTerminal, which read WT_SESSION by itself:
     # a second copy of Get-TerminalKind's rule, answering yes in every process
     # a WT tab starts.
-    if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent)) {
+    if ($isPwshTarget -and (Test-Path -LiteralPath $script:TStylesCurrent) -and
+        -not ($promptResult -and $promptResult.Status -eq 'failed')) {
         . $script:TStylesCurrent
     }
 }
