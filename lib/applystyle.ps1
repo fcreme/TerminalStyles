@@ -712,6 +712,10 @@ function Publish-StyleWezTermConfig {
     # Terminal.app path there is no still-frame conversion: WezTerm animates it.
     $bg = Get-StyleBundledBackground -StyleDir $StyleDir
 
+    # An explicit apply owns the module from here: a picker's record of a
+    # preview goes first, or a preview byte-identical to this apply would let
+    # the next recovery, or that picker's Esc, put the old module back over it.
+    Remove-FilePreviewRecord -Kind WezTerm -Path (Get-WezTermModulePath @splat)
     $status = Write-WezTermStyleModule -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
                                        -BackgroundImage $bg @splat
     $path = Get-WezTermModulePath @splat
@@ -1008,6 +1012,10 @@ function Apply-StyleDirect {
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
+    # A preview a closed picker or tuner left goes back before the file is read
+    # or its .bak rolled, or the .bak would copy that preview over the user's
+    # only copy (Restore-AbandonedFilePreview).
+    Show-FilePreviewResult -Result (Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $settingsPath)
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $settings = ConvertFrom-JsoncText $originalJson
@@ -1203,8 +1211,10 @@ function Reset-StyleNonWT {
     $wez = 'none'
     $wezPath = $null
     if ($kind -eq 'WezTerm') {
-        $wez = Clear-WezTermStyleModule
         $wezPath = Get-WezTermModulePath
+        # As for an apply: the reset owns the module from here.
+        Remove-FilePreviewRecord -Kind WezTerm -Path $wezPath
+        $wez = Clear-WezTermStyleModule
     }
 
     Write-Host ""
@@ -1311,6 +1321,10 @@ function Reset-StyleDirect {
 
     $settingsPath = Find-WTSettingsPath
     if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
+    # A preview a closed picker or tuner left goes back before the file is read
+    # or its .bak rolled, or the .bak would copy that preview over the user's
+    # only copy (Restore-AbandonedFilePreview).
+    Show-FilePreviewResult -Result (Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $settingsPath)
 
     $originalJson = [System.IO.File]::ReadAllText($settingsPath, [System.Text.UTF8Encoding]::new($false))
     $settings = ConvertFrom-JsoncText $originalJson

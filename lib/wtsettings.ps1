@@ -759,7 +759,10 @@ function ConvertTo-CanonicalJson {
     if ($Value -is [string]) { return (ConvertTo-Json -InputObject $Value -Compress) }
     if ($Value -is [datetime]) { return ('"' + $Value.ToString('o', [cultureinfo]::InvariantCulture) + '"') }
     if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal] -or
-        $Value -is [single] -or $Value -is [System.Numerics.BigInteger] -or $Value -is [byte] -or $Value -is [int16]) {
+        $Value -is [single] -or $Value -is [byte] -or $Value -is [int16] -or
+        # By name: pwsh 7 parses a huge integer as BigInteger, and the type is
+        # not loaded on Windows PowerShell 5.1, where a type literal would throw.
+        $Value.GetType().FullName -eq 'System.Numerics.BigInteger') {
         return ([double]$Value).ToString('R', [cultureinfo]::InvariantCulture)
     }
     if ($Value -is [System.Collections.IDictionary]) {

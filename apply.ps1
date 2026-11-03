@@ -130,6 +130,9 @@ if (-not (Test-Path -LiteralPath $SettingsPath)) {
     throw "Settings file not found at $SettingsPath"
 }
 Write-Host "Settings file: $SettingsPath"
+# A preview a closed picker or tuner left goes back before the file is read or
+# backed up (Restore-AbandonedFilePreview).
+Show-FilePreviewResult -Result (Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $SettingsPath)
 
 # UTF-8 explicit: Get-Content -Raw in WinPS 5.1 defaults to Windows-1252,
 # which mangles non-ASCII WT profile names (e.g. "Símbolo del sistema").

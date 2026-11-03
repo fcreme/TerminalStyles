@@ -120,11 +120,12 @@ Describe 'the picker wires that preview in' {
                 -Because 'the preview runs on the input thread'
         }
 
-        It 'gates the restore on having written, like the settings.json half' {
+        It 'restores through the preview session, which writes nothing when nothing was previewed' {
             # Restoring over a file the picker never touched is not free: it
-            # bumps the mtime, and WezTerm is watching.
-            $script:picker | Should -Match '\$pickerState\.WezWritten' `
-                -Because 'a picker that wrote nothing must restore nothing'
+            # bumps the mtime, and WezTerm is watching. The session restores
+            # nothing when it wrote nothing (tests/FilePreviewSession.Tests.ps1).
+            $script:picker | Should -Match 'Restore-FilePreview -Session \$wezSession'
+            $script:picker | Should -Match '-Session \$wezSession'
         }
     }
 }

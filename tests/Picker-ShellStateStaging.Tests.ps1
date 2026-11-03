@@ -402,20 +402,19 @@ Describe 'the picker puts the terminal back when you cancel' {
         # A scriptblock assigning to a [bool] would land in its own child scope
         # and the finally would never see it, so the revert would run twice.
         #
-        # The bag now carries SettingsWritten as well, for the same reason and
-        # with the same consequence if it were a plain [bool]: the write and the
-        # restore both live in scriptblocks, and the restore has to know whether
-        # the picker put a preview on disk at all. A style with no theme.json
-        # writes nothing, and restoring "the original" over a file we never
-        # touched bumps its mtime and makes Windows Terminal reload for nothing.
+        # The same holds for every piece of picker state the scriptblocks set.
         # Matched field by field rather than as one exact literal, so adding a
         # third piece of picker state does not turn this into a red test about
         # nothing.
         $fn = script:Get-FunctionAst -Name 'Invoke-TerminalStyle'
         $src = $fn.Extent.Text
         $src | Should -Match '\$pickerState\s*=\s*@\{[^}]*\bReverted\s*=\s*\$false'
-        $src | Should -Match '\$pickerState\s*=\s*@\{[^}]*\bSettingsWritten\s*=\s*\$false'
-        $src | Should -Match '\$pickerState\.SettingsWritten\s*=\s*\$true'
+        # What the put-back did now lives in the bag too, for the exits to print;
+        # whether there is anything to put back is the preview session's
+        # (tests/FilePreviewSession.Tests.ps1: Esc with nothing previewed writes
+        # nothing).
+        $src | Should -Match '\$pickerState\s*=\s*@\{[^}]*\bSettingsRestore\s*=\s*\$null'
+        $src | Should -Match '\$pickerState\.SettingsRestore\s*=\s*\$sr'
     }
 }
 
