@@ -148,6 +148,9 @@ it from Finder or set it as your Terminal.app default. If you open it from
 Finder before any `-NewWindow` has imported the style, the profile that creates
 is yours: `-NewWindow` has no record of importing it, so it never reuses,
 replaces or deletes it, and may add its own numbered copy (`eva 1`) beside it.
+`tstyles profiles` lists them, and `tstyles profiles -Clean` deletes only the
+numbered copies `-NewWindow` recorded making: Terminal.app's own Duplicate
+Profile names your copy of `eva` `eva 1` too, so the name alone proves nothing.
 
 The file is regenerated whenever the style changes — a re-tune, an update, a
 new background image — and the next `tstyles <style> -NewWindow` then replaces

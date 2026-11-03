@@ -270,15 +270,25 @@ function Invoke-AppleTerminalScript {
     quits, so an external write is silently reverted. Going through the app is
     the only way to change its settings while it is running.
 
+    -Language JavaScript runs it as JXA, for an answer that has to come back as
+    JSON: AppleScript joins a list with ', ', which a name can contain.
+
     Returns the trimmed stdout, or $null if osascript is absent or errored.
     #>
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Script)
+    param(
+        [Parameter(Mandatory)][string]$Script,
+        [ValidateSet('AppleScript', 'JavaScript')][string]$Language = 'AppleScript'
+    )
 
     if ((Get-TStylesPlatform) -ne 'MacOS') { return $null }
     if (-not (Get-Command osascript -ErrorAction SilentlyContinue)) { return $null }
     try {
-        $out = & osascript -e $Script 2>$null
+        if ($Language -eq 'JavaScript') {
+            $out = & osascript -l JavaScript -e $Script 2>$null
+        } else {
+            $out = & osascript -e $Script 2>$null
+        }
         if ($LASTEXITCODE -ne 0) { return $null }
         return ($out -join "`n").Trim()
     } catch { return $null }
@@ -297,20 +307,30 @@ function Get-AppleTerminalSettingsSetName {
     The profiles Terminal.app currently has. Read-only.
 
     .DESCRIPTION
-    Empty when Terminal.app cannot be asked, which is the safe direction:
-    Open-AppleTerminalProfile then falls back to `open`, the behaviour that
-    shipped before this, and Remove-AppleTerminalSettingsSet confirms nothing.
+    Outputs nothing when Terminal.app cannot be asked -- not $null, which @()
+    counts as one name -- and that is the safe direction: Open-AppleTerminalProfile
+    then falls back to `open`, the behaviour that shipped before this, and
+    Remove-AppleTerminalSettingsSet confirms nothing.
 
-    Terminal.app answers with the names joined by ', ', so a name that contains
-    a comma comes back as two, and one with a leading or trailing space comes
-    back trimmed. Test-AppleTerminalSettingsSetNameListable says which names
-    survive; change the two together.
+    The names exactly as Terminal.app holds them, asked through JXA as JSON.
+    AppleScript joins them with ', ', so a name holding a comma came back as
+    two and one with an edge space came back trimmed. Each name is sent
+    prefixed with '=' and the prefix stripped here: pwsh 7's ConvertFrom-Json
+    turns a string that looks like a date into a [DateTime], and an answer with
+    any element that is not such a string is no answer.
     #>
     [CmdletBinding()]
     param()
-    $out = Invoke-AppleTerminalScript 'tell application "Terminal" to get name of every settings set'
-    if (-not $out) { return @() }
-    @($out -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+    $out = Invoke-AppleTerminalScript -Language JavaScript `
+        "JSON.stringify(Application('Terminal').settingsSets.name().map(function (n) { return '=' + n }))"
+    if (-not $out) { return }
+    try { $parsed = ConvertFrom-Json -InputObject $out } catch { return }
+    $names = @()
+    foreach ($n in @($parsed)) {
+        if (-not ($n -is [string]) -or -not $n.StartsWith('=')) { return }
+        $names += $n.Substring(1)
+    }
+    foreach ($n in $names) { $n }
 }
 
 function Get-AppleTerminalSettingsSetUse {
@@ -370,29 +390,17 @@ end tell
     }
 }
 
-function Test-AppleTerminalSettingsSetNameListable {
-    <#
-    .SYNOPSIS
-    Whether Get-AppleTerminalSettingsSetName can return $Name intact.
-
-    .DESCRIPTION
-    Terminal.app answers with the names joined by ', ', and the lister splits on
-    commas and trims each piece. So 'Tokyo, Night' comes back as 'Tokyo' and
-    'Night', and 'eva ' as 'eva': for such a name, 'not in the list' proves
-    nothing, and a profile of the user's own by that name looks free. Change
-    this with the lister; tests/AppleTerminal-DuplicateProfiles.Tests.ps1 checks
-    that the two agree.
-    #>
-    [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Name)
-    ($Name -notmatch ',') -and ($Name -ceq $Name.Trim())
-}
-
 function Get-AppleTerminalImportRecordPath {
     # Not .appleterminal-imported.json: 0.8.24-0.9.2 wrote that after every
     # import, including ones Terminal.app filed under a numbered name, so its
     # entries can claim a profile TerminalStyles never created, and nothing in
     # them tells a claim from a real import. It is left on disk and never read.
+    #
+    # -Copies: the numbered copies Open-AppleTerminalProfile saw Terminal.app
+    # make beside a name it could not take. A file of its own, so the reuse and
+    # replace logic, which reads only the import record, never sees a copy.
+    param([switch]$Copies)
+    if ($Copies) { return (Join-Path $script:TStylesDataRoot '.appleterminal-copies.json') }
     Join-Path $script:TStylesDataRoot '.appleterminal-owned.json'
 }
 
@@ -408,18 +416,20 @@ function Get-AppleTerminalImportRecord {
     recoverable. Open-AppleTerminalProfile deletes only a name that appears
     here, and only while Terminal.app says it is not the default or startup
     profile (Get-AppleTerminalSettingsSetUse); it writes one only when the
-    import is known to have landed under it.
-    `tstyles profiles -Clean` is the exception: it deletes numbered copies by
-    name and never reads this (Get-AppleTerminalDuplicateProfile). Records from
-    0.8.24-0.9.2 were not written that way, so they live in another file and are
-    not read.
+    import is known to have landed under it. Records from 0.8.24-0.9.2 were not
+    written that way, so they live in another file and are not read.
+
+    -Copies reads the record of numbered copies Open-AppleTerminalProfile saw
+    Terminal.app make beside a name it could not take; those are the only
+    profiles `tstyles profiles -Clean` deletes. Keys of a hashtable ignore
+    case, so an exact lookup uses .Keys -ccontains.
 
     Maps settings-set name -> the SHA256 of the .terminal file that produced it,
     so a stale import is detectable.
     #>
     [CmdletBinding()]
-    param()
-    $p = Get-AppleTerminalImportRecordPath
+    param([switch]$Copies)
+    $p = Get-AppleTerminalImportRecordPath -Copies:$Copies
     if (-not (Test-Path -LiteralPath $p)) { return @{} }
     try {
         $raw = [System.IO.File]::ReadAllText($p, [System.Text.UTF8Encoding]::new($false))
@@ -431,15 +441,65 @@ function Get-AppleTerminalImportRecord {
 }
 
 function Set-AppleTerminalImportRecord {
+    # -Copies writes the record of numbered copies; -Remove drops a name.
     [CmdletBinding()]
-    param([Parameter(Mandatory)][string]$Name, [Parameter(Mandatory)][string]$Hash)
-    $r = Get-AppleTerminalImportRecord
-    $r[$Name] = $Hash
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [string]$Hash,
+        [switch]$Copies,
+        [switch]$Remove
+    )
+    $r = Get-AppleTerminalImportRecord -Copies:$Copies
+    if ($Remove) {
+        foreach ($k in @($r.Keys)) { if ($k -ceq $Name) { $r.Remove($k) } }
+    } else {
+        $r[$Name] = $Hash
+    }
     try {
         $json = ([pscustomobject]$r | ConvertTo-Json -Depth 3)
-        [System.IO.File]::WriteAllText((Get-AppleTerminalImportRecordPath), $json,
+        [System.IO.File]::WriteAllText((Get-AppleTerminalImportRecordPath -Copies:$Copies), $json,
             [System.Text.UTF8Encoding]::new($false))
     } catch { }
+}
+
+function Sync-AppleTerminalCopyRecord {
+    # Forget a recorded copy Terminal.app no longer lists (compared exactly),
+    # so a profile that later takes the name is not claimed. Nothing without
+    # an answer.
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][string[]]$Installed)
+    if (@($Installed).Count -eq 0) { return }
+    $r = Get-AppleTerminalImportRecord -Copies
+    foreach ($k in @($r.Keys)) {
+        if (@($Installed) -cnotcontains $k) { Set-AppleTerminalImportRecord -Copies -Name $k -Remove }
+    }
+}
+
+function Register-AppleTerminalImportCopy {
+    # After an `open` that could not land on -Name: read the list again (up to
+    # three times, the import is asynchronous) and record the one new
+    # '<Name> <n>' Terminal.app filed it under. Anything else -- no new
+    # profile, two, another shape, no answer -- records nothing. The name is
+    # never predicted from the list before: a predicted name that never lands
+    # would claim the user's next Duplicate Profile copy.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)][string]$Hash,
+        [AllowEmptyCollection()][string[]]$Before
+    )
+    if (@($Before).Count -eq 0) { return }
+    $new = @()
+    for ($i = 0; $i -lt 3; $i++) {
+        if ($i -gt 0) { Start-Sleep -Milliseconds 200 }
+        $after = @(Get-AppleTerminalSettingsSetName)
+        if ($after.Count -eq 0) { continue }
+        $new = @($after | Where-Object { @($Before) -cnotcontains $_ })
+        if ($new.Count -gt 0) { break }
+    }
+    if ($new.Count -ne 1) { return }
+    if (-not [regex]::IsMatch($new[0], '^' + [regex]::Escape($Name) + ' \d+$')) { return }
+    Set-AppleTerminalImportRecord -Copies -Name $new[0] -Hash $Hash
 }
 
 function Get-AppleTerminalProfileHash {
@@ -461,8 +521,7 @@ function Remove-AppleTerminalSettingsSet {
     $true), so `tstyles profiles -Clean` printed 'Removed' for a delete nobody
     saw. Open-AppleTerminalProfile now records a re-import only when this
     returns $true, and on that reading would record one Terminal.app may have
-    filed under a numbered name. A name the lister cannot return intact is
-    never confirmed gone, for the same reason.
+    filed under a numbered name.
 
     It deletes whatever it is given. A caller must ask
     Get-AppleTerminalSettingsSetUse first: Terminal.app moves the default and
@@ -472,10 +531,8 @@ function Remove-AppleTerminalSettingsSet {
     param([Parameter(Mandatory)][string]$Name)
     Invoke-AppleTerminalScript ("tell application `"Terminal`" to delete settings set {0}" -f
         (ConvertTo-AppleScriptString $Name)) | Out-Null
-    if (-not (Test-AppleTerminalSettingsSetNameListable -Name $Name)) { return $false }
-    # @($null) is one element; filtered, an answer of nothing counts as none.
-    $after = @(Get-AppleTerminalSettingsSetName | Where-Object { $_ })
-    return ($after.Count -gt 0 -and $Name -notin $after)
+    $after = @(Get-AppleTerminalSettingsSetName)
+    return ($after.Count -gt 0 -and $after -cnotcontains $Name)
 }
 
 function Open-AppleTerminalProfile {
@@ -526,8 +583,13 @@ function Open-AppleTerminalProfile {
     style changes. Through 0.9.2 the record was written after every `open`,
     which did exactly that to a user's own 'eva', to imports made before the
     record existed, and to a profile opened from Finder. For the same reason a
-    -Name that is not the base name of -Path, or one
-    Get-AppleTerminalSettingsSetName cannot return intact, is never recorded.
+    -Name that is not the base name of -Path is never recorded.
+
+    Where the import cannot land on -Name, the list is read again after it,
+    and the one new '<Name> <n>' that appeared is recorded as a copy
+    (Register-AppleTerminalImportCopy) -- the only profiles `tstyles profiles
+    -Clean` deletes. Terminal.app's Duplicate Profile names a copy the user
+    makes the same way, so the name alone proves nothing.
 
     Falls back to `open` whenever Terminal.app cannot be asked, so nothing here
     can make the feature worse than it was.
@@ -537,8 +599,10 @@ function Open-AppleTerminalProfile {
 
     if (-not $Name) { & open $Path; return }
 
-    $installed = Get-AppleTerminalSettingsSetName
+    $installed = @(Get-AppleTerminalSettingsSetName)
     if ($installed.Count -eq 0) { & open $Path; return }
+    Sync-AppleTerminalCopyRecord -Installed $installed
+    $before = $installed
 
     $hash   = Get-AppleTerminalProfileHash -Path $Path
     $record = Get-AppleTerminalImportRecord
@@ -551,8 +615,7 @@ function Open-AppleTerminalProfile {
     # import after its file, so no other -Name is what it lands on; and for a
     # name the lister cannot return intact, "not in the list" above means
     # unseen, not free.
-    $recordable = ($Name -ceq [System.IO.Path]::GetFileNameWithoutExtension($Path)) -and
-                  (Test-AppleTerminalSettingsSetNameListable -Name $Name)
+    $recordable = ($Name -ceq [System.IO.Path]::GetFileNameWithoutExtension($Path))
 
     if (-not $landsOnName) {
         $held    = @($installed | Where-Object { $_ -eq $Name })[0]
@@ -585,7 +648,7 @@ end tell
             if ($kept) {
                 Write-Host ("  Terminal.app did not open a window on its '{0}' profile, so the updated" -f $held) -ForegroundColor Yellow
                 Write-Host "  style was opened beside it as a numbered copy; tstyles profiles -Clean" -ForegroundColor Yellow
-                Write-Host "  removes numbered copies." -ForegroundColor Yellow
+                Write-Host "  removes the numbered copies TerminalStyles has a record of making." -ForegroundColor Yellow
             }
         } elseif ($ours) {
             # Ours, out of date, and not the default or startup profile.
@@ -595,6 +658,9 @@ end tell
             # finds this copy stale again rather than reusing it in colours the
             # style no longer has.
             $landsOnName = Remove-AppleTerminalSettingsSet -Name $Name
+            # The delete may have gone through unseen: what the copy is
+            # compared against is the list as it is now.
+            if (-not $landsOnName) { $before = @(Get-AppleTerminalSettingsSetName) }
             if ($landsOnName) {
                 Write-Host ("  Terminal.app's '{0}' profile was older than the style, so it was deleted" -f $held) -ForegroundColor DarkGray
                 Write-Host "  so the updated style could be imported in its place. Anything you changed" -ForegroundColor DarkGray
@@ -608,7 +674,8 @@ end tell
                 Write-Host ("  '{0}' profile, so the updated style may be added beside it as a numbered" -f $held) -ForegroundColor Yellow
                 Write-Host ("  copy. If '{0}' is still in Terminal's Settings > Profiles, delete it there;" -f $held) -ForegroundColor Yellow
                 Write-Host "  the next -NewWindow then imports the style under that name and reuses it" -ForegroundColor Yellow
-                Write-Host "  after that, and tstyles profiles -Clean removes numbered copies." -ForegroundColor Yellow
+                Write-Host "  after that, and tstyles profiles -Clean removes the numbered copies" -ForegroundColor Yellow
+                Write-Host "  TerminalStyles has a record of making." -ForegroundColor Yellow
             }
         } else {
             # Not ours: left alone, and nothing is recorded. Terminal.app will
@@ -620,13 +687,18 @@ end tell
             Write-Host "  no longer trusted -- so it is left alone, and the style may be added beside" -ForegroundColor DarkGray
             Write-Host ("  it as a numbered copy. Rename or delete that '{0}' in Terminal's Settings >" -f $held) -ForegroundColor DarkGray
             Write-Host "  Profiles and the next -NewWindow imports the style under its own name and" -ForegroundColor DarkGray
-            Write-Host "  reuses it after that; tstyles profiles -Clean removes numbered copies." -ForegroundColor DarkGray
+            Write-Host "  reuses it after that; tstyles profiles -Clean removes the numbered copies" -ForegroundColor DarkGray
+            Write-Host "  TerminalStyles has a record of making." -ForegroundColor DarkGray
         }
     }
 
     & open $Path
-    if ($hash -and $landsOnName -and $recordable) {
-        Set-AppleTerminalImportRecord -Name $Name -Hash $hash
+    if ($hash -and $recordable) {
+        if ($landsOnName) {
+            Set-AppleTerminalImportRecord -Name $Name -Hash $hash
+        } else {
+            Register-AppleTerminalImportCopy -Name $Name -Hash $hash -Before $before
+        }
     }
 }
 
@@ -1686,29 +1758,29 @@ function Reset-StyleDirect {
 function Get-AppleTerminalDuplicateProfile {
     <#
     .SYNOPSIS
-    The numbered copies Terminal.app made of a style profile: "eva 1", "eva 2".
+    The numbered profiles named after a style: "eva 1", "eva 2". Lists only.
 
     .DESCRIPTION
-    Only ever the NUMBERED ones, and only where the unsuffixed name is a style
-    this tool knows. The base name is never reported: a user may well have their
-    own profile called `eva`, and there is no way to prove otherwise. "eva 3" has
-    no such ambiguity -- Terminal.app appends that suffix itself when an import
-    collides, so it can only have come from a repeated import.
+    Compared exactly, because Terminal.app numbers only an exact-name
+    collision: 'Forest 1' can never be an import of 'forest'. A name proves
+    nothing about who made it -- Terminal.app's Duplicate Profile names a copy
+    of 'eva' 'eva 1' too -- so what `tstyles profiles -Clean` deletes comes
+    from the copies record, and this lists the rest.
     #>
     [CmdletBinding()]
     param([string[]]$InstalledName, [string[]]$StyleName)
 
     if (-not $PSBoundParameters.ContainsKey('InstalledName')) {
-        $InstalledName = Get-AppleTerminalSettingsSetName
+        $InstalledName = @(Get-AppleTerminalSettingsSetName)
     }
     if (-not $PSBoundParameters.ContainsKey('StyleName')) {
-        $StyleName = @((Get-AvailableStyles).Name)
+        $StyleName = @(Get-AvailableStyles | ForEach-Object { $_.Name })
     }
 
     @(foreach ($n in $InstalledName) {
         $m = [regex]::Match($n, '^(?<base>.+?) (?<num>\d+)$')
         if (-not $m.Success) { continue }
-        if ($m.Groups['base'].Value -notin $StyleName) { continue }
+        if (@($StyleName) -cnotcontains $m.Groups['base'].Value) { continue }
         [pscustomobject]@{ Name = $n; Base = $m.Groups['base'].Value }
     })
 }
@@ -1716,7 +1788,8 @@ function Get-AppleTerminalDuplicateProfile {
 function Invoke-TerminalStyleProfiles {
     <#
     .SYNOPSIS
-    `tstyles profiles` -- what this tool has left in Terminal.app, and a way out.
+    `tstyles profiles` -- what this tool has left in Terminal.app, and a way out
+    for what it can prove it made.
     #>
     [CmdletBinding()]
     param([switch]$Clean, [switch]$Yes)
@@ -1728,7 +1801,7 @@ function Invoke-TerminalStyleProfiles {
         return
     }
 
-    $installed = Get-AppleTerminalSettingsSetName
+    $installed = @(Get-AppleTerminalSettingsSetName)
     if ($installed.Count -eq 0) {
         Write-Host ""
         Write-Host "  Could not ask Terminal.app for its profiles." -ForegroundColor Yellow
@@ -1736,58 +1809,121 @@ function Invoke-TerminalStyleProfiles {
         Write-Host ""
         return
     }
+    Sync-AppleTerminalCopyRecord -Installed $installed
 
-    $styles = @((Get-AvailableStyles).Name)
-    $mine   = @($installed | Where-Object { $_ -in $styles })
-    $dupes  = @(Get-AppleTerminalDuplicateProfile -InstalledName $installed -StyleName $styles)
+    $styles     = @(Get-AvailableStyles | ForEach-Object { $_.Name })
+    $mine       = @($installed | Where-Object { $styles -ccontains $_ })
+    $copyRecord = Get-AppleTerminalImportRecord -Copies
+    $recorded   = @($installed | Where-Object { @($copyRecord.Keys) -ccontains $_ -and
+                                                 [regex]::IsMatch($_, '^.+ \d+$') })
+    $unrecorded = @(Get-AppleTerminalDuplicateProfile -InstalledName $installed -StyleName $styles |
+                    Where-Object { $recorded -cnotcontains $_.Name } | ForEach-Object { $_.Name })
 
     Write-Host ""
     Write-Host "Terminal.app profiles named after a style:" -ForegroundColor Cyan
     Write-Host ""
     foreach ($n in ($mine | Sort-Object)) { Write-Host ("    {0}" -f $n) }
-    if ($dupes.Count -eq 0) {
+
+    if ($recorded.Count -eq 0 -and $unrecorded.Count -eq 0) {
         Write-Host ""
-        Write-Host "  No duplicates." -ForegroundColor Gray
+        Write-Host "  No numbered copies." -ForegroundColor Gray
         Write-Host ""
         return
     }
-
-    Write-Host ""
-    Write-Host "Numbered profiles named after a style:" -ForegroundColor Yellow
-    Write-Host ""
-    foreach ($d in ($dupes | Sort-Object Name)) { Write-Host ("    {0}" -f $d.Name) -ForegroundColor Yellow }
+    if ($recorded.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Numbered copies TerminalStyles recorded making:" -ForegroundColor Yellow
+        Write-Host ""
+        foreach ($n in ($recorded | Sort-Object)) { Write-Host ("    {0}" -f $n) -ForegroundColor Yellow }
+    }
+    if ($unrecorded.Count -gt 0) {
+        Write-Host ""
+        Write-Host "Numbered profiles named after a style that TerminalStyles has no record of making:" -ForegroundColor Yellow
+        Write-Host ""
+        foreach ($n in ($unrecorded | Sort-Object)) { Write-Host ("    {0}" -f $n) -ForegroundColor Yellow }
+        Write-Host ""
+        Write-Host "  TerminalStyles never deletes these. Terminal.app numbers a copy you make with" -ForegroundColor DarkGray
+        Write-Host "  Duplicate Profile the way it numbers a second import -- a copy of 'eva' is" -ForegroundColor DarkGray
+        Write-Host "  'eva 1' -- and copies made before TerminalStyles kept this record have none, so nothing" -ForegroundColor DarkGray
+        Write-Host "  tells its copies from yours. Delete any you do not want in Terminal's" -ForegroundColor DarkGray
+        Write-Host "  Settings > Profiles." -ForegroundColor DarkGray
+    }
     Write-Host ""
 
     if (-not $Clean) {
-        Write-Host "  Remove them with: tstyles profiles -Clean" -ForegroundColor DarkGray
+        if ($recorded.Count -gt 0) {
+            Write-Host "  Remove them with: tstyles profiles -Clean (it keeps your default and startup profile)." -ForegroundColor DarkGray
+        }
         Write-Host "  The unnumbered profiles above are left alone -- one of them may be yours." -ForegroundColor DarkGray
         Write-Host ""
         return
     }
 
-    Write-Host ("This will DELETE {0} Terminal.app profile(s):" -f $dupes.Count) -ForegroundColor Yellow
-    foreach ($d in ($dupes | Sort-Object Name)) { Write-Host ("  - {0}" -f $d.Name) -ForegroundColor Red }
-    Write-Host "  - Nothing else in Terminal.app is touched, including the unnumbered" -ForegroundColor Gray
-    Write-Host "    profiles, your default profile, and any window already open." -ForegroundColor Gray
+    if ($recorded.Count -eq 0) {
+        Write-Host "  Nothing for -Clean to delete: it deletes only numbered copies TerminalStyles" -ForegroundColor Gray
+        Write-Host "  recorded making." -ForegroundColor Gray
+        Write-Host ""
+        return
+    }
+
+    # Kept: the default or startup profile (Terminal.app moves those, and every
+    # tab, off a profile it deletes), one it will not say about, and one with a
+    # case-variant beside it, since a delete by name may not tell them apart.
+    $kept = @()
+    $doomed = @()
+    foreach ($n in ($recorded | Sort-Object)) {
+        $variant = @($installed | Where-Object { $_ -ieq $n -and $_ -cne $n })
+        if ($variant.Count -gt 0) {
+            $kept += ("    {0} -- Terminal.app also has '{1}', and a delete by name may not tell them apart" -f $n, $variant[0])
+            continue
+        }
+        $use = Get-AppleTerminalSettingsSetUse -Name $n
+        if (-not $use.Answered) {
+            $kept += ("    {0} -- Terminal.app did not say whether it is your default or startup profile" -f $n)
+        } elseif ($use.Default) {
+            $kept += ("    {0} -- your default profile" -f $n)
+        } elseif ($use.Startup) {
+            $kept += ("    {0} -- your startup profile" -f $n)
+        } else {
+            $doomed += $n
+        }
+    }
+    if ($kept.Count -gt 0) {
+        Write-Host "-Clean keeps these copies TerminalStyles recorded making:" -ForegroundColor Cyan
+        foreach ($k in $kept) { Write-Host $k -ForegroundColor Gray }
+        Write-Host ""
+    }
+    if ($doomed.Count -eq 0) {
+        Write-Host "  So nothing will be deleted." -ForegroundColor Gray
+        Write-Host ""
+        return
+    }
+
+    Write-Host ("This will DELETE {0} Terminal.app profile(s), numbered copies TerminalStyles recorded making:" -f $doomed.Count) -ForegroundColor Yellow
+    foreach ($n in $doomed) { Write-Host ("  - {0}" -f $n) -ForegroundColor Red }
+    Write-Host "  - Nothing else is deleted: not the unnumbered profiles, not a numbered one" -ForegroundColor Gray
+    Write-Host "    TerminalStyles has no record of making, and not your default or startup profile." -ForegroundColor Gray
+    Write-Host "  - A window or tab open on one of them switches to your default profile." -ForegroundColor Gray
     Write-Host ""
     if (-not (Confirm-Action -Question 'Delete them? [y/N]' -Yes:$Yes `
-                -Consequence ("deletes {0} Terminal.app profile(s)" -f $dupes.Count))) {
+                -Consequence ("deletes {0} Terminal.app profile(s)" -f $doomed.Count))) {
         Write-Host "  Cancelled." -ForegroundColor Gray
         return
     }
 
     $gone = 0
-    foreach ($d in $dupes) {
-        if (Remove-AppleTerminalSettingsSet -Name $d.Name) {
-            Write-Host ("  Removed {0}" -f $d.Name) -ForegroundColor Green
+    foreach ($n in $doomed) {
+        if (Remove-AppleTerminalSettingsSet -Name $n) {
+            Write-Host ("  Removed {0}" -f $n) -ForegroundColor Green
+            Set-AppleTerminalImportRecord -Copies -Name $n -Remove
             $gone++
         } else {
-            Write-Host ("  ! could not confirm {0} was removed" -f $d.Name) -ForegroundColor Red
+            Write-Host ("  ! could not confirm {0} was removed" -f $n) -ForegroundColor Red
         }
     }
     Write-Host ""
-    Write-Host ("  Terminal.app confirmed {0} of {1} removed." -f $gone, $dupes.Count) -ForegroundColor Cyan
-    if ($gone -lt $dupes.Count) {
+    Write-Host ("  Terminal.app confirmed {0} of {1} removed." -f $gone, $doomed.Count) -ForegroundColor Cyan
+    if ($gone -lt $doomed.Count) {
         Write-Host "  Run tstyles profiles to see which are still listed." -ForegroundColor DarkGray
     }
     Write-Host ""

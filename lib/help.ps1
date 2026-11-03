@@ -320,11 +320,16 @@ function Get-TerminalStyleHelpData {
                        "for good. A run can still add a numbered copy where the import cannot land",
                        "on the style's own name: for example while a profile of that name exists",
                        "that TerminalStyles cannot prove it imported (imports made before 0.9.3",
-                       "included), which it never reuses, replaces or deletes.",
+                       "included), which it never reuses, replaces or deletes. It now records the",
+                       "name Terminal.app gives each such copy.",
                        "",
-                       "This lists them and, with -Clean, deletes the numbered ones. The",
-                       "unnumbered profile is never touched: it may be one you made yourself,",
-                       "and there is no way to prove otherwise.")
+                       "This lists them and, with -Clean, deletes only the numbered copies",
+                       "TerminalStyles recorded making -- never your default or startup profile.",
+                       "A numbered profile with no record, every copy made before that record",
+                       "was kept included, is listed and left alone: Terminal.app's Duplicate",
+                       "Profile names your own copy of 'eva' 'eva 1' too, so the name proves",
+                       "nothing. Delete those in Terminal's Settings > Profiles. The unnumbered",
+                       "profile is never touched: it may be one you made yourself.")
             Keys = @(); Examples = @('tstyles profiles', 'tstyles profiles -Clean')
         }
         [pscustomobject]@{

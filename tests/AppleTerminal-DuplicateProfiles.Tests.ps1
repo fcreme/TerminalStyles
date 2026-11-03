@@ -67,8 +67,8 @@ Describe 'Open-AppleTerminalProfile' {
             Mock Write-Host {}
             Mock Invoke-AppleTerminalScript {
                 [void]$script:scripts.Add($Script)
-                if ($Script -match 'name of every settings set') {
-                    return ($script:installedNames -join ', ')
+                if ($Script -match 'settingsSets\.name') {
+                    return (ConvertTo-Json -Compress -InputObject @(@($script:installedNames) | ForEach-Object { '=' + $_ }))
                 }
                 return 'ok'
             }
@@ -109,7 +109,7 @@ Describe 'Open-AppleTerminalProfile' {
             $script:installedNames = @('Basic', 'eva')
             $script:opened.Clear()
             Mock Invoke-AppleTerminalScript {
-                if ($Script -match 'name of every settings set') { return ($script:installedNames -join ', ') }
+                if ($Script -match 'settingsSets\.name') { return (ConvertTo-Json -Compress -InputObject @(@($script:installedNames) | ForEach-Object { '=' + $_ })) }
                 return $null   # the do-script arm fails
             }
             Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
@@ -156,8 +156,8 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             Mock Write-Host { [void]$script:written.Add("$Object") }
             Mock Invoke-AppleTerminalScript {
                 [void]$script:scripts.Add($Script)
-                if ($Script -ceq 'tell application "Terminal" to get name of every settings set') {
-                    return (@($script:sets | ForEach-Object { $_.Name }) -join ', ')
+                if ($Script -match 'settingsSets\.name') {
+                    return (ConvertTo-Json -Compress -InputObject @(@($script:sets | ForEach-Object { $_.Name }) | ForEach-Object { '=' + $_ }))
                 }
                 $m = [regex]::Match($Script,
                     '^tell application "Terminal" to delete settings set "(?<n>(?:[^"\\]|\\.)*)"$')
@@ -233,7 +233,7 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
 
             # It got past both fallbacks to the import, which also run `open`.
-            $script:scripts | Should -Contain 'tell application "Terminal" to get name of every settings set'
+            @($script:scripts | Where-Object { $_ -match 'settingsSets\.name' }).Count | Should -BeGreaterThan 0
             @($script:sets | Where-Object { $_.Name -ceq 'eva 1' } | ForEach-Object { $_.Content }) |
                 Should -Be @('<plist>v1</plist>') -Because 'the import lands beside the profile it found'
             (Get-AppleTerminalImportRecord).ContainsKey('eva') | Should -BeFalse `
@@ -324,7 +324,7 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             @($script:windows) | Should -Be @('<plist>v1</plist>') -Because 'one window, on the profile as it is'
             @($script:sets | Where-Object { $_.Name -cmatch '^eva \d+$' }).Count | Should -Be 0
             (Get-AppleTerminalImportRecord)['eva'] | Should -Be $v1 -Because 'the next run asks again'
-            $script:scripts | Should -Contain 'tell application "Terminal" to get name of every settings set'
+            @($script:scripts | Where-Object { $_ -match 'settingsSets\.name' }).Count | Should -BeGreaterThan 0
         }
 
         It 'says what it is used as, and what to change for it to be replaced' {
@@ -453,23 +453,35 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             $said | Should -Match "did not confirm that it deleted TerminalStyles' out-of-date 'eva' profile"
         }
 
-        It 'never records a name Terminal.app cannot list intact: "<Style>"' -ForEach @(
+        It "a style named '<Style>' is recorded and reused like any other" -ForEach @(
             @{ Style = 'Tokyo, Night' }
             @{ Style = 'eva ' }
         ) {
-            # Terminal.app joins the names with ', ' and the lister splits and
-            # trims them, so neither name is ever seen -- a profile of the user's
-            # own by that name looks free.
+            # AppleScript joined the names with ', ', and the old lister split
+            # and trimmed them, so neither name was ever seen. JXA returns them
+            # exactly.
             $path = Join-Path $script:TStylesDataRoot ('{0}.terminal' -f $Style)
             [System.IO.File]::WriteAllText($path, '<plist>v1</plist>')
-            [void]$script:sets.Add([pscustomobject]@{ Name = $Style; Content = 'USER' })
 
             Open-AppleTerminalProfile -Path $path -Name $Style
+            Open-AppleTerminalProfile -Path $path -Name $Style
 
-            $script:scripts | Should -Contain 'tell application "Terminal" to get name of every settings set'
-            @($script:sets | Where-Object { $_.Name -ceq ('{0} 1' -f $Style) }).Count | Should -Be 1 `
-                -Because 'the import lands numbered, beside the profile the lister could not show'
-            (Get-AppleTerminalImportRecord).ContainsKey($Style) | Should -BeFalse
+            $script:opened.Count | Should -Be 1
+            @($script:sets | Where-Object { $_.Name -ceq $Style }).Count | Should -Be 1
+            @($script:sets | Where-Object { $_.Name -ceq ('{0} 1' -f $Style) }).Count | Should -Be 0
+            @((Get-AppleTerminalImportRecord).Keys) -ccontains $Style | Should -BeTrue
+        }
+
+        It '-NewWindow records the copy Terminal.app files beside a profile it cannot claim' {
+            [void]$script:sets.Add([pscustomobject]@{ Name = 'eva';   Content = 'USER' })
+            [void]$script:sets.Add([pscustomobject]@{ Name = 'eva 1'; Content = 'USER-DUP' })
+            Mock Start-Sleep { }
+
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+
+            @($script:sets | Where-Object { $_.Name -ceq 'eva 2' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v1</plist>')
+            (@((Get-AppleTerminalImportRecord -Copies).Keys) -join ',') | Should -BeExactly 'eva 2'
+            (Get-AppleTerminalImportRecord).ContainsKey('eva') | Should -BeFalse
         }
 
         It 'does not record a name the import cannot land on' {
@@ -497,7 +509,7 @@ Describe 'Remove-AppleTerminalSettingsSet' {
 
         It 'calls it gone when Terminal.app answers without it' {
             Mock Invoke-AppleTerminalScript {
-                if ($Script -match 'name of every settings set') { return 'Basic, Pro' }
+                if ($Script -match 'settingsSets\.name') { return '["=Basic","=Pro"]' }
                 return ''
             }
             Remove-AppleTerminalSettingsSet -Name 'eva 1' | Should -BeTrue
@@ -505,19 +517,19 @@ Describe 'Remove-AppleTerminalSettingsSet' {
 
         It 'does not call it gone while Terminal.app still lists it' {
             Mock Invoke-AppleTerminalScript {
-                if ($Script -match 'name of every settings set') { return 'Basic, eva 1' }
+                if ($Script -match 'settingsSets\.name') { return '["=Basic","=eva 1"]' }
                 return ''
             }
             Remove-AppleTerminalSettingsSet -Name 'eva 1' | Should -BeFalse
         }
 
-        It 'never confirms a name the lister cannot return intact' {
+        It 'confirms a comma-named profile gone once Terminal.app lists without it' {
             Mock Invoke-AppleTerminalScript {
-                if ($Script -match 'name of every settings set') { return 'Basic, Pro' }
+                if ($Script -match 'settingsSets\.name') { return '["=Basic","=Work, eva 1"]' }
                 return ''
             }
 
-            Remove-AppleTerminalSettingsSet -Name 'Tokyo, Night' | Should -BeFalse
+            Remove-AppleTerminalSettingsSet -Name 'Tokyo, Night' | Should -BeTrue
 
             Should -Invoke Invoke-AppleTerminalScript -ParameterFilter {
                 $Script -match 'delete settings set' } -Times 1 -Exactly
@@ -525,24 +537,23 @@ Describe 'Remove-AppleTerminalSettingsSet' {
     }
 }
 
-Describe 'Get-AppleTerminalSettingsSetName and the names it can list' {
-    # What couples the two: change the lister without the helper, or the
-    # helper without the lister, and a case below flips.
+Describe 'Get-AppleTerminalSettingsSetName' {
     InModuleScope TerminalStyles {
-        It 'calls "<N>" listable exactly when the lister returns it intact' -ForEach @(
-            @{ N = 'eva' }
-            @{ N = 'neon rain' }
-            @{ N = 'Tokyo, Night' }
-            @{ N = 'eva ' }
-            @{ N = ' eva' }
+        It 'returns names exactly, commas, edge spaces and date-like names included' {
+            Mock Invoke-AppleTerminalScript { '["=Basic","=Work, eva 2","=eva 3 ","= Pro","=2026-10-24T10:00:00Z"]' }
+            (@(Get-AppleTerminalSettingsSetName) | ForEach-Object { "[$_]" }) -join '' |
+                Should -BeExactly '[Basic][Work, eva 2][eva 3 ][ Pro][2026-10-24T10:00:00Z]'
+            Should -Invoke Invoke-AppleTerminalScript -ParameterFilter { $Language -eq 'JavaScript' }
+        }
+
+        It 'outputs nothing without an answer, or with one it cannot read: <Label>' -ForEach @(
+            @{ Label = 'no answer'; Answer = $null }
+            @{ Label = 'not JSON';  Answer = 'Basic, Pro' }
+            @{ Label = 'unprefixed'; Answer = '["Basic"]' }
         ) {
-            $script:answerName = $N
-            Mock Invoke-AppleTerminalScript { 'Basic, ' + $script:answerName }
-
-            $listed = @(Get-AppleTerminalSettingsSetName)
-
-            $listed | Should -Contain 'Basic' -Because 'the lister answered'
-            (Test-AppleTerminalSettingsSetNameListable -Name $N) | Should -Be ($listed -ccontains $N)
+            $script:answer = $Answer
+            Mock Invoke-AppleTerminalScript { $script:answer }
+            @(Get-AppleTerminalSettingsSetName).Count | Should -Be 0 -Because '@() counts a returned $null as one name'
         }
     }
 }
@@ -598,6 +609,12 @@ Describe 'Get-AppleTerminalDuplicateProfile' {
                 -InstalledName @('Pro 1', 'Ocean 2') -StyleName @('eva')).Count | Should -Be 0
         }
 
+        It 'matches the style name exactly' {
+            # Terminal.app numbers only an exact-name collision.
+            (@(Get-AppleTerminalDuplicateProfile -InstalledName @('Forest 1', 'forest 1') -StyleName @('forest')) |
+                ForEach-Object { $_.Name }) -join '|' | Should -BeExactly 'forest 1'
+        }
+
         It 'handles a style name containing a space' {
             @(Get-AppleTerminalDuplicateProfile `
                 -InstalledName @('neon rain 1') -StyleName @('neon rain')).Name |
@@ -607,98 +624,143 @@ Describe 'Get-AppleTerminalDuplicateProfile' {
 }
 
 Describe 'tstyles profiles' {
+    # -Clean deletes only numbered copies TerminalStyles recorded making:
+    # Terminal.app's own Duplicate Profile names a copy of 'eva' 'eva 1' too,
+    # so a name proves nothing. Against a stand-in that keeps state.
     InModuleScope TerminalStyles {
         BeforeEach {
+            $script:savedRoot = $script:TStylesDataRoot
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
             $script:written = [System.Collections.ArrayList]::new()
+            $script:scripts = [System.Collections.ArrayList]::new()
+            $script:sets = [System.Collections.ArrayList]::new()
+            foreach ($n in 'Basic', 'eva', 'eva 1', 'eva 2') { [void]$script:sets.Add($n) }
+            $script:defaultSet = 'Basic'
+            $script:startupSet = 'Basic'
+            $script:refuseDelete = $false
             Mock Write-Host { [void]$script:written.Add("$Object") }
             Mock Get-TStylesPlatform { 'MacOS' }
             Mock Get-AvailableStyles { @([pscustomobject]@{ Name = 'eva' }) }
             Mock Invoke-AppleTerminalScript {
-                if ($Script -match 'name of every settings set') { return 'Basic, eva, eva 1, eva 2' }
-                return 'ok'
-            }
-        }
-
-        It 'lists the duplicates without deleting anything' {
-            Invoke-TerminalStyleProfiles
-            $out = $script:written -join "`n"
-            $out | Should -Match 'eva 1'
-            $out | Should -Match 'tstyles profiles -Clean'
-            Should -Not -Invoke Invoke-AppleTerminalScript -ParameterFilter {
-                $Script -match 'delete settings set' }
-        }
-
-        It 'does not date every numbered profile to before the fix' {
-            # A current -NewWindow still adds one beside a profile it cannot
-            # prove it imported, and a user's own 'eva 2' is a copy of nothing.
-            Invoke-TerminalStyleProfiles
-            $said = ($script:written -join ' ') -replace '\s+', ' '
-            $said | Should -Match 'eva 1'
-            $said | Should -Match 'Numbered profiles named after a style'
-            $said | Should -Not -Match 'before this was fixed'
-        }
-
-        It 'deletes nothing when consent is refused' {
-            Mock Confirm-Action { $false }
-            Invoke-TerminalStyleProfiles -Clean
-            ($script:written -join "`n") | Should -Match 'Cancelled'
-            Should -Not -Invoke Invoke-AppleTerminalScript -ParameterFilter {
-                $Script -match 'delete settings set' }
-        }
-
-        It 'names every profile it will delete before asking' {
-            # The rule the uninstall consent listing had to learn: a command may
-            # not delete a thing it did not name.
-            Mock Confirm-Action { $false }
-            Invoke-TerminalStyleProfiles -Clean
-            $out = $script:written -join "`n"
-            $out | Should -Match 'eva 1'
-            $out | Should -Match 'eva 2'
-        }
-
-        It 'deletes only the numbered copies once consent is given' {
-            Mock Confirm-Action { $true }
-            $script:calls = [System.Collections.ArrayList]::new()
-            Mock Invoke-AppleTerminalScript {
-                [void]$script:calls.Add($Script)
-                if ($Script -match 'name of every settings set') {
-                    # After the deletes, report them gone so the check passes.
-                    if (($script:calls -join '') -match 'delete settings set') { return 'Basic, eva' }
-                    return 'Basic, eva, eva 1, eva 2'
+                [void]$script:scripts.Add($Script)
+                if ($Script -match 'settingsSets\.name') {
+                    return (ConvertTo-Json -Compress -InputObject @(@($script:sets) | ForEach-Object { '=' + $_ }))
                 }
-                return 'ok'
-            }
-            Invoke-TerminalStyleProfiles -Clean
-            $deletes = @($script:calls | Where-Object { $_ -match 'delete settings set' })
-            $deletes.Count | Should -Be 2
-            ($deletes -join "`n") | Should -Not -Match 'settings set "eva"$'
-        }
-
-        It 'does not report a removal Terminal.app did not confirm' {
-            # Set here, so a value left in module scope cannot satisfy the check.
-            $script:sentDelete = $false
-            Mock Confirm-Action { $true }
-            Mock Invoke-AppleTerminalScript {
-                if ($Script -ceq 'tell application "Terminal" to get name of every settings set') {
-                    # Answers until a delete is sent, then goes quiet.
-                    if ($script:sentDelete) { return $null }
-                    return 'Basic, eva, eva 1'
+                $m = [regex]::Match($Script, 'delete settings set "(?<n>(?:[^"\\]|\\.)*)"')
+                if ($m.Success) {
+                    if ($script:refuseDelete) { return $null }
+                    $n = $m.Groups['n'].Value -replace '\\(.)', '$1'
+                    for ($i = $script:sets.Count - 1; $i -ge 0; $i--) { if ($script:sets[$i] -ceq $n) { $script:sets.RemoveAt($i) } }
+                    return ''
                 }
-                if ($Script -match 'delete settings set') {
-                    $script:sentDelete = $true
-                    return $null
+                $m = [regex]::Match($Script, 'set p to id of settings set "(?<n>(?:[^"\\]|\\.)*)"')
+                if ($m.Success) {
+                    $n = $m.Groups['n'].Value -replace '\\(.)', '$1'
+                    return ('use:{0},{1},0' -f ($script:defaultSet -ceq $n).ToString().ToLowerInvariant(),
+                            ($script:startupSet -ceq $n).ToString().ToLowerInvariant())
                 }
                 throw "unexpected AppleScript: $Script"
             }
+            # 'eva 2' is a copy TerminalStyles recorded making; 'eva 1' is the
+            # user's own Duplicate Profile copy.
+            Set-AppleTerminalImportRecord -Copies -Name 'eva 2' -Hash 'h'
+            $script:said = { ($script:written -join ' ') -replace '\s+', ' ' }
+            $script:deletesOf = { param($n) @($script:scripts | Where-Object { $_ -ceq ('tell application "Terminal" to delete settings set "' + $n + '"') }).Count }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedRoot }
 
+        It 'lists recorded copies and numbered profiles with no record apart, and deletes nothing' {
+            Invoke-TerminalStyleProfiles
+            $t = & $script:said
+            $t | Should -CMatch 'Numbered copies TerminalStyles recorded making: eva 2 '
+            $t | Should -CMatch 'no record of making: eva 1 '
+            $t | Should -CMatch 'TerminalStyles never deletes these'
+            $t | Should -Match 'tstyles profiles -Clean'
+            @($script:scripts | Where-Object { $_ -match 'delete settings set' }).Count | Should -Be 0
+        }
+
+        It '-Clean never deletes a numbered profile it has no record of making' {
+            Mock Confirm-Action { $true }
             Invoke-TerminalStyleProfiles -Clean
+            $script:sets | Should -Contain 'eva 1'
+            & $script:deletesOf 'eva 1' | Should -Be 0
+            $script:sets | Should -Not -Contain 'eva 2'
+            & $script:said | Should -CMatch 'Terminal\.app confirmed 1 of 1 removed'
+            @((Get-AppleTerminalImportRecord -Copies).Keys) -ccontains 'eva 2' | Should -BeFalse
+        }
 
-            $script:sentDelete | Should -BeTrue -Because 'the delete was attempted, or this measures nothing'
-            $said = ($script:written -join ' ') -replace '\s+', ' '
-            $said | Should -Not -CMatch 'Removed eva 1'
-            $said | Should -Match 'could not confirm eva 1 was removed'
-            $said | Should -Match 'Terminal\.app confirmed 0 of 1 removed'
-            $said | Should -Match 'Run tstyles profiles to see which are still listed'
+        It 'names every profile it will delete before asking, and says an open tab switches' {
+            Mock Confirm-Action { $false }
+            Invoke-TerminalStyleProfiles -Clean
+            Should -Invoke Confirm-Action -Times 1 -Exactly
+            $t = & $script:said
+            @($script:written | Where-Object { $_ -ceq '  - eva 2' }).Count | Should -Be 1
+            $t | Should -Not -Match 'any window already open'
+            $t | Should -CMatch 'switches to your default profile'
+            $t | Should -CMatch 'not your default or startup profile'
+            $t | Should -Match 'Cancelled'
+            @($script:scripts | Where-Object { $_ -match 'delete settings set' }).Count | Should -Be 0
+        }
+
+        It '-Clean never deletes the default or startup profile, even a copy it recorded: <Which>' -ForEach @(
+            @{ Which = 'default' }
+            @{ Which = 'startup' }
+        ) {
+            [void]$script:sets.Add('eva 3')
+            Set-AppleTerminalImportRecord -Copies -Name 'eva 3' -Hash 'h'
+            if ($Which -eq 'default') { $script:defaultSet = 'eva 3' } else { $script:startupSet = 'eva 3' }
+            Mock Confirm-Action { $true }
+            Invoke-TerminalStyleProfiles -Clean
+            $script:sets | Should -Contain 'eva 3'
+            & $script:deletesOf 'eva 3' | Should -Be 0
+            & $script:said | Should -CMatch "eva 3 -- your $Which profile"
+            $script:sets | Should -Not -Contain 'eva 2' -Because 'control: the other recorded copy goes'
+        }
+
+        It 'says nothing will be deleted, without asking, when every recorded copy is kept' {
+            $script:defaultSet = 'eva 2'
+            Mock Confirm-Action { $true }
+            Invoke-TerminalStyleProfiles -Clean
+            Should -Invoke Confirm-Action -Times 0 -Exactly
+            & $script:said | Should -Match 'nothing will be deleted'
+            $script:sets | Should -Contain 'eva 2'
+        }
+
+        It '-Clean keeps a recorded copy whose name differs from another profile only in case' {
+            [void]$script:sets.Add('eva 3'); [void]$script:sets.Add('Eva 3')
+            Set-AppleTerminalImportRecord -Copies -Name 'eva 3' -Hash 'h'
+            Mock Confirm-Action { $true }
+            Invoke-TerminalStyleProfiles -Clean
+            & $script:deletesOf 'eva 3' | Should -Be 0
+            & $script:deletesOf 'Eva 3' | Should -Be 0
+            & $script:said | Should -CMatch "also has 'Eva 3'"
+            $script:sets | Should -Not -Contain 'eva 2'
+        }
+
+        It 'forgets a recorded copy Terminal.app no longer lists, so a later profile of that name is not claimed' {
+            $script:sets.Remove('eva 2')
+            Invoke-TerminalStyleProfiles
+            @((Get-AppleTerminalImportRecord -Copies).Keys) -ccontains 'eva 2' | Should -BeFalse
+            [void]$script:sets.Add('eva 2')
+            $script:written.Clear()
+            Mock Confirm-Action { $true }
+            Invoke-TerminalStyleProfiles -Clean
+            $script:sets | Should -Contain 'eva 2'
+            & $script:said | Should -CMatch 'no record of making: eva 1 eva 2'
+            Should -Not -Invoke Confirm-Action
+        }
+
+        It 'does not report a removal Terminal.app did not confirm' {
+            $script:refuseDelete = $true
+            Mock Confirm-Action { $true }
+            Invoke-TerminalStyleProfiles -Clean
+            & $script:deletesOf 'eva 2' | Should -Be 1 -Because 'the delete was attempted, or this measures nothing'
+            $t = & $script:said
+            $t | Should -Not -CMatch 'Removed eva 2'
+            $t | Should -Match 'could not confirm eva 2 was removed'
+            $t | Should -Match 'Terminal\.app confirmed 0 of 1 removed'
+            @((Get-AppleTerminalImportRecord -Copies).Keys) -ccontains 'eva 2' | Should -BeTrue
         }
 
         It 'says so plainly off macOS instead of pretending' {
@@ -726,6 +788,14 @@ Describe 'the profiles command is reachable and documented' {
             $h = Get-TerminalStyleHelpData | Where-Object Name -eq 'profiles'
             (($h.Detail -join ' ') -replace '\s+', ' ') | Should -Match 'cannot prove it imported'
         }
+        It 'says -Clean deletes only copies it recorded making' {
+            $h = Get-TerminalStyleHelpData | Where-Object Name -eq 'profiles'
+            $t = ($h.Detail -join ' ') -replace '\s+', ' '
+            $t | Should -CMatch 'deletes only the numbered copies TerminalStyles recorded making'
+            $t | Should -CMatch 'Duplicate Profile'
+            $t | Should -Not -Match 'deletes the numbered ones'
+        }
+
         It 'says when -NewWindow replaces the profile, and when it leaves it alone' {
             $h = InModuleScope TerminalStyles { Get-TerminalStyleHelpData }
             $prof  = ((@($h | Where-Object Name -eq 'profiles')[0].Detail) -join ' ') -replace '\s+', ' '
