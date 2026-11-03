@@ -425,13 +425,11 @@ Describe 'the one-hop guards compare paths the way the filesystem does' {
             $seedSrc | Should -Match 'Test-SameStyleDirectory -A \$resolvedBaseDir -B \$StyleDir'
             $seedSrc | Should -Not -Match '\$resolvedBaseDir -ne \$StyleDir'
 
-            $bgSrc = (Get-Command Get-TunedBaseBackground).ScriptBlock.ToString()
-            $bgSrc | Should -Match 'Test-SameStyleDirectory'
-            $bgSrc | Should -Not -Match '\$baseDir -eq \$StyleDir'
-
-            $resSrc = (Get-Command Test-StyleResolved).ScriptBlock.ToString()
-            $resSrc | Should -Match 'Test-SameStyleDirectory'
-            $resSrc | Should -Not -Match '\$baseDir -ne \$StyleDir'
+            # The background resolver, Test-StyleResolved and the absence
+            # reader all take the tune.json hop through Get-TunedBaseDir.
+            $baseSrc = (Get-Command Get-TunedBaseDir).ScriptBlock.ToString()
+            $baseSrc | Should -Match 'Test-SameStyleDirectory -A \$baseDir -B \$StyleDir'
+            $baseSrc | Should -Not -Match '\$baseDir -(eq|ne) \$StyleDir'
 
             $openedSrc = (Get-Command Resolve-TuneOpenedScheme).ScriptBlock.ToString()
             $openedSrc | Should -Match 'Test-SameStyleDirectory'

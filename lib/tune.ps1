@@ -667,6 +667,25 @@ function Join-TuneNameList {
     return (($Items[0..($Items.Count - 2)] -join ', ') + ' and ' + $Items[-1])
 }
 
+function Get-TunedBaseDir {
+    # The directory of the style $StyleDir's tune.json names as its base, when
+    # that resolves to a DIFFERENT directory; else $null (not tuned, base gone,
+    # malformed tune.json, or a style tuned in place as its own base). The one
+    # copy of the tune.json hop the background resolver, Test-StyleResolved and
+    # the absence reader all take. Compared the way the host filesystem
+    # compares -- see Test-SameStyleDirectory.
+    param([Parameter(Mandatory)][string]$StyleDir)
+    $tuneFile = Join-Path $StyleDir 'tune.json'
+    if (-not (Test-Path -LiteralPath $tuneFile)) { return $null }
+    try {
+        $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    } catch { return $null }
+    if (-not $tune -or -not $tune.base) { return $null }
+    $baseDir = Get-StyleDir -StyleName $tune.base
+    if (-not $baseDir -or (Test-SameStyleDirectory -A $baseDir -B $StyleDir)) { return $null }
+    return $baseDir
+}
+
 function Get-TunedBaseBackground {
     # If $StyleDir is a tuned style (tune.json with a 'base'), resolve and
     # return the base style's background (with the base's own lazy-fetch).
@@ -674,15 +693,8 @@ function Get-TunedBaseBackground {
     # hop: the base is resolved with -NoInherit, so cyclic tune.json (A->B->A)
     # cannot recurse.
     param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoFetch)
-    $tuneFile = Join-Path $StyleDir 'tune.json'
-    if (-not (Test-Path -LiteralPath $tuneFile)) { return $null }
-    try {
-        $tune = [System.IO.File]::ReadAllText($tuneFile, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-    } catch { return $null }
-    if (-not $tune.base) { return $null }
-    $baseDir = Get-StyleDir -StyleName $tune.base
-    # Compared the way the host filesystem compares -- see Test-SameStyleDirectory.
-    if (-not $baseDir -or (Test-SameStyleDirectory -A $baseDir -B $StyleDir)) { return $null }
+    $baseDir = Get-TunedBaseDir -StyleDir $StyleDir
+    if (-not $baseDir) { return $null }
     return Get-StyleBundledBackground -StyleDir $baseDir -NoInherit -NoFetch:$NoFetch
 }
 

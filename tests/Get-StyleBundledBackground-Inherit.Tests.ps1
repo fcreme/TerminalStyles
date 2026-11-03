@@ -94,3 +94,72 @@ Describe 'Get-StyleBundledBackground inheritance' {
         }
     }
 }
+
+Describe 'a tuned style asks its base before any cache keyed by its own name' {
+    # The cache and the gifs branch are keyed by NAME. The resolver checked
+    # cache/<the style's name> before the tune.json hop, so a tune of forest
+    # saved as 'eva' painted eva's cached wallpaper -- or downloaded it -- while
+    # the tuner's preview had shown forest's, and the wiki says a tuned style
+    # inherits the base theme's background.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedModule = $script:TStylesModuleRoot
+            $script:savedData   = $script:TStylesDataRoot
+            $sand = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesModuleRoot = Join-Path $sand 'module'
+            $script:TStylesDataRoot   = Join-Path $sand 'data'
+            $enc = [System.Text.UTF8Encoding]::new($false)
+            foreach ($n in 'eva', 'forest') {
+                $d = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $n
+                [void][System.IO.Directory]::CreateDirectory($d)
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), ('{"name":"' + $n + '"}'), $enc)
+            }
+            $script:evaCache    = Get-StyleCacheDir -StyleName 'eva'
+            $script:forestCache = Get-StyleCacheDir -StyleName 'forest'
+            [void][System.IO.Directory]::CreateDirectory($script:evaCache)
+            [void][System.IO.Directory]::CreateDirectory($script:forestCache)
+            [System.IO.File]::WriteAllText((Join-Path $script:evaCache 'background.gif'), 'EVA-WALLPAPER', $enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:forestCache 'background.gif'), 'FOREST-WALLPAPER', $enc)
+            # A tune of forest, saved under the name 'eva'.
+            $script:tuned = Join-Path (Join-Path $script:TStylesDataRoot 'styles') 'eva'
+            [void][System.IO.Directory]::CreateDirectory($script:tuned)
+            [System.IO.File]::WriteAllText((Join-Path $script:tuned 'scheme.json'), '{"name":"eva"}', $enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:tuned 'tune.json'), '{"schemaVersion":1,"base":"forest"}', $enc)
+            $script:absent = { param($Dir)
+                [System.IO.File]::WriteAllText((Join-Path $Dir '.no-background'),
+                    ([pscustomobject]@{ schemaVersion = 1; kind = 'absent'; at = [datetime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress), $enc)
+            }
+            Mock Update-CachedBackground { $CachePath }
+            Mock Invoke-WebRequest { throw 'network reached' }
+        }
+        AfterEach {
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesDataRoot   = $script:savedData
+        }
+
+        It "paints its base's image, not the one cached under its name" {
+            [System.IO.File]::ReadAllText((Get-StyleBundledBackground -StyleDir $script:tuned)) | Should -BeExactly 'FOREST-WALLPAPER'
+            [System.IO.File]::ReadAllText((Get-StyleBundledBackground -StyleDir $script:tuned -NoFetch)) | Should -BeExactly 'FOREST-WALLPAPER'
+            Should -Invoke Update-CachedBackground -Times 1 -Exactly -ParameterFilter { $StyleName -eq 'forest' }
+            Should -Invoke Update-CachedBackground -Times 0 -Exactly -ParameterFilter { $StyleName -eq 'eva' }
+            Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        }
+
+        It "takes the base's answer as final when the base has no image" {
+            [System.IO.File]::Delete((Join-Path $script:forestCache 'background.gif'))
+            & $script:absent $script:forestCache
+            Get-StyleBundledBackground -StyleDir $script:tuned | Should -BeNullOrEmpty -Because "eva's cached image is not this style's"
+
+            [System.IO.File]::Delete((Join-Path $script:evaCache 'background.gif'))
+            Get-StyleBundledBackground -StyleDir $script:tuned | Should -BeNullOrEmpty -Because 'nor is a download of gifs/eva'
+            Should -Invoke Invoke-WebRequest -Times 0 -Exactly
+        }
+
+        It 'Test-StyleResolved: a tuned style is resolved exactly when its base is' {
+            [System.IO.File]::Delete((Join-Path $script:forestCache 'background.gif'))
+            Test-StyleResolved -StyleDir $script:tuned | Should -BeFalse
+            [System.IO.File]::WriteAllText((Join-Path $script:forestCache 'background.gif'), 'FOREST-WALLPAPER')
+            Test-StyleResolved -StyleDir $script:tuned | Should -BeTrue
+        }
+    }
+}
