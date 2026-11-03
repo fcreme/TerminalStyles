@@ -175,8 +175,8 @@ takes it out. If `settings.json` changes while the picker is open (you edit
 it, or Settings Sync does), no further preview is written into it, and Enter
 and Esc both work from the file as it is now. Esc takes the preview out by its
 record instead of putting the old file back, then puts back the style you
-started with, except a key of it you had changed by hand before opening the
-picker, which stays as you have it. Either way your change stays,
+started with, except a key of it you had changed or deleted by hand before
+opening the picker, which stays as you have it. Either way your change stays,
 except for a key the incoming style also sets: that key takes the incoming
 style's value, and `tstyles reset` puts yours back. It is named when the
 style you were previewing also wrote it.

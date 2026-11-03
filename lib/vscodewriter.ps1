@@ -1098,7 +1098,17 @@ function Restore-VSCodePreview {
                     $text = $re.Text
                     $rewrote = $re.Record
                     $carried = @(@($Session.StartRecord.Wrote) | Where-Object { $leave -ccontains (@($_.Path) -join '/') })
-                    $record = @{ Style = $re.Record.Style; Wrote = @(@($re.Record.Wrote) + $carried); CreatedParents = $re.Record.CreatedParents }
+                    # The starting record's created blocks too: a block it made
+                    # that the re-apply found already standing (a left key
+                    # holds it up) is still one a later reset may take away
+                    # once it is blank, as a reset at picker open would.
+                    $parents = @(@($re.Record.CreatedParents) | Where-Object { $_ })
+                    foreach ($cp in @($Session.StartRecord.CreatedParents)) {
+                        if (-not $cp) { continue }
+                        $id = @($cp) -join '/'
+                        if (-not @($parents | Where-Object { (@($_) -join '/') -ceq $id })) { $parents += ,$cp }
+                    }
+                    $record = @{ Style = $re.Record.Style; Wrote = @(@($re.Record.Wrote) + $carried); CreatedParents = $parents }
                 }
             }
             if ($rewrote -and @($rewrote.Wrote).Count -gt 0) {

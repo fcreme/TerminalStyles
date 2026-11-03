@@ -466,6 +466,7 @@ Describe 'a new member never lands inside a block comment' {
         It 'keeps a // comment whole in a CRLF file, and in one whose anchor line ends in LF alone' -ForEach @(
             @{ Label = 'uniform CRLF'; Lines = @('{', '  "w": { // my overrides', '  }', '}'); Joins = @("`r`n", "`r`n", "`r`n") }
             @{ Label = 'mixed'; Lines = @('{', '  "w": { // my overrides', '  }', '}'); Joins = @("`r`n", "`n", "`r`n") }
+            @{ Label = 'mixed, after a member'; Lines = @('{', '  "w": {', '    "a": 1 // c', '  }}'); Joins = @("`r`n", "`r`n", "`n") }
         ) {
             $before = $Lines[0] + $Joins[0] + $Lines[1] + $Joins[1] + $Lines[2] + $Joins[2] + $Lines[3]
             $r = Set-JsoncValue -Text $before -Path @('w', 'k') -Value 'v'

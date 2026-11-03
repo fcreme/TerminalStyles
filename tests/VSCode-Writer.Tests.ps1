@@ -2443,6 +2443,23 @@ Describe 'the picker and a key changed by hand under the style it opened on' {
             Should -Invoke Write-Host -Times 1 -Exactly -Scope It -ParameterFilter { "$Object" -cmatch 'Left terminal\.integrated\.fontFamily as you set it\.' }
         }
 
+        It "Esc keeps the starting style's created colour block in its record, so a later reset still takes it away" {
+            & $script:save 'hand-start' | Out-Null
+            $bgPath = @('workbench.colorCustomizations', 'terminal.background')
+            $styleBg = & $script:read $bgPath
+            & $script:setKey $bgPath '"#ababab"'
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'hand-next' -StyleDir (Get-StyleDir -StyleName 'hand-next') | Should -Be 'written'
+            & $script:setKey @('editor.fontSize') '15'
+            (Restore-VSCodePreview -Session $s).Status | Should -Be 'merged'
+            & $script:read $bgPath | Should -BeExactly '"#ababab"'
+            # Set back to the style's own value: now the reset may take it, and
+            # the block it leaves blank.
+            & $script:setKey $bgPath $styleBg
+            (Reset-StyleVSCodeConfig -Variant 'Code').Status | Should -Be 'reset'
+            & $script:read @('workbench.colorCustomizations') | Should -BeNullOrEmpty
+        }
+
         Context 'nothing of the starting style goes back in' {
             BeforeEach {
                 & $script:save 'hand-plain' | Out-Null

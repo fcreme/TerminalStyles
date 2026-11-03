@@ -644,7 +644,7 @@ function Invoke-VSCodeStyleReset {
             $r = Set-JsoncLiteral -Text $current -Path $w.Path -Literal $w.Had
         }
         if ($r.Status -ne 'removed' -and $r.Status -ne 'updated' -and $r.Status -ne 'same') {
-            return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Status = $r.Status; Key = $name }
+            return @{ Text = $Text; Restored = @(); Removed = @(); Kept = @(); Gone = @(); Status = $r.Status; Key = $name }
         }
         if ($r.Changed) {
             $current = $r.Text
