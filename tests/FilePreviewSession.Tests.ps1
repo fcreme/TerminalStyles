@@ -178,11 +178,42 @@ Describe 'a Windows Terminal preview session' {
             [System.IO.File]::Exists($script:paths.Record) | Should -BeFalse
         }
 
-        It 'Enter with nothing written, and the file unchanged, is done and writes nothing' {
+        It 'Enter writes the chosen style when no preview of it landed, and says nothing changed outside' {
+            # A blocked session, or a last preview write that failed: the file
+            # still holds what the session found, and Enter must not report a
+            # style applied that is not in it.
             $s = New-FilePreviewSession -Kind WindowsTerminal -Path $script:p -By picker -TargetName 'PowerShell'
+            $p2 = $script:probe2
+            $r = Complete-FilePreview -Session $s -Merge {
+                param($b) Get-StylePreviewJson -OriginalJson $b -StyleDir $p2 -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false }
+            $r.Status | Should -Be 'done'
+            (& $script:ps (& $script:read)).colorScheme | Should -Be 'probe2'
+        }
+
+        It 'Enter on the style last previewed writes nothing more' {
+            $s = New-FilePreviewSession -Kind WindowsTerminal -Path $script:p -By picker -TargetName 'PowerShell'
+            Write-FilePreview -Session $s -Text (& $script:previewOf $s.OriginalText $script:probe) | Should -Be 'written'
             $t = [System.IO.File]::GetLastWriteTimeUtc($script:p)
-            (Complete-FilePreview -Session $s -Merge { param($b) $b + ' ' }).Status | Should -Be 'done'
+            $p1 = $script:probe
+            (Complete-FilePreview -Session $s -Merge {
+                param($b) Get-StylePreviewJson -OriginalJson $b -StyleDir $p1 -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false }).Status |
+                Should -Be 'done'
             [System.IO.File]::GetLastWriteTimeUtc($script:p) | Should -Be $t
+            [System.IO.File]::Exists($script:paths.Record) | Should -BeFalse
+        }
+
+        It 'Esc says it left the file, not that it took the preview out, when every key was changed again' {
+            $s = New-FilePreviewSession -Kind WindowsTerminal -Path $script:p -By picker -TargetName 'PowerShell'
+            Write-FilePreview -Session $s -Text (& $script:previewOf $s.OriginalText $script:probe) | Should -Be 'written'
+            $o = & $script:read
+            $e = & $script:ps $o
+            $e.colorScheme = 'Mine'; $e.opacity = 40; $e.font = [pscustomobject]@{ face = 'Mine Mono'; size = 11 }
+            $o.schemes = @([pscustomobject]@{ name = 'Campbell'; background = '#0C0C0C' }, [pscustomobject]@{ name = 'probe'; background = '#ABCDEF' })
+            [System.IO.File]::WriteAllText($script:p, ($o | ConvertTo-Json -Depth 100), $script:enc)
+            $bytes = [System.IO.File]::ReadAllBytes($script:p)
+            $r = Restore-FilePreview -Session $s -End
+            $r.Status | Should -Be 'left'
+            ([System.IO.File]::ReadAllBytes($script:p) -join ',') | Should -BeExactly ($bytes -join ',')
         }
 
         It 'the next command puts back a preview a closed picker left, once' {

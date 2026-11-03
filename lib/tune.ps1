@@ -1625,8 +1625,11 @@ function Invoke-TerminalStyleTune {
     # What Esc's or the save's put-back did, and the recovery said at the start,
     # printed below the screen clear.
     $showTuneRestore = {
-        if ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Status -ne 'failed') {
-            Show-FilePreviewResult -Result $tuneState.SettingsRestore
+        # As the picker's: a failed put-back is Show-SettingsRestoreFailure's,
+        # except on the merge arm, where its .bak line would undo the change.
+        $sr = $tuneState.SettingsRestore
+        if ($sr -and ($sr.Status -ne 'failed' -or $sr.Arm -eq 'merge')) {
+            Show-FilePreviewResult -Result $sr
         }
         Show-FilePreviewResult -Result $tuneRecovered
     }
@@ -1715,10 +1718,10 @@ function Invoke-TerminalStyleTune {
                     'Escape' {
                         $revert = & $restoreBaseLook
                         Clear-Host
-                        if ($revert -eq 'failed') {
+                        if ($revert -eq 'failed' -and -not ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Arm -eq 'merge')) {
                             Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
                                 -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
-                        } else {
+                        } elseif ($revert -ne 'failed') {
                             Write-Host "Reverted." -ForegroundColor Yellow
                         }
                         & $showTuneRestore
@@ -1824,12 +1827,14 @@ function Invoke-TerminalStyleTune {
         if (-not $saveName) {
             # Treat an aborted save like a cancel: revert and exit.
             $revert = & $restoreBaseLook
-            if ($revert -eq 'failed') {
+            if ($revert -eq 'failed' -and -not ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Arm -eq 'merge')) {
                 Write-Host "  Nothing saved." -ForegroundColor Yellow
                 Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
                     -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
-            } else {
+            } elseif ($revert -ne 'failed') {
                 Write-Host "  Reverted (nothing saved)." -ForegroundColor Yellow
+            } else {
+                Write-Host "  Nothing saved." -ForegroundColor Yellow
             }
             & $showTuneRestore
             & $showPendingUpdate
@@ -1871,6 +1876,11 @@ function Invoke-TerminalStyleTune {
         if ($tuneUsesSettings) { Apply-StyleDirect -StyleName $saveName -Target $target -ErrorVariable applyErr }
         else { Apply-StyleDirect -StyleName $saveName -ErrorVariable applyErr }
         $applied = -not @($applyErr | Where-Object { $_.CategoryInfo.Activity -eq 'Write-Error' }).Count
+        # The save landed: a record the failed put-back left would make the
+        # next command call this a tuner closed without Enter.
+        if ($applied -and $settingsSession) {
+            Remove-FilePreviewRecord -Kind WindowsTerminal -Path $settingsPath -SessionId $settingsSession.Id
+        }
         Show-FilePreviewResult -Result $saveRestore
         Show-FilePreviewResult -Result $tuneRecovered
         # The third exit path. Esc and the aborted save print it too.
@@ -1892,7 +1902,7 @@ function Invoke-TerminalStyleTune {
             }
             $finalRevert = $null
             if ($restoreBaseLook) { try { $finalRevert = & $restoreBaseLook } catch { } }
-            if ($finalRevert -eq 'failed') {
+            if ($finalRevert -eq 'failed' -and -not ($tuneState.SettingsRestore -and $tuneState.SettingsRestore.Arm -eq 'merge')) {
                 Show-SettingsRestoreFailure -Reason $tuneState.SettingsRestoreError -SettingsPath $settingsPath `
                     -By tuner -BackupTaken:(-not $backupNote) -Unchecked:([bool]$tuneState.SettingsRestoreUnchecked)
             }

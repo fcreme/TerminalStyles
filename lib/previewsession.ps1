@@ -272,8 +272,14 @@ function Restore-FilePreview {
             $out.Arm = 'merge'
             $u = Undo-WTSettingsPreview -OriginalJson $Session.OriginalText -PreviewJson $Session.LastWrittenText `
                     -CurrentJson $now -TargetName $Session.TargetName
-            if (@($u.Undone).Count -gt 0) { Write-SettingsAtomic -Path $Session.Path -Json $u.Text }
-            $out.Status = 'merged'
+            if (@($u.Undone).Count -gt 0) {
+                Write-SettingsAtomic -Path $Session.Path -Json $u.Text
+                $out.Status = 'merged'
+            } else {
+                # Every key the preview set was changed again: nothing of it
+                # is left to take out.
+                $out.Status = 'left'
+            }
             $out.Kept = @($u.Kept)
         } else {
             $out.Status = 'left'
@@ -294,13 +300,17 @@ function Complete-FilePreview {
     changed. Returns @{ Event='commit'; Status done | merged | failed; ... }.
 
     .DESCRIPTION
-    'done' when the file still holds what the session last left there -- the
-    preview on disk is the commit -- or when nothing would change. Otherwise
-    the session's own preview is taken out of the file as it is now (when the
-    record is still this session's) and -Merge is run over the result: the
-    chosen style, merged the way `tstyles <name>` would. Without -Merge (the
-    picker's finally after an error), the file is left with the preview taken
-    out. The record is dropped only when it names this session.
+    When nobody else wrote the file, the commit is the chosen style's preview
+    as -Merge builds it from the text the session found: 'done' when the file
+    already holds it (the last preview was that style), and written, still
+    'done', when it does not -- the last preview write failed, or the session
+    could write none. 'done' never means "nothing happened to a style the
+    picker then calls applied". When the file changed, the session's own
+    preview is taken out of it as it is now (when the record is still this
+    session's) and -Merge is run over the result: 'merged'. Without -Merge (the
+    picker's finally after an error), a file that still holds the preview is
+    kept as the commit; a changed one has the preview taken out. The record is
+    dropped only when it names this session.
 
     WezTerm: the publish that follows Enter writes the module itself, so this
     only drops the session's record.
@@ -324,6 +334,11 @@ function Complete-FilePreview {
         $expected = $Session.LastWrittenText
         if ($null -eq $expected) { $expected = $Session.OriginalText }
         if ((-not $Session.Recorded -or $ours) -and $now -ceq $expected) {
+            if ($Merge) {
+                $chosen = & $Merge $Session.OriginalText
+                if ($null -eq $chosen) { $chosen = $Session.OriginalText }
+                if ($chosen -cne $now) { Write-SettingsAtomic -Path $Session.Path -Json $chosen }
+            }
             Remove-FilePreviewRecord -Kind $Session.Kind -Path $Session.Path -SessionId $Session.Id
             $Session.LastWrittenText = $null
             return $out
@@ -395,7 +410,7 @@ function Restore-AbandonedFilePreview {
         $copy = $null
         if ([System.IO.File]::Exists($p.Original)) { $copy = Read-FilePreviewText -Path $p.Original }
         $existed = [bool]$d.existed
-        if ($existed -and $null -eq $copy) {
+        if (($existed -and $null -eq $copy) -or ($Kind -eq 'WindowsTerminal' -and -not $existed)) {
             Remove-FilePreviewRecord -Kind $Kind -Path $Path
             return $out
         }
@@ -464,7 +479,8 @@ function Show-FilePreviewResult {
         'recover/failed' {
             Write-Host ("  {0} holds a preview from a tstyles {1} that was closed without Enter or Esc, and" -f $Result.Path, $by) -ForegroundColor Yellow
             Write-Host ("  putting back the file it found failed: {0}" -f $Result.Reason) -ForegroundColor Yellow
-            Write-Host ("  That file is kept at {0}; the next tstyles command tries again." -f $Result.Copy) -ForegroundColor Yellow
+            $again = if ($wez) { 'the next tstyles picker tries again' } else { 'the next tstyles command that writes it tries again' }
+            Write-Host ("  That file is kept at {0}; {1}." -f $Result.Copy, $again) -ForegroundColor Yellow
         }
         'restore/merged' {
             Write-Host ("  settings.json changed while the {0} was open, so the preview was taken back out of it" -f $by) -ForegroundColor Yellow
@@ -482,11 +498,12 @@ function Show-FilePreviewResult {
         }
         'restore/failed' {
             Write-Host ("  Could not put {0} back: {1}" -f $Result.Path, $Result.Reason) -ForegroundColor Red
+            $next = if ($wez) { 'the next tstyles picker' } else { 'the next tstyles command that writes it' }
             if ($Result.Arm -eq 'merge') {
-                Write-Host "  It changed while it was open and still holds the preview; the next tstyles command" -ForegroundColor Red
+                Write-Host ("  It changed while it was open and still holds the preview; {0}" -f $next) -ForegroundColor Red
                 Write-Host ("  keeps the file the {0} found beside it." -f $by) -ForegroundColor Red
             } else {
-                Write-Host ("  It still holds the preview; the next tstyles command puts back the file the {0} found." -f $by) -ForegroundColor Red
+                Write-Host ("  It still holds the preview; {0} puts back the file the {1} found." -f $next, $by) -ForegroundColor Red
             }
         }
         'commit/merged' {

@@ -1319,8 +1319,12 @@ function Invoke-TerminalStyle {
     # What the put-backs did, and the recoveries said as the picker opened,
     # below the screen clear that erased them.
     $showPreviewResults = {
-        if ($pickerState.SettingsRestore -and $pickerState.SettingsRestore.Status -ne 'failed') {
-            Show-FilePreviewResult -Result $pickerState.SettingsRestore
+        # A failed put-back is Show-SettingsRestoreFailure's, with its .bak
+        # line -- except on the merge arm, where restoring the .bak would throw
+        # the change away, so the session's own wording says it.
+        $sr = $pickerState.SettingsRestore
+        if ($sr -and ($sr.Status -ne 'failed' -or $sr.Arm -eq 'merge')) {
+            Show-FilePreviewResult -Result $sr
         }
         Show-FilePreviewResult -Result $pickerState.WezRestore
         Show-FilePreviewResult -Result $pickerRecovered
@@ -2074,10 +2078,10 @@ function Invoke-TerminalStyle {
 
         if ($result.Outcome -eq 'cancelled') {
             Clear-Host
-            if ($pickerState.SettingsRestoreError) {
+            if ($pickerState.SettingsRestoreError -and -not ($pickerState.SettingsRestore -and $pickerState.SettingsRestore.Arm -eq 'merge')) {
                 Show-SettingsRestoreFailure -Reason $pickerState.SettingsRestoreError -SettingsPath $settingsPath `
                     -By picker -BackupTaken:(-not $backupNote)
-            } else {
+            } elseif (-not $pickerState.SettingsRestoreError) {
                 Write-Host "Reverted." -ForegroundColor Yellow
             }
             Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
@@ -2131,7 +2135,10 @@ function Invoke-TerminalStyle {
             }
             $pickerState.SettingsCommit.Style = $selectedStyle.Name
             if ($pickerState.SettingsCommit.Status -eq 'failed') {
-                $pickerState.SettingsRestore = Restore-FilePreview -Session $settingsSession -End
+                # Nothing applied, so everything the preview put on goes back:
+                # the file, the palette, the title.
+                try { & $restoreOriginalLook } catch { }
+                if (Test-ShouldRestoreWindowTitle -Title $originalTitle) { $Host.UI.RawUI.WindowTitle = $originalTitle }
                 Clear-Host
                 Write-Host ""
                 Show-FilePreviewResult -Result $pickerState.SettingsCommit
@@ -2353,13 +2360,14 @@ function Invoke-TerminalStyle {
             # Escape already did it.
             if (-not $pickerState.Reverted -and $restoreOriginalLook) {
                 try { & $restoreOriginalLook } catch { }
-                if ($pickerState.SettingsRestoreError) {
+                if ($pickerState.SettingsRestoreError -and -not ($pickerState.SettingsRestore -and $pickerState.SettingsRestore.Arm -eq 'merge')) {
                     Show-SettingsRestoreFailure -Reason $pickerState.SettingsRestoreError -SettingsPath $settingsPath `
                         -By picker -BackupTaken:(-not $backupNote)
                 }
                 Show-VSCodeRestoreResult -Result $pickerState.VSCodeRestore
-                if ($pickerState.SettingsRestore -and $pickerState.SettingsRestore.Status -ne 'failed') {
-                    Show-FilePreviewResult -Result $pickerState.SettingsRestore
+                $srf = $pickerState.SettingsRestore
+                if ($srf -and ($srf.Status -ne 'failed' -or $srf.Arm -eq 'merge')) {
+                    Show-FilePreviewResult -Result $srf
                 }
                 Show-FilePreviewResult -Result $pickerState.WezRestore
             }

@@ -90,10 +90,15 @@ Describe 'the WezTerm apply and reset own the module from the moment they write 
     # Esc, put the old module back over the apply.
     InModuleScope TerminalStyles {
         BeforeEach {
-            $script:savedRoot = $script:TStylesDataRoot
+            # All three roots: the reset removes current-style.ps1, whose path
+            # was fixed at import to the real data root.
+            $script:saved = @{ M = $script:TStylesModuleRoot; D = $script:TStylesDataRoot; C = $script:TStylesCurrent }
             $sand = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
             $script:TStylesDataRoot = Join-Path $sand 'data'
             [void][System.IO.Directory]::CreateDirectory($script:TStylesDataRoot)
+            $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+            Mock Write-HostOscPacket { $true }
+            Mock Show-UpdateNoticeIfAvailable {}
             $script:home2 = Join-Path $sand 'h'
             $script:module = Get-WezTermModulePath -HomeDir $script:home2
             Mock Get-WezTermModulePath { $script:module }
@@ -117,7 +122,9 @@ Describe 'the WezTerm apply and reset own the module from the moment they write 
             $script:tr = $tr
             $script:record = (Get-FilePreviewRecordPath -Kind WezTerm -Path $script:module).Record
         }
-        AfterEach { $script:TStylesDataRoot = $script:savedRoot }
+        AfterEach {
+            $script:TStylesModuleRoot = $script:saved.M; $script:TStylesDataRoot = $script:saved.D; $script:TStylesCurrent = $script:saved.C
+        }
 
         It 'an apply drops the record, so a later recovery does not undo it' {
             Publish-StyleWezTermConfig -StyleName 'tombraider' -StyleDir $script:tr.Dir -Scheme $script:tr.Scheme -Theme $script:tr.Theme -Kind 'WezTerm' | Out-Null
