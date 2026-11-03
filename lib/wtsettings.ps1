@@ -747,6 +747,154 @@ function Show-SettingsRestoreFailure {
     }
 }
 
+function ConvertTo-CanonicalJson {
+    # A value as text that compares equal whenever Windows Terminal would read
+    # the two the same: object keys sorted ordinally, every number as a double
+    # in invariant 'R' form (11 and 11.0 are one value), arrays in order. So a
+    # file Windows Terminal re-serialised -- keys reordered, 11 written 11.0 --
+    # still compares equal to the preview that wrote it.
+    param([AllowNull()]$Value)
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [bool]) { if ($Value) { return 'true' } else { return 'false' } }
+    if ($Value -is [string]) { return (ConvertTo-Json -InputObject $Value -Compress) }
+    if ($Value -is [datetime]) { return ('"' + $Value.ToString('o', [cultureinfo]::InvariantCulture) + '"') }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [double] -or $Value -is [decimal] -or
+        $Value -is [single] -or $Value -is [System.Numerics.BigInteger] -or $Value -is [byte] -or $Value -is [int16]) {
+        return ([double]$Value).ToString('R', [cultureinfo]::InvariantCulture)
+    }
+    if ($Value -is [System.Collections.IDictionary]) {
+        $keys = @($Value.Keys | ForEach-Object { "$_" })
+        [array]::Sort($keys, [System.StringComparer]::Ordinal)
+        return ('{' + (($keys | ForEach-Object { (ConvertTo-Json -InputObject $_ -Compress) + ':' + (ConvertTo-CanonicalJson $Value[$_]) }) -join ',') + '}')
+    }
+    if ($Value -is [System.Collections.IEnumerable]) {
+        return ('[' + ((@($Value) | ForEach-Object { ConvertTo-CanonicalJson $_ }) -join ',') + ']')
+    }
+    $props = @($Value.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' } | ForEach-Object { $_.Name })
+    [array]::Sort($props, [System.StringComparer]::Ordinal)
+    return ('{' + (($props | ForEach-Object { (ConvertTo-Json -InputObject $_ -Compress) + ':' + (ConvertTo-CanonicalJson $Value.$_) }) -join ',') + '}')
+}
+
+function Undo-WTSettingsPreview {
+    <#
+    .SYNOPSIS
+    Take a preview back out of settings.json as it is NOW, keeping every other
+    change. Pure. Returns @{ Text; Undone; Kept }.
+
+    .DESCRIPTION
+    The inverse of Merge-StyleIntoSettings, for a file that changed after the
+    preview was written -- Windows Terminal's Settings UI, Settings Sync,
+    another command -- where putting the old text back would throw that change
+    away. It touches only what the merge can change: the target entry
+    (resolved as the merge resolves it), profiles.defaults when it is not the
+    target, and schemes by name. For each value the preview changed:
+
+      still the preview's   -> the original's goes back, or the key goes when
+                               the original had none (Undone)
+      back at the original  -> nothing to do
+      anything else         -> left as it is, and named (Kept)
+
+    Values compare through ConvertTo-CanonicalJson. A defaults block or schemes
+    key the preview created and the undo leaves empty goes too. Throws on a
+    current file that does not parse; callers turn that into 'failed'.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$OriginalJson,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$PreviewJson,
+        [Parameter(Mandatory)][AllowEmptyString()][string]$CurrentJson,
+        [AllowEmptyString()][string]$TargetName
+    )
+    $o = ConvertFrom-JsoncText $OriginalJson
+    $p = ConvertFrom-JsoncText $PreviewJson
+    $c = ConvertFrom-JsoncText $CurrentJson
+    if ($null -eq $c) { throw 'settings.json does not parse as a JSON object' }
+    $undone = [System.Collections.Generic.List[string]]::new()
+    $kept   = [System.Collections.Generic.List[string]]::new()
+
+    $has   = { param($obj, $k) $null -ne $obj -and @($obj.PSObject.Properties.Match($k)).Count -gt 0 }
+    $canon = { param($obj, $k) if (& $has $obj $k) { ConvertTo-CanonicalJson $obj.$k } else { '<absent>' } }
+
+    # One object's keys, compared across the three texts.
+    $undoObject = {
+        param($oe, $pe, $ce, [string]$Prefix)
+        if ($null -eq $ce) { return }
+        $names = [System.Collections.Generic.List[string]]::new()
+        foreach ($x in @($oe, $pe)) {
+            if ($null -eq $x) { continue }
+            foreach ($pr in $x.PSObject.Properties) { if (-not $names.Contains($pr.Name)) { $names.Add($pr.Name) } }
+        }
+        foreach ($k in $names) {
+            $ov = & $canon $oe $k
+            $pv = & $canon $pe $k
+            if ($ov -ceq $pv) { continue }
+            $cv = & $canon $ce $k
+            if ($cv -ceq $ov) { continue }
+            if ($cv -ceq $pv) {
+                if (& $has $oe $k) {
+                    if (& $has $ce $k) { $ce.$k = $oe.$k }
+                    else { $ce | Add-Member -NotePropertyName $k -NotePropertyValue $oe.$k }
+                } else {
+                    [void]$ce.PSObject.Properties.Remove($k)
+                }
+                $undone.Add($Prefix + $k)
+            } else {
+                $kept.Add($Prefix + $k)
+            }
+        }
+    }
+
+    $target = $TargetName
+    if (-not $target) { $target = 'defaults' }
+    $ro = Resolve-WTProfileTarget -Settings $o -TargetName $target
+    $rp = Resolve-WTProfileTarget -Settings $p -TargetName $target
+    $rc = Resolve-WTProfileTarget -Settings $c -TargetName $target
+    & $undoObject $ro.Entry $rp.Entry $rc.Entry ''
+
+    if ($target -ne 'defaults') {
+        $so = (Get-WTProfileShape -Settings $o).Defaults
+        $sp = (Get-WTProfileShape -Settings $p).Defaults
+        $sc = (Get-WTProfileShape -Settings $c).Defaults
+        & $undoObject $so $sp $sc 'defaults/'
+    }
+    # A defaults block the preview created and the undo left empty.
+    $dc = (Get-WTProfileShape -Settings $c).Defaults
+    if ($null -ne $dc -and @($dc.PSObject.Properties).Count -eq 0 -and $null -eq (Get-WTProfileShape -Settings $o).Defaults -and
+        $null -ne (Get-WTProfileShape -Settings $p).Defaults) {
+        [void]$c.profiles.PSObject.Properties.Remove('defaults')
+    }
+
+    # Schemes, by name.
+    $byName = { param($doc) $h = @{}; if (& $has $doc 'schemes') { foreach ($sx in @($doc.schemes)) { if ($null -ne $sx -and $sx.name) { $h["$($sx.name)"] = $sx } } }; $h }
+    $so = & $byName $o; $sp = & $byName $p; $sc = & $byName $c
+    $schemeNames = [System.Collections.Generic.List[string]]::new()
+    foreach ($h in $so, $sp) { foreach ($k in $h.Keys) { if (-not $schemeNames.Contains($k)) { $schemeNames.Add($k) } } }
+    foreach ($n in $schemeNames) {
+        $ov = if ($so.ContainsKey($n)) { ConvertTo-CanonicalJson $so[$n] } else { '<absent>' }
+        $pv = if ($sp.ContainsKey($n)) { ConvertTo-CanonicalJson $sp[$n] } else { '<absent>' }
+        if ($ov -ceq $pv) { continue }
+        $cv = if ($sc.ContainsKey($n)) { ConvertTo-CanonicalJson $sc[$n] } else { '<absent>' }
+        if ($cv -ceq $ov) { continue }
+        if ($cv -ceq $pv) {
+            $list = @(@($c.schemes) | Where-Object { -not ($null -ne $_ -and "$($_.name)" -ceq $n) })
+            if ($so.ContainsKey($n)) { $list += $so[$n] }
+            $c.schemes = $list
+            $undone.Add("schemes/$n")
+        } else {
+            $kept.Add("schemes/$n")
+        }
+    }
+    if ((& $has $c 'schemes') -and @($c.schemes).Count -eq 0 -and -not (& $has $o 'schemes')) {
+        [void]$c.PSObject.Properties.Remove('schemes')
+    }
+
+    return @{
+        Text   = ($c | ConvertTo-Json -Depth 100)
+        Undone = $undone.ToArray()
+        Kept   = $kept.ToArray()
+    }
+}
+
 function Merge-StyleIntoSettings {
     param(
         $Settings,
