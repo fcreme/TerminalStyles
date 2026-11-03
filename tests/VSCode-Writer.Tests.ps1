@@ -2254,3 +2254,63 @@ Describe 'Get-VSCodeRefusalDetail' {
         }
     }
 }
+
+Describe 'a note written inside the colour block a style created survives every door' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:sPath = Join-Path $script:TStylesDataRoot 'Code/User/settings.json'
+            New-Item -ItemType Directory -Path ([System.IO.Path]::GetDirectoryName($script:sPath)) -Force | Out-Null
+            [System.IO.File]::WriteAllText($script:sPath, "{`n  // mine`n  `"editor.fontSize`": 13`n}", [System.Text.UTF8Encoding]::new($false))
+            $script:koholint = Get-StyleDir -StyleName 'koholint'
+            $script:eva      = Get-StyleDir -StyleName 'eva'
+            Mock Resolve-VSCodeTarget { @{ Status = 'ok'; Variant = 'Code'; Path = $script:sPath } }
+            Mock Write-Host { }
+            Set-VSCodeStateEntry -Variant 'Code' -SettingsPath $script:sPath -Consent 'yes'
+            $script:note = '// NOTE(me): bg was #101010 before'
+            $script:annotate = {
+                $t = [System.IO.File]::ReadAllText($script:sPath)
+                $head = '"workbench.colorCustomizations": {'
+                $at = $t.IndexOf($head, [System.StringComparison]::Ordinal)
+                $at | Should -BeGreaterThan -1
+                $n = $t.Insert($at + $head.Length, "`n    $script:note`n    ")
+                [System.IO.File]::WriteAllText($script:sPath, $n, [System.Text.UTF8Encoding]::new($false))
+            }
+        }
+
+        It 'Reset-StyleVSCodeConfig keeps it' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            ((Read-VSCodeState).Entries['Code'].record.CreatedParents | ForEach-Object { $_ -join '/' }) | Should -Be 'workbench.colorCustomizations'
+            & $script:annotate
+            $r = Reset-StyleVSCodeConfig -Variant 'Code'
+            $r.Status | Should -Be 'reset'
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            $text.Contains($script:note) | Should -BeTrue
+            $text.Contains('// mine') | Should -BeTrue
+            Get-JsoncValueLiteral -Text $text -Path @('workbench.colorCustomizations', 'terminal.background') | Should -BeNullOrEmpty
+            (Read-VSCodeState).Entries['Code'].record | Should -BeNullOrEmpty
+        }
+
+        It 'a switch keeps it' {
+            Publish-StyleVSCodeConfig -StyleName 'koholint' -StyleDir $script:koholint -Kind 'VSCode' | Out-Null
+            & $script:annotate
+            (Publish-StyleVSCodeConfig -StyleName 'eva' -StyleDir $script:eva -Kind 'VSCode').Status | Should -Be 'written'
+            [System.IO.File]::ReadAllText($script:sPath).Contains($script:note) | Should -BeTrue
+            (Read-VSCodeState).Entries['Code'].record.Style | Should -Be 'eva'
+        }
+
+        It 'Esc after you write it into the block a preview created keeps it, as it says' {
+            $s = New-VSCodePreviewSession
+            Invoke-VSCodePreview -Session $s -StyleName 'koholint' -StyleDir $script:koholint | Should -Be 'written'
+            & $script:annotate
+            $r = Restore-VSCodePreview -Session $s
+            $r.Status | Should -Be 'merged'
+            Show-VSCodeRestoreResult -Result $r
+            Should -Invoke Write-Host -Scope It -ParameterFilter { "$Object" -cmatch 'Your edit is still there' }
+            $text = [System.IO.File]::ReadAllText($script:sPath)
+            $text.Contains($script:note) | Should -BeTrue
+            Get-JsoncValueLiteral -Text $text -Path @('workbench.colorCustomizations', 'terminal.background') | Should -BeNullOrEmpty
+        }
+    }
+}

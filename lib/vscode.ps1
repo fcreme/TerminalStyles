@@ -638,21 +638,25 @@ function Invoke-VSCodeStyleReset {
     # A parent object this apply created, and which is empty again, goes too --
     # an orphan {} left in a config we were asked to clean out is the same
     # defect as an orphan colour scheme in Windows Terminal's settings.
+    #
+    # Empty means BLANK between the braces, not "no members". A comment the user
+    # wrote inside the block -- a note, a colour of the style commented out --
+    # is no member, and taking the block with it deleted their writing on every
+    # reset and every switch. Such a block holds the user's writing and stays;
+    # Remove-JsoncValue's own comment check is the backstop.
     foreach ($parentPath in @($Record.CreatedParents)) {
         if (-not $parentPath) { continue }
         $tokens = Get-JsoncToken -Text $current
         $found = Resolve-JsoncPath -Text $current -Tokens $tokens -Path $parentPath
         if (-not $found.Member -or $found.Member.ValueOpen -lt 0) { continue }
-        # NOT @(...) around this call. Get-JsoncObjectMember returns ,$arr to
-        # stop a one-member object unrolling into a bare hashtable -- and a
-        # comma-wrapped return put back inside @() is an array of ONE, whatever
-        # it holds. Wrapping it here reported an empty object as having one
-        # member, so the emptied colour block was never taken away.
-        $members = Get-JsoncObjectMember -Text $current -Tokens $tokens -OpenIndex $found.Member.ValueOpen
-        if (@($members).Count -eq 0 -or $null -eq $members -or $members.Count -eq 0) {
-            $r = Remove-JsoncValue -Text $current -Path $parentPath
-            if ($r.Changed) { $current = $r.Text; $removed.Add(($parentPath -join '/')) }
-        }
+        $open = $found.Member.ValueOpen
+        # We created an object; a value turned into anything else is not ours to take.
+        if ($tokens[$open].Kind -ne 'BraceOpen') { continue }
+        $close = Find-JsoncCloseBrace -Tokens $tokens -OpenIndex $open
+        if ($close -lt 0) { continue }
+        if (-not (Test-JsoncRangeBlank -Text $current -Start ($tokens[$open].Start + 1) -End $close)) { continue }
+        $r = Remove-JsoncValue -Text $current -Path $parentPath
+        if ($r.Changed) { $current = $r.Text; $removed.Add(($parentPath -join '/')) }
     }
 
     return @{
