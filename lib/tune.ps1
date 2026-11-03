@@ -296,6 +296,96 @@ function Test-TuneBaseMoved {
     return ($RecordedFingerprint -ne $currentFp)
 }
 
+function Get-TuneSavePlan {
+    <#
+    .SYNOPSIS
+    What a tuner save will do to <DataRoot>/styles/<name>: what it writes, what
+    it removes, and what of that is already there. Reads; writes nothing.
+
+    .DESCRIPTION
+    One decision, which the question before the save is rendered from
+    (Get-TuneReplaceWarning) and which Save-TunedStyle carries out. Three places
+    used to decide it, and none of them was the code the user was asked about:
+    the Save-As question was asked only when the folder held a scheme.json, and
+    was worded as though the folder were ANOTHER style even when it was the one
+    being tuned, while the removal fired whenever the destination was not the
+    opened style, style or not. So a Save As under the style's own name warned
+    "Its background image goes with it" and kept it, and a folder holding a
+    background.* but no scheme.json lost it with no question.
+
+    Base and destination can be ONE directory -- an Overwrite of a style with
+    no tune.json is its own base -- and then a copy from the base is a copy of a
+    file onto itself. Compared the way the host filesystem compares
+    (Test-SameStyleDirectory), not with -eq, which is case-insensitive: on Linux
+    a Save As of `Eva` from styles/eva is a brand-new style.
+
+    profile.ps1 and prompt.sh follow the base on every save: they are copies of
+    the base's, and a replaced style keeping its own printed the wrong theme's
+    banner under "will be REPLACED" (0.8.18). They are removed only from a folder
+    that is a style (it has a scheme.json); a folder that is not one has nothing
+    being replaced.
+
+    Every background.*, meta.json and README.md are the style's OWN files, so
+    they go only when the destination is ANOTHER style (Replacing). A replaced
+    style's image outranks the base's inherited one and went on painting under
+    the new colours (0.8.28); its meta.json kept its description in the list and
+    picker. They are not carried from the base either: neither a base's
+    description nor its README describes the tuned style. An Overwrite re-tune
+    keeps all three -- a tuned style's base is another directory, so "the
+    destination is not the base" is true on every brightness tweak.
+
+    An omitted -OpenedStyleDir means "the destination is the style being
+    tuned", the non-destructive answer.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][string]$SaveName,
+        [Parameter(Mandatory)][string]$BaseStyleDir,
+        [string]$OpenedStyleDir
+    )
+    $destDir   = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $SaveName
+    $isStyle   = Test-Path -LiteralPath (Join-Path $destDir 'scheme.json')
+    $sameStyle = (-not $OpenedStyleDir) -or (Test-SameStyleDirectory -A $destDir -B $OpenedStyleDir)
+    $sameDir   = Test-SameStyleDirectory -A $destDir -B $BaseStyleDir
+    $replacing = $isStyle -and -not $sameStyle
+    $inDest    = { param($Name) Test-Path -LiteralPath (Join-Path $destDir $Name) }
+
+    $writes  = @('scheme.json', 'theme.json')
+    $removes = @()
+    if (Test-Path -LiteralPath (Join-Path $BaseStyleDir 'profile.ps1')) {
+        $writes += 'profile.ps1'
+    } elseif (-not $sameDir -and $isStyle -and (& $inDest 'profile.ps1')) {
+        $removes += 'profile.ps1'
+    }
+    if (-not $sameDir) {
+        if (Test-Path -LiteralPath (Join-Path $BaseStyleDir 'prompt.sh')) {
+            $writes += 'prompt.sh'
+        } elseif ($isStyle -and (& $inDest 'prompt.sh')) {
+            $removes += 'prompt.sh'
+        }
+    }
+    $writes += 'tune.json'
+    if ($replacing) {
+        $removes += @(Get-BackgroundFileIn -Directory $destDir -All | ForEach-Object { [System.IO.Path]::GetFileName($_) })
+        foreach ($own in 'meta.json', 'README.md') {
+            if (& $inDest $own) { $removes += $own }
+        }
+    }
+
+    $bundled = Join-Path (Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $SaveName) 'scheme.json'
+    return [pscustomobject]@{
+        Name           = $SaveName
+        DestDir        = $destDir
+        IsStyle        = [bool]$isStyle
+        SameStyle      = [bool]$sameStyle
+        Replacing      = [bool]$replacing
+        Writes         = $writes
+        Removes        = $removes
+        Overwrites     = @($writes | Where-Object { & $inDest $_ })
+        ShadowsBundled = ((-not $isStyle) -and (Test-Path -LiteralPath $bundled))
+    }
+}
+
 function Save-TunedStyle {
     # Materializes a tuned style into $DataRoot\styles\$SaveName\:
     #   scheme.json (adjusted colors, name = $SaveName)
@@ -306,6 +396,7 @@ function Save-TunedStyle {
     #               line. In a UTF-16 or UTF-32 file a code unit that does not
     #               decode becomes U+FFFD.)
     #   tune.json   (deltas + base name, for re-tuning)
+    # and removes what Get-TuneSavePlan says a save over another style takes.
     param(
         [Parameter(Mandatory)]$AdjustedScheme,
         [Parameter(Mandatory)][string]$SaveName,
@@ -329,9 +420,17 @@ function Save-TunedStyle {
         # is the non-destructive answer.
         [string]$OpenedStyleDir,
         [int]$Brightness, [int]$Saturation, [int]$Opacity,
-        [string]$FontFace, [int]$FontSize
+        [string]$FontFace, [int]$FontSize,
+        # The plan the user was asked about (Get-TuneSavePlan), so the save does
+        # what the question said. Computed here when absent or for another
+        # folder.
+        $Plan
     )
     $destDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $SaveName
+    if (-not $Plan -or -not [string]::Equals("$($Plan.DestDir)", $destDir, [System.StringComparison]::Ordinal)) {
+        # Before the folder is made, so IsStyle is the folder as it was.
+        $Plan = Get-TuneSavePlan -SaveName $SaveName -BaseStyleDir $BaseStyleDir -OpenedStyleDir $OpenedStyleDir
+    }
     if (-not (Test-Path -LiteralPath $destDir)) {
         New-Item -ItemType Directory -Path $destDir -Force | Out-Null
     }
@@ -351,39 +450,17 @@ function Save-TunedStyle {
         ($theme | ConvertTo-Json -Depth 16),
         [System.Text.UTF8Encoding]::new($false))
 
-    # Re-tuning a style that was already saved with Overwrite makes $BaseStyleDir
-    # and $destDir the SAME directory, so every "copy from base to dest" below is
-    # really a copy of a file onto itself. Left unguarded that appends a second
-    # `# tstyles-tuned:` marker to profile.ps1 on each repeat and makes Copy-Item
-    # throw a red "Cannot overwrite the item with itself" for prompt.sh, at save
-    # time, after the user has already committed.
-    # Compared the way the HOST FILESYSTEM compares, not the way PowerShell's
-    # -eq does. -eq is case-insensitive, so on Linux (case-sensitive) a "Save
-    # as" of `Eva` from a base at styles/eva would look like the same directory
-    # and skip the prompt.sh copy into what is really a brand-new style --
-    # costing it the zsh/bash prompt the copy exists to provide.
-    $sameDir = Test-SameStyleDirectory -A $destDir -B $BaseStyleDir
+    # What goes, as the question said (Get-TuneSavePlan). Silently on failure,
+    # as before.
+    foreach ($name in @($Plan.Removes)) {
+        Remove-Item -LiteralPath (Join-Path $destDir $name) -Force -ErrorAction SilentlyContinue
+    }
 
-    # Copy-or-REMOVE, not copy-if-present, for the artefacts this function owns.
-    #
-    # The Save-As collision prompt promises "'<name>' already exists and will be
-    # REPLACED", and this was a merge: anything the NEW base does not itself
-    # ship survived from the old style. Save over `mytheme` (tuned from eva,
-    # so carrying eva's profile.ps1 and prompt.sh) with a tune of `plain`
-    # (which legitimately ships neither -- README documents both as optional)
-    # and the new mytheme kept eva's profile.ps1 and prompt.sh: it printed the
-    # wrong theme's banner and set the wrong prompt, in a style the user had
-    # just been told was replaced.
-    #
-    # Only when the destination is a DIFFERENT directory from the base. An
-    # Overwrite re-tune has them equal, where the source and the thing being
-    # removed are the same file.
+    # The Test-Path on the base means a save can only do less than its plan,
+    # never more.
     $profileSrc = Join-Path $BaseStyleDir 'profile.ps1'
     $profileDst = Join-Path $destDir 'profile.ps1'
-    if (-not $sameDir -and -not (Test-Path -LiteralPath $profileSrc) -and (Test-Path -LiteralPath $profileDst)) {
-        Remove-Item -LiteralPath $profileDst -Force -ErrorAction SilentlyContinue
-    }
-    if (Test-Path -LiteralPath $profileSrc) {
+    if ((@($Plan.Writes) -contains 'profile.ps1') -and (Test-Path -LiteralPath $profileSrc)) {
         # The base's own bytes, plus one line: a per-style marker, so the
         # materialized profile is byte-distinct from the base's. Without it,
         # Get-CurrentStyleName -- which compares current-style.ps1 against each
@@ -423,41 +500,8 @@ function Save-TunedStyle {
     # this a tuned style has no shell prompt at all, so a zsh user who tunes
     # anything silently loses the banner and prompt while keeping the colors.
     $promptSrc = Join-Path $BaseStyleDir 'prompt.sh'
-    $promptDst = Join-Path $destDir 'prompt.sh'
-    if (-not $sameDir) {
-        if (Test-Path -LiteralPath $promptSrc) {
-            Copy-Item -LiteralPath $promptSrc -Destination $promptDst -Force
-        } elseif (Test-Path -LiteralPath $promptDst) {
-            # Same reasoning as profile.ps1 above: leaving the old style's
-            # prompt behind gives the replaced style the wrong banner.
-            Remove-Item -LiteralPath $promptDst -Force -ErrorAction SilentlyContinue
-        }
-    }
-
-    # The background image, which is NOT one of the artefacts copied from the
-    # base: a base's image lives in the data-root cache and reaches a tuned
-    # style by reference, through tune.json. A background.* sitting in a style
-    # directory is a file the user put there, and it is tier 1 of
-    # Get-StyleBundledBackground -- checked before the cache and before the
-    # inherited image, so it outranks the new base's permanently.
-    #
-    # That made the Save-As collision prompt untrue in the way that shows on
-    # screen: 'mytheme' was REPLACED, kept its own wallpaper, and went on
-    # painting it under the new style's colours -- while the tuner's own
-    # preview, whose scratch dir carries no image, had shown the BASE's.
-    #
-    # Gated on "the destination is a different style", not on $sameDir. Measured
-    # on the $sameDir form: an ordinary Enter-save of a brightness tweak deleted
-    # the override, because a tuned style's base is another directory.
-    $replacingAnotherStyle = $false
-    if ($OpenedStyleDir) {
-        $replacingAnotherStyle = -not (Test-SameStyleDirectory -A $destDir -B $OpenedStyleDir)
-    }
-    if ($replacingAnotherStyle) {
-        $staleBackground = Get-BackgroundFileIn -Directory $destDir
-        if ($staleBackground) {
-            Remove-Item -LiteralPath $staleBackground -Force -ErrorAction SilentlyContinue
-        }
+    if ((@($Plan.Writes) -contains 'prompt.sh') -and (Test-Path -LiteralPath $promptSrc)) {
+        Copy-Item -LiteralPath $promptSrc -Destination (Join-Path $destDir 'prompt.sh') -Force
     }
 
     if (-not $LineageBase)    { $LineageBase    = $BaseName }
@@ -516,6 +560,10 @@ function Get-TuneOverwriteChoice {
     would lose the warning and the y/N gate as well as being told the original
     was safe. Hence two fields.
 
+    Replaces now feeds the label only. The y/N is .Question, rendered from .Plan
+    (Get-TuneSavePlan), the plan the save then carries out; it is $null when
+    the save touches nothing that is there.
+
     -Claim / -RootsAreOne are Get-StyleOrigin's seams, forwarded so a test can
     drive both layouts without building two installs.
     #>
@@ -523,12 +571,15 @@ function Get-TuneOverwriteChoice {
     param(
         [Parameter(Mandatory)][string]$StyleName,
         [Parameter(Mandatory)][string]$StyleDir,
+        # The style the colours come from; the style itself unless it is tuned.
+        [string]$BaseStyleDir,
         $Claim = '__unset__',
         $RootsAreOne = $null
     )
 
-    $destDir  = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
-    $replaces = Test-Path -LiteralPath (Join-Path $destDir 'scheme.json')
+    if (-not $BaseStyleDir) { $BaseStyleDir = $StyleDir }
+    $plan     = Get-TuneSavePlan -SaveName $StyleName -BaseStyleDir $BaseStyleDir -OpenedStyleDir $StyleDir
+    $replaces = $plan.IsStyle
     $origin   = Get-StyleOrigin -Name $StyleName -StyleDir $StyleDir -Claim $Claim -RootsAreOne $RootsAreOne
 
     $note =
@@ -556,36 +607,64 @@ function Get-TuneOverwriteChoice {
         Replaces = [bool]$replaces
         Origin   = $origin
         Note     = $note
+        Plan     = $plan
+        Question = (Get-TuneReplaceWarning -Plan $plan)
     }
 }
 
 function Get-TuneReplaceWarning {
     <#
     .SYNOPSIS
-    The question asked before the tuner writes over a style that already exists.
+    The question asked before a tuner save, or $null when it loses nothing.
 
     .DESCRIPTION
-    A sentence rather than a literal at the Read-Host, because what the save
-    takes with it depends on the destination: replacing ANOTHER style also
-    removes the background image its owner placed beside it (see
-    Save-TunedStyle), and a prompt that bounds itself is entitled to be read as
-    complete. An Overwrite re-tune keeps that image, and says nothing about it.
+    Rendered from the plan Save-TunedStyle carries out (Get-TuneSavePlan), so
+    it cannot promise more than the save does, or less: a prompt that bounds
+    itself is entitled to be read as complete. Over another style it names the
+    style's own files that go with it; onto the style being tuned it says only
+    that it is replaced; in a folder that is not a style it names the files it
+    overwrites. -IncludeShadow adds the bundled-shadow sentence, which Save As
+    asks and [1] Overwrite puts in its label instead.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][string]$Name,
-        [Parameter(Mandatory)][string]$DestDir,
-        # The destination is the style being tuned (Overwrite), not another
-        # style being replaced (Save As).
-        [switch]$SameStyle
+        [Parameter(Mandatory)]$Plan,
+        [switch]$IncludeShadow
     )
 
-    $sentence = if ($SameStyle) { "'$Name' will be replaced and cannot be undone." }
-                else            { "'$Name' already exists and will be REPLACED." }
-    if (-not $SameStyle -and (Get-BackgroundFileIn -Directory $DestDir)) {
-        $sentence += " Its background image goes with it."
+    $name  = $Plan.Name
+    $parts = @()
+    if ($Plan.IsStyle -and $Plan.SameStyle) {
+        $parts += "'$name' will be replaced and cannot be undone."
+    } elseif ($Plan.IsStyle) {
+        $sentence = "'$name' already exists and will be REPLACED."
+        $removes = @($Plan.Removes)
+        $images  = @($removes | Where-Object { $_ -like 'background.*' }).Count
+        $items   = @()
+        if ($images -eq 1) { $items += 'background image' } elseif ($images -gt 1) { $items += 'background images' }
+        foreach ($own in 'meta.json', 'README.md') { if ($removes -contains $own) { $items += $own } }
+        if ($items.Count) {
+            $verb = if ($items.Count -eq 1 -and $images -le 1) { 'goes' } else { 'go' }
+            $sentence += " Its $(Join-TuneNameList $items) $verb with it."
+        }
+        $parts += $sentence
+    } elseif (@($Plan.Overwrites).Count) {
+        $over = @($Plan.Overwrites)
+        $pronoun = if ($over.Count -eq 1) { 'it' } else { 'them' }
+        $parts += "A folder named '$name' already holds $(Join-TuneNameList $over), and saving there overwrites $pronoun."
     }
-    return "  $sentence Continue? [y/N]"
+    if ($IncludeShadow -and $Plan.ShadowsBundled) {
+        $parts += "That shadows bundled '$name'."
+    }
+    if (-not $parts.Count) { return $null }
+    return "  $($parts -join ' ') Continue? [y/N]"
+}
+
+function Join-TuneNameList {
+    # 'a', 'a and b', 'a, b and c'.
+    param([string[]]$Items)
+    if ($Items.Count -le 1) { return ($Items -join '') }
+    return (($Items[0..($Items.Count - 2)] -join ', ') + ' and ' + $Items[-1])
 }
 
 function Get-TunedBaseBackground {
@@ -1655,16 +1734,14 @@ function Invoke-TerminalStyleTune {
         # unconditionally, which for that case asserted the exact opposite of
         # what was about to happen. Save As twenty lines below has drawn this
         # distinction since 0.8.x; option [1] never did.
-        # Two questions with two answers; see Get-TuneOverwriteChoice. .Replaces
-        # is "is there a file where the save is about to write", which gates the
-        # y/N below and is unchanged. .Note is "whose style is that", which on a
-        # bootstrap install is a different question -- and was answered with the
-        # first one, so an untouched SHIPPED style was labelled "your saved
-        # style" and the "(shadows the bundled style)" branch was unreachable.
-        $overwriteChoice   = Get-TuneOverwriteChoice -StyleName $StyleName -StyleDir $styleDir
-        $overwriteReplaces = $overwriteChoice.Replaces
-        $overwriteNote     = $overwriteChoice.Note
-        $overwriteUserDir  = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $StyleName
+        # Two questions with two answers; see Get-TuneOverwriteChoice. .Note is
+        # "whose style is that", which on a bootstrap install is not "is there a
+        # style where the save writes" -- answered with that one, an untouched
+        # SHIPPED style was labelled "your saved style". .Question is the y/N,
+        # one question from the plan the save carries out (Get-TuneSavePlan).
+        $overwriteChoice = Get-TuneOverwriteChoice -StyleName $StyleName -StyleDir $styleDir -BaseStyleDir $baseDir
+        $overwriteNote   = $overwriteChoice.Note
+        $savePlan        = $null
 
         Write-Host "    [1] Overwrite '$StyleName'   $overwriteNote"
         Write-Host "    [2] Save as a new name"
@@ -1673,15 +1750,15 @@ function Invoke-TerminalStyleTune {
         $saveName = $null
         if ($choice -eq '1') {
             # Gated the same way Save As gates the same outcome.
-            if ($overwriteReplaces) {
-                $warn = "$(Read-Host (Get-TuneReplaceWarning -Name $StyleName -DestDir $overwriteUserDir -SameStyle))".Trim()
+            if ($overwriteChoice.Question) {
+                $warn = "$(Read-Host $overwriteChoice.Question)".Trim()
                 if ($warn -notmatch '^(?i)y') {
                     Write-Host ($saveUi.Dim + "  Cancelled." + $saveUi.Reset)
                 } else {
-                    $saveName = $StyleName
+                    $saveName = $StyleName; $savePlan = $overwriteChoice.Plan
                 }
             } else {
-                $saveName = $StyleName
+                $saveName = $StyleName; $savePlan = $overwriteChoice.Plan
             }
         } else {
             while (-not $saveName) {
@@ -1698,28 +1775,17 @@ function Invoke-TerminalStyleTune {
                     Write-Host ($saveUi.Warn + "  Use letters, digits, dot, underscore, or hyphen (max 64, and not '.' or '..')." + $saveUi.Reset)
                     continue
                 }
-                # Two different collisions, and only one of them loses work.
-                #
-                # A USER style of the same name is in the directory Save-TunedStyle
-                # writes to, so saving over it destroys it -- and that was the case
-                # with no warning at all. A BUNDLED style of the same name is only
-                # shadowed: the original stays in the module and comes back if the
-                # user style is deleted. The prompt used to warn about the harmless
-                # one and stay silent about the destructive one.
-                $userDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $candidate
-                if (Test-Path -LiteralPath (Join-Path $userDir 'scheme.json')) {
-                    # Through the helper, because REPLACED now also takes the
-                    # background image the destination's owner placed beside it
-                    # -- and a prompt that bounds itself gets read as complete.
-                    $warn = "$(Read-Host (Get-TuneReplaceWarning -Name $candidate -DestDir $userDir))".Trim()
+                # One question, from the plan the save carries out: over
+                # another style it names what goes with it, in a folder that is
+                # not a style it names what it overwrites, and a fresh name
+                # that shadows a bundled style says so. A no re-asks the name.
+                $candidatePlan = Get-TuneSavePlan -SaveName $candidate -BaseStyleDir $baseDir -OpenedStyleDir $styleDir
+                $question = Get-TuneReplaceWarning -Plan $candidatePlan -IncludeShadow
+                if ($question) {
+                    $warn = "$(Read-Host $question)".Trim()
                     if ($warn -notmatch '^(?i)y') { continue }
-                } else {
-                    $bundledDir = Join-Path (Join-Path $script:TStylesModuleRoot 'styles') $candidate
-                    if (Test-Path -LiteralPath (Join-Path $bundledDir 'scheme.json')) {
-                        $warn = "$(Read-Host "  That shadows bundled '$candidate'. Continue? [y/N]")".Trim()
-                        if ($warn -notmatch '^(?i)y') { continue }
-                    }
                 }
+                $savePlan = $candidatePlan
                 $saveName = $candidate
             }
         }
@@ -1741,7 +1807,7 @@ function Invoke-TerminalStyleTune {
         # Bake + persist, then apply the saved style from a clean settings.json
         # so no preview-scheme pollution lingers.
         $finalScheme = Get-AdjustedScheme -Scheme $baseScheme -Brightness $brightness -Saturation $saturation
-        Save-TunedStyle -AdjustedScheme $finalScheme -SaveName $saveName `
+        Save-TunedStyle -AdjustedScheme $finalScheme -SaveName $saveName -Plan $savePlan `
             -BaseStyleDir $baseDir -BaseName $baseName `
             -LineageBase $lineageBase -LineageBaseDir $lineageBaseDir `
             -OpenedStyleDir $styleDir `

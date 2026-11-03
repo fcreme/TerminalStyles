@@ -208,11 +208,20 @@ function Get-BackgroundFileIn {
     # kept its background.png, so a style the user had just been told was
     # REPLACED went on painting the replaced style's wallpaper. The removal
     # list and the resolution list are now the same list.
-    param([Parameter(Mandatory)][string]$Directory)
+    #
+    # -All returns every one present, in that order, for the removal: README
+    # allows several, and removing only the first left the next one to paint.
+    # Unrolled, so a caller wraps it in @().
+    param([Parameter(Mandatory)][string]$Directory, [switch]$All)
+    $found = @()
     foreach ($ext in 'gif','png','jpg','jpeg') {
         $candidate = Join-Path $Directory "background.$ext"
-        if (Test-Path -LiteralPath $candidate) { return $candidate }
+        if (Test-Path -LiteralPath $candidate) {
+            if (-not $All) { return $candidate }
+            $found += $candidate
+        }
     }
+    if ($All) { return $found }
     return $null
 }
 

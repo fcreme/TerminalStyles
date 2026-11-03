@@ -131,16 +131,17 @@ Describe 'the Overwrite option describes what it is about to do' {
         It 'asks before replacing a style that has no bundled original' {
             # The same y/N gate Save-As has applied to the same outcome since
             # 0.8.x. Overwrite had none: it destroyed the style in place, with
-            # no backup, one line after claiming the original was safe. Replaces
-            # is what the tuner gates that question on, so it is asserted here
-            # rather than by matching the Read-Host line.
+            # no backup, one line after claiming the original was safe. .Question
+            # is what the tuner asks, rendered from the plan the save carries
+            # out, so it is asserted here rather than by matching the Read-Host
+            # line.
             $script:TStylesDataRoot   = Join-Path $script:sand 'data'
             $script:TStylesModuleRoot = Join-Path $script:sand 'module'
             $dir = script:New-Style -Root $script:TStylesDataRoot -Name 'mine'
 
-            (Get-TuneOverwriteChoice -StyleName 'mine' -StyleDir $dir).Replaces | Should -BeTrue
-            Get-TuneReplaceWarning -Name 'mine' -DestDir $dir -SameStyle |
-                Should -Match 'cannot be undone'
+            $choice = Get-TuneOverwriteChoice -StyleName 'mine' -StyleDir $dir
+            $choice.Replaces | Should -BeTrue
+            $choice.Question | Should -Match 'cannot be undone'
         }
     }
 }

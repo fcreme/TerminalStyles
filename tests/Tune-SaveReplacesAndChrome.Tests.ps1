@@ -145,20 +145,81 @@ Describe 'a Save-As over an existing style really replaces it' {
 
         It 'says so before it takes the image, and only when it is taking one' {
             # The prompt is the consent, so it has to name what goes. A Save-As
-            # over a style with an image now removes it; an Overwrite re-tune
-            # keeps it and must not claim otherwise.
+            # over a style with an image removes it; an Overwrite re-tune keeps
+            # it and must not claim otherwise. Both answers come from the plan
+            # the save then carries out.
             New-Item -ItemType Directory -Path $script:dest -Force | Out-Null
-            Get-TuneReplaceWarning -Name 'mytheme' -DestDir $script:dest |
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'scheme.json'), '{"name":"mytheme"}', $script:enc)
+            Get-TuneReplaceWarning -Plan (Get-TuneSavePlan -SaveName 'mytheme' -BaseStyleDir $script:plain -OpenedStyleDir $script:plain) |
                 Should -Not -Match '(?i)background' -Because 'there is no image here to take'
 
             [System.IO.File]::WriteAllText((Join-Path $script:dest 'background.png'), 'x', $script:enc)
-            $saveAs = Get-TuneReplaceWarning -Name 'mytheme' -DestDir $script:dest
+            $saveAs = Get-TuneReplaceWarning -Plan (Get-TuneSavePlan -SaveName 'mytheme' -BaseStyleDir $script:plain -OpenedStyleDir $script:plain)
             $saveAs | Should -Match 'will be REPLACED'
             $saveAs | Should -Match '(?i)background image'
 
-            Get-TuneReplaceWarning -Name 'mytheme' -DestDir $script:dest -SameStyle |
+            Get-TuneReplaceWarning -Plan (Get-TuneSavePlan -SaveName 'mytheme' -BaseStyleDir $script:plain -OpenedStyleDir $script:dest) |
                 Should -Not -Match '(?i)background' `
                 -Because 'an Overwrite re-tune keeps it, and a prompt may not claim a loss that will not happen'
+        }
+
+        It 'takes every image, meta.json and README.md of the style it REPLACES, and nothing else' {
+            $base = Join-Path $script:TStylesDataRoot 'styles/plainbase'
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $base 'scheme.json'), '{"name":"plainbase"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $base 'theme.json'), '{"opacity":100}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $base 'background.gif'), 'PLAIN-BASE-WALLPAPER', $script:enc)
+
+            New-Item -ItemType Directory -Path $script:dest -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'scheme.json'), '{"name":"mytheme"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'theme.json'), '{"opacity":100}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'meta.json'), '{"description":"MYTHEME-DESC","quote":"q"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'README.md'), '# mytheme', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'background.gif'), 'MYTHEME-GIF', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'background.png'), 'MYTHEME-PNG', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $script:dest 'notes.txt'), 'keep me', $script:enc)
+            (Get-StyleMeta -StyleDir $script:dest).Description | Should -Be 'MYTHEME-DESC' -Because 'the fixture must carry a description'
+
+            Save-TunedStyle -AdjustedScheme $script:scheme -SaveName 'mytheme' `
+                -BaseStyleDir $base -BaseName 'plainbase' -OpenedStyleDir $base `
+                -Brightness 0 -Saturation 0 -Opacity 100 -FontFace 'Menlo' -FontSize 12 | Out-Null
+
+            $meta = Get-StyleMeta -StyleDir $script:dest
+            $meta.Description | Should -Be ''
+            $meta.Quote | Should -Be ''
+            foreach ($f in 'README.md', 'background.gif', 'background.png') {
+                [System.IO.File]::Exists((Join-Path $script:dest $f)) | Should -BeFalse -Because "$f belonged to the replaced style"
+            }
+            [System.IO.File]::ReadAllText((Get-StyleBundledBackground -StyleDir $script:dest -NoFetch)) |
+                Should -BeExactly 'PLAIN-BASE-WALLPAPER'
+            [System.IO.File]::ReadAllText((Join-Path $script:dest 'notes.txt')) | Should -BeExactly 'keep me' `
+                -Because "the rule covers the style's own files, not everything in the folder"
+        }
+
+        It 'removes nothing from a folder that is not a style yet' {
+            $base = Join-Path $script:TStylesDataRoot 'styles/eva'
+            New-Item -ItemType Directory -Path $base -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $base 'scheme.json'), '{"name":"eva"}', $script:enc)
+            [System.IO.File]::WriteAllText((Join-Path $base 'theme.json'), '{"opacity":100}', $script:enc)
+            $evaCache = Get-StyleCacheDir -StyleName 'eva'
+            New-Item -ItemType Directory -Path $evaCache -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $evaCache '.no-background'),
+                ([pscustomobject]@{ schemaVersion = 1; kind = 'absent'; at = [datetime]::UtcNow.ToString('o') } | ConvertTo-Json -Compress), $script:enc)
+
+            $mine = Join-Path $script:TStylesDataRoot 'styles/mine'
+            New-Item -ItemType Directory -Path $mine -Force | Out-Null
+            $files = @{ 'background.png' = 'USER-PNG'; 'README.md' = '# notes'; 'profile.ps1' = 'MY-PROFILE'; 'prompt.sh' = 'MY-PROMPT' }
+            foreach ($k in $files.Keys) { [System.IO.File]::WriteAllText((Join-Path $mine $k), $files[$k], $script:enc) }
+
+            Save-TunedStyle -AdjustedScheme $script:scheme -SaveName 'mine' `
+                -BaseStyleDir $base -BaseName 'eva' -OpenedStyleDir $base `
+                -Brightness 0 -Saturation 0 -Opacity 100 -FontFace 'Menlo' -FontSize 12 | Out-Null
+
+            [System.IO.File]::Exists((Join-Path $mine 'scheme.json')) | Should -BeTrue -Because 'the save must have run'
+            foreach ($k in $files.Keys) {
+                [System.IO.File]::ReadAllText((Join-Path $mine $k)) | Should -BeExactly $files[$k] -Because "$k was not a replaced style's"
+            }
+            Get-StyleBundledBackground -StyleDir $mine -NoFetch | Should -Be (Join-Path $mine 'background.png')
         }
 
         It 'leaves an Overwrite re-tune alone, where base and destination are one directory' {

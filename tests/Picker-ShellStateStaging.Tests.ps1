@@ -341,15 +341,6 @@ Describe 'Save-TunedStyle same-directory detection' {
         }
 
     }
-
-    It 'is what Save-TunedStyle actually asks' {
-        # Keeps the decision from being inlined back into the caller, where it
-        # would stop being reachable by the tests above. Outside InModuleScope:
-        # the file's script:Get-FunctionAst helper is not visible inside one.
-        $fn = script:Get-FunctionAst -Name 'Save-TunedStyle'
-        $fn | Should -Not -BeNullOrEmpty
-        $fn.Extent.Text | Should -Match '\$sameDir\s*=\s*Test-SameStyleDirectory'
-    }
 }
 
 Describe 'the picker puts the terminal back when you cancel' {
