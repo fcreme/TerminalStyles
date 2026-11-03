@@ -27,7 +27,11 @@
 # collision, identical content included, whereas Terminal.app's import code
 # (read from its binary, never driven live) reuses an identical same-named
 # profile. No assertion depends on that difference, but the copy counts it
-# produces are not a measurement of Terminal.app.
+# produces are not a measurement of Terminal.app. Its delete rules are
+# Terminal 2.15's, read from its binary (-[TTProfileManager setProfiles:]) and
+# never driven live: a deleted default profile is replaced by the first in the
+# list, a deleted startup profile by the default, and every tab on a deleted
+# profile switches to the default.
 #
 # Invoke-AppleTerminalScript is mocked in every test here. Without that the
 # suite would drive the Terminal.app of whoever is running it: opening windows
@@ -142,6 +146,12 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             $script:scripts = [System.Collections.ArrayList]::new()
             $script:written = [System.Collections.ArrayList]::new()
             $script:refuseDelete = $false
+            # The roles a profile can hold, and the open tabs (by profile name).
+            $script:defaultSet = 'Basic'
+            $script:startupSet = 'Basic'
+            $script:tabs = [System.Collections.ArrayList]::new()
+            $script:refuseUse = $false
+            $script:refuseWindow = $false
 
             Mock Write-Host { [void]$script:written.Add("$Object") }
             Mock Invoke-AppleTerminalScript {
@@ -161,11 +171,28 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
                         if ($script:sets[$i].Name -ceq $n) { $script:sets.RemoveAt($i) }
                     }
                     if ($script:sets.Count -eq $before) { return $null }
+                    # Terminal 2.15's rules for the roles the deleted profile held.
+                    if ($script:defaultSet -ceq $n) { $script:defaultSet = $script:sets[0].Name }
+                    if ($script:startupSet -ceq $n) { $script:startupSet = $script:defaultSet }
+                    for ($i = 0; $i -lt $script:tabs.Count; $i++) {
+                        if ($script:tabs[$i] -ceq $n) { $script:tabs[$i] = $script:defaultSet }
+                    }
                     return ''
+                }
+                $m = [regex]::Match($Script,
+                    'set p to id of settings set "(?<n>(?:[^"\\]|\\.)*)"')
+                if ($m.Success -and $Script.Contains('id of default settings') -and $Script.Contains('id of startup settings')) {
+                    if ($script:refuseUse) { return $null }
+                    $n = $m.Groups['n'].Value -replace '\\(.)', '$1'
+                    if (@($script:sets | Where-Object { $_.Name -ceq $n }).Count -eq 0) { return $null }
+                    $t = @($script:tabs | Where-Object { $_ -ceq $n }).Count
+                    return ('use:{0},{1},{2}' -f ($script:defaultSet -ceq $n).ToString().ToLowerInvariant(),
+                            ($script:startupSet -ceq $n).ToString().ToLowerInvariant(), $t)
                 }
                 $m = [regex]::Match($Script,
                     'set current settings of t to settings set "(?<n>(?:[^"\\]|\\.)*)"')
                 if ($m.Success) {
+                    if ($script:refuseWindow) { return $null }
                     $n   = $m.Groups['n'].Value -replace '\\(.)', '$1'
                     $hit = @($script:sets | Where-Object { $_.Name -ceq $n })
                     if ($hit.Count -eq 0) { return $null }
@@ -277,6 +304,103 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
 
             $script:opened.Count | Should -Be $openedBefore -Because 'an up-to-date import is reused, not imported again'
             $script:windows[$script:windows.Count - 1] | Should -Be '<plist>v2</plist>'
+        }
+
+        It 'leaves its out-of-date profile alone while Terminal.app uses it as <Use>' -ForEach @(
+            @{ Use = 'the default profile' }
+            @{ Use = 'the startup profile' }
+        ) {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            $v1 = Get-AppleTerminalProfileHash -Path $script:profilePath
+            if ($Use -eq 'the default profile') { $script:defaultSet = 'eva' } else { $script:startupSet = 'eva' }
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:windows.Clear()
+
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+
+            if ($Use -eq 'the default profile') { $script:defaultSet | Should -BeExactly 'eva' } else { $script:startupSet | Should -BeExactly 'eva' }
+            @($script:scripts | Where-Object { $_ -cmatch 'delete settings set "eva"' }).Count | Should -Be 0
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v1</plist>')
+            @($script:windows) | Should -Be @('<plist>v1</plist>') -Because 'one window, on the profile as it is'
+            @($script:sets | Where-Object { $_.Name -cmatch '^eva \d+$' }).Count | Should -Be 0
+            (Get-AppleTerminalImportRecord)['eva'] | Should -Be $v1 -Because 'the next run asks again'
+            $script:scripts | Should -Contain 'tell application "Terminal" to get name of every settings set'
+        }
+
+        It 'says what it is used as, and what to change for it to be replaced' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            $script:defaultSet = 'eva'
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:written.Clear()
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            $said = ($script:written -join ' ') -replace '\s+', ' '
+            $said | Should -Match "using its 'eva' profile as your default profile"
+            $said | Should -Match 'left as it is'
+            $said | Should -Match 'Settings > Profiles'
+            $said | Should -Not -Match 'startup profile' -Because 'the startup profile is not eva here'
+
+            # Doing what it says lets the next run replace it.
+            $script:defaultSet = 'Basic'
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v2</plist>')
+        }
+
+        It 'leaves it alone when Terminal.app does not say what is using it' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            $script:refuseUse = $true
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:windows.Clear()
+            $script:written.Clear()
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            @($script:scripts | Where-Object { $_ -cmatch 'delete settings set "eva"' }).Count | Should -Be 0
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v1</plist>')
+            @($script:windows) | Should -Be @('<plist>v1</plist>')
+            (($script:written -join ' ') -replace '\s+', ' ') | Should -Match 'did not say whether its'
+        }
+
+        It 'does not claim a window on a kept profile that Terminal.app would not open' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            $v1 = Get-AppleTerminalProfileHash -Path $script:profilePath
+            $script:defaultSet = 'eva'
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:windows.Clear()
+            $script:written.Clear()
+            $openedBefore = $script:opened.Count
+            $script:refuseWindow = $true
+
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+
+            $script:opened.Count | Should -Be ($openedBefore + 1)
+            @($script:sets | Where-Object { $_.Name -ceq 'eva 1' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v2</plist>')
+            (Get-AppleTerminalImportRecord)['eva'] | Should -Be $v1
+            $said = ($script:written -join ' ') -replace '\s+', ' '
+            $said | Should -Not -Match 'opens on it'
+            $said | Should -Match 'numbered copy'
+        }
+
+        It 'replaces it when only open tabs use it, and says those tabs switched' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            [void]$script:tabs.Add('eva'); [void]$script:tabs.Add('eva')
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:written.Clear()
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v2</plist>')
+            $said = ($script:written -join ' ') -replace '\s+', ' '
+            $said | Should -Match 'was older than the style, so it was deleted'
+            $said | Should -Match "2 open tabs on it switched to Terminal.app's default profile"
+        }
+
+        It 'still replaces a profile nothing is using, and says what that costs' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:written.Clear()
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('<plist>v2</plist>')
+            (Get-AppleTerminalImportRecord)['eva'] | Should -Be (Get-AppleTerminalProfileHash -Path $script:profilePath)
+            $said = ($script:written -join ' ') -replace '\s+', ' '
+            $said | Should -Match 'was older than the style, so it was deleted'
+            $said | Should -Match 'did not carry over'
+            $said | Should -Not -Match 'switched'
         }
 
         It 'does not trust an import record written before 0.9.3' {
@@ -419,6 +543,38 @@ Describe 'Get-AppleTerminalSettingsSetName and the names it can list' {
 
             $listed | Should -Contain 'Basic' -Because 'the lister answered'
             (Test-AppleTerminalSettingsSetNameListable -Name $N) | Should -Be ($listed -ccontains $N)
+        }
+    }
+}
+
+Describe 'Get-AppleTerminalSettingsSetUse' {
+    InModuleScope TerminalStyles {
+        It 'reads what Terminal.app answers' {
+            $script:answer = 'use:true,false,2'
+            Mock Invoke-AppleTerminalScript { $script:answer }
+            $u = Get-AppleTerminalSettingsSetUse -Name 'eva'
+            $u.Answered | Should -BeTrue; $u.Default | Should -BeTrue; $u.Startup | Should -BeFalse; $u.Tabs | Should -Be 2
+            $script:answer = 'use:false,false,0'
+            $u = Get-AppleTerminalSettingsSetUse -Name 'eva'
+            $u.Answered | Should -BeTrue; $u.Default | Should -BeFalse; $u.Startup | Should -BeFalse; $u.Tabs | Should -Be 0
+        }
+
+        It 'counts an answer it cannot read as unanswered: <Label>' -ForEach @(
+            @{ Label = 'no answer'; Answer = $null }
+            @{ Label = 'empty';     Answer = '' }
+            @{ Label = 'ok';        Answer = 'ok' }
+            @{ Label = 'truncated'; Answer = 'use:true,false' }
+        ) {
+            $script:answer = $Answer
+            Mock Invoke-AppleTerminalScript { $script:answer }
+            (Get-AppleTerminalSettingsSetUse -Name 'eva').Answered | Should -BeFalse
+        }
+
+        It 'asks about the profile by the name it is given, quoted for AppleScript' {
+            Mock Invoke-AppleTerminalScript { 'use:false,false,0' }
+            Get-AppleTerminalSettingsSetUse -Name 'say "hi"' | Out-Null
+            Should -Invoke Invoke-AppleTerminalScript -Times 1 -Exactly -ParameterFilter {
+                $Script.Contains('id of settings set ' + (ConvertTo-AppleScriptString 'say "hi"')) }
         }
     }
 }
@@ -570,6 +726,16 @@ Describe 'the profiles command is reachable and documented' {
             $h = Get-TerminalStyleHelpData | Where-Object Name -eq 'profiles'
             (($h.Detail -join ' ') -replace '\s+', ' ') | Should -Match 'cannot prove it imported'
         }
+        It 'says when -NewWindow replaces the profile, and when it leaves it alone' {
+            $h = InModuleScope TerminalStyles { Get-TerminalStyleHelpData }
+            $prof  = ((@($h | Where-Object Name -eq 'profiles')[0].Detail) -join ' ') -replace '\s+', ' '
+            $apply = ((@($h | Where-Object Name -eq 'apply')[0].Detail) -join ' ') -replace '\s+', ' '
+            $prof  | Should -Match 'Once the style changes'
+            $prof  | Should -Match 'default or startup profile'
+            $apply | Should -Match 'replaced once the style changes'
+            $apply | Should -Match 'default or startup profile'
+        }
+
         It 'is in the known-subcommand list, so it is not read as a style name' {
             # The VALUE, not the source text: the list is a script variable, and
             # asserting on where it is written would pass or fail on layout.

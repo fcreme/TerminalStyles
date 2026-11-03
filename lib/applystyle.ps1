@@ -313,6 +313,63 @@ function Get-AppleTerminalSettingsSetName {
     @($out -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 }
 
+function Get-AppleTerminalSettingsSetUse {
+    <#
+    .SYNOPSIS
+    What Terminal.app is using one profile for: @{ Answered; Default; Startup;
+    Tabs }. Read-only.
+
+    .DESCRIPTION
+    Asked before TerminalStyles deletes a profile of its own. Terminal 2.15's
+    delete (-[TTProfileManager setProfiles:], read from its binary, never
+    driven live) makes the first profile in its list the default if the
+    deleted one was the default, moves the startup profile to the default if
+    the deleted one was the startup profile, and switches every tab on it to
+    the default -- silently.
+
+    Compared by id: `settings set "<name>"` resolves here exactly as the delete
+    resolves it, so the answer is about the profile the delete would remove.
+    Answered is $false for no answer, an error, or one that cannot be read
+    (such as a mock's 'ok'); a caller treats that as "in use", the direction
+    that deletes nothing. A window whose tabs cannot be listed is skipped
+    rather than failing the whole question.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Name)
+    $query = @"
+tell application "Terminal"
+    set p to id of settings set $(ConvertTo-AppleScriptString $Name)
+    set d to false
+    set s to false
+    try
+        set d to (id of default settings) is p
+    end try
+    try
+        set s to (id of startup settings) is p
+    end try
+    set n to 0
+    repeat with w in windows
+        try
+            repeat with t in tabs of w
+                if (id of current settings of t) is p then set n to n + 1
+            end repeat
+        end try
+    end repeat
+    return "use:" & d & "," & s & "," & n
+end tell
+"@
+    $m = [regex]::Match("$(Invoke-AppleTerminalScript $query)", '^use:(?<d>true|false),(?<s>true|false),(?<n>\d{1,6})$')
+    if (-not $m.Success) {
+        return [pscustomobject]@{ Answered = $false; Default = $false; Startup = $false; Tabs = 0 }
+    }
+    return [pscustomobject]@{
+        Answered = $true
+        Default  = ($m.Groups['d'].Value -eq 'true')
+        Startup  = ($m.Groups['s'].Value -eq 'true')
+        Tabs     = [int]$m.Groups['n'].Value
+    }
+}
+
 function Test-AppleTerminalSettingsSetNameListable {
     <#
     .SYNOPSIS
@@ -349,7 +406,9 @@ function Get-AppleTerminalImportRecord {
     no way to tell a settings set TerminalStyles created from one the user made
     and happened to name after a style, and deleting the wrong one is not
     recoverable. Open-AppleTerminalProfile deletes only a name that appears
-    here, and writes one only when the import is known to have landed under it.
+    here, and only while Terminal.app says it is not the default or startup
+    profile (Get-AppleTerminalSettingsSetUse); it writes one only when the
+    import is known to have landed under it.
     `tstyles profiles -Clean` is the exception: it deletes numbered copies by
     name and never reads this (Get-AppleTerminalDuplicateProfile). Records from
     0.8.24-0.9.2 were not written that way, so they live in another file and are
@@ -404,6 +463,10 @@ function Remove-AppleTerminalSettingsSet {
     returns $true, and on that reading would record one Terminal.app may have
     filed under a numbered name. A name the lister cannot return intact is
     never confirmed gone, for the same reason.
+
+    It deletes whatever it is given. A caller must ask
+    Get-AppleTerminalSettingsSetUse first: Terminal.app moves the default and
+    startup profile, and every tab, off a profile it deletes.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Name)
@@ -436,8 +499,18 @@ function Open-AppleTerminalProfile {
                                     which is what stops the accumulation
       * installed, ours, stale   -> delete ours and re-import, so a re-tuned
                                     style does not open a window in its old
-                                    colours
+                                    colours -- and say so
+      * installed, ours, stale,  -> open a window on it as it is, and say why
+        default or startup          (no answer from Terminal.app counts too)
       * installed, not ours      -> `open` it anyway, and record nothing
+
+    Why the default/startup case: Terminal 2.15's delete makes the first
+    profile in its list the default, moves the startup profile to the default
+    and switches every tab on the deleted profile to the default, and the
+    README invites making this profile the default. Through 0.9.3 the stale
+    branch never asked. Open tabs alone do not keep it: they switch to the
+    default and lose nothing, and the window this run would open on a kept
+    profile would keep it forever.
 
     The stale branch is why the import record exists. Reusing an installed
     profile unconditionally would trade a duplicate for something worse -- a
@@ -486,25 +559,51 @@ function Open-AppleTerminalProfile {
         $ours    = $record.ContainsKey($Name)
         $current = $ours -and $hash -and $record[$Name] -eq $hash
 
-        if ($current) {
-            $script = @"
+        $windowOnIt = @"
 tell application "Terminal"
     set t to do script ""
     set current settings of t to settings set $(ConvertTo-AppleScriptString $Name)
 end tell
 "@
-            if ($null -ne (Invoke-AppleTerminalScript $script)) { return }
+        $use = $null
+        $kept = $false
+        if ($ours -and -not $current) {
+            $use  = Get-AppleTerminalSettingsSetUse -Name $Name
+            $kept = (-not $use.Answered) -or $use.Default -or $use.Startup
+        }
+
+        if ($current -or $kept) {
+            if ($null -ne (Invoke-AppleTerminalScript $windowOnIt)) {
+                # Said only once the window is open on it: the note says so.
+                if ($kept) { Show-AppleTerminalProfileKept -Name $held -Use $use }
+                return
+            }
             # Terminal.app refused; fall through to the import path rather than
             # leaving the user with no window at all. The name is still taken,
-            # so nothing is recorded -- the record already holds this hash.
+            # so nothing is recorded: the record holds this hash, or, for a
+            # kept profile, the old one, so the next run asks again.
+            if ($kept) {
+                Write-Host ("  Terminal.app did not open a window on its '{0}' profile, so the updated" -f $held) -ForegroundColor Yellow
+                Write-Host "  style was opened beside it as a numbered copy; tstyles profiles -Clean" -ForegroundColor Yellow
+                Write-Host "  removes numbered copies." -ForegroundColor Yellow
+            }
         } elseif ($ours) {
-            # Ours, and out of date. Deleting it frees the name so the re-import
-            # lands on it -- but only once Terminal.app confirms the delete.
-            # Otherwise the import is numbered and the record keeps the OLD
-            # hash, so the next run finds this copy stale again rather than
-            # reusing it in colours the style no longer has.
+            # Ours, out of date, and not the default or startup profile.
+            # Deleting it frees the name so the re-import lands on it -- but
+            # only once Terminal.app confirms the delete. Otherwise the import
+            # is numbered and the record keeps the OLD hash, so the next run
+            # finds this copy stale again rather than reusing it in colours the
+            # style no longer has.
             $landsOnName = Remove-AppleTerminalSettingsSet -Name $Name
-            if (-not $landsOnName) {
+            if ($landsOnName) {
+                Write-Host ("  Terminal.app's '{0}' profile was older than the style, so it was deleted" -f $held) -ForegroundColor DarkGray
+                Write-Host "  so the updated style could be imported in its place. Anything you changed" -ForegroundColor DarkGray
+                Write-Host "  in it in Terminal's Settings did not carry over." -ForegroundColor DarkGray
+                if ($use -and $use.Tabs -gt 0) {
+                    $tabWord = if ($use.Tabs -eq 1) { 'open tab' } else { 'open tabs' }
+                    Write-Host ("  The {0} {1} on it switched to Terminal.app's default profile." -f $use.Tabs, $tabWord) -ForegroundColor DarkGray
+                }
+            } else {
                 Write-Host "  Terminal.app did not confirm that it deleted TerminalStyles' out-of-date" -ForegroundColor Yellow
                 Write-Host ("  '{0}' profile, so the updated style may be added beside it as a numbered" -f $held) -ForegroundColor Yellow
                 Write-Host ("  copy. If '{0}' is still in Terminal's Settings > Profiles, delete it there;" -f $held) -ForegroundColor Yellow
@@ -529,6 +628,37 @@ end tell
     if ($hash -and $landsOnName -and $recordable) {
         Set-AppleTerminalImportRecord -Name $Name -Hash $hash
     }
+}
+
+function Show-AppleTerminalProfileKept {
+    # Why -NewWindow opened its out-of-date profile instead of replacing it,
+    # naming only the roles Terminal.app reported and the steps for those.
+    param(
+        [Parameter(Mandatory)][string]$Name,
+        [Parameter(Mandatory)]$Use
+    )
+    Write-Host ""
+    if (-not $Use.Answered) {
+        Write-Host ("  Terminal.app did not say whether its '{0}' profile is your default or startup" -f $Name) -ForegroundColor Yellow
+        Write-Host "  profile, so it was left as it is rather than deleted to import the updated" -ForegroundColor Yellow
+        Write-Host "  style. The new window opens on it as it is; the next -NewWindow asks again." -ForegroundColor Yellow
+        return
+    }
+    $roles = @()
+    $steps = @()
+    if ($Use.Default) {
+        $roles += 'your default profile'
+        $steps += "make another profile the default in Terminal's Settings > Profiles"
+    }
+    if ($Use.Startup) {
+        $roles += 'your startup profile'
+        $steps += "choose another profile under 'On startup, open' in Settings > General"
+    }
+    Write-Host ("  Terminal.app is using its '{0}' profile as {1}, so it was left as it is:" -f $Name, ($roles -join ' and ')) -ForegroundColor Yellow
+    Write-Host "  deleting it to import the updated style would make Terminal.app put another" -ForegroundColor Yellow
+    Write-Host "  profile in its place there. The new window opens on it as it is, without the" -ForegroundColor Yellow
+    Write-Host ("  style's changes. To have it replaced, {0}; the next -NewWindow" -f ($steps -join ', and ')) -ForegroundColor Yellow
+    Write-Host "  then replaces it, and anything you changed in it goes with it." -ForegroundColor Yellow
 }
 
 function Show-MissingBackgroundForNewWindow {
