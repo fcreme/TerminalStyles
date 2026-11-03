@@ -466,16 +466,23 @@ function Set-AppleTerminalImportRecord {
     } catch { }
 }
 
-function Sync-AppleTerminalCopyRecord {
-    # Forget a recorded copy Terminal.app no longer lists (compared exactly),
-    # so a profile that later takes the name is not claimed. Nothing without
-    # an answer.
+function Sync-AppleTerminalRecord {
+    # Forget a recorded import or copy Terminal.app no longer lists (compared
+    # exactly), so a profile that later takes the name is not claimed: the user
+    # deletes TerminalStyles' 'eva' and makes their own, and the import record
+    # still said 'eva' was ours, to reuse and, once the style changed, to
+    # delete. Only as good as the reads: a name the user re-creates before any
+    # command has listed the profiles again still looks like ours. Nothing
+    # without an answer, which proves nothing. Dropping an entry errs safe: a
+    # profile with no record is never reused or deleted.
     [CmdletBinding()]
     param([AllowEmptyCollection()][string[]]$Installed)
     if (@($Installed).Count -eq 0) { return }
-    $r = Get-AppleTerminalImportRecord -Copies
-    foreach ($k in @($r.Keys)) {
-        if (@($Installed) -cnotcontains $k) { Set-AppleTerminalImportRecord -Copies -Name $k -Remove }
+    foreach ($copies in $false, $true) {
+        $r = Get-AppleTerminalImportRecord -Copies:$copies
+        foreach ($k in @($r.Keys)) {
+            if (@($Installed) -cnotcontains $k) { Set-AppleTerminalImportRecord -Copies:$copies -Name $k -Remove }
+        }
     }
 }
 
@@ -605,7 +612,7 @@ function Open-AppleTerminalProfile {
 
     $installed = @(Get-AppleTerminalSettingsSetName)
     if ($installed.Count -eq 0) { & open $Path; return }
-    Sync-AppleTerminalCopyRecord -Installed $installed
+    Sync-AppleTerminalRecord -Installed $installed
     $before = $installed
 
     $hash   = Get-AppleTerminalProfileHash -Path $Path
@@ -782,6 +789,24 @@ function Show-MissingBackgroundForNewWindow {
             Write-Host ("  opened. Nothing was cached under {0}." -f
                         (Get-StyleBackgroundCacheDir -StyleDir $StyleDir)) -ForegroundColor Yellow
         }
+    }
+}
+
+function Write-HostRecord {
+    # Print Write-Host lines captured with 6>&1, in their colours, so a caller
+    # that clears the screen after the work can show what the work said below
+    # the clear. The picker runs Publish-StyleBackgroundProfile before its
+    # Clear-Host, which also clears scrollback, so every -NewWindow note was
+    # erased before it could be read. An unset colour is captured as -1.
+    param([AllowEmptyCollection()][AllowNull()][object[]]$Record)
+    foreach ($r in @($Record)) {
+        if ($r -isnot [System.Management.Automation.InformationRecord]) { continue }
+        $m = $r.MessageData
+        if ($m -isnot [System.Management.Automation.HostInformationMessage]) { Write-Host "$m"; continue }
+        $a = @{ Object = $m.Message; NoNewline = [bool]$m.NoNewLine }
+        if ($null -ne $m.ForegroundColor -and [int]$m.ForegroundColor -ge 0) { $a.ForegroundColor = $m.ForegroundColor }
+        if ($null -ne $m.BackgroundColor -and [int]$m.BackgroundColor -ge 0) { $a.BackgroundColor = $m.BackgroundColor }
+        Write-Host @a
     }
 }
 
@@ -1855,7 +1880,7 @@ function Invoke-TerminalStyleProfiles {
         Write-Host ""
         return
     }
-    Sync-AppleTerminalCopyRecord -Installed $installed
+    Sync-AppleTerminalRecord -Installed $installed
 
     $styles     = @(Get-AvailableStyles | ForEach-Object { $_.Name })
     $mine       = @($installed | Where-Object { $styles -ccontains $_ })

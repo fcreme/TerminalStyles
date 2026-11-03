@@ -286,6 +286,34 @@ Describe 'Open-AppleTerminalProfile against a Terminal.app that keeps state' {
             $script:windows | Should -Not -Contain '<plist>v1</plist>'
         }
 
+        It 'forgets its import once Terminal.app no longer lists it, so a later profile of that name is not claimed' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            (Get-AppleTerminalImportRecord).ContainsKey('eva') | Should -BeTrue -Because 'control: the import is recorded'
+            # The user deletes it in Terminal's Settings, and some later command
+            # lists the profiles before they make one of their own.
+            for ($i = $script:sets.Count - 1; $i -ge 0; $i--) { if ($script:sets[$i].Name -ceq 'eva') { $script:sets.RemoveAt($i) } }
+            $other = Join-Path $script:TStylesDataRoot 'forest.terminal'
+            [System.IO.File]::WriteAllText($other, '<plist>forest</plist>')
+            Open-AppleTerminalProfile -Path $other -Name 'forest'
+            (Get-AppleTerminalImportRecord).ContainsKey('eva') | Should -BeFalse
+            (Get-AppleTerminalImportRecord).ContainsKey('forest') | Should -BeTrue
+
+            [void]$script:sets.Add([pscustomobject]@{ Name = 'eva'; Content = 'USER' })
+            [System.IO.File]::WriteAllText($script:profilePath, '<plist>v2</plist>')
+            $script:windows.Clear()
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+
+            @($script:sets | Where-Object { $_.Name -ceq 'eva' } | ForEach-Object { $_.Content }) | Should -Be @('USER')
+            @($script:scripts | Where-Object { $_ -cmatch 'delete settings set "eva"' }).Count | Should -Be 0
+            $script:windows | Should -Not -Contain 'USER'
+        }
+
+        It 'keeps its import record when Terminal.app gives no list' {
+            Open-AppleTerminalProfile -Path $script:profilePath -Name 'eva'
+            Sync-AppleTerminalRecord -Installed @()
+            (Get-AppleTerminalImportRecord).ContainsKey('eva') | Should -BeTrue
+        }
+
         It 'replaces its own out-of-date copy, records the new hash, and reuses it' {
             # The control for the two above: where the delete is confirmed, the
             # re-import lands on the name and is recorded, so the next run

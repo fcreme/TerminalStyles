@@ -143,6 +143,23 @@ Describe 'both apply paths deliver the background' {
                 -Because '`tstyles -NewWindow` was accepted in silence and did nothing'
         }
 
+        It 'the picker prints what it said below its Clear-Host, not above it' {
+            # Clear-Host also clears scrollback, and the publish runs before
+            # it, so every -NewWindow note was erased before it could be read.
+            $fn = (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast
+            $cmd = { param($name) @($fn.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and $n.GetCommandName() -eq $name }, $true)) }
+            $publish = @(& $cmd 'Publish-StyleBackgroundProfile')[0]
+            $publish.Parent.Extent.Text | Should -Match '6>&1' -Because 'what it writes to the host is kept'
+            $publish.Parent.Extent.Text | Should -Not -Match 'Out-Null'
+            $clears = @(& $cmd 'Clear-Host' | Where-Object { $_.Extent.StartOffset -gt $publish.Extent.StartOffset })
+            $clears.Count | Should -BeGreaterThan 0 -Because 'control: the commit clears the screen after the publish'
+            $replay = @(& $cmd 'Write-HostRecord')
+            $replay.Count | Should -Be 1
+            $replay[0].Extent.Text | Should -Match '\$backgroundNotes'
+            $replay[0].Extent.StartOffset | Should -BeGreaterThan $clears[0].Extent.StartOffset
+        }
+
         It '-NewWindow reaches every path that declares it' {
             # The flag is on Invoke-TerminalStyle's param block, so every branch
             # that applies a style owes the user an answer for it. random was
@@ -484,6 +501,59 @@ Describe 'Get-StyleBackgroundAbsence' {
 
             Get-StyleBundledBackground -StyleDir $script:styleDir | Should -BeNullOrEmpty
             Get-StyleBackgroundAbsence -StyleDir $script:styleDir | Should -Be 'unreachable'
+        }
+    }
+}
+
+Describe 'Write-HostRecord' {
+    InModuleScope TerminalStyles {
+        It 'prints captured host lines again, with their colours and line breaks' {
+            $captured = @(& {
+                Write-Host 'plain'
+                Write-Host 'warn' -ForegroundColor Yellow
+                Write-Host 'a' -NoNewline
+                Write-Host 'b'
+                'not host output'
+            } 6>&1)
+            $records = @($captured | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $records.Count | Should -Be 4 -Because 'control: the capture holds the four host lines'
+
+            $replayed = @(Write-HostRecord -Record $captured 6>&1)
+
+            @($replayed | ForEach-Object { $_.MessageData.Message }) -join '|' | Should -BeExactly 'plain|warn|a|b'
+            @($replayed | ForEach-Object { [bool]$_.MessageData.NoNewLine }) -join ',' | Should -BeExactly 'False,False,True,False'
+            "$($replayed[1].MessageData.ForegroundColor)" | Should -BeExactly 'Yellow'
+        }
+
+        It 'prints nothing for nothing' {
+            @(Write-HostRecord -Record @() 6>&1).Count | Should -Be 0
+            @(Write-HostRecord -Record $null 6>&1).Count | Should -Be 0
+        }
+    }
+}
+
+Describe 'the picker keeps what the background step says' {
+    # The same pipeline the picker runs, with Write-Host left real so its
+    # records reach stream 6: what it keeps must be the notes, and only them.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            Mock Get-StyleBundledBackground { '/tmp/does-not-matter.gif' }
+            Mock New-AppleTerminalProfile { '/tmp/generated.terminal' }
+            Mock Open-AppleTerminalProfile { Write-Host '  kept-profile note' -ForegroundColor Yellow }
+        }
+
+        It 'keeps every note, and not the profile path, <Label>' -ForEach @(
+            @{ Label = 'with -NewWindow'; NewWindow = $true;  Want = 'Opening a new window|kept-profile note' }
+            @{ Label = 'without it';      NewWindow = $false; Want = 'ships a background image' }
+        ) {
+            $kept = @(Publish-StyleBackgroundProfile -StyleName 'eva' -StyleDir '/tmp/eva' `
+                        -Scheme ([pscustomobject]@{ background = '#000000' }) -Kind 'AppleTerminal' -NewWindow:$NewWindow 6>&1 |
+                      Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+            $text = @($kept | ForEach-Object { $_.MessageData.Message }) -join "`n"
+            foreach ($w in $Want.Split('|')) { $text | Should -Match ([regex]::Escape($w)) }
+            $text | Should -Not -Match 'generated\.terminal' -Because 'the return value is not a note'
+            $replayed = @(Write-HostRecord -Record $kept 6>&1)
+            $replayed.Count | Should -Be $kept.Count
         }
     }
 }
