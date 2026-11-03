@@ -148,6 +148,18 @@ it from Finder or set it as your Terminal.app default. If you open it from
 Finder before any `-NewWindow` has imported the style, the profile that creates
 is yours: `-NewWindow` has no record of importing it, so it never reuses,
 replaces or deletes it, and may add its own numbered copy (`eva 1`) beside it.
+`tstyles profiles` lists them, and `tstyles profiles -Clean` deletes only the
+numbered copies `-NewWindow` recorded making: Terminal.app's own Duplicate
+Profile names your copy of `eva` `eva 1` too, so the name alone proves nothing.
+
+The file is regenerated whenever the style changes — a re-tune, an update, a
+new background image — and the next `tstyles <style> -NewWindow` then replaces
+the profile it imported: it deletes it and imports the new file in its place,
+so anything you changed in that profile in Terminal's Settings is lost, and it
+says so. Windows open on it switch to your default profile. It never replaces
+the profile while Terminal.app uses it as your default or startup profile,
+because Terminal.app would put another profile there: it opens the new window
+on it as it is and says what to change for it to be replaced.
 
 > Terminal.app renders a **still** background, not an animated one. The bundled
 > backgrounds are animated GIFs, so the first frame is extracted to a PNG and

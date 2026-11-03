@@ -43,7 +43,7 @@ tstyles font [name]               # List coding fonts, or install one and apply 
 tstyles register                  # Auto-add `Import-Module TerminalStyles ...` to each engine's $PROFILE
 tstyles shell-init                # Style zsh/bash too: add the loader to ~/.zshrc, ~/.bashrc, ~/.bash_profile
 tstyles shell-remove              # Remove that zsh/bash loader again
-tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes duplicates
+tstyles profiles [-Clean]         # macOS: Terminal.app profiles this tool left behind; -Clean removes the copies it recorded making
 tstyles vscode [on|off]           # VS Code: show, allow (on) or undo and stop (off) saving styles to settings.json
 tstyles update                    # PSGallery: Update-PSResource (Update-Module without it). Bootstrap: re-run installer.
 tstyles uninstall                 # Remove module + strip $PROFILE loader. Preserves user state.

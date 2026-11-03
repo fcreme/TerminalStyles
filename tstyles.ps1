@@ -967,8 +967,8 @@ function Invoke-TerminalStyle {
         # uninstall removes only install-managed files and leaves user state,
         # so a reinstall picks up where you left off.
         [switch]$DeleteData,
-        # `tstyles profiles -Clean`: remove the numbered Terminal.app profiles
-        # that repeated -NewWindow imports left behind.
+        # `tstyles profiles -Clean`: delete the numbered Terminal.app copies that
+        # -NewWindow recorded making, never one it has no record of.
         [switch]$Clean,
         # Pre-granted consent for the confirm prompts on `register` and
         # `uninstall`. Those prompts now REFUSE rather than assume when there

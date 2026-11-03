@@ -61,7 +61,12 @@ function Get-TerminalStyleHelpData {
                        "                           window you are already in. If the style",
                        "                           ships no image, or it could not be",
                        "                           downloaded, it says which -- it never just",
-                       "                           opens nothing.",
+                       "                           opens nothing. The window's profile is",
+                       "                           imported once and reused, and replaced once",
+                       "                           the style changes -- unless Terminal.app",
+                       "                           uses it as the default or startup profile,",
+                       "                           or does not say; then it is left as it is",
+                       "                           and the command says so.",
                        "  -Target <name>           Windows Terminal profile to apply to,",
                        "                           instead of the tab's own. 'defaults' is a",
                        "                           name in its own right -- it is what the",
@@ -306,17 +311,25 @@ function Get-TerminalStyleHelpData {
             Name = 'profiles'; Usage = 'profiles [-Clean]'
             Summary = 'Terminal.app profiles this tool has left behind (macOS)'
             Detail = @("Opening a style with -NewWindow imports a .terminal profile into",
-                       "Terminal.app, and later runs reuse it. Before 0.8.24 every run imported",
+                       "Terminal.app, and later runs reuse it. Once the style changes, the next",
+                       "run deletes that profile and imports the new one, dropping anything",
+                       "changed in it in Terminal's Settings -- but not while Terminal.app uses",
+                       "it as the default or startup profile. Before 0.8.24 every run imported",
                        "ANOTHER copy -- Terminal.app numbers the collisions, so a style opened",
                        "four times left 'eva', 'eva 1', 'eva 2' and 'eva 3' in your profile list",
                        "for good. A run can still add a numbered copy where the import cannot land",
                        "on the style's own name: for example while a profile of that name exists",
                        "that TerminalStyles cannot prove it imported (imports made before 0.9.3",
-                       "included), which it never reuses, replaces or deletes.",
+                       "included), which it never reuses, replaces or deletes. It now records the",
+                       "name Terminal.app gives such a copy when it sees it land.",
                        "",
-                       "This lists them and, with -Clean, deletes the numbered ones. The",
-                       "unnumbered profile is never touched: it may be one you made yourself,",
-                       "and there is no way to prove otherwise.")
+                       "This lists them and, with -Clean, deletes only the numbered copies",
+                       "TerminalStyles recorded making -- never your default or startup profile.",
+                       "A numbered profile with no record, every copy made before that record",
+                       "was kept included, is listed and left alone: Terminal.app's Duplicate",
+                       "Profile names your own copy of 'eva' 'eva 1' too, so the name proves",
+                       "nothing. Delete those in Terminal's Settings > Profiles. The unnumbered",
+                       "profile is never touched: it may be one you made yourself.")
             Keys = @(); Examples = @('tstyles profiles', 'tstyles profiles -Clean')
         }
         [pscustomobject]@{
