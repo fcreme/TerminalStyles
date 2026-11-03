@@ -174,7 +174,9 @@ Esc (the terminal closed), the preview it left is recorded, so `tstyles reset`
 takes it out. If `settings.json` changes while the picker is open (you edit
 it, or Settings Sync does), no further preview is written into it, and Enter
 and Esc both work from the file as it is now. Esc takes the preview out by its
-record instead of putting the old file back. Either way your change stays,
+record instead of putting the old file back, then puts back the style you
+started with, except a key of it you had changed or deleted by hand before
+opening the picker, which stays as you have it. Either way your change stays,
 except for a key the incoming style also sets: that key takes the incoming
 style's value, and `tstyles reset` puts yours back. It is named when the
 style you were previewing also wrote it.
@@ -191,6 +193,15 @@ style you were previewing also wrote it.
   `"[Monokai]": { "terminal.background": "#000000" }` inside
   `workbench.colorCustomizations` overrides the style while that theme is
   active; the apply names any it finds.
+- **A comment inside a key the style added holds the edit back.** A comment
+  written inside one of the style's keys -- between the key and its value,
+  say -- would have to go with that key, and TerminalStyles does not change
+  your comments. So when a key the style added has to come out (`tstyles
+  reset`, a switch to another style, `tstyles vscode off`, the picker's Esc),
+  or a value it replaces holds a comment inside it, the command writes
+  nothing and names the key. Move the comment out of the key and run it
+  again. `tstyles uninstall` cannot be run again after that, since the module
+  is already gone, so take those keys out by hand there.
 - **Workspace settings win over user settings.** A project's own
   `.vscode/settings.json` can set the same keys, and that is not detected.
 - **Settings Sync carries it.** If you sync settings, the style goes to your

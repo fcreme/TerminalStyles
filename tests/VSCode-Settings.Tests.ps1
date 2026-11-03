@@ -601,3 +601,197 @@ Describe 'applying and resetting a style in settings.json text' {
         }
     }
 }
+
+Describe 'a style goes in as settings, never inside a comment, and refuses rather than lose one' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:live = {
+                param($Applied)
+                @(@($Applied.Record.Wrote) | Where-Object { (Get-JsoncValueLiteral -Text $Applied.Text -Path $_.Path) -cne $_.Literal } |
+                    ForEach-Object { $_.Path -join '/' })
+            }
+        }
+
+        It "writes every key live under a block comment on the colour block's brace line, and comes back after a chain of styles" {
+            $user = @('{', '  "workbench.colorCustomizations": { /* per-theme overrides', '      go in here */', '  }', '}') -join "`n"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            @($a.Record.Wrote).Count | Should -BeGreaterThan 20
+            $dead = & $script:live $a
+            $dead.Count | Should -Be 0 -Because ($dead -join ', ')
+            Test-JsoncCommentsIntact -Before $user -After $a.Text | Should -BeTrue
+            $r = $a
+            foreach ($n in 'sober', 'koholint', 'eva') {
+                $r = Invoke-VSCodeStyleApply -Text $r.Text -StyleDir (Get-StyleDir -StyleName $n) -StyleName $n -PreviousRecord $r.Record
+                $r.Status | Should -Be 'applied'
+            }
+            (Invoke-VSCodeStyleReset -Text $r.Text -Record $r.Record).Text | Should -BeExactly $user
+        }
+
+        It "writes every key live when the comment opens on the last setting's line of a file with no colour block" {
+            $user = @('{', '  "editor.fontSize": 14 /* tried these, reverting:', '      16, 18 */', '}') -join "`n"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $a.Status | Should -Be 'applied'
+            @($a.Record.Wrote).Count | Should -BeGreaterThan 20
+            (& $script:live $a).Count | Should -Be 0
+            (Invoke-VSCodeStyleReset -Text $a.Text -Record $a.Record).Text | Should -BeExactly $user
+        }
+
+        It 'refuses, naming the key, when a key the style writes holds a comment inside its value' {
+            $user = @('{', '  "terminal.integrated.fontFamily": { /* odd */ }', '}') -join "`n"
+            $a = Invoke-VSCodeStyleApply -Text $user -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $a.Status | Should -Be 'commentchanged'
+            $a.Key | Should -Be 'terminal.integrated.fontFamily'
+            $a.Text | Should -BeExactly $user
+            $a.Record | Should -BeNullOrEmpty
+        }
+
+        Context 'a comment written inside a key the outgoing style added' {
+            BeforeEach {
+                $script:a = Invoke-VSCodeStyleApply -Text (@('{', '  "editor.fontSize": 13', '}') -join "`n") `
+                    -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+                $script:annot = $script:a.Text.Replace('"terminal.integrated.fontFamily": ', '"terminal.integrated.fontFamily" /* mine */ : ')
+                $script:annot | Should -Not -BeExactly $script:a.Text -Because 'the fixture must hold the comment'
+            }
+
+            It 'refuses a switch whose undo would delete it' {
+                $b = Invoke-VSCodeStyleApply -Text $script:annot -StyleDir (Get-StyleDir -StyleName 'koholint') -StyleName 'koholint' -PreviousRecord $script:a.Record
+                $b.Status | Should -Be 'commentchanged'
+                $b.Key | Should -Be 'terminal.integrated.fontFamily'
+                $b.Text | Should -BeExactly $script:annot
+                $b.Record | Should -BeNullOrEmpty
+            }
+
+            It 'refuses a reset that would delete it, and hands the text back unchanged' {
+                $r = Invoke-VSCodeStyleReset -Text $script:annot -Record $script:a.Record
+                $r.Status | Should -Be 'commentchanged'
+                $r.Key | Should -Be 'terminal.integrated.fontFamily'
+                $r.Text | Should -BeExactly $script:annot
+            }
+        }
+    }
+}
+
+Describe 'what you write inside the colour block a style created is yours' {
+    # The reset removed a block it had created whenever the block had no
+    # MEMBERS left, and a comment is no member: a note written inside it, or a
+    # colour of the style commented out, went with the block on every reset
+    # and every switch.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $bare = "{`n  `"editor.fontSize`": 13`n}"
+            $script:a = Invoke-VSCodeStyleApply -Text $bare -StyleDir (Get-StyleDir -StyleName 'koholint') -StyleName 'koholint'
+            (@($script:a.Record.CreatedParents) | ForEach-Object { $_ -join '/' }) | Should -Be 'workbench.colorCustomizations'
+            $head = '"workbench.colorCustomizations": {'
+            $at = $script:a.Text.IndexOf($head, [System.StringComparison]::Ordinal)
+            $at | Should -BeGreaterThan -1
+            $script:after = $at + $head.Length
+        }
+
+        It 'keeps what you wrote inside it, through a reset and a switch (<label>)' -ForEach @(
+            @{ label = 'a note on a line of its own'; shape = 'line' }
+            @{ label = 'an inline block comment';     shape = 'inline' }
+            @{ label = 'a colour of the style commented out'; shape = 'commentedout' }
+        ) {
+            switch ($shape) {
+                'line'   { $comment = '// NOTE(me): bg was #101010 before'; $mine = $script:a.Text.Insert($script:after, "`n    $comment`n    ") }
+                'inline' { $comment = '/* keep: chose koholint for the demo */'; $mine = $script:a.Text.Insert($script:after, " $comment ") }
+                'commentedout' {
+                    $red = Get-JsoncValueLiteral -Text $script:a.Text -Path @('workbench.colorCustomizations', 'terminal.ansiRed')
+                    $comment = '// "terminal.ansiRed": ' + $red
+                    $mine = $script:a.Text.Insert($script:after, "`n    $comment`n    ")
+                }
+            }
+            $mine.Contains($comment) | Should -BeTrue
+
+            $r = Invoke-VSCodeStyleReset -Text $mine -Record $script:a.Record
+            $r.Status | Should -Be 'reset'
+            $r.Removed | Should -Contain 'workbench.colorCustomizations/terminal.background'
+            $r.Text.Contains($comment) | Should -BeTrue
+            Test-JsoncCommentsIntact -Before $mine -After $r.Text | Should -BeTrue
+            Get-JsoncValueLiteral -Text $r.Text -Path @('workbench.colorCustomizations') | Should -Not -BeNullOrEmpty
+            @(@($script:a.Record.Wrote) | Where-Object { $null -ne (Get-JsoncValueLiteral -Text $r.Text -Path $_.Path) }).Count | Should -Be 0
+            Get-JsoncValueLiteral -Text $r.Text -Path @('editor.fontSize') | Should -BeExactly '13'
+
+            $s = Invoke-VSCodeStyleApply -Text $mine -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva' -PreviousRecord $script:a.Record
+            $s.Status | Should -Be 'applied'
+            Test-JsoncCommentsIntact -Before $mine -After $s.Text | Should -BeTrue
+            @(@($s.Record.Wrote) | Where-Object { (Get-JsoncValueLiteral -Text $s.Text -Path $_.Path) -cne $_.Literal }).Count | Should -Be 0
+        }
+
+        It 'leaves a block you have written in to you once a switch has kept it' {
+            $note = '// NOTE(me): bg was #101010 before'
+            $mine = $script:a.Text.Insert($script:after, "`n    $note`n    ")
+            $s = Invoke-VSCodeStyleApply -Text $mine -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva' -PreviousRecord $script:a.Record
+            @($s.Record.CreatedParents).Count | Should -Be 0 -Because 'eva found the block already there'
+            $r = Invoke-VSCodeStyleReset -Text $s.Text -Record $s.Record
+            $r.Text.Contains($note) | Should -BeTrue
+            Get-JsoncValueLiteral -Text $r.Text -Path @('workbench.colorCustomizations') | Should -Not -BeNullOrEmpty
+        }
+
+        It 'still takes away a block it created when only whitespace is left, however it was re-indented' {
+            $lit = Get-JsoncValueLiteral -Text $script:a.Text -Path @('workbench.colorCustomizations')
+            $inner = $lit.Substring(1, $lit.Length - 2).Trim()
+            $fmt = $script:a.Text.Replace($lit, "{`n    " + $inner.Replace(', "', ",`n    `"") + "`n  }")
+            ((Get-JsoncValueLiteral -Text $fmt -Path @('workbench.colorCustomizations')) -split "`n").Count | Should -BeGreaterThan 2
+            $r = Invoke-VSCodeStyleReset -Text $fmt -Record $script:a.Record
+            Get-JsoncValueLiteral -Text $r.Text -Path @('workbench.colorCustomizations') | Should -BeNullOrEmpty
+            $r.Removed | Should -Contain 'workbench.colorCustomizations'
+            Get-JsoncValueLiteral -Text $r.Text -Path @('editor.fontSize') | Should -BeExactly '13'
+        }
+
+        It 'puts the next style beside a block comment that opens on the brace of the block it created' {
+            $mine = $script:a.Text.Insert($script:after, " /* koholint, for the demo`n       revisit later */`n    ")
+            $s = Invoke-VSCodeStyleApply -Text $mine -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva' -PreviousRecord $script:a.Record
+            Test-JsoncCommentsIntact -Before $mine -After $s.Text | Should -BeTrue
+            @(@($s.Record.Wrote) | Where-Object { (Get-JsoncValueLiteral -Text $s.Text -Path $_.Path) -cne $_.Literal }).Count | Should -Be 0
+            (Invoke-VSCodeStyleReset -Text $s.Text -Record $s.Record).Text.Contains('revisit later */') | Should -BeTrue
+        }
+    }
+}
+
+Describe 'what an undo found taken out, and what an apply is told to leave' {
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            $script:K = Get-StyleDir -StyleName 'koholint'
+            $script:bare = "{`n  `"editor.fontSize`": 13`n}"
+        }
+
+        It 'names a key it wrote that the file no longer has as gone, apart from one changed by hand' {
+            $a = Invoke-VSCodeStyleApply -Text $script:bare -StyleDir $script:K -StyleName 'koholint'
+            $t = (Remove-JsoncValue -Text $a.Text -Path @('terminal.integrated.fontFamily')).Text
+            $t = (Set-JsoncLiteral -Text $t -Path @('terminal.integrated.fontSize') -Literal '20').Text
+            $b = Invoke-VSCodeStyleReset -Text $t -Record $a.Record
+            (@($b.Gone) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily'
+            (@($b.Kept) -join ',') | Should -BeExactly 'terminal.integrated.fontSize'
+            Get-JsoncValueLiteral -Text $b.Text -Path @('terminal.integrated.fontFamily') | Should -BeNullOrEmpty
+        }
+
+        It "carries out what the outgoing style's undo found taken out, as it carries what it kept" {
+            $a = Invoke-VSCodeStyleApply -Text $script:bare -StyleDir (Get-StyleDir -StyleName 'eva') -StyleName 'eva'
+            $gone = (Remove-JsoncValue -Text $a.Text -Path @('terminal.integrated.fontFamily')).Text
+            $b = Invoke-VSCodeStyleApply -Text $gone -StyleDir $script:K -StyleName 'koholint' -PreviousRecord $a.Record
+            (@($b.Gone) -join ',') | Should -BeExactly 'terminal.integrated.fontFamily'
+            @($b.Kept | Where-Object { $_ }).Count | Should -Be 0
+        }
+
+        It 'leaves a key it is told to leave as it is, and keeps it out of the record' {
+            $mine = (Set-JsoncLiteral -Text $script:bare -Path @('terminal.integrated.fontFamily') -Literal '"Mine Mono"').Text
+            $a = Invoke-VSCodeStyleApply -Text $mine -StyleDir $script:K -StyleName 'koholint' -Leave @('terminal.integrated.fontFamily')
+            $names = @($a.Record.Wrote | ForEach-Object { @($_.Path) -join '/' })
+            $a.Status | Should -Be 'applied'
+            Get-JsoncValueLiteral -Text $a.Text -Path @('terminal.integrated.fontFamily') | Should -BeExactly '"Mine Mono"'
+            $names | Should -Not -Contain 'terminal.integrated.fontFamily'
+            $names | Should -Contain 'terminal.integrated.cursorStyle' -Because 'the rest of the style is written'
+        }
+
+        It 'creates no colour block when it is told to leave every colour' {
+            $plan = Get-VSCodeStylePlan -StyleDir $script:K
+            $ids = @($plan | Where-Object { $_.Path.Count -eq 2 } | ForEach-Object { $_.Path -join '/' })
+            $ids.Count | Should -Be 20
+            $a = Invoke-VSCodeStyleApply -Text $script:bare -StyleDir $script:K -StyleName 'koholint' -Leave $ids
+            Get-JsoncValueLiteral -Text $a.Text -Path @('workbench.colorCustomizations') | Should -BeNullOrEmpty
+            @($a.Record.CreatedParents | Where-Object { $_ }).Count | Should -Be 0
+            Get-JsoncValueLiteral -Text $a.Text -Path @('terminal.integrated.fontFamily') | Should -Not -BeNullOrEmpty
+        }
+    }
+}

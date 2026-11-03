@@ -23,8 +23,10 @@
 #   the other, whichever goes first.
 #
 #   REFUSE RATHER THAN GUESS. An editor that cannot be identified, a settings
-#   folder that does not exist, a file that does not parse and a state file
-#   that cannot be read all stop the write and say which.
+#   folder that does not exist, a file that does not parse, an edit that would
+#   change one of its comments or would not read back as written, and a state
+#   file that cannot be read all stop the write and say which. 'wontparse'
+#   means that refusal: nothing written, record kept.
 
 function Get-VSCodeStatePath {
     # Where the per-editor consent and undo records live. One file for every
@@ -387,8 +389,11 @@ function Split-VSCodeKept {
     The publisher and Esc's merge both report this split, and both get it
     from here, so the two cannot come to name the same key differently
     (CLAUDE.md: two implementations of one rule diverge). Keys are named the
-    way the undo names them, Path joined with '/'. -Record is the next
-    style's record; with none, every kept key is Left.
+    way the undo names them, Path joined with '/'. -Record is the record of
+    what the next style WROTE; with none, every kept key is Left. Esc's merge
+    passes its re-apply's own record, not the one it saves, which also
+    carries the starting record's entries for the keys it left as the user
+    had them.
     #>
     [CmdletBinding()]
     param(
@@ -429,7 +434,10 @@ function Publish-StyleVSCodeConfig {
     outgoing style's undo left alone because the user had changed them; the
     incoming style then writes over any of those it sets itself, keeping the
     user's value as the one a reset restores. "Left as you set it" is only
-    true of the others. Split-VSCodeKept draws that line.
+    true of the others. Split-VSCodeKept draws that line. Under a picker
+    session whose file holds a preview, the keys the user had changed under
+    the starting style are added from the session, so Enter names what
+    tstyles <name> from the same start names.
     #>
     [CmdletBinding()]
     param(
@@ -479,10 +487,7 @@ function Publish-StyleVSCodeConfig {
     $a = Invoke-VSCodeStyleApply -Text $base -StyleDir $StyleDir -StyleName $StyleName -PreviousRecord $onDisk
     if ($a.Status -ne 'applied') {
         $result.Status = 'wontparse'
-        $result.Detail = switch ($a.Status) {
-            'parentnotobject' { 'workbench.colorCustomizations in it is not an object' }
-            default           { 'it does not parse as a JSON object' }
-        }
+        $result.Detail = Get-VSCodeRefusalDetail -Status $a.Status -Key $a.Key
         return $result
     }
 
@@ -524,7 +529,20 @@ function Publish-StyleVSCodeConfig {
     # The record and the file agree again: the commit landed, or wrote nothing.
     if ($Session) { $Session.RecordAhead = $false }
 
-    $split = Split-VSCodeKept -Kept $a.Kept -Record $a.Record
+    # Under a session whose file holds a preview, the undo above is of the
+    # preview's own record, which took the user's hand edits under the
+    # starting style for the values before it and puts them back cleanly, so
+    # it names none of them. The session found them when the picker opened
+    # (StartKept); they are named here, as tstyles <name> from the same start
+    # names them. While the starting record is still the one on disk, the undo
+    # above was of that record, against the file as it is now, and already
+    # said which. ReferenceEquals: every place that means "the start is on
+    # disk" assigns the StartRecord object itself, never a copy.
+    $kept = @($a.Kept | Where-Object { $_ })
+    if ($Session -and -not [object]::ReferenceEquals($onDisk, $Session.StartRecord)) {
+        foreach ($k in @($Session.StartKept)) { if ($k -and $kept -cnotcontains $k) { $kept += $k } }
+    }
+    $split = Split-VSCodeKept -Kept $kept -Record $a.Record
     $ids = @(@($a.Record.Wrote) |
              Where-Object { @($_.Path).Count -eq 2 -and $_.Path[0] -eq 'workbench.colorCustomizations' } |
              ForEach-Object { $_.Path[1] })
@@ -536,6 +554,22 @@ function Publish-StyleVSCodeConfig {
     $result.Replaced  = $split.Replaced
     $result.Overrides = $overrides
     return $result
+}
+
+function Get-VSCodeRefusalDetail {
+    # The one wording for a refusal from the JSONC engine, after "Could not
+    # edit <path> safely:" or "Could not put <path> back:". Each status gets
+    # its own true sentence: the fallback, "does not parse", was printed about
+    # a file that parses when the refusal was a comment's.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Status, [string]$Key)
+    switch ($Status) {
+        'parentnotobject' { return 'workbench.colorCustomizations in it is not an object' }
+        'parentmissing'   { return "$Key in it could not be reached" }
+        'commentchanged'  { return "changing $Key in it would have changed a comment too" }
+        'notreadback'     { return "$Key would not have read back from it as written" }
+        default           { return 'it does not parse as a JSON object' }
+    }
 }
 
 function Show-VSCodeWriteResult {
@@ -625,8 +659,9 @@ function Reset-StyleVSCodeConfig {
 
     Returns @{ Status; Variant; Path; Kept; Restored; Removed; Detail }, Status
     one of reset, norecord, unknownvariant, statecorrupt, wontparse,
-    writefailed. Detail says why for wontparse: the file could not be read, or
-    does not parse. On reset it is set when the file was put back but the
+    writefailed. Detail says why for wontparse: the file could not be read,
+    does not parse, or holds a comment inside one of the style's keys that
+    taking it out would change -- nothing written, record kept. On reset it is set when the file was put back but the
     record could not be cleared afterwards.
     #>
     [CmdletBinding()]
@@ -659,6 +694,13 @@ function Reset-StyleVSCodeConfig {
     }
 
     $r = Invoke-VSCodeStyleReset -Text $text -Record $entry.record
+    # Refused before any write or record change: the style stays, and so does
+    # the record of what to take out.
+    if ($r.Status -ne 'reset' -and $r.Status -ne 'norecord') {
+        $result.Status = 'wontparse'
+        $result.Detail = Get-VSCodeRefusalDetail -Status $r.Status -Key $r.Key
+        return $result
+    }
     if ($r.Text -cne $text) {
         try {
             Write-SettingsAtomic -Path $entry.settingsPath -Json $r.Text
@@ -788,6 +830,14 @@ function New-VSCodePreviewSession {
         OnDiskRecord    = $start
         LastWrittenText = $null
         Cache           = @{}
+        # The starting style's keys the user had already changed by hand when
+        # the picker opened: a value of their own (Kept) or taken out (Gone).
+        # Found by the undo of StartRecord that every preview's apply starts
+        # with (Invoke-VSCodePreview), and the same for every style. Empty
+        # until a preview has been computed, which happens before any is
+        # written.
+        StartKept       = @()
+        StartGone       = @()
         BackedUp        = $false
         Backup          = $null
         # Set while the stored record may name text the file does not hold:
@@ -839,6 +889,11 @@ function Invoke-VSCodePreview {
         $a = Invoke-VSCodeStyleApply -Text $base -StyleDir $StyleDir -StyleName $StyleName -PreviousRecord $Session.StartRecord
         if ($a.Status -ne 'applied') { return 'wontparse' }
         $Session.Cache[$StyleName] = @{ Text = $a.Text; Record = $a.Record }
+        # Its undo of the starting style names that style's keys the user had
+        # already changed by hand; kept for Enter to name and for Esc's merge
+        # to leave alone.
+        $Session.StartKept = @($a.Kept | Where-Object { $_ })
+        $Session.StartGone = @($a.Gone | Where-Object { $_ })
     }
     $p = $Session.Cache[$StyleName]
 
@@ -911,13 +966,20 @@ function Restore-VSCodePreview {
                     most likely in VS Code itself. Writing the original back
                     would throw that edit away. Instead the preview is undone
                     by its own record, which leaves the edit standing, and the
-                    style that was on before is put back over it. Kept and
+                    style that was on before is put back over it -- except
+                    its keys the user had changed or taken out before the
+                    picker opened (the session's StartKept and StartGone),
+                    which stay as they are now. The saved record keeps the
+                    starting record's entry for each of those, so a later
+                    reset leaves them alone and names them. Kept and
                     Replaced split the way the publisher's do, through the
-                    same Split-VSCodeKept: when the starting style sets a key
-                    the user edited, that key is replaced, and the edited
-                    value is what a reset restores. The record is saved
-                    before the file when the starting style goes back in;
-                    with none to put back, after it, as above.
+                    same Split-VSCodeKept, against what the re-apply wrote:
+                    when the starting style sets a key the user edited during
+                    the picker, that key is replaced, and the edited value is
+                    what a reset restores. The record is saved before the
+                    file when some of the starting style goes back in;
+                    otherwise after it, as above. A re-apply the editor
+                    refuses fails the Esc rather than drop the style.
 
     Nothing of the picker's in the file is 'none' -- unless a preview's or a
     commit's write failed and its record could not be put back (RecordAhead).
@@ -925,7 +987,9 @@ function Restore-VSCodePreview {
     if even that cannot be written.
 
     A file that no longer parses is not undone at all. The record's offsets no
-    longer mean what the record thinks, so this fails rather than splices.
+    longer mean what the record thinks, so this fails rather than splices. So
+    does a preview that cannot come out without changing a comment written
+    inside one of its keys.
 
     On failure the stored record is left naming the preview, because the
     preview is what the file still holds: `tstyles reset` can then take it
@@ -1008,35 +1072,73 @@ function Restore-VSCodePreview {
                 throw 'it changed while the picker was open and no longer parses as a JSON object'
             }
             $undo = Invoke-VSCodeStyleReset -Text $now -Record $Session.OnDiskRecord
+            # No record has moved yet, so the preview's stays on file.
+            if ($undo.Status -ne 'reset' -and $undo.Status -ne 'norecord') {
+                throw (Get-VSCodeRefusalDetail -Status $undo.Status -Key $undo.Key)
+            }
             $text = $undo.Text
             $record = $null
+            $rewrote = $null
             $startStyle = $null
             if ($Session.StartRecord) { $startStyle = $Session.StartRecord.Style }
             if ($startStyle) {
                 $startDir = Get-StyleDir -StyleName $startStyle
                 if ($startDir) {
-                    $re = Invoke-VSCodeStyleApply -Text $text -StyleDir $startDir -StyleName $startStyle
-                    if ($re.Status -eq 'applied') { $text = $re.Text; $record = $re.Record }
+                    # A key the starting style did not hold when the picker
+                    # opened is not the style's to put back: it keeps what the
+                    # undo above left, its value at picker open or the one the
+                    # user gave it since. The saved record carries the starting
+                    # record's own entry for it, so a later reset names it as a
+                    # reset at picker open would.
+                    $leave = @(@($Session.StartKept) + @($Session.StartGone) | Where-Object { $_ })
+                    $re = Invoke-VSCodeStyleApply -Text $text -StyleDir $startDir -StyleName $startStyle -Leave $leave
+                    if ($re.Status -ne 'applied') {
+                        throw (Get-VSCodeRefusalDetail -Status $re.Status -Key $re.Key)
+                    }
+                    $text = $re.Text
+                    $rewrote = $re.Record
+                    $carried = @(@($Session.StartRecord.Wrote) | Where-Object { $leave -ccontains (@($_.Path) -join '/') })
+                    # The starting record's created blocks too: a block it made
+                    # that the re-apply found already standing (a left key
+                    # holds it up) is still one a later reset may take away
+                    # once it is blank, as a reset at picker open would.
+                    # A List and foreach, no pipeline: a pipeline unrolls a
+                    # path that is itself an array.
+                    $parents = [System.Collections.Generic.List[object]]::new()
+                    $ids = [System.Collections.Generic.List[string]]::new()
+                    foreach ($set in @($re.Record.CreatedParents), @($Session.StartRecord.CreatedParents)) {
+                        foreach ($cp in $set) {
+                            if ($null -eq $cp) { continue }
+                            $path = [string[]]@(foreach ($k in @($cp)) { [string]$k })
+                            $id = $path -join '/'
+                            if (-not $id -or $ids.Contains($id)) { continue }
+                            $ids.Add($id)
+                            $parents.Add($path)
+                        }
+                    }
+                    $record = @{ Style = $re.Record.Style; Wrote = @(@($re.Record.Wrote) + $carried); CreatedParents = $parents.ToArray() }
                 }
             }
-            if ($record) {
+            if ($rewrote -and @($rewrote.Wrote).Count -gt 0) {
                 # Record first: this write puts the starting style's keys back in.
                 Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $record
                 $recordMoved = $true
                 Write-SettingsAtomic -Path $Session.Path -Json $text
             } else {
-                # No style to put back: this write only takes ours out, so the
-                # file goes first, as in the restored arm above.
+                # Nothing of a style to put back: this write only takes ours
+                # out, so the file goes first, as in the restored arm above.
+                # The record then holds only the entries carried for keys left
+                # as the user had them, or nothing.
                 Write-SettingsAtomic -Path $Session.Path -Json $text
                 try {
-                    Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $null
+                    Set-VSCodeStateEntry -Variant $Session.Variant -SettingsPath $Session.Path -Record $record
                 } catch {
-                    $out.Detail = 'its record could not be cleared'
+                    $out.Detail = if ($record) { 'its record could not be saved' } else { 'its record could not be cleared' }
                 }
             }
             $Session.OnDiskRecord = $record
             $Session.RecordAhead = $false
-            $split = Split-VSCodeKept -Kept $undo.Kept -Record $record
+            $split = Split-VSCodeKept -Kept $undo.Kept -Record $rewrote
             $out.Status   = 'merged'
             $out.Kept     = $split.Left
             $out.Replaced = $split.Replaced
@@ -1147,8 +1249,7 @@ function Show-VSCodeRestoreResult {
             if ($Result.Detail) {
                 Write-Host ("  The preview is still in it, and {0}, so tstyles reset cannot take it out." -f $Result.Detail) -ForegroundColor Red
             } else {
-                Write-Host "  The preview is still in it; tstyles reset takes it out once the file" -ForegroundColor Red
-                Write-Host "  parses and can be written." -ForegroundColor Red
+                Write-Host "  The preview is still in it; once that is fixed, tstyles reset takes it out." -ForegroundColor Red
             }
         }
     }
