@@ -2266,14 +2266,19 @@ function Invoke-TerminalStyle {
 
         # The prompt rule, and why -KeepPrompt must not guard this call:
         # Set-CurrentStylePrompt.
+        $promptResult = $null
         if ($isPwshTarget) {
-            [void](Set-CurrentStylePrompt -StyleDir $selectedStyle.FullName -KeepPrompt:$KeepPrompt)
+            $promptResult = Set-CurrentStylePrompt -StyleDir $selectedStyle.FullName -KeepPrompt:$KeepPrompt
         }
 
         Clear-Host
         Write-Host ""
         Write-Host "  Style applied: " -NoNewline
         Write-Host $selectedStyle.Name -ForegroundColor Green
+        if ($promptResult) {
+            $promptNote = Get-CurrentStylePromptFailureNote -Result $promptResult
+            if ($promptNote) { Write-Host $promptNote -ForegroundColor Yellow }
+        }
         Write-Host ""
         Show-FilePreviewResult -Result $pickerState.SettingsCommit
         Show-FilePreviewResult -Result $pickerRecovered
@@ -2338,8 +2343,10 @@ function Invoke-TerminalStyle {
         # Apply-StyleNonWT has honoured that flag since 0.8.x; this door asked a
         # gate that could not see it, so the picker printed two banners where
         # `tstyles <name>` printed one. Same gate now, same answer.
+        # Not after a failed replace, as in Apply-StyleNonWT.
         if (Test-ShouldLiveReloadPrompt -IsPwshTarget $isPwshTarget `
-                -ProfilePresent (Test-Path -LiteralPath $script:TStylesCurrent) `
+                -ProfilePresent ((Test-Path -LiteralPath $script:TStylesCurrent) -and
+                                 -not ($promptResult -and $promptResult.Status -eq 'failed')) `
                 -AutoLoadSuppressed ([bool]$global:TStylesNoAutoLoad)) {
             . $script:TStylesCurrent
         }
