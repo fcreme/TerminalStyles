@@ -714,7 +714,7 @@ Describe 'Clear-WezTermStyleModule and the module a reset leaves' {
         }
 
         It 'Test-WezTermModuleStyled and the write agree on a module that differs from the reset''s only in case' {
-            # The pair this file pins: the predicate's -ne and the write's
+            # The pair this file pins: the predicate's -cne and the write's
             # 'unchanged' check have to be the same comparison. Case-sensitive
             # now, so a reset's module in other case reads as styled -- it is
             # not the module a reset leaves, and Lua's names are case-sensitive
