@@ -803,8 +803,8 @@ Describe 'install.ps1 hardens its download' {
 
     Context 'console encodings in a host without a console to set' {
         BeforeAll {
-            # Setting a console encoding throws where there is no console to
-            # set -- the PowerShell ISE, or a host with redirected handles. In
+            # Setting a console encoding throws where no console is attached
+            # -- the PowerShell ISE, or a detached process. In
             # the finally, an unguarded throw prints a red error after a good
             # install or replaces the real error of a failed one; in the try
             # body it aborts the install. So every set is try/catch'd, like the
@@ -822,9 +822,15 @@ Describe 'install.ps1 hardens its download' {
             }
             $script:isGuarded = {
                 param([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Stop)
+                # Its own try/catch: the nearest try wraps this one statement
+                # alone, and its catch is empty -- a `catch { throw }`, or one
+                # try round several sets, does not count.
                 for ($p = $Node.Parent; $null -ne $p -and $p -ne $Stop; $p = $p.Parent) {
-                    if ($p -is [System.Management.Automation.Language.TryStatementAst] -and
-                        $p.CatchClauses.Count -gt 0) { return $true }
+                    if ($p -is [System.Management.Automation.Language.TryStatementAst]) {
+                        return ($p.CatchClauses.Count -eq 1 -and
+                            $p.CatchClauses[0].Body.Statements.Count -eq 0 -and
+                            $p.Body.Statements.Count -eq 1)
+                    }
                 }
                 return $false
             }

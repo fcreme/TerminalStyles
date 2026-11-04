@@ -1323,8 +1323,8 @@ if (-not $TStylesInstallNoRun) {
         # `2>&1` turns anything chcp writes to stderr into a terminating error.
         try { $null = & chcp 65001 2>&1 } catch { }
     }
-    # Setting a console encoding throws where there is no console to set --
-    # the PowerShell ISE, or a host with redirected handles. That is no reason
+    # Setting a console encoding throws where no console is attached -- the
+    # PowerShell ISE, or a detached process. That is no reason
     # to refuse to install; the messages just keep the host's encoding.
     try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
@@ -1459,7 +1459,7 @@ if (-not $TStylesInstallNoRun) {
         if ($null -ne $tstylesPrevTls) {
             try { [Net.ServicePointManager]::SecurityProtocol = $tstylesPrevTls } catch { }
         }
-        # Guarded like the TLS restore: in a host with no console to set, an
+        # Guarded like the TLS restore: in a host with no attached console, an
         # unguarded throw here prints a red error after a good install, or
         # replaces the real error of a failed one.
         try { [Console]::OutputEncoding = $tstylesPrevOutputEncoding } catch { }
