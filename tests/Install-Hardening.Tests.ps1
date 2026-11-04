@@ -801,6 +801,85 @@ Describe 'install.ps1 hardens its download' {
         @($chcp).Count | Should -Be 1
     }
 
+    Context 'console encodings in a host without a console to set' {
+        BeforeAll {
+            # Setting a console encoding throws where no console is attached
+            # -- the PowerShell ISE, or a detached process. In
+            # the finally, an unguarded throw prints a red error after a good
+            # install or replaces the real error of a failed one; in the try
+            # body it aborts the install. So every set is try/catch'd, like the
+            # TLS restore beside them.
+            $script:mainTry = @($script:installAst.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.TryStatementAst] -and
+                $n.Finally -and
+                $n.Finally.Extent.Text -match '\$ErrorActionPreference\s*=\s*\$tstylesPrevEAP' }, $true))[0]
+            $script:encodingSets = {
+                param([System.Management.Automation.Language.Ast]$Root, [string]$Value)
+                @($Root.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $n.Left.Extent.Text -match '^\[Console\]::(Output|Input)Encoding$' -and
+                    $n.Right.Extent.Text -match $Value }, $true))
+            }
+            $script:isGuarded = {
+                param([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Stop)
+                # Its own try/catch: the nearest try wraps this one statement
+                # alone, and its catch is empty -- a `catch { throw }`, or one
+                # try round several sets, does not count.
+                for ($p = $Node.Parent; $null -ne $p -and $p -ne $Stop; $p = $p.Parent) {
+                    if ($p -is [System.Management.Automation.Language.TryStatementAst]) {
+                        return ($p.CatchClauses.Count -eq 1 -and
+                            $p.CatchClauses[0].Body.Statements.Count -eq 0 -and
+                            $p.Body.Statements.Count -eq 1)
+                    }
+                }
+                return $false
+            }
+            $script:isUnder = {
+                param([System.Management.Automation.Language.Ast]$Node, [System.Management.Automation.Language.Ast]$Ancestor)
+                for ($p = $Node.Parent; $null -ne $p; $p = $p.Parent) {
+                    if ($p -eq $Ancestor) { return $true }
+                }
+                return $false
+            }
+        }
+
+        It 'guards each restore in the finally with its own try/catch' {
+            $script:mainTry | Should -Not -BeNullOrEmpty
+            $restores = & $script:encodingSets $script:mainTry.Finally '^\$tstylesPrev(Output|Input)Encoding$'
+            $restores.Count | Should -Be 2
+            foreach ($r in $restores) {
+                & $script:isGuarded $r $script:mainTry.Finally | Should -BeTrue -Because "'$($r.Extent.Text)' runs in the finally"
+            }
+        }
+
+        It 'switches to UTF-8 inside the try whose finally restores it, guarded' {
+            $switch = & $script:encodingSets $script:installAst 'UTF8Encoding'
+            $switch.Count | Should -Be 1
+            & $script:isUnder $switch[0] $script:mainTry.Body | Should -BeTrue `
+                -Because 'an error between the switch and the try would skip the restore'
+            & $script:isGuarded $switch[0] $script:mainTry.Body | Should -BeTrue `
+                -Because 'a host that cannot set it should still install'
+            $chcp = @($script:installAst.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] -and
+                $n.GetCommandName() -eq 'chcp' }, $true))
+            & $script:isUnder $chcp[0] $script:mainTry.Body | Should -BeTrue `
+                -Because 'chcp flips the code page the finally puts back'
+            & $script:isGuarded $chcp[0] $script:mainTry.Body | Should -BeTrue `
+                -Because 'under the try, $ErrorActionPreference is Stop, and on 5.1 a chcp that writes to stderr then throws'
+        }
+
+        It 'saves the encodings and preferences before that try, so the finally has them' {
+            foreach ($name in 'tstylesPrevOutputEncoding', 'tstylesPrevInputEncoding', 'tstylesPrevEAP', 'tstylesPrevProgress') {
+                $saves = @($script:installAst.FindAll({ param($n)
+                    $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                    $n.Left.Extent.Text -eq ('$' + $name) }, $true))
+                $saves.Count | Should -Be 1 -Because "`$$name is saved once"
+                & $script:isUnder $saves[0] $script:mainTry | Should -BeFalse -Because "`$$name is saved before the try"
+                $saves[0].Extent.StartOffset | Should -BeLessThan $script:mainTry.Extent.StartOffset
+            }
+        }
+    }
+
     It 'runs chcp only on Windows' {
         # chcp is a Windows console command. `$null = & chcp ... 2>&1` does NOT
         # swallow its absence: a missing native command is a PowerShell error,

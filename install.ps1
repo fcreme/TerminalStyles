@@ -1276,12 +1276,10 @@ if (-not $TStylesInstallNoRun) {
     # session, and setting [Console]::OutputEncoding also flips the console
     # code page, so restoring OutputEncoding (and InputEncoding) puts both
     # back. Do not undo with a second `chcp`.
+    # Both are switched inside the try below, so the finally that restores
+    # them always runs once they have changed.
     $tstylesPrevOutputEncoding = [Console]::OutputEncoding
     $tstylesPrevInputEncoding  = [Console]::InputEncoding
-    if ((Get-TStylesPlatform) -eq 'Windows') {
-        $null = & chcp 65001 2>&1
-    }
-    [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 
     # The entry point is `iwr ... | iex`, which runs this whole body in the
     # CALLER'S scope -- so every preference set here outlives the install and
@@ -1319,6 +1317,16 @@ if (-not $TStylesInstallNoRun) {
     }
 
     try {
+
+    if ((Get-TStylesPlatform) -eq 'Windows') {
+        # $ErrorActionPreference is Stop by now, and on Windows PowerShell 5.1
+        # `2>&1` turns anything chcp writes to stderr into a terminating error.
+        try { $null = & chcp 65001 2>&1 } catch { }
+    }
+    # Setting a console encoding throws where no console is attached -- the
+    # PowerShell ISE, or a detached process. That is no reason
+    # to refuse to install; the messages just keep the host's encoding.
+    try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
 
     Write-InstallBanner
 
@@ -1451,7 +1459,10 @@ if (-not $TStylesInstallNoRun) {
         if ($null -ne $tstylesPrevTls) {
             try { [Net.ServicePointManager]::SecurityProtocol = $tstylesPrevTls } catch { }
         }
-        [Console]::OutputEncoding = $tstylesPrevOutputEncoding
-        [Console]::InputEncoding  = $tstylesPrevInputEncoding
+        # Guarded like the TLS restore: in a host with no attached console, an
+        # unguarded throw here prints a red error after a good install, or
+        # replaces the real error of a failed one.
+        try { [Console]::OutputEncoding = $tstylesPrevOutputEncoding } catch { }
+        try { [Console]::InputEncoding  = $tstylesPrevInputEncoding } catch { }
     }
 }
