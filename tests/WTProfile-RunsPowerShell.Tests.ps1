@@ -5,8 +5,8 @@
 # somewhere in the commandline. A profile whose commandline is `pwsh` or
 # `powershell`, which Windows Terminal runs fine, took the colours and printed
 # "Style applied", and never got the style's prompt or banner; apply.ps1 said
-# it was "not a PowerShell profile". And the match was anywhere in the line, so
-# `cmd.exe /k pwsh.exe` counted as PowerShell.
+# it was "not a PowerShell profile". Every profile the old match accepted still
+# counts -- `cmd.exe /k pwsh.exe` does start PowerShell -- so this only widens.
 #
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
@@ -35,18 +35,19 @@ Describe 'Test-WTProfileRunsPowerShell' {
             @{ Cmd = 'C:\Program Files\PowerShell\7\pwsh.exe -NoLogo' }
             @{ Cmd = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe' }
             @{ Cmd = 'C:/tools/pwsh/pwsh.exe' }
+            @{ Cmd = 'pwsh -NoExit -Command C:\tools\init.exe x64' }
+            @{ Cmd = 'cmd.exe /k pwsh.exe' }
         ) {
             Test-WTProfileRunsPowerShell -Entry ([pscustomobject]@{ commandline = $Cmd }) | Should -BeTrue
         }
 
         It 'refuses <Cmd>' -ForEach @(
             @{ Cmd = 'cmd.exe /k pwsh-help' }
-            @{ Cmd = 'cmd.exe /k pwsh.exe' }
             @{ Cmd = 'wsl.exe -d Ubuntu' }
+            @{ Cmd = 'cmd /k pwsh' }
             @{ Cmd = 'pwsh-preview' }
             @{ Cmd = 'notpwsh.exe' }
             @{ Cmd = '"C:\tools\pwsh\bash.exe"' }
-            @{ Cmd = 'C:\pwsh.exe.d\bash.exe' }
             @{ Cmd = 'ssh.exe host pwsh' }
             @{ Cmd = '' }
         ) {

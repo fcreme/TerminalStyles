@@ -414,16 +414,22 @@ function Test-WTProfileRunsPowerShell {
     .DESCRIPTION
     The one copy of the rule, for the module's apply path, the picker and
     apply.ps1. Each used to carry its own, and all three wanted `pwsh.exe` or
-    `powershell.exe` anywhere in the commandline: a profile running `pwsh`,
+    `powershell.exe` somewhere in the commandline, so a profile running `pwsh`,
     which Windows Terminal resolves off PATH, took the colours and never the
-    prompt, and `cmd.exe /k pwsh.exe` counted as PowerShell.
+    prompt.
 
-    The PowerShell Core dynamic profile counts by its source; it carries no
-    commandline. Otherwise the program is the commandline's first word -- the
-    quoted part when it opens with a quote, else up to the first `.exe` that
-    ends a word (an unquoted `C:\Program Files\...\pwsh.exe` is one program,
-    as Windows resolves it), else up to the first space -- and it counts when
-    its file name is pwsh or powershell, with or without .exe.
+    It counts when the PowerShell Core dynamic profile's source says so (that
+    profile carries no commandline); when the program the commandline starts is
+    pwsh or powershell, with or without .exe and a path; or by that old match,
+    kept so every profile it accepted still counts -- `cmd.exe /k pwsh.exe`
+    does start PowerShell.
+
+    The program is the quoted part when the commandline opens with a quote.
+    When it opens with a path (a drive, `\\` or `%`), it runs to the first
+    `.exe` that ends a word, so an unquoted `C:\Program Files\...\pwsh.exe` is
+    one program, as Windows resolves it. Otherwise it is the first word: only
+    a path is read past a space, or `pwsh -Command C:\x\init.exe a` would be
+    taken for init.exe.
     #>
     [CmdletBinding()]
     param([AllowNull()]$Entry)
@@ -434,13 +440,14 @@ function Test-WTProfileRunsPowerShell {
     if ($cmd.StartsWith('"')) {
         $end = $cmd.IndexOf('"', 1)
         $program = if ($end -lt 0) { $cmd.Substring(1) } else { $cmd.Substring(1, $end - 1) }
-    } elseif ($cmd -match '^(?<p>.*?\.exe)(?=\s|$)') {
+    } elseif ($cmd -match '^(?:[A-Za-z]:|\\\\|%)' -and $cmd -match '^(?<p>.*?\.exe)(?=\s|$)') {
         $program = $Matches['p']
     } else {
         $program = ($cmd -split '\s+', 2)[0]
     }
     $leaf = @($program -split '[\\/]')[-1]
-    return ($leaf -match '^(?i:pwsh|powershell)(?i:\.exe)?$')
+    if ($leaf -match '^(?i:pwsh|powershell)(?i:\.exe)?$') { return $true }
+    return ($cmd -match '(?i)\bpwsh\.exe\b' -or $cmd -match '(?i)\bpowershell\.exe\b')
 }
 
 function Resolve-WTProfileTarget {
