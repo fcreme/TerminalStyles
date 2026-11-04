@@ -35,6 +35,9 @@ Describe 'tab completion of style names' {
         }
     }
     BeforeEach {
+        # Saved first, so AfterEach puts back the real root even if a step
+        # below throws.
+        $script:savedRoot = & $script:mod { $script:TStylesDataRoot }
         $root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
         $enc = [System.Text.UTF8Encoding]::new($false)
         foreach ($n in $script:names) {
@@ -44,7 +47,7 @@ Describe 'tab completion of style names' {
                 [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'), '{"name":"x","background":"#101010","foreground":"#f0f0f0"}', $enc)
             }
         }
-        $script:savedRoot = & $script:mod { param($r) $old = $script:TStylesDataRoot; $script:TStylesDataRoot = $r; $old } $root
+        & $script:mod { param($r) $script:TStylesDataRoot = $r } $root
         @(& $script:mod { Get-AvailableStyles } | ForEach-Object Name) | Should -Contain 'My Theme' -Because 'the sandbox must be what the completers read'
         @(& $script:mod { Get-StyleTrashEntry } | ForEach-Object StyleName) | Should -Contain 'My Theme'
     }
