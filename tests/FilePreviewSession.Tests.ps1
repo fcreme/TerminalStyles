@@ -333,6 +333,22 @@ Describe 'a WezTerm preview session' {
             [System.IO.File]::Exists($script:paths.Record) | Should -BeFalse
         }
 
+        It 'writes a preview that differs from the last only in case, and does not then refuse the next' {
+            # Write-FilePreview compares case-sensitively and recorded the text
+            # as written; the module write it calls compared with -eq and wrote
+            # nothing. The file then held other text than the session's record,
+            # so the next preview took it for someone else's edit: 'changed',
+            # sticky, for the rest of the picker.
+            $s = New-FilePreviewSession -Kind WezTerm -Path $script:module -By picker
+            $a = & $script:luaOf 'sober'
+            $b = $a.Replace('TerminalStyles sober', 'TerminalStyles SOBER')
+            $b | Should -Not -BeExactly $a -Because 'the probe must differ'
+            Write-FilePreview -Session $s -Text $a | Should -BeExactly 'written'
+            Write-FilePreview -Session $s -Text $b | Should -BeExactly 'written'
+            [System.IO.File]::ReadAllText($script:module) | Should -BeExactly $b
+            Write-FilePreview -Session $s -Text (& $script:luaOf 'umbrella') | Should -BeExactly 'written'
+        }
+
         It 'Enter drops the record, whatever the publish then writes' {
             $s = New-FilePreviewSession -Kind WezTerm -Path $script:module -By picker
             & $script:preview $s | Should -Be 'written'

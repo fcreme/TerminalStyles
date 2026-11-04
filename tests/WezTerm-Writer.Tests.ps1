@@ -583,6 +583,18 @@ Describe 'Write-WezTermStyleModule' {
                 Should -Be 'unchanged'
         }
 
+        It 'rewrites a module that differs from the new one only in case' {
+            # The 'unchanged' check was -eq, which ignores case, so a style
+            # renamed in case only -- or a background path that changed only in
+            # case, a different file on a case-sensitive file system -- was
+            # reported unchanged and the old module kept.
+            Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme -HomeDir $script:h | Out-Null
+            Write-WezTermStyleModule -StyleName 'Eva' -Scheme $script:scheme -HomeDir $script:h |
+                Should -BeExactly 'written'
+            [System.IO.File]::ReadAllText((Join-Path $script:h '.config/wezterm/terminalstyles.lua')) |
+                Should -BeExactly (Get-WezTermStyleLua -StyleName 'Eva' -Scheme $script:scheme)
+        }
+
         It 'drops a background path that does not exist rather than emitting it' {
             # It would be dropped by WezTerm anyway, silently, into a log file.
             Write-WezTermStyleModule -StyleName 'eva' -Scheme $script:scheme `
@@ -699,6 +711,23 @@ Describe 'Clear-WezTermStyleModule and the module a reset leaves' {
             # would print a success line nobody had checked.
             New-Item -ItemType Directory -Path $p | Out-Null
             Test-WezTermModuleStyled -Path $p | Should -BeTrue -Because 'a path it cannot read is not known to be clean'
+        }
+
+        It 'Test-WezTermModuleStyled and the write agree on a module that differs from the reset''s only in case' {
+            # The pair this file pins: the predicate's -cne and the write's
+            # 'unchanged' check have to be the same comparison. Case-sensitive
+            # now, so a reset's module in other case reads as styled -- it is
+            # not the module a reset leaves, and Lua's names are case-sensitive
+            # -- and reset rewrites it rather than answering 'none'.
+            $path = Get-WezTermModulePath -HomeDir $script:h
+            [void][System.IO.Directory]::CreateDirectory((Split-Path -Parent $path))
+            $variant = (Get-WezTermUnstyledLua).Replace('return M', 'return m')
+            $variant | Should -Not -BeExactly (Get-WezTermUnstyledLua) -Because 'the probe must differ'
+            [System.IO.File]::WriteAllText($path, $variant, [System.Text.UTF8Encoding]::new($false))
+
+            Test-WezTermModuleStyled -Path $path | Should -BeTrue
+            Clear-WezTermStyleModule -HomeDir $script:h | Should -BeExactly 'cleared'
+            [System.IO.File]::ReadAllText($path) | Should -BeExactly (Get-WezTermUnstyledLua)
         }
 
         It 'Clear-WezTermStyleModule says none and creates nothing where there is no module' {
