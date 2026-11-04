@@ -716,7 +716,11 @@ function Write-WezTermModuleText {
         if (Test-Path -LiteralPath $Path) {
             # Rewriting an identical file would still trip WezTerm's config
             # reload watch, so an unchanged style does not repaint the window.
-            if ([System.IO.File]::ReadAllText($Path, $enc) -eq $Text) { return 'unchanged' }
+            # -ceq: a module that differs only in case is a different module --
+            # a style name, or a background path on a case-sensitive file
+            # system -- and the picker's preview session, which compares with
+            # -ceq, records it as written.
+            if ([System.IO.File]::ReadAllText($Path, $enc) -ceq $Text) { return 'unchanged' }
         }
         [System.IO.File]::WriteAllText($Path, $Text, $enc)
         return 'written'
@@ -781,10 +785,10 @@ function Test-WezTermModuleStyled {
 
     Statements, not the whole text, so a reworded header -- the wiring line it
     quotes included -- does not turn every module an earlier reset left into a
-    styled one, and CR LF against LF does not matter. -ne, the same
-    case-insensitive family as Write-WezTermModuleText's 'unchanged' check
-    (-eq), so the two cannot disagree about one file; make either one
-    case-sensitive and the other has to follow.
+    styled one, and CR LF against LF does not matter. -cne, the same
+    case-sensitive comparison as Write-WezTermModuleText's 'unchanged' check
+    (-ceq), so the two cannot disagree about one file; change either one and
+    the other has to follow.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Path)
@@ -793,7 +797,7 @@ function Test-WezTermModuleStyled {
     try {
         $text = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
     } catch { return $true }
-    return ((Get-WezTermModuleCode $text) -ne (Get-WezTermModuleCode (Get-WezTermUnstyledLua)))
+    return ((Get-WezTermModuleCode $text) -cne (Get-WezTermModuleCode (Get-WezTermUnstyledLua)))
 }
 
 function Clear-WezTermStyleModule {
