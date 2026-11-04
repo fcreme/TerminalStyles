@@ -2161,13 +2161,7 @@ function Invoke-TerminalStyle {
                 # Shared resolver, so the picker inspects the same profile it
                 # styled -- see Resolve-WTProfileTarget on same-named profiles.
                 $entry = (Resolve-WTProfileTarget -Settings $originalSettings -TargetName $Target).Entry
-                $cmd = "$($entry.commandline)"
-                $src = "$($entry.source)"
-                if ($src -eq 'Windows.Terminal.PowershellCore' -or
-                    $cmd -match '(?i)\bpwsh\.exe\b' -or
-                    $cmd -match '(?i)\bpowershell\.exe\b') {
-                    $isPwshTarget = $true
-                }
+                $isPwshTarget = Test-WTProfileRunsPowerShell -Entry $entry
             }
 
             # Same reason as the non-WT arm below, and as Apply-StyleDirect's

@@ -1382,13 +1382,7 @@ function Apply-StyleDirect {
         # profiles this read the wrong one's commandline and could install (or
         # skip) the prompt on the strength of it.
         $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Entry
-        $cmd = "$($entry.commandline)"
-        $src = "$($entry.source)"
-        if ($src -eq 'Windows.Terminal.PowershellCore' -or
-            $cmd -match '(?i)\bpwsh\.exe\b' -or
-            $cmd -match '(?i)\bpowershell\.exe\b') {
-            $isPwshTarget = $true
-        }
+        $isPwshTarget = Test-WTProfileRunsPowerShell -Entry $entry
     }
 
     # The prompt rule: Set-CurrentStylePrompt.

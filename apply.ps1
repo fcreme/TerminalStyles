@@ -247,13 +247,9 @@ $isPwshTarget = $false
 if ($Target -eq 'defaults') {
     $isPwshTarget = $true
 } else {
-    # Shared resolver, as in the module's own apply path.
+    # Shared resolver and shared rule, as in the module's own apply path.
     $entry = (Resolve-WTProfileTarget -Settings $settings -TargetName $Target).Entry
-    $cmd = "$($entry.commandline)"
-    $src = "$($entry.source)"
-    if ($src -eq 'Windows.Terminal.PowershellCore' -or $cmd -match '(?i)\bpwsh\.exe\b' -or $cmd -match '(?i)\bpowershell\.exe\b') {
-        $isPwshTarget = $true
-    }
+    $isPwshTarget = Test-WTProfileRunsPowerShell -Entry $entry
 }
 
 if ($isPwshTarget) {

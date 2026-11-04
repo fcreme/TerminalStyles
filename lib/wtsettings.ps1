@@ -405,6 +405,44 @@ function Initialize-WTDefaultsEntry {
     return $block
 }
 
+function Test-WTProfileRunsPowerShell {
+    <#
+    .SYNOPSIS
+    Does this Windows Terminal profile start PowerShell? Decides whether an
+    apply installs the style's prompt. Pure.
+
+    .DESCRIPTION
+    The one copy of the rule, for the module's apply path, the picker and
+    apply.ps1. Each used to carry its own, and all three wanted `pwsh.exe` or
+    `powershell.exe` anywhere in the commandline: a profile running `pwsh`,
+    which Windows Terminal resolves off PATH, took the colours and never the
+    prompt, and `cmd.exe /k pwsh.exe` counted as PowerShell.
+
+    The PowerShell Core dynamic profile counts by its source; it carries no
+    commandline. Otherwise the program is the commandline's first word -- the
+    quoted part when it opens with a quote, else up to the first `.exe` that
+    ends a word (an unquoted `C:\Program Files\...\pwsh.exe` is one program,
+    as Windows resolves it), else up to the first space -- and it counts when
+    its file name is pwsh or powershell, with or without .exe.
+    #>
+    [CmdletBinding()]
+    param([AllowNull()]$Entry)
+    if ($null -eq $Entry) { return $false }
+    if ("$($Entry.source)" -eq 'Windows.Terminal.PowershellCore') { return $true }
+    $cmd = "$($Entry.commandline)".Trim()
+    if (-not $cmd) { return $false }
+    if ($cmd.StartsWith('"')) {
+        $end = $cmd.IndexOf('"', 1)
+        $program = if ($end -lt 0) { $cmd.Substring(1) } else { $cmd.Substring(1, $end - 1) }
+    } elseif ($cmd -match '^(?<p>.*?\.exe)(?=\s|$)') {
+        $program = $Matches['p']
+    } else {
+        $program = ($cmd -split '\s+', 2)[0]
+    }
+    $leaf = @($program -split '[\\/]')[-1]
+    return ($leaf -match '^(?i:pwsh|powershell)(?i:\.exe)?$')
+}
+
 function Resolve-WTProfileTarget {
     <#
     .SYNOPSIS

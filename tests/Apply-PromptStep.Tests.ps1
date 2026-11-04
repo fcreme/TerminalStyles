@@ -115,6 +115,7 @@ if ($splat.ContainsKey('KeepPrompt')) { $splat['KeepPrompt'] = [bool]$splat['Kee
                         [ordered]@{ guid = '{a}'; name = 'PowerShell'; source = 'Windows.Terminal.PowershellCore' }
                         [ordered]@{ guid = '{b}'; name = 'Windows PowerShell'
                                     commandline = '%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe' }
+                        [ordered]@{ guid = '{c}'; name = 'Bare pwsh'; commandline = 'pwsh -NoLogo' }
                     )
                 }
                 schemes = @()
@@ -211,6 +212,19 @@ Describe 'apply.ps1 leaves $PROFILE alone' {
         $flat.Contains("'tstyles register'") | Should -BeTrue -Because $flat
         $flat.Contains('Installed profile.ps1 to:') | Should -BeFalse
         $flat.Contains('Backed up existing profile to:') | Should -BeFalse
+    }
+}
+
+Describe 'apply.ps1 gives the prompt to a profile that runs pwsh without .exe' {
+    It "installs the prompt for a commandline of 'pwsh -NoLogo'" {
+        # Windows Terminal runs `pwsh` off PATH; the old match wanted
+        # `pwsh.exe` and called this profile "not a PowerShell profile".
+        $r = & $script:runApply -Case 'bare-pwsh' -ApplyArgs @{ Style = 'sober'; Target = 'Bare pwsh' } `
+            -ProfileText $script:handProfile
+        $r.Code | Should -Be 0 -Because $r.Out
+        & $script:schemeOf $r 'Bare pwsh' | Should -Be 'sober' -Because "the run must have applied the style: $($r.Out)"
+        $r.Flat.Contains('is not a PowerShell profile') | Should -BeFalse -Because $r.Flat
+        [System.IO.File]::Exists($r.Current) | Should -BeTrue -Because 'the prompt goes to current-style.ps1'
     }
 }
 
