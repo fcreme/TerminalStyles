@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.9.6] - 2026-11-05
+
 ### Fixed
 
 - **The installer puts your console's code page back.** `iwr | iex`, and the bootstrap update, run the installer in your own session, and on Windows it switched the console to UTF-8 (`chcp 65001` and `[Console]::OutputEncoding`) for its messages and never switched it back, so the rest of that session stayed on code page 65001. It now saves the console's output and input encodings first and restores both when it finishes, on the failure paths too; restoring them also resets the code page, so there is no second `chcp` ([#134](https://github.com/fcreme/TerminalStyles/issues/134), [#141](https://github.com/fcreme/TerminalStyles/pull/141)). The switch now happens inside the block whose cleanup restores it, so nothing between the two can skip the restore, and each step is guarded: in a host with no attached console, such as the PowerShell ISE or a detached process, setting an encoding throws, and that would have printed a red error after a good install, replaced the real error of a failed one, or, now that the switch runs with `$ErrorActionPreference` at Stop, stopped the install. There it installs and keeps the host's encoding.
@@ -1715,7 +1717,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.5...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.6...HEAD
+[0.9.6]: https://github.com/fcreme/TerminalStyles/compare/v0.9.5...v0.9.6
 [0.9.5]: https://github.com/fcreme/TerminalStyles/compare/v0.9.4...v0.9.5
 [0.9.4]: https://github.com/fcreme/TerminalStyles/compare/v0.9.3...v0.9.4
 [0.9.3]: https://github.com/fcreme/TerminalStyles/compare/v0.9.2...v0.9.3
