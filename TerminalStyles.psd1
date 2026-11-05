@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.5'
+    ModuleVersion     = '0.9.6'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.5: Eight fixes from the audit''s follow-ups. A data root or install folder whose path is not ASCII goes into rc files and $PROFILE as UTF-8, so the loader finds it, and tstyles register replaces an out-of-date loader. tstyles font refuses a profile whose font is not an object instead of saying Applied. An apply says so when current-style.ps1 could not be written, instead of claiming the prompt changed. In the picker, -NewWindow''s notes stay on screen. -NewWindow forgets a Terminal.app profile it imported once it is gone. shell-init refreshes a loader whose path changed only in case, and the tuner refuses style names with look-alike letters.'
+            ReleaseNotes = 'v0.9.6: Four fixes. A Windows Terminal profile that runs pwsh or powershell without .exe gets the style''s prompt. Tab completion quotes a style name with a space in it, and completes after a typed quote. WezTerm rewrites a module that differs only in case, which also kept the picker''s WezTerm preview from freezing. The installer puts the console''s code page back after an iwr | iex install, and still installs in a host with no console to set.'
         }
     }
 }
