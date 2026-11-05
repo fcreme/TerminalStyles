@@ -2434,23 +2434,44 @@ Set-Alias -Name tstyles -Value Invoke-TerminalStyle -Force
 # the trash, which are the ONLY thing that command accepts and the one list a
 # user cannot see without asking for it. Completing delete but not restore would
 # leave the half you cannot guess uncompleted.
+function Get-StyleNameCompletion {
+    # The completion results for a list of style or subcommand names, shared by
+    # both completers below. A style is any folder in the styles directory --
+    # only one the tuner CREATES is held to `^[A-Za-z0-9._-]+$` -- so a name can
+    # hold a space, a quote or a `$`. Inserted raw, `My Theme` became two
+    # arguments and applied a style called `My`. Such a name goes in single
+    # quotes, escaped; the menu text stays the plain name.
+    #
+    # A quote the user typed first arrives in $WordToComplete, and matched as
+    # part of the name it completed nothing, so it is trimmed. -like is given
+    # the typed text escaped, so a `[` in a name is a character, not a wildcard.
+    param([string[]]$Names, [string]$WordToComplete)
+    $word = "$WordToComplete" -replace '^[''"]', '' -replace '[''"]$', ''
+    $pattern = [System.Management.Automation.WildcardPattern]::Escape($word) + '*'
+    foreach ($name in @($Names | Where-Object { $_ -like $pattern })) {
+        $text = if ($name -cmatch '^[A-Za-z0-9._][A-Za-z0-9._-]*$') { $name } else {
+            "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($name) + "'"
+        }
+        [System.Management.Automation.CompletionResult]::new($text, $name, 'ParameterValue', $name)
+    }
+}
+
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName SubArg -ScriptBlock {
     param($commandName, $parameterName, $wordToComplete, $commandAst, $fakeBoundParameters)
     $sub = "$($fakeBoundParameters['Arg'])"
     if ($sub -eq 'restore') {
-        @(Get-StyleTrashEntry | ForEach-Object StyleName | Sort-Object -Unique |
-            Where-Object { $_ -like "$wordToComplete*" }) |
-            ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+        Get-StyleNameCompletion -Names @(Get-StyleTrashEntry | ForEach-Object StyleName | Sort-Object -Unique) `
+            -WordToComplete $wordToComplete
         return
     }
     if ($sub -ne 'delete') { return }
     $claim = Get-InstalledStyleClaim
     $one   = Test-StylesRootsAreOne
     $hash  = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
-    @(Get-AvailableStyles | Where-Object {
+    $deletable = @(Get-AvailableStyles | Where-Object {
         (Get-StyleOrigin -Name $_.Name -StyleDir $_.FullName -Claim $claim -RootsAreOne $one -StyleHash $hash) -in @('yours', 'shadow')
-    } | ForEach-Object Name | Where-Object { $_ -like "$wordToComplete*" } | Sort-Object) |
-        ForEach-Object { [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }
+    } | ForEach-Object Name | Sort-Object)
+    Get-StyleNameCompletion -Names $deletable -WordToComplete $wordToComplete
 }
 
 Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg -ScriptBlock {
@@ -2461,9 +2482,7 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg 
     # can target.
     $styleNames = @(Get-AvailableStyles | ForEach-Object Name)
     $all = @($subcommands + $styleNames | Sort-Object -Unique)
-    $all | Where-Object { $_ -like "$wordToComplete*" } | ForEach-Object {
-        [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_)
-    }
+    Get-StyleNameCompletion -Names $all -WordToComplete $wordToComplete
 }
 
 # One-time data-layout migration for users upgrading from pre-0.2.0.
