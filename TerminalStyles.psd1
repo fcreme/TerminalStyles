@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.6'
+    ModuleVersion     = '0.9.7'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.6: Four fixes. A Windows Terminal profile that runs pwsh or powershell without .exe gets the style''s prompt. Tab completion quotes a style name with a space in it, and completes after a typed quote. WezTerm rewrites a module that differs only in case, which also kept the picker''s WezTerm preview from freezing. The installer puts the console''s code page back after an iwr | iex install, and still installs in a host with no console to set.'
+            ReleaseNotes = 'v0.9.7: Two new commands. tstyles create builds a new style step by step in Windows Terminal, which previews it live: a background image from your computer, a palette pulled from it, font, cursor, a prompt shape and symbol, and a name; Esc or a closed tab puts settings.json back. tstyles submit checks a style you made against the catalogue''s rules, packs it into a zip and opens a GitHub form to offer it for the bundled catalogue; the maintainer decides.'
         }
     }
 }
