@@ -62,6 +62,12 @@ function Save-CreatedStyle {
         return (& $result 'invalid' $null "'$Name' is not a usable style name.")
     }
 
+    # Only the extensions Get-BackgroundFileIn resolves paint a background.
+    $ext = [System.IO.Path]::GetExtension($BackgroundPath).ToLowerInvariant()
+    if ($ext -notin '.gif', '.png', '.jpg', '.jpeg') {
+        return (& $result 'invalid' $null "Background image must be a .gif, .png, .jpg or .jpeg file (got '$ext').")
+    }
+
     $stylesRoot = Join-Path $script:TStylesDataRoot 'styles'
     $dest = Join-Path $stylesRoot $Name
     if ((Get-StyleDir -StyleName $Name) -or (Test-Path -LiteralPath $dest)) {
@@ -83,7 +89,6 @@ function Save-CreatedStyle {
         [System.IO.File]::WriteAllText((Join-Path $work 'profile.ps1'), [string]$Prompt.Profile, $utf8)
         [System.IO.File]::WriteAllText((Join-Path $work 'prompt.sh'), (([string]$Prompt.Shell) -replace "`r`n", "`n"), $utf8)
 
-        $ext = [System.IO.Path]::GetExtension($BackgroundPath).ToLowerInvariant()
         Copy-Item -LiteralPath $BackgroundPath -Destination (Join-Path $work "background$ext") -ErrorAction Stop
 
         if (-not (Test-Path -LiteralPath $stylesRoot)) {

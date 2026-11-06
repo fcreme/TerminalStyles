@@ -43,6 +43,52 @@ Describe 'Save-CreatedStyle' {
             $sh[0] | Should -Not -Be 239
             [System.IO.File]::ReadAllText((Join-Path $dir 'profile.ps1')) | Should -Be "# profile`r`n"
             Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot '.creating') | Should -BeFalse
+
+            # Contents, not just existence.
+            $eva = (Get-Content -Raw -LiteralPath (Join-Path $script:TStylesModuleRoot 'styles\eva\theme.json') | ConvertFrom-Json).PSObject.Properties.Name
+            $th = Get-Content -Raw -LiteralPath (Join-Path $dir 'theme.json') | ConvertFrom-Json
+            $th.backgroundImage | Should -Be '{{BACKGROUND_IMAGE}}'
+            ($th.PSObject.Properties.Name | Sort-Object) | Should -Be ($eva | Sort-Object)
+            ($script:theme.PSObject.Properties.Name | Sort-Object) | Should -Be ($eva | Sort-Object)
+            $sc = Get-Content -Raw -LiteralPath (Join-Path $dir 'scheme.json') | ConvertFrom-Json
+            $sc.background | Should -Be '#101010'
+            $sc.foreground | Should -Be '#eeeeee'
+            (Get-Content -Raw -LiteralPath (Join-Path $dir 'meta.json') | ConvertFrom-Json).description | Should -Be 'd'
+            [System.IO.File]::ReadAllBytes((Join-Path $dir 'prompt.sh')) |
+                Should -Be ([System.Text.UTF8Encoding]::new($false).GetBytes("line1`nline2`n"))
+            [System.IO.File]::ReadAllBytes((Join-Path $dir 'profile.ps1')) |
+                Should -Be ([System.Text.UTF8Encoding]::new($false).GetBytes("# profile`r`n"))
+        }
+
+        It 'writes all 21 scheme keys with the input values' {
+            $keys = 'background','foreground','cursorColor','selectionBackground','black','red','green','yellow','blue','purple','cyan','white','brightBlack','brightRed','brightGreen','brightYellow','brightBlue','brightPurple','brightCyan','brightWhite'
+            $o = [ordered]@{ name = 'orig' }
+            $i = 0
+            foreach ($k in $keys) { $o[$k] = ('#{0:x2}{0:x2}{0:x2}' -f (10 + $i)); $i++ }
+            $sch = [pscustomobject]$o
+            (Save-CreatedStyle -Name 'mine' -Scheme $sch -Theme $script:theme -BackgroundPath $script:img -Prompt $script:prompt).Status | Should -Be 'saved'
+            $back = Get-Content -Raw -LiteralPath (Join-Path $script:TStylesDataRoot 'styles\mine\scheme.json') | ConvertFrom-Json
+            @($back.PSObject.Properties).Count | Should -Be 21
+            foreach ($k in $keys) { $back.$k | Should -Be $sch.$k }
+            $back.name | Should -Be 'mine'
+            $sch.name | Should -Be 'orig'
+        }
+
+        It 'keeps the lower-cased extension of an upper-case source' {
+            $up = Join-Path $TestDrive 'UPPER.PNG'
+            Copy-Item -LiteralPath $script:img -Destination $up
+            (Save-CreatedStyle -Name 'mine' -Scheme $script:scheme -Theme $script:theme -BackgroundPath $up -Prompt $script:prompt).Status | Should -Be 'saved'
+            Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot 'styles\mine\background.png') | Should -BeTrue
+        }
+
+        It 'returns invalid for an unsupported background type (<f>)' -ForEach @(@{ f = 'x.webp' }, @{ f = 'x.bmp' }, @{ f = 'noext' }) {
+            $p = Join-Path $TestDrive $f
+            Copy-Item -LiteralPath $script:img -Destination $p
+            $r = Save-CreatedStyle -Name 'mine' -Scheme $script:scheme -Theme $script:theme -BackgroundPath $p -Prompt $script:prompt
+            $r.Status | Should -Be 'invalid'
+            $r.Reason | Should -Match 'gif.*png.*jpg.*jpeg'
+            Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot 'styles') | Should -BeFalse
+            Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot '.creating') | Should -BeFalse
         }
 
         It 'refuses a taken user name and leaves the folder unchanged' {
