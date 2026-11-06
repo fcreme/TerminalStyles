@@ -656,6 +656,12 @@ function Test-StyleNameValid {
     return ($Name -cmatch '^[A-Za-z0-9._-]+$')
 }
 
+function Get-StyleNameRuleText {
+    # Test-StyleNameValid's rule, as the sentence the tuner and the creator
+    # show when a name fails it.
+    "Use letters, digits, dot, underscore, or hyphen (max 64, and not '.' or '..')."
+}
+
 function Get-StyleDir {
     # Resolves a style name to its on-disk directory, checking the user
     # dir first ($DataRoot\styles\<name>\) then the bundled dir

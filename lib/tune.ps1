@@ -1804,7 +1804,7 @@ function Invoke-TerminalStyleTune {
                 # long enough to throw a raw .NET path exception from inside
                 # Save-TunedStyle, after the user had committed to the save.
                 if (-not (Test-StyleNameValid -Name $candidate)) {
-                    Write-Host ($saveUi.Warn + "  Use letters, digits, dot, underscore, or hyphen (max 64, and not '.' or '..')." + $saveUi.Reset)
+                    Write-Host ($saveUi.Warn + "  " + (Get-StyleNameRuleText) + $saveUi.Reset)
                     continue
                 }
                 # One question, from the plan the save carries out: over

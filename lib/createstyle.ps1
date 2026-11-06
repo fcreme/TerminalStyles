@@ -32,6 +32,16 @@ function New-CreatedThemeObject {
     }
 }
 
+function Test-CreatedStyleNameTaken {
+    # Is $Name taken for a new style? Taken when Get-StyleDir resolves it (a
+    # user or bundled style), or when a folder already sits at its path in the
+    # user styles directory, style or not. The creator's name page and
+    # Save-CreatedStyle both ask here, so they cannot disagree.
+    param([Parameter(Mandatory)][string]$Name)
+    $dest = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $Name
+    [bool]((Get-StyleDir -StyleName $Name) -or (Test-Path -LiteralPath $dest))
+}
+
 function Save-CreatedStyle {
     <#
     .SYNOPSIS
@@ -70,7 +80,7 @@ function Save-CreatedStyle {
 
     $stylesRoot = Join-Path $script:TStylesDataRoot 'styles'
     $dest = Join-Path $stylesRoot $Name
-    if ((Get-StyleDir -StyleName $Name) -or (Test-Path -LiteralPath $dest)) {
+    if (Test-CreatedStyleNameTaken -Name $Name) {
         return (& $result 'taken' $null "A style named '$Name' already exists.")
     }
 
