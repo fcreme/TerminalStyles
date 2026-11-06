@@ -1,0 +1,44 @@
+name: Style submission
+description: Offer a style you made with tstyles create (or tune) for the bundled catalogue
+title: "Style: "
+labels: [style-submission]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        `tstyles submit <name>` checks your style, packs it into a zip and opens this form.
+        Drag that zip into the box below and press Submit. The maintainer checks it and
+        decides whether it joins the catalogue; either way it keeps working as your own
+        style. The catalogue is curated, so a style can be turned down for taste alone.
+  - type: input
+    id: style-name
+    attributes:
+      label: Style name
+      description: The name of the style, as tstyles lists it.
+    validations:
+      required: true
+  - type: input
+    id: description
+    attributes:
+      label: Description
+      description: The one line the picker shows beside the name.
+  - type: textarea
+    id: package
+    attributes:
+      label: The zip
+      description: Drag `submissions/<name>.zip` from your TerminalStyles data folder here. `tstyles submit` printed where it is.
+      placeholder: Drop the zip here.
+    validations:
+      required: true
+  - type: input
+    id: image-source
+    attributes:
+      label: Where the background image comes from
+      description: A link, or a few words ("my own photo", "drawn by me"). Leave empty if the style has no image.
+  - type: checkboxes
+    id: rights
+    attributes:
+      label: Sharing
+      options:
+        - label: The image is mine to share, or its licence lets everyone use and redistribute it (or the style has no image).
+          required: true
