@@ -309,6 +309,21 @@ Describe 'Invoke-TerminalStyleCreate' {
                 Invoke-TerminalStyle -Arg 'create'
                 Should -Invoke Invoke-TerminalStyleCreate -Times 1 -Exactly
             }
+            It "refuses 'tstyles create' with arguments (<Tag>), naming its usage and touching nothing" -ForEach @(
+                @{ Tag = 'a name'; Splat = @{ SubArg = 'mine' } },
+                @{ Tag = '-Target'; Splat = @{ Target = 'PowerShell' } },
+                @{ Tag = '-BackgroundImage'; Splat = @{ BackgroundImage = 'C:\pics\a.png' } },
+                @{ Tag = '-KeepPrompt'; Splat = @{ KeepPrompt = $true } }) {
+                Mock Invoke-TerminalStyleCreate {}
+                Mock Show-UpdateNoticeIfAvailable {}
+                Invoke-TerminalStyle -Arg 'create' @Splat
+                Should -Invoke Invoke-TerminalStyleCreate -Times 0 -Exactly
+                @($script:out | Where-Object { $_ -ceq '  tstyles create takes no arguments: run tstyles create, and choose the image, colours, prompt and name on its pages. Nothing was changed.' }).Count |
+                    Should -Be 1 -Because ("what was said: " + ($script:out -join ' | '))
+                @(Get-ChildItem -LiteralPath $script:TStylesDataRoot -Force).Count | Should -Be 0
+                (& $script:bytesNow) | Should -Be $script:originalB64
+            }
+
             It "prints a help topic for 'create'" {
                 Invoke-TerminalStyle -Arg 'help' -SubArg 'create'
                 (& $script:said 'No help topic') | Should -BeFalse

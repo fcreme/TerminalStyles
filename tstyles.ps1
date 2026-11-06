@@ -1009,7 +1009,18 @@ function Invoke-TerminalStyle {
         Reset-StyleDirect -Target $resetTarget; return
     }
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
-    if ($Arg -eq 'create')               { Invoke-TerminalStyleCreate; return }
+    if ($Arg -eq 'create')               {
+        # The creator asks for everything on its pages. A name, -Target or
+        # -BackgroundImage given here would be silently ignored, so it is
+        # refused instead, before anything is read or written.
+        $common = [System.Management.Automation.PSCmdlet]::CommonParameters
+        $extra = @($PSBoundParameters.Keys | Where-Object { $_ -ne 'Arg' -and $common -notcontains $_ })
+        if ($extra.Count -gt 0) {
+            Write-Host "  tstyles create takes no arguments: run tstyles create, and choose the image, colours, prompt and name on its pages. Nothing was changed." -ForegroundColor Yellow
+            return
+        }
+        Invoke-TerminalStyleCreate; return
+    }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force -Yes:$Yes; return }
     if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }
