@@ -278,12 +278,13 @@ function Get-SchemeLowContrastSlots {
     $bars['brightBlack'] = 3.0
 
     $bg = ConvertTo-NormalHex $Scheme.background
-    if (-not $bg) { return , [string[]]@() }
+    if (-not $bg) { return }
     $low = New-Object System.Collections.Generic.List[string]
     foreach ($k in $bars.Keys) {
         $hex = ConvertTo-NormalHex $Scheme.$k
         if (-not $hex) { continue }
         if ((Get-ContrastRatio $hex $bg) -lt $bars[$k]) { $low.Add($k) }
     }
-    , $low.ToArray()
+    # Callers wrap in @(): a bare return unrolls to nothing when empty.
+    $low.ToArray()
 }
