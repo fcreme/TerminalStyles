@@ -49,9 +49,12 @@ function Save-CreatedStyle {
 
     .DESCRIPTION
     Status is saved | taken | invalid | failed. -Prompt is the hashtable
-    New-StylePromptText returns; its text is written verbatim.
+    New-StylePromptText returns; its text is written verbatim. With no
+    -Description, meta.json says "Made with tstyles create.".
 
-    The style is built in $DataRoot\.creating\<guid> and renamed into place,
+    The style is built in $DataRoot\.creating\<guid> and renamed into place
+    (a tab closed mid-save leaves that folder; Remove-StaleCreatingWork
+    sweeps it),
     so no half-written folder is ever visible under styles\ (Get-AvailableStyles
     enumerates with -Force, so even a dot-prefixed folder there would be listed
     the moment its scheme.json landed). Both are on the same volume.
@@ -92,6 +95,7 @@ function Save-CreatedStyle {
     try {
         New-Item -ItemType Directory -Path $work -Force -ErrorAction Stop | Out-Null
         $utf8 = [System.Text.UTF8Encoding]::new($false)
+        if (-not $Description.Trim()) { $Description = 'Made with tstyles create.' }
 
         $schemeOut = $Scheme.PSObject.Copy()
         $schemeOut | Add-Member -NotePropertyName name -NotePropertyValue $Name -Force
@@ -123,5 +127,34 @@ function Save-CreatedStyle {
             Remove-Item -LiteralPath $workRoot -Force -ErrorAction SilentlyContinue
         }
         return (& $result 'failed' $null $_.Exception.Message)
+    }
+}
+
+function Remove-StaleCreatingWork {
+    <#
+    .SYNOPSIS
+    Remove the half-built styles a killed save left in $DataRoot\.creating.
+
+    .DESCRIPTION
+    Save-CreatedStyle builds each style in .creating\<guid> and removes the
+    folder on every way out it sees; a tab closed mid-save is not one of them.
+    Only a folder named like Save-CreatedStyle's (32 hex digits) and last
+    written over an hour ago goes -- a save in progress, in this or another
+    tab, is seconds old -- and containment is proved before each recursive
+    delete. The .creating folder itself goes once it is empty.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root, [datetime]$NowUtc = [datetime]::UtcNow)
+    if (-not [System.IO.Directory]::Exists($Root)) { return }
+    $cutoff = $NowUtc.AddHours(-1)
+    foreach ($d in [System.IO.Directory]::GetDirectories($Root)) {
+        $leaf = [System.IO.Path]::GetFileName($d)
+        if ($leaf -notmatch '^[0-9a-fA-F]{32}$') { continue }
+        if ([System.IO.Directory]::GetLastWriteTimeUtc($d) -ge $cutoff) { continue }
+        if (-not (Test-PathIsUnderRoot -Path $d -Root $Root)) { continue }
+        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+    }
+    if ([System.IO.Directory]::GetFileSystemEntries($Root).Count -eq 0) {
+        Remove-Item -LiteralPath $Root -Force -ErrorAction SilentlyContinue
     }
 }

@@ -413,6 +413,8 @@ function Invoke-TerminalStyleCreate {
     # never share (or delete) one folder. Sessions a closed tab left go first.
     $scratchRoot = Join-Path $script:TStylesDataRoot '.create-preview'
     Remove-StaleCreatorScratch -Root $scratchRoot
+    # And the half-built styles a tab closed mid-save left (over an hour old).
+    Remove-StaleCreatingWork -Root (Join-Path $script:TStylesDataRoot '.creating')
     $scratchSession = Join-Path $scratchRoot ("session-{0}" -f $PID)
     $scratchDir = Join-Path $scratchSession 'style'
 

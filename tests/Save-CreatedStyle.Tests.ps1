@@ -81,6 +81,12 @@ Describe 'Save-CreatedStyle' {
             Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot 'styles\mine\background.png') | Should -BeTrue
         }
 
+        It 'writes a default description when none is given' {
+            (Save-CreatedStyle -Name 'mine' -Scheme $script:scheme -Theme $script:theme -BackgroundPath $script:img -Prompt $script:prompt).Status | Should -Be 'saved'
+            (Get-Content -Raw -LiteralPath (Join-Path $script:TStylesDataRoot 'styles\mine\meta.json') | ConvertFrom-Json).description |
+                Should -BeExactly 'Made with tstyles create.'
+        }
+
         It 'saves a .jfif as background.jpg, the name Get-BackgroundFileIn resolves' {
             $jf = Join-Path $TestDrive 'download.jfif'
             Copy-Item -LiteralPath $script:img -Destination $jf
@@ -158,6 +164,40 @@ Describe 'Save-CreatedStyle' {
             $t.colorScheme | Should -Be 'my-style'
             $t.backgroundImage | Should -Be '{{BACKGROUND_IMAGE}}'
             $t.backgroundImageOpacity | Should -Be 0.4
+        }
+    }
+}
+
+Describe 'Remove-StaleCreatingWork' {
+    InModuleScope TerminalStyles {
+        It 'removes only work folders over an hour old, and the root once it is empty' {
+            $root = Join-Path $TestDrive ('creating-' + [guid]::NewGuid().ToString('N'))
+            $old = Join-Path $root ([guid]::NewGuid().ToString('N'))
+            $fresh = Join-Path $root ([guid]::NewGuid().ToString('N'))
+            $notWork = Join-Path $root 'keep-me'
+            foreach ($d in $old, $fresh, $notWork) {
+                [void][System.IO.Directory]::CreateDirectory($d)
+                [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), '{}')
+            }
+            $now = [datetime]::UtcNow
+            [System.IO.Directory]::SetLastWriteTimeUtc($old, $now.AddMinutes(-61))
+            [System.IO.Directory]::SetLastWriteTimeUtc($fresh, $now.AddMinutes(-59))
+            [System.IO.Directory]::SetLastWriteTimeUtc($notWork, $now.AddDays(-3))
+            Remove-StaleCreatingWork -Root $root -NowUtc $now
+            Test-Path -LiteralPath $old | Should -BeFalse -Because 'a save killed over an hour ago left it'
+            Test-Path -LiteralPath (Join-Path $fresh 'scheme.json') | Should -BeTrue -Because 'a save may still be running'
+            Test-Path -LiteralPath (Join-Path $notWork 'scheme.json') | Should -BeTrue -Because 'only Save-CreatedStyle''s <guid> folders are its'
+
+            Remove-Item -LiteralPath $fresh, $notWork -Recurse -Force
+            $last = Join-Path $root ([guid]::NewGuid().ToString('N'))
+            [void][System.IO.Directory]::CreateDirectory($last)
+            [System.IO.Directory]::SetLastWriteTimeUtc($last, $now.AddHours(-2))
+            Remove-StaleCreatingWork -Root $root -NowUtc $now
+            Test-Path -LiteralPath $root | Should -BeFalse -Because 'an empty .creating is removed with its last folder'
+        }
+
+        It 'does nothing when there is no .creating folder' {
+            { Remove-StaleCreatingWork -Root (Join-Path $TestDrive 'no-such-creating') } | Should -Not -Throw
         }
     }
 }

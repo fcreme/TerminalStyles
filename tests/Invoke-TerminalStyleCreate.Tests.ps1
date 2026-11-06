@@ -283,10 +283,17 @@ Describe 'Invoke-TerminalStyleCreate' {
                         [void][System.IO.Directory]::CreateDirectory((Join-Path $d 'style'))
                         [System.IO.File]::WriteAllText((Join-Path (Join-Path $d 'style') 'scheme.json'), '{}', $script:enc)
                     }
+                    # And a half-built style a save killed two hours ago left.
+                    $creating = Join-Path $script:TStylesDataRoot '.creating'
+                    $killed = Join-Path $creating ([guid]::NewGuid().ToString('N'))
+                    [void][System.IO.Directory]::CreateDirectory($killed)
+                    [System.IO.Directory]::SetLastWriteTimeUtc($killed, [datetime]::UtcNow.AddHours(-2))
                     Mock Apply-StyleDirect {}
                     Mock Save-CreatedStyle {}
                     & $script:queue @('Escape')
                     Invoke-TerminalStyleCreate
+
+                    Test-Path -LiteralPath $killed | Should -BeFalse -Because 'the creator sweeps .creating as it starts'
 
                     Test-Path -LiteralPath $stale | Should -BeFalse -Because 'its process is gone'
                     Test-Path -LiteralPath (Join-Path (Join-Path $live 'style') 'scheme.json') |
