@@ -40,8 +40,9 @@ There is exactly ONE rolling backup, `settings.json.bak` (no timestamp),
 in the same directory as the `settings.json` tstyles edited — that of the
 Windows Terminal you ran it in. Every command that writes
 `settings.json` rolls it first: `tstyles <name>`, `tstyles random`,
-`tstyles reset`, `tstyles font <name>`, `tstyles tune`, and opening the
-picker (`tstyles` with no arg, which backs up before its first preview).
+`tstyles reset`, `tstyles font <name>`, `tstyles tune`, `tstyles create`,
+and opening the picker (`tstyles` with no arg, which backs up before its
+first preview).
 So it holds the state from immediately before the **most recent** of
 those — a font change or a tune after an apply is what you will get
 back, not the file from before the apply. To restore it:
@@ -80,6 +81,12 @@ it found is still in the data root, and the next tstyles command that writes
 and says so. If `settings.json` has changed since, it is left as it is, and
 the file the picker found is moved beside it as
 `settings.json.preview-<timestamp>`.
+
+`tstyles create` previews through the same kind of session, with the same
+recovery after a closed tab. Its Esc says "Cancelled. Your terminal is back
+as it was." only when the file it found went back (or nothing had been
+written); when it cannot be put back, it says so and prints the same
+`Copy-Item`. Its save takes the preview out before it applies the new style.
 
 If `settings.json` changes while the picker or the tuner is open — Windows
 Terminal's Settings UI saves it, or another tstyles command writes it — no

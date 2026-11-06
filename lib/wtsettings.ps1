@@ -695,8 +695,8 @@ function Save-SettingsBackup {
         [Parameter(Mandatory)][string]$Path,
         # The result of Resolve-WTProfileTarget for the operation about to run.
         [Parameter(Mandatory)][AllowNull()]$ResolvedTarget,
-        # The picker and the tuner take this as crash-recovery behind a menu
-        # that redraws every frame; announcing it would be noise.
+        # The picker, the tuner and the creator take this as crash-recovery
+        # behind a menu that redraws every frame; announcing it would be noise.
         [switch]$Quiet
     )
 
