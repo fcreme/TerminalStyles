@@ -271,12 +271,21 @@ function Invoke-TerminalStyleCreate {
     # anything is read or written.
     $kind = Get-TerminalKind
     if ($kind -ne 'WindowsTerminal') {
+        # Every line true for every kind: a terminal Get-TerminalDisplayName
+        # does not know is not named (its fallback, "this terminal", would
+        # say nothing), and the tuner's live colours are offered only where
+        # Get-TerminalCapability promises an OSC palette.
+        $display = Get-TerminalDisplayName -Kind $kind
         Write-Host ""
         Write-Host "  tstyles create needs Windows Terminal for now." -ForegroundColor Yellow
-        Write-Host ("  It previews the image, font and cursor through Windows Terminal's settings.json, and this is {0}." -f (Get-TerminalDisplayName -Kind $kind))
+        Write-Host "  It previews the image, font and cursor through Windows Terminal's settings.json."
+        if ($display -ne 'this terminal') { Write-Host ("  This terminal is {0}." -f $display) }
         Write-Host "  Nothing was changed."
         Write-Host ""
-        Write-Host "  Here, tstyles tune <name> adjusts an existing style, with its colours live." -ForegroundColor DarkGray
+        if ((Get-TerminalCapability -Kind $kind).OscPalette) {
+            Write-Host "  Here, tstyles tune <name> adjusts an existing style, with its colours live." -ForegroundColor DarkGray
+        }
+        Write-Host "  tstyles list shows the styles there are; tstyles <name> applies one." -ForegroundColor DarkGray
         Write-Host ""
         return
     }

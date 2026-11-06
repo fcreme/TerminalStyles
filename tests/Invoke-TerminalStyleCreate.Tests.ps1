@@ -109,6 +109,32 @@ Describe 'Invoke-TerminalStyleCreate' {
                 (& $script:bytesNow) | Should -Be $script:originalB64
             }
 
+            It 'names no terminal it does not know' {
+                Mock Get-TerminalKind { 'SomeNewTerm' }
+                Mock Find-WTSettingsPath { throw 'must not look for settings.json off Windows Terminal' }
+                Invoke-TerminalStyleCreate
+                (& $script:said 'tstyles create needs Windows Terminal for now') | Should -BeTrue
+                (& $script:said 'this terminal.') | Should -BeFalse
+                (& $script:said 'This terminal is') | Should -BeFalse
+                # An unknown kind does get OscPalette (Get-TerminalCapability's
+                # lowest common denominator), so the tuner is offered there; the
+                # test below covers a kind without it.
+                (Get-TerminalCapability -Kind 'SomeNewTerm').OscPalette | Should -BeTrue
+                (& $script:said 'tstyles tune') | Should -BeTrue
+                (& $script:said 'tstyles list') | Should -BeTrue
+                Should -Invoke Find-WTSettingsPath -Times 0 -Exactly
+            }
+
+            It 'promises live colours only where the terminal takes an OSC palette' {
+                Mock Get-TerminalKind { 'Kitty' }
+                Mock Get-TerminalCapability { $c = @{}; foreach ($n in $script:TStylesCapabilityNames) { $c[$n] = $false }; $c }
+                Invoke-TerminalStyleCreate
+                (& $script:said 'This terminal is kitty.') | Should -BeTrue
+                (& $script:said 'live') | Should -BeFalse
+                (& $script:said 'tstyles tune') | Should -BeFalse
+                (& $script:said 'tstyles list') | Should -BeTrue
+            }
+
             It 'refuses when input is redirected, before touching the terminal or settings.json' {
                 Mock Get-CreatorConsoleRedirection { [pscustomobject]@{ Input = $true; Output = $false } }
                 Mock Write-FilePreview { 'written' }
@@ -211,22 +237,38 @@ Describe 'Invoke-TerminalStyleCreate' {
                     Should -BeFalse
             }
 
-            It 'sweeps a scratch session a closed creator left, and keeps a live one' {
+            It 'sweeps a scratch session a closed creator left, keeps another live one, and removes its own' {
                 $root = Join-Path $script:TStylesDataRoot '.create-preview'
-                # A PID no process holds: the next one past the highest running.
-                $dead = ((Get-Process | Measure-Object -Property Id -Maximum).Maximum + 7919)
-                $stale = Join-Path $root ("session-{0}" -f $dead)
-                $live = Join-Path $root ("session-{0}" -f $PID)
-                $other = Join-Path $root 'not-a-session'
-                foreach ($d in $stale, $other) { [void][System.IO.Directory]::CreateDirectory((Join-Path $d 'style')) }
-                Mock Apply-StyleDirect {}
-                Mock Save-CreatedStyle {}
-                & $script:queue @('Escape')
-                Invoke-TerminalStyleCreate
+                # Another creator still open: a real process, alive for the
+                # whole run, other than this one.
+                $engine = (Get-Process -Id $PID).Path
+                $other = Start-Process -FilePath $engine -ArgumentList @('-NoProfile', '-NonInteractive', '-Command', 'Start-Sleep -Seconds 60') -PassThru
+                try {
+                    Get-Process -Id $other.Id -ErrorAction Stop | Should -Not -BeNullOrEmpty -Because 'the live session needs a live process'
+                    # A PID no process holds, checked rather than assumed.
+                    $dead = ((Get-Process | Measure-Object -Property Id -Maximum).Maximum + 7919)
+                    while (Get-Process -Id $dead -ErrorAction SilentlyContinue) { $dead++ }
+                    $stale = Join-Path $root ("session-{0}" -f $dead)
+                    $live = Join-Path $root ("session-{0}" -f $other.Id)
+                    $own = Join-Path $root ("session-{0}" -f $PID)
+                    $notSession = Join-Path $root 'not-a-session'
+                    foreach ($d in $stale, $live, $own, $notSession) {
+                        [void][System.IO.Directory]::CreateDirectory((Join-Path $d 'style'))
+                        [System.IO.File]::WriteAllText((Join-Path (Join-Path $d 'style') 'scheme.json'), '{}', $script:enc)
+                    }
+                    Mock Apply-StyleDirect {}
+                    Mock Save-CreatedStyle {}
+                    & $script:queue @('Escape')
+                    Invoke-TerminalStyleCreate
 
-                Test-Path -LiteralPath $stale | Should -BeFalse
-                Test-Path -LiteralPath $other | Should -BeTrue -Because 'only session-<PID> folders are the creator''s'
-                Test-Path -LiteralPath $live | Should -BeFalse -Because 'its own session goes on the way out'
+                    Test-Path -LiteralPath $stale | Should -BeFalse -Because 'its process is gone'
+                    Test-Path -LiteralPath (Join-Path (Join-Path $live 'style') 'scheme.json') |
+                        Should -BeTrue -Because 'a creator open in another tab keeps its scratch session'
+                    Test-Path -LiteralPath $notSession | Should -BeTrue -Because 'only session-<PID> folders are the creator''s'
+                    Test-Path -LiteralPath $own | Should -BeFalse -Because 'its own session goes on the way out'
+                } finally {
+                    Stop-Process -Id $other.Id -Force -ErrorAction SilentlyContinue
+                }
             }
         }
 
