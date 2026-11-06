@@ -353,6 +353,12 @@ function Read-CreatorImage {
     } catch {
         return (& $result $State "error:'$typed' is not a path this computer can use.")
     }
+    # Refused here, before the reader, by the rule Save-CreatedStyle applies:
+    # an image the save would refuse must not get the user to the last page.
+    if (-not (Get-BackgroundImageSaveExtension -Path $full)) {
+        return (& $result $State ("error:'{0}' is not a file type tstyles create takes. Use a {1} file." -f
+            [System.IO.Path]::GetFileName($full), (Get-BackgroundImageTypesText)))
+    }
     if ($State.Scheme -and ([string]$State.ImagePath) -ceq $full) {
         $State.Step = 1; $State.Control = 0
         return (& $result $State 'next')

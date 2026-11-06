@@ -81,6 +81,16 @@ Describe 'Save-CreatedStyle' {
             Test-Path -LiteralPath (Join-Path $script:TStylesDataRoot 'styles\mine\background.png') | Should -BeTrue
         }
 
+        It 'saves a .jfif as background.jpg, the name Get-BackgroundFileIn resolves' {
+            $jf = Join-Path $TestDrive 'download.jfif'
+            Copy-Item -LiteralPath $script:img -Destination $jf
+            (Save-CreatedStyle -Name 'mine' -Scheme $script:scheme -Theme $script:theme -BackgroundPath $jf -Prompt $script:prompt).Status | Should -Be 'saved'
+            $dir = Join-Path $script:TStylesDataRoot 'styles\mine'
+            @(Get-ChildItem -LiteralPath $dir -Force | Where-Object { $_.Name -like 'background*' } | ForEach-Object { $_.Name }) |
+                Should -Be @('background.jpg')
+            Get-BackgroundFileIn -Directory $dir | Should -Be (Join-Path $dir 'background.jpg')
+        }
+
         It 'returns invalid for an unsupported background type (<f>)' -ForEach @(@{ f = 'x.webp' }, @{ f = 'x.bmp' }, @{ f = 'noext' }) {
             $p = Join-Path $TestDrive $f
             Copy-Item -LiteralPath $script:img -Destination $p

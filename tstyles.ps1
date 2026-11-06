@@ -532,7 +532,7 @@ function Invoke-TerminalStylesStateMigration {
         $cacheDir = Join-Path (Join-Path $script:TStylesDataRoot 'cache') $styleName
 
         # Move cached background files
-        foreach ($ext in 'gif','png','jpg','jpeg') {
+        foreach ($ext in @(Get-BackgroundImageExtensions)) {
             $src = Join-Path $styleDir.FullName "background.$ext"
             if (Test-Path -LiteralPath $src) {
                 if (-not (Test-Path -LiteralPath $cacheDir)) {
@@ -878,7 +878,7 @@ function Test-StyleResolved {
     # name. -NoInherit (the recursive base call) keeps it one hop, so a cyclic
     # tune.json (A->B->A) cannot recurse.
     param([Parameter(Mandatory)][string]$StyleDir, [switch]$NoInherit)
-    foreach ($ext in 'gif','png','jpg','jpeg') {
+    foreach ($ext in @(Get-BackgroundImageExtensions)) {
         if (Test-Path -LiteralPath (Join-Path $StyleDir "background.$ext")) { return $true }
     }
     if (-not $NoInherit) {
@@ -887,7 +887,7 @@ function Test-StyleResolved {
     }
     $styleName = Split-Path -Leaf $StyleDir
     $cacheDir = Get-StyleCacheDir -StyleName $styleName
-    foreach ($ext in 'gif','png','jpg','jpeg') {
+    foreach ($ext in @(Get-BackgroundImageExtensions)) {
         if (Test-Path -LiteralPath (Join-Path $cacheDir "background.$ext")) { return $true }
     }
 
@@ -1566,6 +1566,8 @@ function Invoke-TerminalStyle {
                 # and the file is not there"? That distinction decides the
                 # marker's TTL below, and getting it wrong costs a month.
                 $sawUnreachable = $false
+                # Spelled out: this runs in a job, which has none of the
+                # module's functions. Keep it Get-BackgroundImageExtensions.
                 foreach ($ext in 'gif','png','jpg','jpeg') {
                     $local = Join-Path $cacheDir "background.$ext"
                     # Download to a sibling .part and rename into place only once

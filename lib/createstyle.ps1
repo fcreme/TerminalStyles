@@ -72,10 +72,13 @@ function Save-CreatedStyle {
         return (& $result 'invalid' $null "'$Name' is not a usable style name.")
     }
 
-    # Only the extensions Get-BackgroundFileIn resolves paint a background.
-    $ext = [System.IO.Path]::GetExtension($BackgroundPath).ToLowerInvariant()
-    if ($ext -notin '.gif', '.png', '.jpg', '.jpeg') {
-        return (& $result 'invalid' $null "Background image must be a .gif, .png, .jpg or .jpeg file (got '$ext').")
+    # Only the extensions Get-BackgroundFileIn resolves paint a background;
+    # Get-BackgroundImageSaveExtension is the one rule, the creator's step 0
+    # asks it too, and it saves a .jfif as background.jpg.
+    $ext = Get-BackgroundImageSaveExtension -Path $BackgroundPath
+    if (-not $ext) {
+        $got = [System.IO.Path]::GetExtension($BackgroundPath)
+        return (& $result 'invalid' $null ("Background image must be a {0} file (got '{1}')." -f (Get-BackgroundImageTypesText), $got))
     }
 
     $stylesRoot = Join-Path $script:TStylesDataRoot 'styles'

@@ -122,12 +122,31 @@ Describe 'Invoke-CreatorKey' {
 
             It 'Enter on a file the reader refuses returns its message and stays on step 0' {
                 $s = New-CreatorStartState
-                $s.PathText = 'notes.txt'
+                $s.PathText = 'notes.png'
                 $r = Invoke-CreatorKey -State $s -Key 'Enter' -ReadImage $script:badReader
                 $r.Action | Should -BeLike 'error:Not an image TerminalStyles can read: *'
                 $r.State.Step | Should -Be 0
                 $r.State.Scheme | Should -BeNullOrEmpty
-                $r.State.PathText | Should -BeExactly 'notes.txt'
+                $r.State.PathText | Should -BeExactly 'notes.png'
+            }
+
+            It 'Enter on a type the save would refuse (<f>) says which types it takes, without reading it' -ForEach @(
+                @{ f = 'photo.bmp' }, @{ f = 'scan.tif' }, @{ f = 'noext' }) {
+                $s = New-CreatorStartState
+                $s.PathText = $f
+                $r = & $script:key $s 'Enter' $null
+                $r.Action | Should -BeExactly ("error:'$f' is not a file type tstyles create takes. Use a .gif, .png, .jpg, .jpeg or .jfif file.")
+                $r.State.Step | Should -Be 0
+                $r.State.Scheme | Should -BeNullOrEmpty
+                $script:readPaths.Count | Should -Be 0 -Because 'the type is refused before the reader runs'
+            }
+
+            It 'Enter on a .jfif (a JPEG as Windows browsers save one) reads it' {
+                $s = New-CreatorStartState
+                $s.PathText = 'download.JFIF'
+                $r = & $script:key $s 'Enter' $null
+                $r.Action | Should -BeExactly 'preview'
+                $script:readPaths.Count | Should -Be 1
             }
 
             It 'a relative, quoted path reaches the reader and the state absolute and unquoted' {
