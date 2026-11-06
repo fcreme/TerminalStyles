@@ -33,3 +33,6 @@ out/
 
 # Agent worktrees, created by tooling. Never part of the project.
 .claude/
+
+# Brainstorming mockups (visual companion)
+.superpowers/

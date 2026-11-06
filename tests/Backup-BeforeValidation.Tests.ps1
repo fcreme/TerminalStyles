@@ -185,16 +185,19 @@ target has been resolved and found valid.
 
 Describe 'only a redraw loop takes the backup quietly' {
     # -Quiet suppresses "Backed up settings to: <path>", and its own docstring
-    # scopes it: "The picker and the tuner take this as crash-recovery behind a
-    # menu that redraws every frame; announcing it would be noise." Nothing
+    # scopes it: "The picker, the tuner and the creator take this as
+    # crash-recovery behind a menu that redraws every frame; announcing it
+    # would be noise." Nothing
     # enforced that, so `tstyles font` -- a linear one-shot command with ordinary
     # line output -- inherited the silence without the reason for it, spent the
     # single rolling .bak, and printed only "Applied '<family>' to '<target>'".
     #
     # The rule is in prose in one place and applied in five others, which is the
     # shape this project keeps finding. This is the lint for it.
-    It 'passes -Quiet only from the picker loop and the tuner' {
-        $allowed = @('Invoke-TerminalStyle', 'Invoke-TerminalStyleTune')
+    # The creator (`tstyles create`) is the third: its pages redraw on every
+    # key too, and it says a failed backup inside its frame.
+    It 'passes -Quiet only from the picker loop, the tuner and the creator' {
+        $allowed = @('Invoke-TerminalStyle', 'Invoke-TerminalStyleTune', 'Invoke-TerminalStyleCreate')
 
         $repoRoot = Split-Path $PSScriptRoot -Parent
         $files = Get-ChildItem -LiteralPath $repoRoot -Recurse -Filter '*.ps1' -File |

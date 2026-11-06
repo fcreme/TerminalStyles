@@ -199,6 +199,37 @@ function Test-BackgroundChanged {
     return $false
 }
 
+function Get-BackgroundImageExtensions {
+    # The extensions a style's background.<ext> can have, without the dot, in
+    # priority order (.gif > .png > .jpg > .jpeg). THE list: the resolution,
+    # the removal, the fetch, and what `tstyles create` takes and saves all
+    # read it, so no two of them can disagree about what paints.
+    [OutputType([string[]])]
+    param()
+    'gif', 'png', 'jpg', 'jpeg'
+}
+
+function Get-BackgroundImageSaveExtension {
+    # The extension (with the dot, lower case) an image at $Path is saved
+    # under as a style's background, or $null when it is not one of
+    # Get-BackgroundImageExtensions. .jfif is a JPEG under the name Windows
+    # browsers commonly save one with, so it is taken and saved as .jpg: the
+    # saved file is then one Get-BackgroundFileIn already resolves.
+    [OutputType([string])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Path)
+    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    if ($ext -eq '.jfif') { return '.jpg' }
+    if ($ext.Length -gt 1 -and @(Get-BackgroundImageExtensions) -contains $ext.Substring(1)) { return $ext }
+    $null
+}
+
+function Get-BackgroundImageTypesText {
+    # The file types Get-BackgroundImageSaveExtension takes, for a message:
+    # ".gif, .png, .jpg, .jpeg or .jfif".
+    $all = @(@(Get-BackgroundImageExtensions) + 'jfif' | ForEach-Object { '.' + $_ })
+    (($all[0..($all.Count - 2)]) -join ', ') + ' or ' + $all[$all.Count - 1]
+}
+
 function Get-BackgroundFileIn {
     # The background image sitting DIRECTLY in one directory, or $null.
     #
@@ -216,7 +247,7 @@ function Get-BackgroundFileIn {
     # Unrolled, so a caller wraps it in @().
     param([Parameter(Mandatory)][string]$Directory, [switch]$All)
     $found = @()
-    foreach ($ext in 'gif','png','jpg','jpeg') {
+    foreach ($ext in @(Get-BackgroundImageExtensions)) {
         $candidate = Join-Path $Directory "background.$ext"
         if (Test-Path -LiteralPath $candidate) {
             if (-not $All) { return $candidate }
@@ -434,7 +465,7 @@ function Get-StyleBundledBackground {
     # attempt is enough to make the whole result inconclusive.
     $definitelyAbsent = $true
     try {
-        foreach ($ext in 'gif','png','jpg','jpeg') {
+        foreach ($ext in @(Get-BackgroundImageExtensions)) {
             $url = "$remoteBase.$ext"
             $local = Join-Path $cacheDir "background.$ext"
             # Same .part-then-rename as the picker's prefetch job, for the same

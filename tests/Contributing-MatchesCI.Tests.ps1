@@ -158,6 +158,7 @@ Describe 'README claims that the code can settle' {
         $commandFor = @{
             'Invoke-TerminalStyle'     = 'picker'          # tstyles with no arg
             'Invoke-TerminalStyleTune' = 'tstyles tune'
+            'Invoke-TerminalStyleCreate' = 'tstyles create'
             'Invoke-TerminalStyleFont' = 'tstyles font'
             'Apply-StyleDirect'        = 'tstyles <name>'
             'Reset-StyleDirect'        = 'tstyles reset'
