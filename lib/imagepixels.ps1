@@ -34,6 +34,7 @@ function Read-ImagePixels {
     $img = $null
     $small = $null
     $g = $null
+    $attr = $null
     try {
         try {
             $full = (Resolve-Path -LiteralPath $Path).ProviderPath
@@ -57,7 +58,12 @@ function Read-ImagePixels {
         $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
         $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
         $g.Clear([System.Drawing.Color]::Black)
-        $g.DrawImage($img, 0, 0, $tw, $th)
+        # TileFlipXY so edge samples blend with the mirrored image, not with
+        # transparent, which would darken the border over the black Clear.
+        $attr = [System.Drawing.Imaging.ImageAttributes]::new()
+        $attr.SetWrapMode([System.Drawing.Drawing2D.WrapMode]::TileFlipXY)
+        $dest = [System.Drawing.Rectangle]::new(0, 0, $tw, $th)
+        $g.DrawImage($img, $dest, 0, 0, $w, $h, [System.Drawing.GraphicsUnit]::Pixel, $attr)
 
         $rect = [System.Drawing.Rectangle]::new(0, 0, $tw, $th)
         $data = $small.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
@@ -81,6 +87,7 @@ function Read-ImagePixels {
         for ($i = 0; $i -lt $argb.Length; $i++) { $out[$i] = $argb[$i] -band 0xFFFFFF }
         return ,$out
     } finally {
+        if ($attr) { $attr.Dispose() }
         if ($g) { $g.Dispose() }
         if ($small) { $small.Dispose() }
         if ($img) { $img.Dispose() }

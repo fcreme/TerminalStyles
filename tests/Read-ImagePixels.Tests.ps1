@@ -44,8 +44,7 @@ Describe 'Read-ImagePixels' {
             $bmp = [System.Drawing.Bitmap]::new(2000, 1000)
             try { $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $bmp.Dispose() }
             $px = @(Read-ImagePixels -Path $path -MaxSide 50)
-            $px.Count | Should -BeGreaterThan 0
-            $px.Count | Should -BeLessOrEqual (50 * 25)
+            $px.Count | Should -Be (50 * 25)
         }
     }
 
