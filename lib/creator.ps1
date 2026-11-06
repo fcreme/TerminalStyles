@@ -380,7 +380,13 @@ function Invoke-TerminalStyleCreate {
         foreach ($note in @($backupNote, $previewNote, $message)) {
             if ($note) { Write-Host ("  $e[33m! " + ([string]$note).Trim().TrimStart('!').Trim() + "$e[0m") }
         }
-        foreach ($line in @(Get-CreatorPageLines -State $state)) { Write-Host $line }
+        # Assigned first, never @(): Get-CreatorPageLines emits its lines as
+        # ONE array (a unary comma), and @() of a single array is a one-element
+        # array holding it. Write-Host then got the whole page as one object --
+        # joined with spaces onto one line on pwsh 7, and printed as
+        # "System.String[]" on 5.1, whose remaining-arguments binding wraps it.
+        $pageLines = Get-CreatorPageLines -State $state
+        foreach ($line in $pageLines) { Write-Host $line }
     }
 
     $originalTitle = $null

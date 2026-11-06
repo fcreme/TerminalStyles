@@ -200,8 +200,14 @@ Describe 'Invoke-TerminalStyleCreate' {
                 $end = $script:out.IndexOf('<<CLEAR>>', $next + 1)
                 if ($end -lt 0) { $end = $script:out.Count }
                 $frame = @($script:out.GetRange($next, $end - $next))
-                @($frame | Where-Object { $_.Contains('Step 5 of 5') }).Count | Should -Be 1
-                @($frame | Where-Object { $_.Contains("A style named 'probe' already exists.") }).Count | Should -Be 1
+                # Every Write-Host is one entry, so a page handed to Write-Host
+                # as one array shows here as one long entry (pwsh 7 joins it
+                # with spaces) or as "System.String[]" (5.1 wraps it in its
+                # remaining-arguments list). Each page line must be its own.
+                $seen = "the frame was:`n" + ($frame -join "`n")
+                @($frame | Where-Object { $_ -clike '  tstyles create   Step 5 of 5: *' }).Count | Should -Be 1 -Because $seen
+                @($frame | Where-Object { $_ -ceq 'On branch main' }).Count | Should -Be 1 -Because $seen
+                @($frame | Where-Object { $_.Contains("A style named 'probe' already exists.") }).Count | Should -Be 1 -Because $seen
                 # The session stayed live, so the Esc after it still put the file back.
                 (& $script:bytesNow) | Should -Be $script:originalB64
                 (& $script:said 'Cancelled. Your terminal is back as it was.') | Should -BeTrue
