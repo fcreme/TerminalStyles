@@ -54,14 +54,14 @@ use `InModuleScope` to reach the internals.
 
 ### The easy way: `tstyles submit`
 
-Made a style with `tstyles create` (or `tstyles tune`)? Run
+Made a style with `tstyles create`? Run
 
 ```powershell
 tstyles submit <name>
 ```
 
-It checks the style against the catalogue's rules, the same ones the CI
-checks below enforce, and lists anything that would get it refused. It then
+It checks the style against the catalogue's rules, most of the ones the CI
+checks below enforce, and lists any problem it finds. It then
 packs it into a zip and opens the **Style submission** issue form in your
 browser. Drag the zip into the form and press Submit; no fork, no git, and
 no `gifs` branch. The maintainer reviews it with

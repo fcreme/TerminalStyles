@@ -17,10 +17,92 @@ function Get-StyleMetaLimits {
 }
 
 function Get-StyleSubmissionFileNames {
-    # The files a catalogue style may hold, besides one background.<ext> of a
-    # type Get-BackgroundImageExtensions names. The zip and the review's
-    # unpack both take exactly these.
-    @('scheme.json', 'theme.json', 'profile.ps1', 'prompt.sh', 'README.md', 'meta.json')
+    # The files a submission carries, besides one background.<ext> of a type
+    # Get-BackgroundImageExtensions names. The zip and the review's unpack
+    # both take exactly these. Not README.md: a style folder may hold one and
+    # it is left out of the zip, because the review writes the catalogue's
+    # own README, whose Includes list CI holds to the folder.
+    @('scheme.json', 'theme.json', 'profile.ps1', 'prompt.sh', 'meta.json')
+}
+
+function Get-SubmittedThemeProblems {
+    <#
+    .SYNOPSIS
+    Why a submitted theme.json could not ship, as plain sentences.
+
+    .DESCRIPTION
+    Merge-StyleIntoSettings copies every theme.json key into the user's
+    Windows Terminal profile as it is, so a key the catalogue does not use
+    is not decoration: "commandline" would run a program for everyone who
+    applies the style, and an "icon" or a backgroundImage on a network path
+    would make Windows Terminal fetch it. So the check is an allow-list --
+    the keys every bundled style and New-CreatedThemeObject write, with the
+    value shapes Windows Terminal takes for them -- and backgroundImage
+    must be the {{BACKGROUND_IMAGE}} placeholder.
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)]$Theme, [Parameter(Mandatory)][string]$Name)
+
+    $p = New-Object System.Collections.Generic.List[string]
+    $isText = { param($v, [int]$max) ($v -is [string]) -and $v.Length -le $max -and ($v -notmatch '[\x00-\x1F\x7F]') }
+    $isNum = { param($v) ($v -is [int]) -or ($v -is [long]) -or ($v -is [double]) -or ($v -is [decimal]) }
+    $checks = [ordered]@{
+        colorScheme                        = { param($v) ($v -is [string]) -and ($v -ceq $Name) }
+        tabTitle                           = { param($v) & $isText $v 64 }
+        tabColor                           = { param($v) ($v -is [string]) -and ($v -match '^#[0-9a-fA-F]{6}$') }
+        cursorShape                        = { param($v) @('bar', 'vintage', 'underscore', 'filledBox', 'emptyBox', 'doubleUnderscore') -ccontains $v }
+        useAcrylic                         = { param($v) $v -is [bool] }
+        opacity                            = { param($v) (& $isNum $v) -and $v -ge 0 -and $v -le 100 }
+        'experimental.retroTerminalEffect' = { param($v) $v -is [bool] }
+        font                               = { param($v) $null -ne $v -and $v -isnot [string] -and $v -isnot [bool] -and -not (& $isNum $v) }
+        padding                            = { param($v) ($v -is [string]) -and ($v -match '^\d{1,3}(, ?\d{1,3}){0,3}$') }
+        backgroundImage                    = { param($v) $v -ceq '{{BACKGROUND_IMAGE}}' }
+        backgroundImageOpacity             = { param($v) (& $isNum $v) -and $v -ge 0 -and $v -le 1 }
+        backgroundImageStretchMode         = { param($v) @('none', 'fill', 'uniform', 'uniformToFill') -ccontains $v }
+        backgroundImageAlignment           = { param($v) @('center', 'left', 'top', 'right', 'bottom', 'topLeft', 'topRight', 'bottomLeft', 'bottomRight') -ccontains $v }
+    }
+    foreach ($prop in @($Theme.PSObject.Properties)) {
+        if (-not $checks.Contains($prop.Name)) {
+            $p.Add("theme.json's '$($prop.Name)' cannot be submitted: a catalogue style sets only $(@($checks.Keys) -join ', ').")
+            continue
+        }
+        if (-not (& $checks[$prop.Name] $prop.Value)) {
+            $want = if ($prop.Name -eq 'colorScheme') { " (it must be '$Name')" } elseif ($prop.Name -eq 'backgroundImage') { ' (it must be {{BACKGROUND_IMAGE}})' } else { '' }
+            $p.Add("theme.json's '$($prop.Name)' is not a value Windows Terminal takes there$want.")
+        }
+    }
+    if ($Theme.PSObject.Properties['font'] -and (& $checks['font'] $Theme.font)) {
+        $weights = 'thin', 'extra-light', 'light', 'semi-light', 'normal', 'medium', 'semi-bold', 'bold', 'extra-bold', 'black', 'extra-black'
+        foreach ($fp in @($Theme.font.PSObject.Properties)) {
+            $ok = switch ($fp.Name) {
+                'face'   { & $isText $fp.Value 64 }
+                'size'   { (& $isNum $fp.Value) -and $fp.Value -ge 4 -and $fp.Value -le 72 }
+                'weight' { $weights -ccontains $fp.Value }
+                default  { $false }
+            }
+            if (-not $ok) { $p.Add("theme.json's font '$($fp.Name)' is not one a catalogue style sets, or not a value Windows Terminal takes there.") }
+        }
+    }
+    $p.ToArray()
+}
+
+function Test-ImageFileSignature {
+    # Do a file's first bytes say it is the image type its extension names?
+    # A .gif must start GIF8, a .png with the PNG signature, a .jpg/.jpeg
+    # with FF D8 FF.
+    param([Parameter(Mandatory)][string]$Path)
+    $ext = [System.IO.Path]::GetExtension($Path).ToLowerInvariant()
+    $head = New-Object byte[] 8
+    $n = 0
+    $fs = [System.IO.File]::OpenRead($Path)
+    try { $n = $fs.Read($head, 0, 8) } finally { $fs.Dispose() }
+    switch ($ext) {
+        '.gif'  { return $n -ge 4 -and $head[0] -eq 0x47 -and $head[1] -eq 0x49 -and $head[2] -eq 0x46 -and $head[3] -eq 0x38 }
+        '.png'  { return $n -ge 8 -and (@(0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A) -join ',') -eq (@($head[0..7]) -join ',') }
+        { $_ -in '.jpg', '.jpeg' } { return $n -ge 3 -and $head[0] -eq 0xFF -and $head[1] -eq 0xD8 -and $head[2] -eq 0xFF }
+    }
+    $false
 }
 
 function Get-SchemeCatalogueContrastProblems {
@@ -111,7 +193,7 @@ function Get-StyleSubmissionProblems {
                 $same = [System.IO.Path]::GetFullPath($taken).TrimEnd('\', '/') -eq
                         [System.IO.Path]::GetFullPath($StyleDir).TrimEnd('\', '/')
             } catch { $same = $false }
-            if (-not $same) { $p.Add("The catalogue already has a style called '$Name'. Save yours under another name with: tstyles tune $Name") }
+            if (-not $same) { $p.Add("The catalogue already has a style called '$Name'. Make yours again under a name of its own with: tstyles create") }
         }
     }
 
@@ -127,6 +209,12 @@ function Get-StyleSubmissionProblems {
             continue
         }
         if ($allowed -ccontains $leaf) { continue }
+        # Left out of the zip, not a problem: the review writes the README.
+        if ($leaf -ceq 'README.md') { continue }
+        if ($leaf -ceq 'tune.json') {
+            $p.Add("'$Name' was saved by tstyles tune and builds on the style it was tuned from; the catalogue takes styles made whole, with tstyles create.")
+            continue
+        }
         $m = [regex]::Match($leaf, '^background\.([A-Za-z]+)$')
         if ($m.Success -and ($imageExts -ccontains $m.Groups[1].Value)) { $images.Add($entry); continue }
         $p.Add("'$leaf' cannot be submitted. A style holds only $($allowed -join ', ') and one background image ($((@($imageExts) | ForEach-Object { '.' + $_ }) -join ', ')).")
@@ -136,6 +224,9 @@ function Get-StyleSubmissionProblems {
     }
     foreach ($img in $images) {
         $len = (New-Object System.IO.FileInfo $img).Length
+        if (-not (Test-ImageFileSignature -Path $img)) {
+            $p.Add("$([System.IO.Path]::GetFileName($img)) is not the image its name says; save it again as a real $([System.IO.Path]::GetExtension($img)) file.")
+        }
         if ($len -gt 2MB) {
             $mb = [string]::Format([cultureinfo]::InvariantCulture, '{0:0.0}', $len / 1MB)
             $p.Add("$([System.IO.Path]::GetFileName($img)) is $mb MB; the catalogue takes images up to 2 MB.")
@@ -161,6 +252,14 @@ function Get-StyleSubmissionProblems {
             $bad = @($slots | Where-Object { $scheme.PSObject.Properties[$_] -and ("$($scheme.$_)" -notmatch '^#[0-9a-fA-F]{6}$') })
             if ($bad.Count) { $p.Add("scheme.json colours must be #rrggbb: $($bad -join ', ').") }
             if ("$($scheme.name)" -cne $Name) { $p.Add("scheme.json's name must be '$Name', the style's name.") }
+            # The picker's hint line is dimmed from the foreground and must
+            # still read on the background (Picker-HintContrast.Tests.ps1).
+            $hint = $null
+            try { $hint = Get-SchemeHintColor -Scheme $scheme } catch { $hint = $null }
+            $hintRatio = if ($hint -and (ConvertTo-NormalHex $scheme.background)) { Get-ContrastRatio -A $hint -B $scheme.background } else { $null }
+            if ($null -ne $hintRatio -and $hintRatio -lt 4.5) {
+                $p.Add("foreground ($($scheme.foreground)) is too faint on the background for the picker's hint line; the catalogue needs it at 4.5:1 or more.")
+            }
             foreach ($c in @(Get-SchemeCatalogueContrastProblems -Scheme $scheme -Exempt $ContrastExempt)) {
                 $ratio = [string]::Format([cultureinfo]::InvariantCulture, '{0:0.00}', $c.Ratio)
                 $p.Add("$($c.Slot) ($($c.Color)) is $ratio`:1 on $($c.Against) ($($c.AgainstColor)); the catalogue needs more than $($c.Floor):1.")
@@ -170,13 +269,15 @@ function Get-StyleSubmissionProblems {
 
     $themePath = Join-Path $StyleDir 'theme.json'
     if ([System.IO.File]::Exists($themePath)) {
-        try { $null = [System.IO.File]::ReadAllText($themePath, $utf8) | ConvertFrom-Json -ErrorAction Stop }
-        catch { $p.Add('theme.json is not valid JSON.') }
+        $theme = $null
+        try { $theme = [System.IO.File]::ReadAllText($themePath, $utf8) | ConvertFrom-Json -ErrorAction Stop } catch { $theme = $null }
+        if (-not $theme) { $p.Add('theme.json is not valid JSON.') }
+        else { foreach ($t in @(Get-SubmittedThemeProblems -Theme $theme -Name $Name)) { $p.Add($t) } }
     }
 
-    if ([System.IO.File]::Exists((Join-Path $StyleDir 'profile.ps1')) -and
-        -not [System.IO.File]::Exists((Join-Path $StyleDir 'prompt.sh'))) {
-        $p.Add('profile.ps1 has no prompt.sh beside it: the catalogue needs the zsh/bash half of the prompt too.')
+    # Shell-Prompt.Tests.ps1 renders a prompt.sh beside every scheme.json.
+    if (-not [System.IO.File]::Exists((Join-Path $StyleDir 'prompt.sh'))) {
+        $p.Add('prompt.sh is missing: the catalogue needs the zsh/bash prompt as well as the PowerShell one.')
     }
 
     # meta.json: the picker shows its description on one row.
@@ -417,7 +518,7 @@ function Invoke-TerminalStyleSubmit {
         return
     }
     if ($origin -eq 'shadow') {
-        Write-Host "  Your '$Name' uses a bundled style's name, and the catalogue needs a name of its own. Save it under a new name with: tstyles tune $Name" -ForegroundColor Yellow
+        Write-Host "  Your '$Name' uses a bundled style's name, and the catalogue needs a name of its own. Make it again under a new name with: tstyles create" -ForegroundColor Yellow
         return
     }
     if ($origin -ne 'yours') {

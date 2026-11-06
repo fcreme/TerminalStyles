@@ -103,6 +103,13 @@ Describe 'ConvertTo-VisibleText' {
     }
 }
 
+Describe 'ConvertTo-VisibleText and invisible formatting' {
+    It 'shows a bidi override and a zero-width space as code points' {
+        $t = 'if (ok) ' + [char]0x202E + 'x' + [char]0x200B + 'y'
+        ConvertTo-VisibleText $t | Should -Be 'if (ok) \u202ex\u200by'
+    }
+}
+
 Describe 'New-SubmissionReadme' {
     It 'names exactly the files the style ships, and credits the submitter' {
         $r = New-SubmissionReadme -Name 'sunset' -Description 'Warm dusk.' -Author 'someone' -IssueNumber 170 `
@@ -124,7 +131,7 @@ Describe 'a zip from tstyles submit survives the review' {
             $script:TStylesDataRoot = Join-Path $root 'data'
             try {
                 $img = Join-Path $root 'src.png'
-                [System.IO.File]::WriteAllBytes($img, [byte[]](137, 80, 78, 71, 1))
+                [System.IO.File]::WriteAllBytes($img, [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1))
                 $scheme = Get-Content -Raw -LiteralPath (Join-Path $script:TStylesModuleRoot 'styles/eva/scheme.json') | ConvertFrom-Json
                 $choice = [ordered]@{ shape = 'twoline'; symbol = [string][char]0x03BB; pathColor = '#88c0d0'; symbolColor = '#a3be8c' }
                 $theme = New-CreatedThemeObject -Name 'roundtrip' -FontFace 'Cascadia Code' -FontSize 11 -CursorShape 'bar' `

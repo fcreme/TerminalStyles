@@ -39,7 +39,7 @@ Describe 'submission' {
                 # sandboxed data root.
                 param([string]$Name = 'sunset', [switch]$NoChoice)
                 $img = Join-Path $TestDrive ([guid]::NewGuid().ToString('N') + '.png')
-                [System.IO.File]::WriteAllBytes($img, [byte[]](137, 80, 78, 71, 1, 2, 3))
+                [System.IO.File]::WriteAllBytes($img, [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 1, 2, 3))
                 $theme = New-CreatedThemeObject -Name $Name -FontFace 'Cascadia Code' -FontSize 11 `
                     -CursorShape 'bar' -ImageOpacity 0.5 -StretchMode 'uniformToFill' -Alignment 'center' -TabColor '#112233'
                 $prompt = New-CreatedStylePromptText -Choice $script:choice -Name $Name
@@ -68,7 +68,7 @@ Describe 'submission' {
                 $dir = New-TestCreatedStyle
                 [System.IO.File]::WriteAllText((Join-Path $dir 'notes.txt'), 'x')
                 New-Item -ItemType Directory -Path (Join-Path $dir 'extra') | Out-Null
-                [System.IO.File]::WriteAllBytes((Join-Path $dir 'background.gif'), [byte[]](71, 73, 70))
+                [System.IO.File]::WriteAllBytes((Join-Path $dir 'background.gif'), [byte[]](71, 73, 70, 56, 57, 97))
                 $p = @(Get-StyleSubmissionProblems -StyleDir $dir)
                 $p | Where-Object { $_ -like "*'notes.txt' cannot be submitted*" } | Should -Not -BeNullOrEmpty
                 $p | Where-Object { $_ -like "*folder 'extra'*" } | Should -Not -BeNullOrEmpty
@@ -78,9 +78,12 @@ Describe 'submission' {
             It 'refuses an image over 2 MB and takes one of exactly 2 MB' {
                 $dir = New-TestCreatedStyle
                 $img = Join-Path $dir 'background.png'
-                [System.IO.File]::WriteAllBytes($img, (New-Object byte[] (2MB)))
+                $sig = [byte[]](0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A)
+                $b = New-Object byte[] (2MB); [Array]::Copy($sig, $b, 8)
+                [System.IO.File]::WriteAllBytes($img, $b)
                 @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -BeNullOrEmpty
-                [System.IO.File]::WriteAllBytes($img, (New-Object byte[] (2MB + 1)))
+                $b = New-Object byte[] (2MB + 1); [Array]::Copy($sig, $b, 8)
+                [System.IO.File]::WriteAllBytes($img, $b)
                 @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -Be @('background.png is 2.0 MB; the catalogue takes images up to 2 MB.')
             }
 
@@ -99,11 +102,62 @@ Describe 'submission' {
                 $p | Where-Object { $_ -like 'red (*) is 1.00:1 on background*more than 3:1.' } | Should -Not -BeNullOrEmpty
             }
 
-            It 'needs prompt.sh beside profile.ps1' {
+            It 'needs prompt.sh, with or without profile.ps1' {
                 $dir = New-TestCreatedStyle
                 Remove-Item -LiteralPath (Join-Path $dir 'prompt.sh')
-                @(Get-StyleSubmissionProblems -StyleDir $dir) |
-                    Should -Be @('profile.ps1 has no prompt.sh beside it: the catalogue needs the zsh/bash half of the prompt too.')
+                $want = @('prompt.sh is missing: the catalogue needs the zsh/bash prompt as well as the PowerShell one.')
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -Be $want
+                Remove-Item -LiteralPath (Join-Path $dir 'profile.ps1')
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -Be $want
+            }
+
+            It 'refuses a theme.json key that is not a catalogue style''s: <Key>' -ForEach @(
+                @{ Key = 'commandline'; Value = 'powershell -enc AAAA' }
+                @{ Key = 'icon';        Value = '\\host\share\x.png' }
+                @{ Key = 'startingDirectory'; Value = 'C:\' }
+            ) {
+                $dir = New-TestCreatedStyle
+                $t = Get-Content -Raw -LiteralPath (Join-Path $dir 'theme.json') | ConvertFrom-Json
+                $t | Add-Member -NotePropertyName $Key -NotePropertyValue $Value
+                [System.IO.File]::WriteAllText((Join-Path $dir 'theme.json'), ($t | ConvertTo-Json -Depth 4), $script:utf8)
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -HaveCount 1
+                @(Get-StyleSubmissionProblems -StyleDir $dir)[0] | Should -BeLike "theme.json's '$Key' cannot be submitted*"
+            }
+
+            It 'refuses a background that is not the placeholder, and a bad value' {
+                $dir = New-TestCreatedStyle
+                $t = Get-Content -Raw -LiteralPath (Join-Path $dir 'theme.json') | ConvertFrom-Json
+                $t.backgroundImage = '\\host\share\x.png'
+                $t.cursorShape = 'banana'
+                $t.font | Add-Member -NotePropertyName features -NotePropertyValue 'x'
+                [System.IO.File]::WriteAllText((Join-Path $dir 'theme.json'), ($t | ConvertTo-Json -Depth 4), $script:utf8)
+                $p = @(Get-StyleSubmissionProblems -StyleDir $dir)
+                $p | Should -Contain "theme.json's 'backgroundImage' is not a value Windows Terminal takes there (it must be {{BACKGROUND_IMAGE}})."
+                $p | Should -Contain "theme.json's 'cursorShape' is not a value Windows Terminal takes there."
+                $p | Should -Contain "theme.json's font 'features' is not one a catalogue style sets, or not a value Windows Terminal takes there."
+            }
+
+            It 'refuses an image whose bytes are not its type' {
+                $dir = New-TestCreatedStyle
+                [System.IO.File]::WriteAllText((Join-Path $dir 'background.png'), 'not a picture')
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -Be @('background.png is not the image its name says; save it again as a real .png file.')
+            }
+
+            It 'refuses a tuned style, and ignores a README' {
+                $dir = New-TestCreatedStyle
+                [System.IO.File]::WriteAllText((Join-Path $dir 'README.md'), '# mine')
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -BeNullOrEmpty
+                [System.IO.File]::WriteAllText((Join-Path $dir 'tune.json'), '{}')
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -Be @("'sunset' was saved by tstyles tune and builds on the style it was tuned from; the catalogue takes styles made whole, with tstyles create.")
+            }
+
+            It 'refuses a foreground too faint for the picker''s hint line' {
+                $dir = New-TestCreatedStyle
+                $s = Get-Content -Raw -LiteralPath (Join-Path $dir 'scheme.json') | ConvertFrom-Json
+                $s.foreground = $s.background
+                [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'), ($s | ConvertTo-Json), $script:utf8)
+                @(Get-StyleSubmissionProblems -StyleDir $dir) | Where-Object { $_ -like "foreground (*) is too faint on the background for the picker's hint line*" } |
+                    Should -Not -BeNullOrEmpty
             }
 
             It 'needs a description that fits a picker row' {
@@ -120,7 +174,7 @@ Describe 'submission' {
                 $cat = Join-Path $TestDrive ('cat-' + [guid]::NewGuid().ToString('N'))
                 New-Item -ItemType Directory -Path (Join-Path $cat 'sunset') -Force | Out-Null
                 @(Get-StyleSubmissionProblems -StyleDir $dir -CatalogueRoot $cat) |
-                    Should -Be @("The catalogue already has a style called 'sunset'. Save yours under another name with: tstyles tune sunset")
+                    Should -Be @("The catalogue already has a style called 'sunset'. Make yours again under a name of its own with: tstyles create")
             }
         }
 
@@ -181,6 +235,7 @@ Describe 'submission' {
 
             It 'packs the style flat with a submission record' {
                 $dir = New-TestCreatedStyle
+                [System.IO.File]::WriteAllText((Join-Path $dir 'README.md'), '# mine')
                 $out = Join-Path $TestDrive ('out-' + [guid]::NewGuid().ToString('N'))
                 $r = New-StyleSubmissionPackage -StyleDir $dir -Name 'sunset' -OutDir $out -ImageSource 'my photo' -RightsConfirmed $true
                 $r.Status | Should -Be 'written'
@@ -267,7 +322,7 @@ Describe 'submission' {
                 $script:out | Should -Contain "  'eva' is already in the catalogue. Nothing was submitted."
                 Mock Get-StyleOrigin { 'shadow' }
                 Invoke-TerminalStyleSubmit -Name 'eva' -ReadLine { throw 'asked' } -OpenUrl $script:open
-                $script:out[$script:out.Count - 1] | Should -BeLike "*uses a bundled style's name*tstyles tune eva"
+                $script:out[$script:out.Count - 1] | Should -BeLike "*uses a bundled style's name*tstyles create"
                 Mock Get-StyleOrigin { 'unknown' }
                 Invoke-TerminalStyleSubmit -Name 'eva' -ReadLine { throw 'asked' } -OpenUrl $script:open
                 $script:out[$script:out.Count - 1] | Should -BeLike "*Cannot tell whether 'eva'*nothing was submitted."
