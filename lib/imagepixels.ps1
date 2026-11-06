@@ -17,12 +17,26 @@ function Test-ImagePixelReaderAvailable {
     }
 }
 
+function Get-ImagePixelsInterpolation {
+    # The GDI+ InterpolationMode name for a downscale by $Scale (target over
+    # source, 0-1]. Below a quarter, HighQualityBilinear: a 6000-pixel photo
+    # cut to 96 spends seconds in bicubic for detail the palette, which only
+    # counts colours, never looks at. Otherwise HighQualityBicubic.
+    [OutputType([string])]
+    param([Parameter(Mandatory)][double]$Scale)
+    if ($Scale -lt 0.25) { return 'HighQualityBilinear' }
+    'HighQualityBicubic'
+}
+
 function Read-ImagePixels {
     [OutputType([int[]])]
     # Returns the pixels as [int] values, each 0xRRGGBB, unrolled onto the
     # pipeline (see the end of the function for the caller contract). Reads the first frame of a GIF, ignores
     # alpha (transparent pixels are drawn over black), and
     # scales the longest side down to at most -MaxSide before sampling.
+    # Anything GDI+ throws while decoding, drawing or locking the image ("A
+    # generic error occurred in GDI+.", "Out of memory." for a file it cannot
+    # decode) is the one "Not an image TerminalStyles can read" message.
     param(
         [Parameter(Mandatory)][string]$Path,
         [ValidateRange(1, 4096)][int]$MaxSide = 96
@@ -38,6 +52,7 @@ function Read-ImagePixels {
     $g = $null
     $attr = $null
     try {
+        $out = $null
         try {
             $full = (Resolve-Path -LiteralPath $Path).ProviderPath
             $img = [System.Drawing.Image]::FromFile($full)
@@ -45,48 +60,50 @@ function Read-ImagePixels {
                 $dim = [System.Drawing.Imaging.FrameDimension]::new($img.FrameDimensionsList[0])
                 if ($img.GetFrameCount($dim) -gt 1) { [void]$img.SelectActiveFrame($dim, 0) }
             }
+            $w = [int]$img.Width
+            $h = [int]$img.Height
+            if ($w -lt 1 -or $h -lt 1) { throw $notImage }
+            $scale = [Math]::Min(1.0, $MaxSide / [double][Math]::Max($w, $h))
+            $tw = [Math]::Max(1, [int][Math]::Round($w * $scale))
+            $th = [Math]::Max(1, [int][Math]::Round($h * $scale))
+
+            $small = [System.Drawing.Bitmap]::new($tw, $th, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            $g = [System.Drawing.Graphics]::FromImage($small)
+            $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode](Get-ImagePixelsInterpolation -Scale $scale)
+            $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
+            $g.Clear([System.Drawing.Color]::Black)
+            # TileFlipXY so edge samples blend with the mirrored image, not with
+            # transparent, which would darken the border over the black Clear.
+            $attr = [System.Drawing.Imaging.ImageAttributes]::new()
+            $attr.SetWrapMode([System.Drawing.Drawing2D.WrapMode]::TileFlipXY)
+            $dest = [System.Drawing.Rectangle]::new(0, 0, $tw, $th)
+            $g.DrawImage($img, $dest, 0, 0, $w, $h, [System.Drawing.GraphicsUnit]::Pixel, $attr)
+
+            $rect = [System.Drawing.Rectangle]::new(0, 0, $tw, $th)
+            $data = $small.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
+                [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
+            try {
+                $argb = [int[]]::new($tw * $th)
+                if ($data.Stride -ne $tw * 4) {
+                    # Rows are padded: copy row by row.
+                    $row = [int[]]::new($tw)
+                    for ($y = 0; $y -lt $th; $y++) {
+                        [System.Runtime.InteropServices.Marshal]::Copy([IntPtr]($data.Scan0.ToInt64() + [int64]$y * $data.Stride), $row, 0, $tw)
+                        [Array]::Copy($row, 0, $argb, $y * $tw, $tw)
+                    }
+                } else {
+                    [System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $argb, 0, $argb.Length)
+                }
+            } finally {
+                $small.UnlockBits($data)
+            }
+            $out = [int[]]::new($argb.Length)
+            for ($i = 0; $i -lt $argb.Length; $i++) { $out[$i] = $argb[$i] -band 0xFFFFFF }
         } catch {
+            # Decode, draw, lock and copy: whatever GDI+ says, the user is
+            # told the one thing that is true -- this file could not be read.
             throw $notImage
         }
-        $w = [int]$img.Width
-        $h = [int]$img.Height
-        if ($w -lt 1 -or $h -lt 1) { throw $notImage }
-        $scale = [Math]::Min(1.0, $MaxSide / [double][Math]::Max($w, $h))
-        $tw = [Math]::Max(1, [int][Math]::Round($w * $scale))
-        $th = [Math]::Max(1, [int][Math]::Round($h * $scale))
-
-        $small = [System.Drawing.Bitmap]::new($tw, $th, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-        $g = [System.Drawing.Graphics]::FromImage($small)
-        $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-        $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-        $g.Clear([System.Drawing.Color]::Black)
-        # TileFlipXY so edge samples blend with the mirrored image, not with
-        # transparent, which would darken the border over the black Clear.
-        $attr = [System.Drawing.Imaging.ImageAttributes]::new()
-        $attr.SetWrapMode([System.Drawing.Drawing2D.WrapMode]::TileFlipXY)
-        $dest = [System.Drawing.Rectangle]::new(0, 0, $tw, $th)
-        $g.DrawImage($img, $dest, 0, 0, $w, $h, [System.Drawing.GraphicsUnit]::Pixel, $attr)
-
-        $rect = [System.Drawing.Rectangle]::new(0, 0, $tw, $th)
-        $data = $small.LockBits($rect, [System.Drawing.Imaging.ImageLockMode]::ReadOnly,
-            [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
-        try {
-            $argb = [int[]]::new($tw * $th)
-            if ($data.Stride -ne $tw * 4) {
-                # Rows are padded: copy row by row.
-                $row = [int[]]::new($tw)
-                for ($y = 0; $y -lt $th; $y++) {
-                    [System.Runtime.InteropServices.Marshal]::Copy([IntPtr]($data.Scan0.ToInt64() + [int64]$y * $data.Stride), $row, 0, $tw)
-                    [Array]::Copy($row, 0, $argb, $y * $tw, $tw)
-                }
-            } else {
-                [System.Runtime.InteropServices.Marshal]::Copy($data.Scan0, $argb, 0, $argb.Length)
-            }
-        } finally {
-            $small.UnlockBits($data)
-        }
-        $out = [int[]]::new($argb.Length)
-        for ($i = 0; $i -lt $argb.Length; $i++) { $out[$i] = $argb[$i] -band 0xFFFFFF }
         # Emit the elements (no unary comma): the pipeline unrolls them, so the
         # caller gets a flat sequence of [int] whether or not it wraps the call
         # in @(). Callers that need an array use @(Read-ImagePixels ...); a bare

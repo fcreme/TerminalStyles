@@ -243,6 +243,27 @@ Describe 'Invoke-TerminalStyleCreate' {
                     Should -BeFalse
             }
 
+            It 'says it is reading the image before the reader runs' {
+                Mock Apply-StyleDirect {}
+                Mock Save-CreatedStyle {}
+                Mock Read-ImagePixels {
+                    $script:out.Add('<<READ>>')
+                    foreach ($c in 0x0a0a2a, 0xff7a1a, 0x3060d0, 0xe0e0f0) { for ($i = 0; $i -lt 30; $i++) { $c } }
+                }
+                & $script:queue ([object[]]@($script:img.ToCharArray() | ForEach-Object { [string]$_ }))
+                # Enter on the image already read moves on: no second line.
+                & $script:queue @('Enter', $null, 'Enter', 'Escape')
+                Invoke-TerminalStyleCreate
+
+                $read = $script:out.IndexOf('<<READ>>')
+                $read | Should -BeGreaterThan -1
+                $said = $script:out.IndexOf('  Reading picture.png...')
+                $said | Should -BeGreaterThan -1 -Because ("what was said: " + ($script:out -join ' | '))
+                $said | Should -BeLessThan $read
+                @($script:out | Where-Object { $_ -ceq '  Reading picture.png...' }).Count | Should -Be 1
+                Should -Invoke Read-ImagePixels -Times 1 -Exactly
+            }
+
             It 'sweeps a scratch session a closed creator left, keeps another live one, and removes its own' {
                 $root = Join-Path $script:TStylesDataRoot '.create-preview'
                 # Another creator still open: a real process, alive for the

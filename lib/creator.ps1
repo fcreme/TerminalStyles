@@ -488,6 +488,12 @@ function Invoke-TerminalStyleCreate {
                 continue
             }
 
+            # A large image can hold the reader for seconds: say so first,
+            # below the page, so it never looks frozen.
+            $reading = Get-CreatorImageToRead -State $state -Key $key
+            if ($reading) {
+                Write-Host ("  Reading {0}..." -f [System.IO.Path]::GetFileName($reading)) -ForegroundColor DarkGray
+            }
             # Always the returned state: a newly read image is a new hashtable.
             $r = Invoke-CreatorKey -State $state -Key $key
             $state = $r.State

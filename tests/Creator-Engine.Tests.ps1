@@ -188,6 +188,38 @@ Describe 'Invoke-CreatorKey' {
                 $script:readPaths.Count | Should -Be 2
             }
 
+            It 'a leading ~ (<Typed>) is the home folder' -ForEach @(
+                @{ Typed = '~/pics/a.png'; Rest = 'pics/a.png' }, @{ Typed = '~\pics\b.jpg'; Rest = 'pics\b.jpg' },
+                @{ Typed = '"~/my pics/c.gif"'; Rest = 'my pics/c.gif' }) {
+                $s = New-CreatorStartState
+                $s.PathText = $Typed
+                $r = & $script:key $s 'Enter' $null
+                $want = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($HOME, $Rest))
+                $script:readPaths.Count | Should -Be 1
+                $script:readPaths[0] | Should -BeExactly $want
+                $r.State.ImagePath | Should -BeExactly $want
+            }
+
+            It 'a ~ inside a name is left alone' {
+                $s = New-CreatorStartState
+                $s.PathText = 'a~/b.png'
+                $null = & $script:key $s 'Enter' $null
+                $script:readPaths[0] | Should -BeExactly ([System.IO.Path]::GetFullPath((Join-Path (Get-Location -PSProvider FileSystem).ProviderPath 'a~/b.png')))
+            }
+
+            It 'Get-CreatorImageToRead names the path only for an Enter that will read it' {
+                $s = New-CreatorStartState
+                $s.PathText = 'a.png'
+                $want = [System.IO.Path]::GetFullPath((Join-Path (Get-Location -PSProvider FileSystem).ProviderPath 'a.png'))
+                Get-CreatorImageToRead -State $s -Key 'Enter' | Should -BeExactly $want
+                Get-CreatorImageToRead -State $s -Key 'x' | Should -BeNullOrEmpty
+                $r = & $script:key $s 'Enter' $null
+                Get-CreatorImageToRead -State $r.State -Key 'Enter' | Should -BeNullOrEmpty -Because 'that image is already read; Enter moves on'
+                $b = New-CreatorStartState
+                $b.PathText = 'a.bmp'
+                Get-CreatorImageToRead -State $b -Key 'Enter' | Should -BeNullOrEmpty -Because 'a refused type is never read'
+            }
+
             It 'Esc cancels before an image' {
                 (& $script:key (New-CreatorStartState) 'Escape' $null).Action | Should -BeExactly 'cancel'
             }

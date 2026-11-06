@@ -209,9 +209,9 @@ function Invoke-CreatorKey {
     pulls the palette from the image again, keeping the colours set by hand.
 
     Step 0 starts from New-CreatorStartState, which has no scheme. Enter reads
-    the typed path: it is unquoted (ConvertFrom-PastedPath) and made absolute
-    against the current location, then handed to -ReadImage. A readable image
-    returns a NEW state from New-CreatorState, still on step 0. A different
+    the typed path: it is unquoted, a leading ~ expanded and made absolute,
+    and its type checked (Resolve-CreatorImagePath), then handed to
+    -ReadImage. A readable image returns a NEW state from New-CreatorState, still on step 0. A different
     path typed later is read the same way; the new state keeps the settings
     chosen so far and the colours set by hand, and takes its other colours,
     and the prompt's, from the new image. Enter on the path already read moves
@@ -341,25 +341,69 @@ function Invoke-CreatorImageKey {
     & $result $State 'preview'
 }
 
+function Resolve-CreatorImagePath {
+    <#
+    .SYNOPSIS
+    What Enter on step 0 does with the typed path, before anything is read:
+    @{ Full; Error; Read }.
+
+    .DESCRIPTION
+    The path is unquoted (ConvertFrom-PastedPath), a leading ~ (alone, or
+    before / or \) is $HOME, and the rest is made absolute against the
+    current location. Error is the message for a path that cannot be used:
+    empty, not a path, or a type Get-BackgroundImageSaveExtension (the rule
+    Save-CreatedStyle applies) refuses -- refused here, so an image the save
+    would refuse never gets the user to the last page. Read is true when the
+    reader has to run: not the image already read. Read-CreatorImage and the
+    loop's "Reading..." line both ask here.
+    #>
+    param([Parameter(Mandatory)][hashtable]$State)
+    $out = @{ Full = $null; Error = $null; Read = $false }
+    $typed = ConvertFrom-PastedPath ([string]$State.PathText)
+    if (-not $typed) { $out.Error = 'Type or paste the path to a PNG, JPEG or GIF image, then press Enter.'; return $out }
+    $expanded = $typed
+    if ($typed -eq '~') {
+        $expanded = $HOME
+    } elseif ($typed.StartsWith('~/') -or $typed.StartsWith('~\')) {
+        $expanded = [System.IO.Path]::Combine($HOME, $typed.Substring(2))
+    }
+    try {
+        $base = (Get-Location -PSProvider FileSystem).ProviderPath
+        $out.Full = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($base, $expanded))
+    } catch {
+        $out.Error = "'$typed' is not a path this computer can use."
+        return $out
+    }
+    if (-not (Get-BackgroundImageSaveExtension -Path $out.Full)) {
+        $out.Error = ("'{0}' is not a file type tstyles create takes. Use a {1} file." -f
+            [System.IO.Path]::GetFileName($out.Full), (Get-BackgroundImageTypesText))
+        return $out
+    }
+    $out.Read = -not ($State.Scheme -and ([string]$State.ImagePath) -ceq $out.Full)
+    $out
+}
+
+function Get-CreatorImageToRead {
+    # The absolute path this key will hand the image reader, or $null: Enter
+    # on step 0 (outside hex entry) with a usable path not already read. The
+    # loop asks first, to say "Reading ..." before a large image holds it.
+    param([Parameter(Mandatory)][hashtable]$State, $Key)
+    if ([int]$State.Step -ne 0) { return $null }
+    if ($State.ContainsKey('HexEntry') -and $null -ne $State.HexEntry) { return $null }
+    if ((ConvertTo-CreatorKeyInput -Key $Key).Name -ne 'Enter') { return $null }
+    $r = Resolve-CreatorImagePath -State $State
+    if ($r.Error -or -not $r.Read) { return $null }
+    $r.Full
+}
+
 function Read-CreatorImage {
     # Enter on step 0. See Invoke-CreatorKey for what it does.
     param([hashtable]$State, [scriptblock]$ReadImage)
     $result = { param($s, $a) @{ State = $s; Action = $a } }
-    $typed = ConvertFrom-PastedPath $State.PathText
-    if (-not $typed) { return (& $result $State 'error:Type or paste the path to a PNG, JPEG or GIF image, then press Enter.') }
-    try {
-        $base = (Get-Location -PSProvider FileSystem).ProviderPath
-        $full = [System.IO.Path]::GetFullPath([System.IO.Path]::Combine($base, $typed))
-    } catch {
-        return (& $result $State "error:'$typed' is not a path this computer can use.")
-    }
-    # Refused here, before the reader, by the rule Save-CreatedStyle applies:
-    # an image the save would refuse must not get the user to the last page.
-    if (-not (Get-BackgroundImageSaveExtension -Path $full)) {
-        return (& $result $State ("error:'{0}' is not a file type tstyles create takes. Use a {1} file." -f
-            [System.IO.Path]::GetFileName($full), (Get-BackgroundImageTypesText)))
-    }
-    if ($State.Scheme -and ([string]$State.ImagePath) -ceq $full) {
+    $r = Resolve-CreatorImagePath -State $State
+    if ($r.Error) { return (& $result $State ('error:' + $r.Error)) }
+    $full = $r.Full
+    if (-not $r.Read) {
         $State.Step = 1; $State.Control = 0
         return (& $result $State 'next')
     }

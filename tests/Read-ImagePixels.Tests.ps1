@@ -105,9 +105,35 @@ Describe 'Read-ImagePixels' {
         }
     }
 
+    It 'a failure after the decode (drawing, locking) is the same not-an-image message' -Skip:$script:NoReader {
+        InModuleScope TerminalStyles -Parameters @{ Dir = $TestDrive } {
+            param($Dir)
+            Add-Type -AssemblyName System.Drawing
+            $path = Join-Path $Dir 'decodes.png'
+            $bmp = [System.Drawing.Bitmap]::new(8, 8)
+            try { $bmp.Save($path, [System.Drawing.Imaging.ImageFormat]::Png) } finally { $bmp.Dispose() }
+            # Called while the downscale is being set up, after the decode.
+            Mock Get-ImagePixelsInterpolation { throw 'A generic error occurred in GDI+.' }
+            { Read-ImagePixels -Path $path } | Should -Throw "Not an image TerminalStyles can read: $path"
+            Should -Invoke Get-ImagePixelsInterpolation -Times 1 -Exactly
+        }
+    }
+
     It 'says it needs Windows off Windows' -Skip:(-not $script:NoReader) {
         InModuleScope TerminalStyles {
             { Read-ImagePixels -Path 'whatever.png' } | Should -Throw '*needs Windows*'
+        }
+    }
+}
+
+Describe 'Get-ImagePixelsInterpolation' {
+    # Pure, so it runs on every platform: which GDI+ mode the downscale uses.
+    It 'uses bicubic down to a quarter, and the cheaper bilinear below it (<Scale>)' -ForEach @(
+        @{ Scale = 1.0; Want = 'HighQualityBicubic' }, @{ Scale = 0.25; Want = 'HighQualityBicubic' },
+        @{ Scale = 0.2499; Want = 'HighQualityBilinear' }, @{ Scale = (96 / 6000.0); Want = 'HighQualityBilinear' }) {
+        InModuleScope TerminalStyles -Parameters @{ Scale = $Scale; Want = $Want } {
+            param($Scale, $Want)
+            Get-ImagePixelsInterpolation -Scale $Scale | Should -BeExactly $Want
         }
     }
 }
