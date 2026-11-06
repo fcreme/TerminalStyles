@@ -32,7 +32,12 @@ Describe 'Read-ImagePixels' {
             } finally { $bmp.Dispose() }
             $px = @(Read-ImagePixels -Path $path)
             $px.Count | Should -Be 16
+            $px[0] | Should -BeOfType [int]
             @($px | Where-Object { $_ -ne 0xFF0000 }).Count | Should -Be 0
+            # A bare assignment must also give the flat 16 values.
+            $bare = Read-ImagePixels -Path $path
+            $bare.Count | Should -Be 16
+            $bare[0] | Should -BeOfType [int]
         }
     }
 
@@ -75,6 +80,7 @@ Describe 'Read-ImagePixels' {
             } finally { $first.Dispose(); $second.Dispose() }
             $px = @(Read-ImagePixels -Path $path)
             $px.Count | Should -Be 16
+            $px[0] | Should -BeOfType [int]
             @($px | Where-Object { $_ -ne 0x00FF00 }).Count | Should -Be 0
         }
     }

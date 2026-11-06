@@ -18,7 +18,9 @@ function Test-ImagePixelReaderAvailable {
 }
 
 function Read-ImagePixels {
-    # Returns [int[]], each 0xRRGGBB. Reads the first frame of a GIF, ignores
+    [OutputType([int[]])]
+    # Returns the pixels as [int] values, each 0xRRGGBB, unrolled onto the
+    # pipeline (see the end of the function for the caller contract). Reads the first frame of a GIF, ignores
     # alpha (transparent pixels are drawn over black), and
     # scales the longest side down to at most -MaxSide before sampling.
     param(
@@ -85,7 +87,12 @@ function Read-ImagePixels {
         }
         $out = [int[]]::new($argb.Length)
         for ($i = 0; $i -lt $argb.Length; $i++) { $out[$i] = $argb[$i] -band 0xFFFFFF }
-        return ,$out
+        # Emit the elements (no unary comma): the pipeline unrolls them, so the
+        # caller gets a flat sequence of [int] whether or not it wraps the call
+        # in @(). Callers that need an array use @(Read-ImagePixels ...); a bare
+        # assignment is an [int[]] except for a 1x1 image, which arrives as one
+        # [int] and still binds to an [int[]] parameter.
+        $out
     } finally {
         if ($attr) { $attr.Dispose() }
         if ($g) { $g.Dispose() }
