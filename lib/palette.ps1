@@ -267,10 +267,14 @@ function Get-SchemeLowContrastSlots {
     scheme object or dictionary with those keys; a slot that is missing or does
     not parse is skipped (Get-SchemeUnreadableSlots reports unparsable values).
     Returns names in a fixed order; empty when every slot passes.
+
+    -Text is more colours shown as text on that background (the creator's
+    prompt path and symbol colours), name -> #rrggbb, held to the body-text
+    bar of the ANSI hues, 4.5, and returned after the slots in their order.
     #>
     [CmdletBinding()]
     [OutputType([string[]])]
-    param([Parameter(Mandatory)]$Scheme)
+    param([Parameter(Mandatory)]$Scheme, [System.Collections.IDictionary]$Text)
 
     $bars = [ordered]@{ foreground = 7.0 }
     foreach ($k in 'red', 'green', 'yellow', 'blue', 'purple', 'cyan', 'white') { $bars[$k] = 4.5 }
@@ -284,6 +288,13 @@ function Get-SchemeLowContrastSlots {
         $hex = ConvertTo-NormalHex $Scheme.$k
         if (-not $hex) { continue }
         if ((Get-ContrastRatio $hex $bg) -lt $bars[$k]) { $low.Add($k) }
+    }
+    if ($Text) {
+        foreach ($k in $Text.Keys) {
+            $hex = ConvertTo-NormalHex $Text[$k]
+            if (-not $hex) { continue }
+            if ((Get-ContrastRatio $hex $bg) -lt $bars['red']) { $low.Add([string]$k) }
+        }
     }
     # Callers wrap in @(): a bare return unrolls to nothing when empty.
     $low.ToArray()

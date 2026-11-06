@@ -102,30 +102,88 @@ function Update-CreatorPalette {
     }
 }
 
+function Get-CreatorWarningSlots {
+    <#
+    .SYNOPSIS
+    What will be hard to read, or will not show: @{ Unreadable; LowContrast }.
+
+    .DESCRIPTION
+    THE rule behind both renderings, Get-CreatorWarnings (one sentence each)
+    and Get-CreatorWarningLine (the page's one line). Contrast against the
+    background comes from Get-SchemeLowContrastSlots, the same bars the
+    palette is pulled to (foreground 7:1), with the prompt's path and symbol
+    colours held to the ANSI hues' 4.5:1 as 'prompt path colour' and 'prompt
+    symbol colour'; a value that is not a colour from
+    Get-SchemeUnreadableSlots, the slots the OSC packet would drop. Warnings
+    only: the creator keeps the edit.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][hashtable]$State)
+    $unreadable = @(Get-SchemeUnreadableSlots -Scheme $State.Scheme | Where-Object { $_ -ne 'name' })
+    $text = [ordered]@{}
+    if ($State.ContainsKey('PromptPathColor')) { $text['prompt path colour'] = [string]$State.PromptPathColor }
+    if ($State.ContainsKey('PromptSymbolColor')) { $text['prompt symbol colour'] = [string]$State.PromptSymbolColor }
+    $low = @(Get-SchemeLowContrastSlots -Scheme $State.Scheme -Text $text)
+    @{ Unreadable = [string[]]$unreadable; LowContrast = [string[]]$low }
+}
+
 function Get-CreatorWarnings {
     <#
     .SYNOPSIS
-    One line per colour slot that will be hard to read, or will not show at all.
+    One line per colour that will be hard to read, or will not show at all.
 
     .DESCRIPTION
-    Contrast against the background comes from Get-SchemeLowContrastSlots, the
-    same bars the palette is pulled to (foreground 7:1); a value that is not a
-    colour from Get-SchemeUnreadableSlots, the slots the OSC packet would drop.
-    Warnings only: the creator keeps the edit. Empty when everything reads.
+    Get-CreatorWarningSlots' answer, a sentence each. Empty when everything
+    reads.
     #>
     [CmdletBinding()]
     [OutputType([string[]])]
     param([Parameter(Mandatory)][hashtable]$State)
+    $w = Get-CreatorWarningSlots -State $State
     $lines = New-Object System.Collections.Generic.List[string]
-    foreach ($k in @(Get-SchemeUnreadableSlots -Scheme $State.Scheme)) {
-        if ($k -eq 'name') { continue }
-        $lines.Add(("{0} is not a colour, so it will not show." -f $k))
-    }
-    foreach ($k in @(Get-SchemeLowContrastSlots -Scheme $State.Scheme)) {
-        $lines.Add(("{0} is hard to read against the background." -f $k))
-    }
+    foreach ($k in $w.Unreadable) { $lines.Add(("{0} is not a colour, so it will not show." -f $k)) }
+    foreach ($k in $w.LowContrast) { $lines.Add(("{0} is hard to read against the background." -f $k)) }
     # Callers wrap in @(): a bare return unrolls to nothing when empty.
     $lines.ToArray()
+}
+
+function Get-CreatorWarningLine {
+    <#
+    .SYNOPSIS
+    Get-CreatorWarningSlots' answer as ONE line of at most -MaxLength
+    characters, or $null when everything reads.
+
+    .DESCRIPTION
+    "Not a colour, will not show: cyan. Hard to read: red, green." One line
+    whatever the count, so the page keeps its height; names that do not fit
+    are counted ("... and 9 more.") rather than wrapped.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][hashtable]$State, [int]$MaxLength = 114)
+    $w = Get-CreatorWarningSlots -State $State
+    $groups = @(
+        @{ Label = 'Not a colour, will not show'; Names = @($w.Unreadable) }
+        @{ Label = 'Hard to read'; Names = @($w.LowContrast) }
+    )
+    $total = 0
+    foreach ($g in $groups) { $total += $g.Names.Count }
+    if ($total -eq 0) { return $null }
+    $text = $null
+    for ($keep = $total; $keep -ge 1; $keep--) {
+        $left = $keep
+        $parts = New-Object System.Collections.Generic.List[string]
+        foreach ($g in $groups) {
+            $n = [Math]::Min($left, $g.Names.Count)
+            $left -= $n
+            if ($n -gt 0) { $parts.Add(($g.Label + ': ' + (($g.Names[0..($n - 1)]) -join ', '))) }
+        }
+        $text = $parts -join '. '
+        if ($keep -lt $total) { $text += (' and {0} more' -f ($total - $keep)) }
+        $text += '.'
+        if ($text.Length -le $MaxLength) { return $text }
+    }
+    $text
 }
 
 function New-CreatorPromptText {
@@ -387,8 +445,10 @@ function Invoke-TerminalStyleCreate {
         }
     }
     $draw = {
+        # No blank line first: the page is held to 28 lines
+        # (Get-CreatorPageLines), so with a note or two it still fits a
+        # 30-row window without scrolling its title away.
         Clear-Host
-        Write-Host ""
         foreach ($note in @($backupNote, $previewNote, $message)) {
             if ($note) { Write-Host ("  $e[33m! " + ([string]$note).Trim().TrimStart('!').Trim() + "$e[0m") }
         }

@@ -444,9 +444,9 @@ Describe 'Invoke-CreatorKey' {
                 $s = & $script:onStep 1
                 Set-CreatorColor -State $s -Slot red -Hex $s.Scheme.background
                 $text = (Get-CreatorPageLines -State $s) -join "`n"
-                $text.Contains('red is hard to read against the background.') | Should -BeTrue
+                $text.Contains('Hard to read: red.') | Should -BeTrue
                 $plain = (Get-CreatorPageLines -State (& $script:onStep 1)) -join "`n"
-                $plain.Contains('hard to read') | Should -BeFalse
+                $plain.Contains('Hard to read') | Should -BeFalse
             }
         }
 
@@ -697,6 +697,35 @@ Describe 'Get-CreatorPageLines' {
             (& $script:plain (Get-CreatorPageLines -State $s)).Contains('#12') | Should -BeTrue
         }
 
+        It 'every page fits a 120x30 window with 15 warnings: step <Step><Tag>' -ForEach @(
+            @{ Step = 0; Tag = '' }, @{ Step = 1; Tag = '' }, @{ Step = 1; Tag = ', hex entry' },
+            @{ Step = 2; Tag = '' }, @{ Step = 3; Tag = '' }, @{ Step = 4; Tag = '' }) {
+            $s = New-CreatorState -Pixels $script:px -ImagePath '/img/a.png'
+            $s.Step = $Step
+            # The tallest sample (twoline), and the longest fields there are.
+            $s.PromptShape = 'twoline'
+            $s.PathText = '/' + ('very-long-folder-name/' * 12) + 'image.png'
+            $s.Name = 'n' * 150
+            if ($Tag) { $s.Control = 3; $s.HexEntry = '#1234567' }
+            foreach ($k in 'foreground', 'red', 'green', 'yellow', 'blue', 'purple', 'cyan', 'white',
+                           'brightRed', 'brightGreen', 'brightYellow', 'brightBlue', 'brightPurple', 'brightCyan', 'brightWhite') {
+                Set-CreatorColor -State $s -Slot $k -Hex $s.Scheme.background
+            }
+            @((Get-CreatorWarningSlots -State $s).LowContrast).Count | Should -BeGreaterOrEqual 15
+            $lines = @(Get-CreatorPageLines -State $s | ForEach-Object { $_ -replace "$([char]27)\[[0-9;]*m", '' })
+            $seen = "the page was:`n" + ($lines -join "`n")
+            $lines.Count | Should -BeLessOrEqual 28 -Because $seen
+            foreach ($l in $lines) { $l.Length | Should -BeLessOrEqual 118 -Because "'$l' is too wide" }
+            $hint = @($lines | Where-Object { $_.Contains('Esc ') })
+            $hint.Count | Should -Be 1 -Because $seen
+            $hint[0].Trim().Length | Should -BeLessOrEqual 100 -Because "the hint '$($hint[0].Trim())' must be one short line"
+            if ($Step -in 1, 4) {
+                $warn = @($lines | Where-Object { $_.StartsWith('  ! ') })
+                $warn.Count | Should -Be 1 -Because 'every warning is on one line'
+                $warn[0] | Should -Match 'and \d+ more\.$'
+            }
+        }
+
         It 'step 4 shows the typed name and any warnings before save' {
             $s = New-CreatorState -Pixels $script:px -ImagePath '/img/a.png'
             $s.Step = 4
@@ -705,7 +734,7 @@ Describe 'Get-CreatorPageLines' {
             $text = & $script:plain (Get-CreatorPageLines -State $s)
             $text.Contains('probe-name') | Should -BeTrue
             $text.Contains('PgUp previous step') | Should -BeTrue
-            $text.Contains('red is hard to read') | Should -BeTrue
+            $text.Contains('Hard to read: red.') | Should -BeTrue
         }
     }
 }

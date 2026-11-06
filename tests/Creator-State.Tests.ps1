@@ -119,6 +119,16 @@ Describe 'the creator state' {
             @($w | Where-Object { $_.Contains('foreground') }).Count | Should -Be 1
         }
 
+        It 'a prompt colour below 4.5:1 against the background warns, naming it (<Part>)' -ForEach @(
+            @{ Part = 'path'; Key = 'PromptPathColor' }, @{ Part = 'symbol'; Key = 'PromptSymbolColor' }) {
+            $s = New-CreatorState -Pixels $script:px -ImagePath '/img/a.png'
+            $s[$Key] = $s.Scheme.background
+            $w = @(Get-CreatorWarnings -State $s)
+            $w | Should -Contain ("prompt $Part colour is hard to read against the background.")
+            $w.Count | Should -Be 1
+            (Get-CreatorWarningLine -State $s) | Should -BeExactly "Hard to read: prompt $Part colour."
+        }
+
         It 'an unparseable slot warns, naming it' {
             $s = New-CreatorState -Pixels $script:px -ImagePath '/img/a.png'
             $s.Scheme.cyan = 'rgb(1,2,3)'

@@ -563,6 +563,13 @@ function Get-CreatorPageLines {
     $pathText = [string]$State.PathText
     if (-not $State.ContainsKey('PathText') -and $State.ImagePath) { $pathText = [string]$State.ImagePath }
     $caret = "$e[7m $x"
+    # A text field longer than its room shows its end, after '...': the page
+    # stays one line per row in a 120-column window (the row's label takes 19).
+    $field = {
+        param([string]$Text, [int]$Room = 96)
+        if ($Text.Length -le $Room) { return $Text }
+        '...' + $Text.Substring($Text.Length - ($Room - 3))
+    }
 
     $lines = New-Object System.Collections.Generic.List[string]
     $lines.Add(('  tstyles create   Step {0} of 5: {1}' -f ($step + 1), $script:CreatorStepTitles[$step]))
@@ -583,14 +590,14 @@ function Get-CreatorPageLines {
     $showWarnings = $false
     switch ($step) {
         0 {
-            $pathValue = $pathText
+            $pathValue = & $field $pathText
             if ($control -eq 0) { $pathValue += $caret }
             $lines.Add((& $row 0 'Image' $pathValue))
             if ($State.Scheme) {
                 $lines.Add((& $row 1 'Opacity' ([double]$State.ImageOpacity).ToString('0.00', $inv)))
                 $lines.Add((& $row 2 'Fit' ([string]$State.StretchMode)))
                 $lines.Add((& $row 3 'Position' ([string]$State.Alignment)))
-                $hint = 'Up/Down choose, Left/Right change, Enter next, Esc cancel. Edit the path and press Enter to read another image.'
+                $hint = 'Up/Down choose, Left/Right change, Enter next, Esc cancel. Type another path and Enter to read it.'
             } else {
                 $hint = 'Type or paste the path to a PNG, JPEG or GIF image, then press Enter. Esc cancels.'
             }
@@ -608,11 +615,12 @@ function Get-CreatorPageLines {
                 $lines.Add($left)
             }
             if ($null -ne $hexEntry) {
-                $lines.Add('')
-                $lines.Add(('  Hex for {0}: {1}{2}' -f $slots[$control], $hexEntry, $caret))
-                $hint = 'Type a colour as #rrggbb. Enter applies it, Backspace deletes, Esc leaves hex entry.'
+                # On the hint's line, so hex entry does not make the page taller.
+                $hint = ('Hex for {0}: {1}{2}  Type #rrggbb. Enter applies, Esc leaves hex entry.' -f $slots[$control], $hexEntry, $caret)
             } else {
-                $hint = 'Up/Down choose a colour, Left/Right lightness, Shift+Left/Right hue, H type a hex, P pull again from the image (keeps your changes), Enter next, PgUp or Backspace previous step, Esc cancel.'
+                # One line of at most 100: PgUp and Backspace going back are on
+                # the next pages' hints; P keeps the colours set by hand.
+                $hint = 'Up/Down pick, Left/Right lightness, Shift+Left/Right hue, H hex, P re-pull, Enter next, Esc cancel.'
             }
             $showWarnings = $true
         }
@@ -627,18 +635,20 @@ function Get-CreatorPageLines {
             $lines.Add((& $row 1 'Symbol' ([string]$State.Symbol)))
             $lines.Add((& $row 2 'Path colour' (& $swatch $State.PromptPathColor)))
             $lines.Add((& $row 3 'Symbol colour' (& $swatch $State.PromptSymbolColor)))
-            $hint = 'Up/Down choose, Left/Right change, Enter next, PgUp or Backspace previous step, Esc cancel. The prompt shows in the sample below.'
+            $hint = 'Up/Down choose, Left/Right change, Enter next, PgUp or Backspace previous step, Esc cancel.'
         }
         4 {
-            $lines.Add((& $row 0 'Name' ([string]$State.Name + $caret)))
-            $hint = 'Type a name. Backspace deletes, Enter saves the style and applies it, PgUp previous step, Esc cancels.'
+            $lines.Add((& $row 0 'Name' ((& $field ([string]$State.Name)) + $caret)))
+            $hint = 'Type a name. Backspace deletes, Enter saves and applies it, PgUp previous step, Esc cancels.'
             $showWarnings = $true
         }
     }
     $lines.Add('')
     $lines.Add("  $hint")
     if ($showWarnings -and $State.Scheme) {
-        foreach ($w in @(Get-CreatorWarnings -State $State)) { $lines.Add("  $e[33m! $w$x") }
+        # One line however many there are, so the page fits a 120x30 window.
+        $w = Get-CreatorWarningLine -State $State
+        if ($w) { $lines.Add("  $e[33m! $w$x") }
     }
     $lines.Add('')
     foreach ($l in @(Get-CreatorSampleLines -State $State)) { $lines.Add($l) }
