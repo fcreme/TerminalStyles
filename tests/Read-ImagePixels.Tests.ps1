@@ -56,32 +56,36 @@ Describe 'Read-ImagePixels' {
     It 'reads only the first frame of a GIF' -Skip:$script:NoReader {
         InModuleScope TerminalStyles -Parameters @{ Dir = $TestDrive } {
             param($Dir)
-            Add-Type -AssemblyName System.Drawing
+            # Hand-written GIF89a, so the fixture does not depend on the GDI+
+            # encoder (which quantises colours). Layout:
+            #   header 'GIF89a'; logical screen 4x4, packed 0x81 (global colour
+            #   table, 4 entries), background 0, aspect 0;
+            #   global colour table: [0]=00FF00 green, [1]=0000FF blue, [2] black, [3] white;
+            #   per frame: Graphic Control Extension (21 F9 04 00 0A 00 00 00),
+            #   image descriptor (2C, left 0, top 0, 4x4, no local table),
+            #   LZW min code size 2 (clear=4, end=5, 3-bit codes), then one data
+            #   sub-block. The stream is: clear, px, px, clear, px, px ... x8,
+            #   then end. Clearing every two pixels keeps the code size at 3.
+            #   Frame 1 = 16 x index 0 (green), frame 2 = 16 x index 1 (blue);
+            #   trailer 3B.
+            [byte[]]$gif = @(
+                0x47,0x49,0x46,0x38,0x39,0x61, 0x04,0x00,0x04,0x00, 0x81,0x00,0x00,
+                0x00,0xFF,0x00, 0x00,0x00,0xFF, 0x00,0x00,0x00, 0xFF,0xFF,0xFF,
+                0x21,0xF9,0x04,0x00,0x0A,0x00,0x00,0x00,
+                0x2C,0x00,0x00,0x00,0x00,0x04,0x00,0x04,0x00,0x00,
+                0x02, 0x0A, 0x04,0x08,0x10,0x20,0x40,0x80,0x00,0x01,0x02,0x05, 0x00,
+                0x21,0xF9,0x04,0x00,0x0A,0x00,0x00,0x00,
+                0x2C,0x00,0x00,0x00,0x00,0x04,0x00,0x04,0x00,0x00,
+                0x02, 0x0A, 0x4C,0x98,0x30,0x61,0xC2,0x84,0x09,0x13,0x26,0x05, 0x00,
+                0x3B)
             $path = Join-Path $Dir 'two.gif'
-            $first = [System.Drawing.Bitmap]::new(4, 4)
-            $second = [System.Drawing.Bitmap]::new(4, 4)
-            try {
-                $g = [System.Drawing.Graphics]::FromImage($first)
-                try { $g.Clear([System.Drawing.Color]::FromArgb(0, 255, 0)) } finally { $g.Dispose() }
-                $g = [System.Drawing.Graphics]::FromImage($second)
-                try { $g.Clear([System.Drawing.Color]::FromArgb(0, 0, 255)) } finally { $g.Dispose() }
-                $enc = [System.Drawing.Imaging.Encoder]::SaveFlag
-                $codec = [System.Drawing.Imaging.ImageCodecInfo]::GetImageEncoders() |
-                    Where-Object { $_.MimeType -eq 'image/gif' } | Select-Object -First 1
-                $p = [System.Drawing.Imaging.EncoderParameters]::new(1)
-                try {
-                    $p.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new($enc, [long][System.Drawing.Imaging.EncoderValue]::MultiFrame)
-                    $first.Save($path, $codec, $p)
-                    $p.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new($enc, [long][System.Drawing.Imaging.EncoderValue]::FrameDimensionTime)
-                    $first.SaveAdd($second, $p)
-                    $p.Param[0] = [System.Drawing.Imaging.EncoderParameter]::new($enc, [long][System.Drawing.Imaging.EncoderValue]::Flush)
-                    $first.SaveAdd($p)
-                } finally { $p.Dispose() }
-            } finally { $first.Dispose(); $second.Dispose() }
+            [System.IO.File]::WriteAllBytes($path, $gif)
             $px = @(Read-ImagePixels -Path $path)
-            $px.Count | Should -Be 16
+            $found = ($px | Group-Object | Sort-Object Name | ForEach-Object {
+                    ('0x{0:X6} x{1}' -f [int]$_.Name, $_.Count) }) -join ', '
+            $px.Count | Should -Be 16 -Because "values read: $found"
             $px[0] | Should -BeOfType [int]
-            @($px | Where-Object { $_ -ne 0x00FF00 }).Count | Should -Be 0
+            @($px | Where-Object { $_ -ne 0x00FF00 }).Count | Should -Be 0 -Because "values read: $found"
         }
     }
 
