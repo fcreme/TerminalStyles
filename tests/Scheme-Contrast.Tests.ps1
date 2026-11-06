@@ -12,48 +12,50 @@
 # Run: Invoke-Pester -Path tests
 #Requires -Modules @{ ModuleName = 'Pester'; ModuleVersion = '5.0.0' }
 
+BeforeAll {
+    $repoRoot = Split-Path $PSScriptRoot -Parent
+    Import-Module (Join-Path $repoRoot 'TerminalStyles.psd1') -Force -DisableNameChecking *> $null
+}
+
+# The floors themselves live in Get-SchemeCatalogueContrastProblems
+# (lib/submit.ps1), which `tstyles submit` holds a submitted style to: one
+# rule, so the submission check and this guard cannot disagree.
 Describe 'Bundled scheme color contrast' {
     BeforeDiscovery {
         $repoRoot  = Split-Path $PSScriptRoot -Parent
-        $chromatic = 'red','green','yellow','blue','purple','cyan',
-                     'brightRed','brightGreen','brightYellow','brightBlue','brightPurple','brightCyan'
 
         # (theme/key) pairs intentionally allowed below the 3:1 floor.
         #   umbrella/red -- the theme's signature "blood red" (#b41e1e), used for
         #   the banner, prompt scaffolding and cursor. It sits at 2.99:1, within
         #   rounding of the floor; lifting it would shift the whole theme's
         #   identity for an imperceptible contrast gain.
-        $allow = @{ 'umbrella/red' = $true }
+        $allow = @{ 'umbrella' = @('red') }
 
         $cases = foreach ($dir in Get-ChildItem -LiteralPath (Join-Path $repoRoot 'styles') -Directory) {
             $schemePath = Join-Path $dir.FullName 'scheme.json'
             if (-not (Test-Path -LiteralPath $schemePath)) { continue }
-            $scheme = Get-Content -LiteralPath $schemePath -Raw | ConvertFrom-Json
-            foreach ($key in $chromatic) {
-                if (-not $scheme.$key) { continue }
-                if ($allow.ContainsKey("$($dir.Name)/$key")) { continue }
-                @{ Theme = $dir.Name; Key = $key; Color = [string]$scheme.$key; Background = [string]$scheme.background }
-            }
+            $exempt = @()
+            if ($allow.ContainsKey($dir.Name)) { $exempt = $allow[$dir.Name] }
+            @{ Theme = $dir.Name; SchemePath = $schemePath; Exempt = $exempt }
         }
     }
 
-    It '<Theme>/<Key> (<Color>) is >=3:1 against <Background>' -ForEach $cases {
-        function Get-RelativeLuminance([string]$hex) {
-            $h = $hex.TrimStart('#')
-            $chan = 0, 2, 4 | ForEach-Object {
-                $v = [Convert]::ToInt32($h.Substring($_, 2), 16) / 255
-                if ($v -le 0.03928) { $v / 12.92 } else { [math]::Pow(($v + 0.055) / 1.055, 2.4) }
-            }
-            0.2126 * $chan[0] + 0.7152 * $chan[1] + 0.0722 * $chan[2]
+    It '<Theme>: every chromatic slot is above 3:1 on its background' -ForEach $cases {
+        $scheme = Get-Content -LiteralPath $SchemePath -Raw | ConvertFrom-Json
+        $misses = @(InModuleScope TerminalStyles -Parameters @{ S = $scheme; E = $Exempt } {
+            param($S, $E)
+            Get-SchemeCatalogueContrastProblems -Scheme $S -Exempt $E | Where-Object Against -eq 'background'
+        })
+        ($misses | ForEach-Object { '{0} {1} {2:0.00}:1' -f $_.Slot, $_.Color, $_.Ratio }) -join '; ' |
+            Should -BeNullOrEmpty -Because "$Theme's accent colours must stay readable on its background"
+    }
+
+    It 'reports a slot below the floor, and skips it when exempt' {
+        InModuleScope TerminalStyles {
+            $s = [pscustomobject]@{ background = '#000000'; red = '#202020'; green = '#00ff00' }
+            @(Get-SchemeCatalogueContrastProblems -Scheme $s).Slot | Should -Be @('red')
+            @(Get-SchemeCatalogueContrastProblems -Scheme $s -Exempt 'red').Count | Should -Be 0
         }
-
-        $lColor = Get-RelativeLuminance $Color
-        $lBg    = Get-RelativeLuminance $Background
-        $hi     = [math]::Max($lColor, $lBg)
-        $lo     = [math]::Min($lColor, $lBg)
-        $ratio  = ($hi + 0.05) / ($lo + 0.05)
-
-        $ratio | Should -BeGreaterThan 3.0 -Because "$Theme/$Key ($Color) must stay readable on $Background"
     }
 }
 
@@ -84,21 +86,13 @@ Describe 'Selection highlight' {
         }
     }
 
-    It '<Theme> foreground (<Foreground>) is >=4.5:1 on its selection (<Selection>)' -ForEach $selCases {
-        function Get-RelativeLuminance([string]$hex) {
-            $h = $hex.TrimStart('#')
-            $chan = 0, 2, 4 | ForEach-Object {
-                $v = [Convert]::ToInt32($h.Substring($_, 2), 16) / 255
-                if ($v -le 0.03928) { $v / 12.92 } else { [math]::Pow(($v + 0.055) / 1.055, 2.4) }
-            }
-            0.2126 * $chan[0] + 0.7152 * $chan[1] + 0.0722 * $chan[2]
-        }
-        $lFg  = Get-RelativeLuminance $Foreground
-        $lSel = Get-RelativeLuminance $Selection
-        $hi   = [math]::Max($lFg, $lSel)
-        $lo   = [math]::Min($lFg, $lSel)
-        (($hi + 0.05) / ($lo + 0.05)) | Should -BeGreaterThan 4.5 `
-            -Because "selected text in $Theme is body text, not an accent token"
+    It '<Theme> foreground (<Foreground>) is >4.5:1 on its selection (<Selection>)' -ForEach $selCases {
+        $s = [pscustomobject]@{ foreground = $Foreground; selectionBackground = $Selection }
+        $misses = @(InModuleScope TerminalStyles -Parameters @{ S = $s } {
+            param($S)
+            Get-SchemeCatalogueContrastProblems -Scheme $S | Where-Object Against -eq 'selectionBackground'
+        })
+        $misses.Count | Should -Be 0 -Because "selected text in $Theme is body text, not an accent token"
     }
 
     It '<Theme> paints the same selection colour in PSReadLine as in the terminal' -ForEach $selCases {

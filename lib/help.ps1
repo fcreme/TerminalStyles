@@ -208,6 +208,29 @@ function Get-TerminalStyleHelpData {
             Examples = @('tstyles create')
         }
         [pscustomobject]@{
+            Name = 'submit'; Usage = 'submit <name>'; Summary = 'Offer a style you made for the bundled catalogue'
+            Detail = @("Checks one of your own styles against the catalogue's rules, packs it",
+                       "into a zip in your data dir's submissions folder, and opens the Style",
+                       "submission form on GitHub in your browser, filled in with its name and",
+                       "description. Nothing is sent: you drag the zip into the form and press",
+                       "Submit, and the maintainer decides whether it joins the catalogue.",
+                       "",
+                       "It checks first, and on a problem lists it and packs nothing: a",
+                       "scheme missing a colour, a colour too faint on the background, a",
+                       "theme.json setting a catalogue style does not set, a missing",
+                       "prompt.sh, a description longer than a picker row, an image over",
+                       "2 MB, or a name the catalogue already uses. The catalogue's own tests",
+                       "run again when the maintainer adds it and have the final word.",
+                       "A style saved by 'tstyles tune' builds on another style and is",
+                       "refused; your README.md stays out of the zip.",
+                       "",
+                       "A style with a background image asks where the image comes from and",
+                       "whether you may let everyone use it; without a yes, nothing is packed.",
+                       "Bundled styles, and your copies that keep a bundled name, are refused.",
+                       "It changes no terminal's settings.")
+            Keys = @(); Examples = @('tstyles submit sunset')
+        }
+        [pscustomobject]@{
             Name = 'delete'; Usage = 'delete [name]'; Summary = 'Delete a style you made (bundled styles are refused)'
             Detail = @("With no name, lists the styles this command can act on.",
                        "",

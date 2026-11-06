@@ -52,6 +52,23 @@ use `InModuleScope` to reach the internals.
 
 ## Contributing a theme
 
+### The easy way: `tstyles submit`
+
+Made a style with `tstyles create`? Run
+
+```powershell
+tstyles submit <name>
+```
+
+It checks the style against the catalogue's rules, most of the ones the CI
+checks below enforce, and lists any problem it finds. It then
+packs it into a zip and opens the **Style submission** issue form in your
+browser. Drag the zip into the form and press Submit; no fork, no git, and
+no `gifs` branch. The maintainer reviews it with
+`scripts/review-submission.ps1`, which opens the PRs that add it, so merging
+them is the approval. The rest of this section is the by-hand route, for
+themes written in an editor.
+
 A theme is a folder under `styles/<name>/`:
 
 ```
@@ -178,7 +195,7 @@ maintainer can do this step for you.
 
 ### Curation model
 
-Anyone may submit a theme — including one you made with `tstyles tune`
+Anyone may submit a theme — through `tstyles submit`, or by hand, including one you made with `tstyles tune`
 (the tuner's saved folder in `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`
 is exactly the submittable format). **Inclusion in the bundled catalog
 is at the maintainer's discretion.** A theme is accepted when:

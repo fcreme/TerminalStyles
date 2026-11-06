@@ -187,15 +187,12 @@ function Get-CreatorWarningLine {
 }
 
 function New-CreatorPromptText {
-    # The prompt a created style is saved with: New-StylePromptText from the
-    # state's prompt choices, titled with the upper-cased name. No
-    # -BranchColor: the git shape's branch takes the generator's default arm.
-    # The save calls this, and the parity test renders what it returns, so
-    # the prompt measured is the prompt shipped.
+    # The prompt a created style is saved with: New-CreatedStylePromptText
+    # from the state's prompt choices -- the one rule the submission review
+    # regenerates with too. The save calls this, and the parity test renders
+    # what it returns, so the prompt measured is the prompt shipped.
     param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Name)
-    New-StylePromptText -Shape $State.PromptShape -Symbol $State.Symbol `
-        -PathColor $State.PromptPathColor -SymbolColor $State.PromptSymbolColor `
-        -Title $Name.ToUpperInvariant()
+    New-CreatedStylePromptText -Choice (ConvertTo-CreatedPromptChoice -State $State) -Name $Name
 }
 
 function Get-CreatorTabColor {
@@ -542,7 +539,8 @@ function Invoke-TerminalStyleCreate {
                         -StretchMode $state.StretchMode -Alignment $state.Alignment `
                         -TabColor (Get-CreatorTabColor -Scheme $state.Scheme)
                     $res = Save-CreatedStyle -Name $name -Scheme $state.Scheme -Theme $theme `
-                        -BackgroundPath $state.ImagePath -Prompt $prompt
+                        -BackgroundPath $state.ImagePath -Prompt $prompt `
+                        -PromptChoice (ConvertTo-CreatedPromptChoice -State $state)
                 } catch {
                     $res = [pscustomobject]@{ Status = 'failed'; Path = $null; Reason = $_.Exception.Message }
                 }
@@ -570,6 +568,7 @@ function Invoke-TerminalStyleCreate {
                 if ($applied) {
                     Remove-FilePreviewRecord -Kind WindowsTerminal -Path $settingsPath -SessionId $session.Id
                     Write-Host ("Created '{0}' and applied it." -f $name) -ForegroundColor Green
+                    Write-Host ("To offer it for the catalogue: tstyles submit {0}" -f $name)
                 } else {
                     if ($applyThrew) { Write-Host ("  " + $applyThrew.Exception.Message) -ForegroundColor Red }
                     Write-Host ("Created '{0}', but it could not be applied. It is saved in {1}; to apply it: tstyles {0}" -f
