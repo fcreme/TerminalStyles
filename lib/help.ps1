@@ -196,7 +196,7 @@ function Get-TerminalStyleHelpData {
                        "picker then treat it like any other style.",
                        "",
                        "Windows Terminal only for now: anywhere else it says so and changes",
-                       "nothing.")
+                       "nothing. It takes no arguments; everything is chosen on its pages.")
             Keys = @('Up/Down          choose a control',
                      'Left/Right       change it (on Colours: lightness)',
                      'Shift+Left/Right Colours: hue',
