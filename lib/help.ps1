@@ -171,6 +171,43 @@ function Get-TerminalStyleHelpData {
             Examples = @('tstyles tune', 'tstyles tune eva')
         }
         [pscustomobject]@{
+            Name = 'create'; Usage = 'create'; Summary = 'Make a new style step by step, live (Windows Terminal)'
+            Detail = @("Builds a new style one page at a time in the Windows Terminal window",
+                       "you run it from, and that window is the preview: it changes as you go.",
+                       "",
+                       "  1. Background   a PNG, JPEG or GIF on this computer, typed or pasted",
+                       "                  as a path, and how strongly it shows, how it fits",
+                       "                  and where it sits.",
+                       "  2. Colours      a palette pulled from the image. Change any colour;",
+                       "                  one that is hard to read is kept, with a warning.",
+                       "  3. Font and cursor",
+                       "  4. Prompt       a shape, its symbol and its colours. It shows in the",
+                       "                  sample session on the page; your own prompt changes",
+                       "                  only when the style is applied.",
+                       "  5. Name         a name no style has yet, yours or a bundled one; a",
+                       "                  taken name is refused, never overwritten.",
+                       "",
+                       "The image, font and cursor preview through settings.json, recorded so",
+                       "that Esc takes the preview back out -- or, after a closed tab, the",
+                       "next tstyles command that writes settings.json does. The colours",
+                       "preview at once. Enter on the last",
+                       "page saves the style to your styles dir, with a copy of the image,",
+                       "and applies it. 'tstyles <name>', 'tstyles tune <name>' and the",
+                       "picker then treat it like any other style.",
+                       "",
+                       "Windows Terminal only for now: anywhere else it says so and changes",
+                       "nothing.")
+            Keys = @('Up/Down          choose a control',
+                     'Left/Right       change it (on Colours: lightness)',
+                     'Shift+Left/Right Colours: hue',
+                     'H                Colours: type a colour as #rrggbb',
+                     'P                Colours: pull the palette again (keeps your changes)',
+                     'Enter            next page; on the last, save and apply',
+                     'PgUp             previous page (Backspace too, on pages with no text field)',
+                     'Esc              cancel and take the preview back out')
+            Examples = @('tstyles create')
+        }
+        [pscustomobject]@{
             Name = 'delete'; Usage = 'delete [name]'; Summary = 'Delete a style you made (bundled styles are refused)'
             Detail = @("With no name, lists the styles this command can act on.",
                        "",

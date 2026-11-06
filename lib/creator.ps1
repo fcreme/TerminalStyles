@@ -128,6 +128,17 @@ function Get-CreatorWarnings {
     $lines.ToArray()
 }
 
+function Get-CreatorTabColor {
+    # The tab colour a created style gets: the palette's accent, else its
+    # foreground, else grey. One rule, read by the preview and by the save, so
+    # the tab the user saw is the tab they get.
+    param([Parameter(Mandatory)]$Scheme)
+    $tab = Get-PaletteAccent -Scheme $Scheme
+    if (-not $tab) { $tab = ConvertTo-NormalHex $Scheme.foreground }
+    if (-not $tab) { $tab = '#808080' }
+    $tab
+}
+
 function Write-CreatorPreview {
     <#
     .SYNOPSIS
@@ -158,9 +169,7 @@ function Write-CreatorPreview {
     }
     $scheme | Add-Member -NotePropertyName name -NotePropertyValue $script:CreatorPreviewName -Force
 
-    $tab = Get-PaletteAccent -Scheme $scheme
-    if (-not $tab) { $tab = ConvertTo-NormalHex $scheme.foreground }
-    if (-not $tab) { $tab = '#808080' }
+    $tab = Get-CreatorTabColor -Scheme $scheme
     try {
         # Inside the try: it validates opacity and stretch mode, and a preview
         # never throws into the creator's key loop (Write-FilePreview's rule).
@@ -175,4 +184,330 @@ function Write-CreatorPreview {
     } catch { return 'failed' }
     if ($null -eq $text) { return 'failed' }
     Write-FilePreview -Session $Session -Text $text
+}
+
+# ---- the command: `tstyles create` ------------------------------------------
+
+function Get-CreatorConsoleRedirection {
+    # Is either end of this session redirected? The creator's guards ask here
+    # rather than reading [Console] themselves so a test can answer: the .NET
+    # statics cannot be mocked, and on CI both are true.
+    [pscustomobject]@{
+        Input  = [bool][Console]::IsInputRedirected
+        Output = [bool][Console]::IsOutputRedirected
+    }
+}
+
+function Read-CreatorConsoleKey {
+    # The next key, or $null when none is waiting. Never blocks: the loop
+    # draws the page and writes the debounced preview only when it is idle,
+    # so a pasted path is one redraw, not one per character.
+    if (-not [Console]::KeyAvailable) { return $null }
+    [Console]::ReadKey($true)
+}
+
+function Remove-StaleCreatorScratch {
+    <#
+    .SYNOPSIS
+    Remove the scratch sessions creators that are no longer running left.
+
+    .DESCRIPTION
+    Each creator writes its preview style to $Root\session-<PID> and removes
+    that folder on every way out its finally block sees. A closed tab is not
+    one of them -- pwsh is killed without running finally -- so the folder
+    stays. A session-<n> whose process is gone goes here; this process's own,
+    one whose process is still running (a creator open in another tab), and
+    anything not named session-<n> are left alone. Containment is proved
+    before each recursive delete (Test-PathIsUnderRoot).
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$Root)
+    if (-not [System.IO.Directory]::Exists($Root)) { return }
+    foreach ($d in [System.IO.Directory]::GetDirectories($Root)) {
+        $leaf = [System.IO.Path]::GetFileName($d)
+        if ($leaf -notmatch '^session-(\d{1,9})$') { continue }
+        $n = [int]$Matches[1]
+        if ($n -eq $PID) { continue }
+        if (Get-Process -Id $n -ErrorAction SilentlyContinue) { continue }
+        if (-not (Test-PathIsUnderRoot -Path $d -Root $Root)) { continue }
+        Remove-Item -LiteralPath $d -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+function Invoke-TerminalStyleCreate {
+    <#
+    .SYNOPSIS
+    `tstyles create`: build a new style step by step, previewed live in the
+    Windows Terminal window it runs in.
+
+    .DESCRIPTION
+    The pages and keys are Invoke-CreatorKey's and Get-CreatorPageLines'
+    (lib/creatorengine.ps1); this is the loop around them, built the way the
+    tuner's is (Invoke-TerminalStyleTune): every guard before the screen is
+    touched, a closed session's preview recovered before settings.json is
+    read, the rolling .bak taken, colours over OSC at once and the rest
+    through a debounced write of the recorded preview session, and the update
+    notice held until the screen is given back.
+
+    Esc puts settings.json back through the session and resets the colours.
+    Enter on the last page saves through Save-CreatedStyle FIRST, with the
+    preview still live: a name that is taken, invalid or fails to save keeps
+    the user on that page, and Esc there still has everything to put back.
+    Only a saved style ends the session -- the bytes the creator found go
+    back, so the placeholder scheme never stays in settings.json -- and is
+    then applied through Apply-StyleDirect, the apply `tstyles <name>` runs.
+    #>
+    [CmdletBinding()]
+    param()
+
+    # Held, and printed after the screen is given back -- see the tuner: its
+    # Clear-Host takes the scrollback, and printing the notice burns the
+    # throttle. Checked only past the guards.
+    $pendingUpdate = $null
+
+    # Windows Terminal only, for now. The image, font and cursor preview live
+    # only through its settings.json; elsewhere a creator would show colours
+    # and nothing else of a style that is mostly its image. Refused before
+    # anything is read or written.
+    $kind = Get-TerminalKind
+    if ($kind -ne 'WindowsTerminal') {
+        Write-Host ""
+        Write-Host "  tstyles create needs Windows Terminal for now." -ForegroundColor Yellow
+        Write-Host ("  It previews the image, font and cursor through Windows Terminal's settings.json, and this is {0}." -f (Get-TerminalDisplayName -Kind $kind))
+        Write-Host "  Nothing was changed."
+        Write-Host ""
+        Write-Host "  Here, tstyles tune <name> adjusts an existing style, with its colours live." -ForegroundColor DarkGray
+        Write-Host ""
+        return
+    }
+
+    # Both console guards, before the recovery, the backup and the first
+    # Clear-Host, for the reasons the tuner's carry: KeyAvailable throws on
+    # redirected input, and with output redirected the page and every OSC
+    # repaint go into the file while keystrokes are acted on blind.
+    $redirect = Get-CreatorConsoleRedirection
+    if ($redirect.Input) {
+        Write-Host ""
+        Write-Host "  tstyles create needs an interactive terminal." -ForegroundColor Yellow
+        Write-Host "  This session's input is redirected, so there are no keystrokes to read. Nothing was changed."
+        Write-Host ""
+        return
+    }
+    if ($redirect.Output) {
+        Write-Host ""
+        Write-Host "  tstyles create needs a terminal to repaint." -ForegroundColor Yellow
+        Write-Host "  This session's output is redirected, so there is nothing to preview against. Nothing was changed."
+        Write-Host ""
+        return
+    }
+
+    $settingsPath = Find-WTSettingsPath
+    if (-not $settingsPath) { return }  # Find-WTSettingsPath has already said why.
+    # Said now, and again at the exit the screen clear would erase.
+    $recovered = Restore-AbandonedFilePreview -Kind WindowsTerminal -Path $settingsPath
+    Show-FilePreviewResult -Result $recovered
+
+    $pendingUpdate = Test-UpdateAvailable
+
+    try {
+        $session = New-FilePreviewSession -Kind WindowsTerminal -Path $settingsPath -By creator
+    } catch {
+        Write-Error $_.Exception.Message
+        return
+    }
+    $originalSettings = ConvertFrom-JsoncText $session.OriginalText
+    $target = Get-CurrentWTProfileName -Settings $originalSettings
+    if (-not $target) {
+        Write-Error "Could not auto-detect a Windows Terminal profile to preview against."
+        return
+    }
+    $session.TargetName = $target
+
+    # Crash-recovery copy before the first preview write. A failure is said
+    # inside the frame: anything printed here is wiped by the first redraw.
+    $backupNote = $null
+    $resolved = Resolve-WTProfileTarget -Settings $originalSettings -TargetName $target
+    try { Save-SettingsBackup -Path $settingsPath -ResolvedTarget $resolved -Quiet }
+    catch { $backupNote = Get-BackupFailureNote -Reason "$_" -InFrame }
+
+    # Per process, like the tuner's .tune-preview: two creators in two tabs
+    # never share (or delete) one folder. Sessions a closed tab left go first.
+    $scratchRoot = Join-Path $script:TStylesDataRoot '.create-preview'
+    Remove-StaleCreatorScratch -Root $scratchRoot
+    $scratchSession = Join-Path $scratchRoot ("session-{0}" -f $PID)
+    $scratchDir = Join-Path $scratchSession 'style'
+
+    $state = New-CreatorStartState
+    $message = $null       # what the last key has to say, for the next frame
+    $previewNote = $null   # a preview write that did not land
+    $pendingPreview = $false
+    $needsRedraw = $true
+    $applied = $false
+    $e = [char]27
+
+    # Restore-TuneBaseLook is the tuner's put-back, and runs at most once per
+    # session: settings.json through the session, then Get-RevertOscPacket's
+    # packet (on Windows Terminal, the reset, so it repaints from the file).
+    $createState = @{ Reverted = $false; SettingsRestoreError = $null; SettingsRestoreUnchecked = $false; SettingsRestore = $null }
+    $restoreLook = { Restore-TuneBaseLook -State $createState -UseSettingsFile -Session $session }
+    $restoreFailedHere = {
+        $createState.SettingsRestoreError -and -not ($createState.SettingsRestore -and $createState.SettingsRestore.Arm -eq 'merge')
+    }
+    $showRestore = {
+        $sr = $createState.SettingsRestore
+        if ($sr -and ($sr.Status -ne 'failed' -or $sr.Arm -eq 'merge')) { Show-FilePreviewResult -Result $sr }
+        Show-FilePreviewResult -Result $recovered
+    }
+    $showPendingUpdate = {
+        if ($pendingUpdate) {
+            Write-Host ("  Update available ({0} -> {1}). Run: tstyles update" -f
+                        $pendingUpdate.Installed, $pendingUpdate.Remote) -ForegroundColor Yellow
+            Write-Host ""
+        }
+    }
+    $draw = {
+        Clear-Host
+        Write-Host ""
+        foreach ($note in @($backupNote, $previewNote, $message)) {
+            if ($note) { Write-Host ("  $e[33m! " + ([string]$note).Trim().TrimStart('!').Trim() + "$e[0m") }
+        }
+        foreach ($line in @(Get-CreatorPageLines -State $state)) { Write-Host $line }
+    }
+
+    $originalTitle = $null
+    try { $originalTitle = $Host.UI.RawUI.WindowTitle } catch { }
+    try { [Console]::CursorVisible = $false } catch { }
+    try {
+        while ($true) {
+            $key = Read-CreatorConsoleKey
+            if ($null -eq $key) {
+                # Idle: draw first, so the page answers the key at once, then
+                # the debounced write, which reloads Windows Terminal.
+                $idleWork = $needsRedraw -or $pendingPreview
+                if ($needsRedraw) { & $draw; $needsRedraw = $false }
+                if ($pendingPreview) {
+                    $pendingPreview = $false
+                    $status = Write-CreatorPreview -State $state -Session $session -ScratchDir $scratchDir `
+                        -Target $target -OriginalJson $session.OriginalText
+                    $note = $null
+                    if ($status -eq 'changed') {
+                        $note = 'settings.json was changed by something else while tstyles create was open, so the image, font and cursor no longer preview here; the colours still do.'
+                    } elseif ($status -eq 'failed') {
+                        $note = 'The last change could not be written to settings.json, so the image, font and cursor may not show it; the colours do.'
+                    }
+                    if ($note -cne $previewNote) { $previewNote = $note; $needsRedraw = $true }
+                }
+                if (-not $idleWork) { Start-Sleep -Milliseconds 50 }
+                continue
+            }
+
+            # Always the returned state: a newly read image is a new hashtable.
+            $r = Invoke-CreatorKey -State $state -Key $key
+            $state = $r.State
+            $action = [string]$r.Action
+            $needsRedraw = $true
+            $message = $null
+            if ($action -like 'error:*') { $message = $action.Substring(6); continue }
+
+            if ($action -eq 'preview') {
+                [void](Write-HostOscPacket -Packet (Get-SchemeOscPacket -Scheme $state.Scheme))
+                $pendingPreview = $true
+                continue
+            }
+
+            if ($action -eq 'cancel') {
+                $revert = & $restoreLook
+                Clear-Host
+                $sr = $createState.SettingsRestore
+                if ($revert -eq 'failed' -and (& $restoreFailedHere)) {
+                    Show-SettingsRestoreFailure -Reason $createState.SettingsRestoreError -SettingsPath $settingsPath `
+                        -By creator -BackupTaken:(-not $backupNote) -Unchecked:([bool]$createState.SettingsRestoreUnchecked)
+                } elseif ($revert -ne 'failed' -and (-not $sr -or $sr.Status -eq 'restored')) {
+                    Write-Host "Cancelled. Your terminal is back as it was." -ForegroundColor Yellow
+                } else {
+                    # The file changed while the creator was open, or another
+                    # command took the session over: Show-FilePreviewResult
+                    # says what was and was not put back.
+                    Write-Host "Cancelled." -ForegroundColor Yellow
+                }
+                & $showRestore
+                & $showPendingUpdate
+                return
+            }
+
+            if ($action -eq 'save') {
+                $name = [string]$state.Name
+                # Saved with the preview still live, so a refusal leaves Esc
+                # everything it needs.
+                $res = $null
+                try {
+                    $prompt = New-StylePromptText -Shape $state.PromptShape -Symbol $state.Symbol `
+                        -PathColor $state.PromptPathColor -SymbolColor $state.PromptSymbolColor `
+                        -Title $name.ToUpperInvariant()
+                    $theme = New-CreatedThemeObject -Name $name -FontFace $state.FontFace -FontSize $state.FontSize `
+                        -CursorShape $state.CursorShape -ImageOpacity $state.ImageOpacity `
+                        -StretchMode $state.StretchMode -Alignment $state.Alignment `
+                        -TabColor (Get-CreatorTabColor -Scheme $state.Scheme)
+                    $res = Save-CreatedStyle -Name $name -Scheme $state.Scheme -Theme $theme `
+                        -BackgroundPath $state.ImagePath -Prompt $prompt
+                } catch {
+                    $res = [pscustomobject]@{ Status = 'failed'; Path = $null; Reason = $_.Exception.Message }
+                }
+                if (-not $res) { $res = [pscustomobject]@{ Status = 'failed'; Path = $null; Reason = 'the save returned no result.' } }
+                if ($res.Status -ne 'saved') {
+                    $message = "Not saved: " + [string]$res.Reason
+                    continue
+                }
+
+                # Saved. The preview comes out through the session -- the
+                # bytes the creator found go back, or, in a file that changed,
+                # the preview is taken out of it -- and the style is applied
+                # from there, as the tuner does.
+                $saveRestore = Restore-FilePreview -Session $session -End
+                Clear-Host
+                $applyErr = $null
+                $applyThrew = $null
+                try {
+                    Apply-StyleDirect -StyleName $name -Target $target -ErrorVariable applyErr
+                } catch { $applyThrew = $_ }
+                # Only Apply-StyleDirect's own give-ups count (Write-Error +
+                # return, before anything is written); see the tuner.
+                $applied = (-not $applyThrew) -and
+                    (-not @($applyErr | Where-Object { $_.CategoryInfo.Activity -eq 'Write-Error' }).Count)
+                if ($applied) {
+                    Remove-FilePreviewRecord -Kind WindowsTerminal -Path $settingsPath -SessionId $session.Id
+                    Write-Host ("Created '{0}' and applied it." -f $name) -ForegroundColor Green
+                } else {
+                    if ($applyThrew) { Write-Host ("  " + $applyThrew.Exception.Message) -ForegroundColor Red }
+                    Write-Host ("Created '{0}', but it could not be applied. It is saved in {1}; to apply it: tstyles {0}" -f
+                                $name, $res.Path) -ForegroundColor Yellow
+                }
+                Show-FilePreviewResult -Result $saveRestore
+                Show-FilePreviewResult -Result $recovered
+                & $showPendingUpdate
+                return
+            }
+            # none | next | back: the page changed, and is redrawn when idle.
+        }
+    } finally {
+        try { [Console]::CursorVisible = $true } catch { }
+        if (-not $applied) {
+            # The safety net for anything that left the loop another way. After
+            # an Esc this answers 'already' and writes nothing.
+            if (Test-ShouldRestoreWindowTitle -Title $originalTitle) {
+                try { $Host.UI.RawUI.WindowTitle = $originalTitle } catch { }
+            }
+            $finalRevert = $null
+            try { $finalRevert = & $restoreLook } catch { }
+            if ($finalRevert -eq 'failed' -and (& $restoreFailedHere)) {
+                Show-SettingsRestoreFailure -Reason $createState.SettingsRestoreError -SettingsPath $settingsPath `
+                    -By creator -BackupTaken:(-not $backupNote) -Unchecked:([bool]$createState.SettingsRestoreUnchecked)
+            }
+        }
+        if (Test-Path -LiteralPath $scratchSession) {
+            if (Test-PathIsUnderRoot -Path $scratchSession -Root $scratchRoot) {
+                Remove-Item -LiteralPath $scratchSession -Recurse -Force -ErrorAction SilentlyContinue
+            }
+        }
+    }
 }

@@ -571,7 +571,7 @@ function Invoke-TerminalStylesStateMigration {
 # (OSC reset, cleared the style record and shell state, deleted current-style.ps1)
 # and reported "Reset <terminal> to its unstyled default."
 $script:TStylesSubcommands = @(
-    'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
+    'create', 'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
     'reset', 'restore', 'shell-init', 'shell-remove', 'show', 'trash', 'tune',
     'update', 'uninstall', 'profiles', 'vscode')
 
@@ -1009,6 +1009,7 @@ function Invoke-TerminalStyle {
         Reset-StyleDirect -Target $resetTarget; return
     }
     if ($Arg -eq 'tune')                 { Invoke-TerminalStyleTune -StyleName $SubArg; return }
+    if ($Arg -eq 'create')               { Invoke-TerminalStyleCreate; return }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force -Yes:$Yes; return }
     if ($Arg -eq 'shell-init')           { Invoke-TerminalStylesShellInit -Force:$Force; return }

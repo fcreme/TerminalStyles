@@ -36,6 +36,7 @@ tstyles show <name>               # Preview a style's colours, then put the term
 tstyles random                    # Pick a random style and apply it
 tstyles reset                     # Revert the active profile to its unstyled default
 tstyles tune [name]               # Live-tune brightness/saturation/opacity/font; save as a style
+tstyles create                    # Windows Terminal: make a new style step by step from an image, previewed live
 tstyles delete [name]             # Delete a style you made (bundled styles are refused)
 tstyles trash                     # List deleted styles, and how long each one has left
 tstyles restore [name]            # Put a deleted style back; never overwrites a live one

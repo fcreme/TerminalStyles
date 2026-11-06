@@ -115,8 +115,8 @@ Describe 'Save-CreatedStyle' {
                 -BackgroundPath $script:img -Prompt $script:prompt).Status | Should -Be 'invalid'
         }
 
-        # Pending until Task 7 adds 'create' to the subcommands (Test-StyleNameValid then rejects it).
-        It 'returns invalid for the reserved name create' -Skip {
+        # 'create' is a subcommand, so Test-StyleNameValid rejects it.
+        It 'returns invalid for the reserved name create' {
             (Save-CreatedStyle -Name 'create' -Scheme $script:scheme -Theme $script:theme `
                 -BackgroundPath $script:img -Prompt $script:prompt).Status | Should -Be 'invalid'
         }
