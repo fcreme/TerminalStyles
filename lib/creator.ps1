@@ -128,6 +128,18 @@ function Get-CreatorWarnings {
     $lines.ToArray()
 }
 
+function New-CreatorPromptText {
+    # The prompt a created style is saved with: New-StylePromptText from the
+    # state's prompt choices, titled with the upper-cased name. No
+    # -BranchColor: the git shape's branch takes the generator's default arm.
+    # The save calls this, and the parity test renders what it returns, so
+    # the prompt measured is the prompt shipped.
+    param([Parameter(Mandatory)][hashtable]$State, [Parameter(Mandatory)][string]$Name)
+    New-StylePromptText -Shape $State.PromptShape -Symbol $State.Symbol `
+        -PathColor $State.PromptPathColor -SymbolColor $State.PromptSymbolColor `
+        -Title $Name.ToUpperInvariant()
+}
+
 function Get-CreatorTabColor {
     # The tab colour a created style gets: the palette's accent, else its
     # foreground, else grey. One rule, read by the preview and by the save, so
@@ -456,9 +468,7 @@ function Invoke-TerminalStyleCreate {
                 # everything it needs.
                 $res = $null
                 try {
-                    $prompt = New-StylePromptText -Shape $state.PromptShape -Symbol $state.Symbol `
-                        -PathColor $state.PromptPathColor -SymbolColor $state.PromptSymbolColor `
-                        -Title $name.ToUpperInvariant()
+                    $prompt = New-CreatorPromptText -State $state -Name $name
                     $theme = New-CreatedThemeObject -Name $name -FontFace $state.FontFace -FontSize $state.FontSize `
                         -CursorShape $state.CursorShape -ImageOpacity $state.ImageOpacity `
                         -StretchMode $state.StretchMode -Alignment $state.Alignment `

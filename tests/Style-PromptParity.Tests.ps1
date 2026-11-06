@@ -362,6 +362,36 @@ Describe 'a generated style renders the same prompt in PowerShell, zsh and bash'
             script:Assert-HalvesMatch -Rendered $bash -Reference $zsh -Cwds $cwds -RenderedName 'bash' -Label 'gen-git-repo'
         }
     }
+
+    It 'the git prompt tstyles create writes (no branch colour) matches in all three halves inside a repository' -Skip:$script:NoGenGit {
+        # The cases above pass -BranchColor; the creator never does, so the
+        # branch segment it ships takes the other arm of the generator. Made
+        # through New-CreatorPromptText, the call the creator's save makes.
+        $repo = Join-Path $script:ParityHome 'repo-create'
+        New-Item -ItemType Directory -Path $repo -Force | Out-Null
+        & git -C $repo init -q 2>$null
+        & git -C $repo checkout -q -b tsbranch 2>$null
+        & git -C $repo -c user.name=ts -c user.email=ts@example.invalid commit -q --allow-empty -m init 2>$null
+        $gen = & $script:GenMod {
+            $state = @{ PromptShape = 'git'; Symbol = '$'; PromptPathColor = '#7a9999'; PromptSymbolColor = '#d08770' }
+            New-CreatorPromptText -State $state -Name 'made'
+        }
+        $gen.Shell | Should -MatchExactly 'ts_title .*MADE' -Because 'the title is the upper-cased name, as the creator saves it'
+        $dir = Join-Path (Join-Path $TestDrive 'generated') 'gen-create-git'
+        New-Item -ItemType Directory -Path $dir -Force | Out-Null
+        $utf8 = [System.Text.UTF8Encoding]::new($false)
+        [System.IO.File]::WriteAllText((Join-Path $dir 'profile.ps1'), $gen.Profile, $utf8)
+        [System.IO.File]::WriteAllText((Join-Path $dir 'prompt.sh'), $gen.Shell, $utf8)
+        $cwds = @($repo)
+        $ps   = script:Get-PsPrompts  -StyleDir $dir -Cwds $cwds -Tag 'gen-create-git'
+        $zsh  = script:Get-ZshPrompts -StyleDir $dir -Cwds $cwds -Tag 'gen-create-git'
+        ([string]$zsh[0]) | Should -Match '\(tsbranch\)' -Because 'the repository must really show a branch, or this compares two prompts without one'
+        script:Assert-HalvesMatch -Rendered $ps -Reference $zsh -Cwds $cwds -RenderedName 'PowerShell' -Label 'gen-create-git'
+        if (Get-Command bash -ErrorAction SilentlyContinue) {
+            $bash = script:Get-BashPrompts -StyleDir $dir -Cwds $cwds -Tag 'gen-create-git'
+            script:Assert-HalvesMatch -Rendered $bash -Reference $zsh -Cwds $cwds -RenderedName 'bash' -Label 'gen-create-git'
+        }
+    }
 }
 
 Describe 'a style does not touch the line editor, on any platform' {
