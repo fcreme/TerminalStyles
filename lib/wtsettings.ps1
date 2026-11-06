@@ -769,7 +769,7 @@ function Show-SettingsRestoreFailure {
     param(
         [Parameter(Mandatory)][AllowEmptyString()][string]$Reason,
         [Parameter(Mandatory)][string]$SettingsPath,
-        [Parameter(Mandatory)][ValidateSet('picker', 'tuner')][string]$By,
+        [Parameter(Mandatory)][ValidateSet('picker', 'tuner', 'creator')][string]$By,
         [switch]$BackupTaken,
         [switch]$Unchecked
     )

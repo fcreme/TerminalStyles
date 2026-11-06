@@ -129,7 +129,7 @@ function New-FilePreviewSession {
     param(
         [Parameter(Mandatory)][ValidateSet('WindowsTerminal', 'WezTerm')][string]$Kind,
         [Parameter(Mandatory)][string]$Path,
-        [Parameter(Mandatory)][ValidateSet('picker', 'tuner')][string]$By,
+        [Parameter(Mandatory)][ValidateSet('picker', 'tuner', 'creator')][string]$By,
         [string]$TargetName
     )
     $existed = [System.IO.File]::Exists($Path)
@@ -507,7 +507,7 @@ function Show-FilePreviewResult {
             }
         }
         'commit/merged' {
-            Write-Host ("  settings.json changed while the picker was open, so '{0}' was merged into it as it is" -f $Result.Style) -ForegroundColor DarkGray
+            Write-Host ("  settings.json changed while the {0} was open, so '{1}' was merged into it as it is" -f $by, $Result.Style) -ForegroundColor DarkGray
             Write-Host ("  now, the way tstyles {0} would. The change is kept, except where the style sets the same key." -f $Result.Style) -ForegroundColor DarkGray
         }
         'commit/failed' {
