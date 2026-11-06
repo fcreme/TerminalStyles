@@ -572,7 +572,7 @@ function Invoke-TerminalStylesStateMigration {
 # and reported "Reset <terminal> to its unstyled default."
 $script:TStylesSubcommands = @(
     'create', 'current', 'delete', 'font', 'help', 'list', 'ls', 'random', 'register',
-    'reset', 'restore', 'shell-init', 'shell-remove', 'show', 'trash', 'tune',
+    'reset', 'restore', 'shell-init', 'shell-remove', 'show', 'submit', 'trash', 'tune',
     'update', 'uninstall', 'profiles', 'vscode')
 
 function Test-StyleNameIsSingleSegment {
@@ -1020,6 +1020,17 @@ function Invoke-TerminalStyle {
             return
         }
         Invoke-TerminalStyleCreate; return
+    }
+    if ($Arg -eq 'submit')               {
+        # Only the name: a -Target or -BackgroundImage would be silently
+        # ignored, so it is refused instead, before anything is read.
+        $common = [System.Management.Automation.PSCmdlet]::CommonParameters
+        $extra = @($PSBoundParameters.Keys | Where-Object { $_ -notin @('Arg', 'SubArg') -and $common -notcontains $_ })
+        if ($extra.Count -gt 0) {
+            Write-Host "  tstyles submit takes only a style name: tstyles submit <name>. Nothing was submitted." -ForegroundColor Yellow
+            return
+        }
+        Invoke-TerminalStyleSubmit -Name $SubArg; return
     }
     if ($Arg -eq 'help')                 { Show-TerminalStyleHelp -Command $SubArg; return }
     if ($Arg -eq 'register')             { Invoke-TerminalStylesRegister -Force:$Force -Yes:$Yes; return }
@@ -2484,12 +2495,15 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName SubA
             -WordToComplete $wordToComplete
         return
     }
-    if ($sub -ne 'delete') { return }
+    if ($sub -ne 'delete' -and $sub -ne 'submit') { return }
     $claim = Get-InstalledStyleClaim
     $one   = Test-StylesRootsAreOne
     $hash  = Get-InstalledStyleHash -DataDir $script:TStylesDataRoot
+    # delete offers yours and shadows; submit only yours (a shadow carries a
+    # bundled name, which Invoke-TerminalStyleSubmit refuses).
+    $origins = if ($sub -eq 'submit') { @('yours') } else { @('yours', 'shadow') }
     $deletable = @(Get-AvailableStyles | Where-Object {
-        (Get-StyleOrigin -Name $_.Name -StyleDir $_.FullName -Claim $claim -RootsAreOne $one -StyleHash $hash) -in @('yours', 'shadow')
+        (Get-StyleOrigin -Name $_.Name -StyleDir $_.FullName -Claim $claim -RootsAreOne $one -StyleHash $hash) -in $origins
     } | ForEach-Object Name | Sort-Object)
     Get-StyleNameCompletion -Names $deletable -WordToComplete $wordToComplete
 }

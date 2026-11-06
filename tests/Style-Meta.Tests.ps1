@@ -38,14 +38,16 @@ Describe 'every bundled style describes itself' {
         # is overwritten in place. Truncation is the safety net; this is the cap
         # that keeps it from firing on a normal terminal.
         $m = InModuleScope TerminalStyles { param($d) Get-StyleMeta -StyleDir $d } -Parameters @{ d = $Dir }
-        $m.Description.Length | Should -BeLessOrEqual 90 -Because 'an 80-column terminal is the floor'
+        # The cap is Get-StyleMetaLimits', which `tstyles submit` reads too.
+        $cap = InModuleScope TerminalStyles { (Get-StyleMetaLimits).Description }
+        $m.Description.Length | Should -BeLessOrEqual $cap -Because 'an 80-column terminal is the floor'
         $m.Description | Should -Not -Match "`n" -Because 'it is one line, not a paragraph'
     }
 
     It '<Name>''s quote is a quote, not a second description' -ForEach $script:StyleDirs {
         $m = InModuleScope TerminalStyles { param($d) Get-StyleMeta -StyleDir $d } -Parameters @{ d = $Dir }
         if ($m.Quote) {
-            $m.Quote.Length | Should -BeLessOrEqual 70
+            $m.Quote.Length | Should -BeLessOrEqual (InModuleScope TerminalStyles { (Get-StyleMetaLimits).Quote })
             $m.Quote | Should -Not -Match "`n"
         }
     }

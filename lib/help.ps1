@@ -208,6 +208,25 @@ function Get-TerminalStyleHelpData {
             Examples = @('tstyles create')
         }
         [pscustomobject]@{
+            Name = 'submit'; Usage = 'submit <name>'; Summary = 'Offer a style you made for the bundled catalogue'
+            Detail = @("Checks one of your own styles against the catalogue's rules, packs it",
+                       "into a zip in your data dir's submissions folder, and opens the Style",
+                       "submission form on GitHub in your browser, filled in with its name and",
+                       "description. Nothing is sent: you drag the zip into the form and press",
+                       "Submit, and the maintainer decides whether it joins the catalogue.",
+                       "",
+                       "Anything that would get the style refused is listed instead, and",
+                       "nothing is packed: a scheme missing a colour, a colour too faint on",
+                       "the background, a description longer than a picker row, an image",
+                       "over 2 MB, or a name the catalogue already uses.",
+                       "",
+                       "A style with a background image asks where the image comes from and",
+                       "whether you may let everyone use it; without a yes, nothing is packed.",
+                       "Bundled styles, and your copies that keep a bundled name, are refused.",
+                       "It changes no terminal's settings.")
+            Keys = @(); Examples = @('tstyles submit sunset')
+        }
+        [pscustomobject]@{
             Name = 'delete'; Usage = 'delete [name]'; Summary = 'Delete a style you made (bundled styles are refused)'
             Detail = @("With no name, lists the styles this command can act on.",
                        "",

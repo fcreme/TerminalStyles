@@ -50,7 +50,10 @@ function Save-CreatedStyle {
     .DESCRIPTION
     Status is saved | taken | invalid | failed. -Prompt is the hashtable
     New-StylePromptText returns; its text is written verbatim. With no
-    -Description, meta.json says "Made with tstyles create.".
+    -Description, meta.json says "Made with tstyles create.". -PromptChoice
+    (ConvertTo-CreatedPromptChoice) is kept in meta.json as `created`, the
+    record Test-StylePromptIsGenerated regenerates the prompt from when the
+    style is submitted.
 
     The style is built in $DataRoot\.creating\<guid> and renamed into place
     (a tab closed mid-save leaves that folder; Remove-StaleCreatingWork
@@ -66,6 +69,7 @@ function Save-CreatedStyle {
         [Parameter(Mandatory)]$Theme,
         [Parameter(Mandatory)][string]$BackgroundPath,
         [Parameter(Mandatory)][hashtable]$Prompt,
+        [System.Collections.IDictionary]$PromptChoice,
         [string]$Description = ''
     )
 
@@ -102,7 +106,9 @@ function Save-CreatedStyle {
 
         [System.IO.File]::WriteAllText((Join-Path $work 'scheme.json'), ($schemeOut | ConvertTo-Json -Depth 16), $utf8)
         [System.IO.File]::WriteAllText((Join-Path $work 'theme.json'), ($Theme | ConvertTo-Json -Depth 16), $utf8)
-        [System.IO.File]::WriteAllText((Join-Path $work 'meta.json'), ([pscustomobject]@{ description = $Description } | ConvertTo-Json -Depth 4), $utf8)
+        $meta = [ordered]@{ description = $Description }
+        if ($PromptChoice) { $meta.created = [pscustomobject]$PromptChoice }
+        [System.IO.File]::WriteAllText((Join-Path $work 'meta.json'), ([pscustomobject]$meta | ConvertTo-Json -Depth 4), $utf8)
         [System.IO.File]::WriteAllText((Join-Path $work 'profile.ps1'), [string]$Prompt.Profile, $utf8)
         [System.IO.File]::WriteAllText((Join-Path $work 'prompt.sh'), (([string]$Prompt.Shell) -replace "`r`n", "`n"), $utf8)
 
