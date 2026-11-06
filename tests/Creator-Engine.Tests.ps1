@@ -249,6 +249,45 @@ Describe 'Invoke-CreatorKey' {
                 $r.Action | Should -BeExactly 'next'
                 $r.State.Step | Should -Be 2
             }
+            It 'PageUp on step <_> goes back one step' -ForEach @(1, 2, 3) {
+                $r = & $script:key (& $script:onStep $_) 'PageUp' $null
+                $r.Action | Should -BeExactly 'back'
+                $r.State.Step | Should -Be ($_ - 1)
+            }
+            It 'PageUp on step 0 does nothing' {
+                $s = & $script:onStep 0
+                $r = & $script:key $s 'PageUp' $null
+                $r.Action | Should -BeExactly 'none'
+                $r.State.Step | Should -Be 0
+                $r.State.PathText | Should -BeExactly '/img/a.png'
+                $r = & $script:key (New-CreatorStartState) 'PageUp' $null
+                $r.Action | Should -BeExactly 'none'
+                $r.State.Step | Should -Be 0
+            }
+            It 'ten held Backspaces from step 3 stop on step 0 with the image path untouched' {
+                $s = & $script:onStep 3
+                $path = $s.ImagePath
+                $r = @{ State = $s }
+                for ($i = 0; $i -lt 10; $i++) { $r = & $script:key $r.State 'Backspace' $null }
+                $r.State.Step | Should -Be 0
+                $r.State.PathText | Should -BeExactly $path
+                $r.State.ImagePath | Should -BeExactly $path
+                $r.State.Control | Should -Be 1
+            }
+            It 'back to step 0 focuses opacity, not the path field' {
+                $r = & $script:key (& $script:onStep 1) 'Backspace' $null
+                $r.State.Step | Should -Be 0
+                $r.State.Control | Should -Be 1
+            }
+            It 'PageUp and Backspace in hex entry do not navigate' {
+                $s = & $script:onStep 1
+                $r = & $script:key $s 'H' $null
+                $r = & $script:key $r.State 'Backspace' $null
+                $r = & $script:key $r.State 'PageUp' $null
+                $r.State.Step | Should -Be 1
+                $r.State.HexEntry | Should -BeExactly ''
+                $r.Action | Should -BeExactly 'none'
+            }
             It 'Backspace on step 2 goes back to step 1' {
                 $r = & $script:key (& $script:onStep 2) 'Backspace' $null
                 $r.Action | Should -BeExactly 'back'
@@ -333,10 +372,21 @@ Describe 'Invoke-CreatorKey' {
                 $r = & $script:key $s 'H' $null
                 $r = & $script:key $r.State $null 'zz'
                 $r = & $script:key $r.State 'Enter' $null
-                $r.Action | Should -BeLike 'error:*'
+                $r.Action | Should -BeExactly "error:'zz' is not a colour. Type a colour as #rrggbb."
                 $r.State.Scheme.background | Should -BeExactly $before
                 $r.State.Edited.Count | Should -Be 0
                 $r.State.HexEntry | Should -BeExactly 'zz'
+            }
+
+            It 'Enter on an empty hex entry asks for a colour, not a binding error' {
+                $s = & $script:onStep 1
+                $before = $s.Scheme.background
+                $r = & $script:key $s 'H' $null
+                $r = & $script:key $r.State 'Enter' $null
+                $r.Action | Should -BeExactly 'error:Type a colour as #rrggbb.'
+                $r.State.HexEntry | Should -BeExactly ''
+                $r.State.Scheme.background | Should -BeExactly $before
+                $r.State.Edited.Count | Should -Be 0
             }
 
             It 'Esc leaves hex entry, not the creator' {
@@ -459,7 +509,7 @@ Describe 'Invoke-CreatorKey' {
         }
 
         Context 'step 4, name' {
-            It 'typed characters fill the name, Backspace deletes them, and goes back once it is empty' {
+            It 'typed characters fill the name, and Backspace only deletes them, even on an empty name' {
                 $s = & $script:onStep 4
                 $r = & $script:key $s $null 'ab'
                 $r.State.Name | Should -BeExactly 'ab'
@@ -469,7 +519,23 @@ Describe 'Invoke-CreatorKey' {
                 $r = & $script:key $r.State 'Backspace' $null
                 $r.State.Step | Should -Be 4
                 $r = & $script:key $r.State 'Backspace' $null
+                $r.Action | Should -BeExactly 'none'
+                $r.State.Step | Should -Be 4
+                $r.State.Name | Should -BeExactly ''
+            }
+
+            It 'PageUp on step 4 goes back to step 3' {
+                $s = & $script:onStep 4
+                $s.Name = 'keep'
+                $r = & $script:key $s 'PageUp' $null
                 $r.Action | Should -BeExactly 'back'
+                $r.State.Step | Should -Be 3
+                $r.State.Name | Should -BeExactly 'keep'
+            }
+
+            It 'PageUp arrives as a ConsoleKeyInfo too' {
+                $k = New-Object System.ConsoleKeyInfo ([char]0), ([ConsoleKey]::PageUp), $false, $false, $false
+                $r = & $script:key (& $script:onStep 4) $k $null
                 $r.State.Step | Should -Be 3
             }
 
@@ -583,6 +649,7 @@ Describe 'Get-CreatorPageLines' {
             $s = New-CreatorState -Pixels $script:px -ImagePath '/img/a.png'
             $s.Step = 2
             $text = & $script:plain (Get-CreatorPageLines -State $s)
+            $text.Contains('PgUp or Backspace previous step') | Should -BeTrue
             $text.IndexOf('Font size') | Should -BeGreaterThan -1
             $text.IndexOf('Font size') | Should -BeLessThan $text.IndexOf('git status')
         }
@@ -618,6 +685,7 @@ Describe 'Get-CreatorPageLines' {
             Set-CreatorColor -State $s -Slot red -Hex $s.Scheme.background
             $text = & $script:plain (Get-CreatorPageLines -State $s)
             $text.Contains('probe-name') | Should -BeTrue
+            $text.Contains('PgUp previous step') | Should -BeTrue
             $text.Contains('red is hard to read') | Should -BeTrue
         }
     }

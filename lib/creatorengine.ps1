@@ -141,7 +141,7 @@ function ConvertTo-CreatorKeyInput {
     # One key, as a [ConsoleKeyInfo] from the console or a key name from a
     # test ('Enter', 'Escape', 'Backspace', 'UpArrow', 'Shift+LeftArrow', or a
     # single character), or typed text. -> @{ Name; Shift; Chars }, where Name
-    # is Up | Down | Left | Right | Enter | Back | Esc | Chars | Other.
+    # is Up | Down | Left | Right | Enter | Back | Esc | PageUp | Chars | Other.
     param($Key, [AllowEmptyString()][AllowNull()][string]$Text)
     $out = @{ Name = 'Other'; Shift = $false; Chars = '' }
     if ($null -eq $Key -and $Text) {
@@ -172,6 +172,7 @@ function ConvertTo-CreatorKeyInput {
         'Enter' { $out.Name = 'Enter'; return $out }
         { $_ -in 'Backspace', 'Back' } { $out.Name = 'Back'; return $out }
         { $_ -in 'Escape', 'Esc' } { $out.Name = 'Esc'; return $out }
+        { $_ -in 'PageUp', 'PgUp', 'Prior' } { $out.Name = 'PageUp'; return $out }
     }
     if ($null -ne $char -and [int]$char -ge 0x20 -and [int]$char -ne 0x7F) {
         $out.Name = 'Chars'
@@ -197,12 +198,15 @@ function Invoke-CreatorKey {
       error:<message>  nothing changed but what is said; show the message
 
     Keys: Up/Down choose a control, Left/Right change it, Enter goes to the
-    next step, Backspace to the previous one, Esc cancels. Typed characters go
-    to the path field on step 0 and the name on step 4, where Backspace deletes
-    one instead (on step 0 it never goes back; on step 4 it goes back once the
-    name is empty). On step 1, Shift+Left/Right moves the hue, H opens hex
-    entry (Enter applies it, Esc leaves it, not the creator) and P pulls the
-    palette from the image again, keeping the colours set by hand.
+    next step, PageUp to the previous one on every page, Esc cancels.
+    Typed characters go to the path field on step 0, the name on step 4 and
+    the hex entry on step 1. Backspace NEVER navigates from a text field: there
+    it only deletes, and on an empty field does nothing. On steps 1-3, outside
+    hex entry, Backspace goes back too. Going back to step 0 focuses the
+    opacity control, not the path field, so a held Backspace stops there
+    instead of eating the path. On step 1, Shift+Left/Right moves the hue, H
+    opens hex entry (Enter applies it, Esc leaves it, not the creator) and P
+    pulls the palette from the image again, keeping the colours set by hand.
 
     Step 0 starts from New-CreatorStartState, which has no scheme. Enter reads
     the typed path: it is unquoted (ConvertFrom-PastedPath) and made absolute
@@ -241,6 +245,10 @@ function Invoke-CreatorKey {
         return (& $result $State 'none')
     }
 
+    if ($in.Name -eq 'PageUp') {
+        if ([int]$State.Step -eq 0) { return (& $result $State 'none') }
+        return (Step-CreatorBack -State $State)
+    }
     switch ([int]$State.Step) {
         0 { return (Invoke-CreatorImageKey -State $State -In $in -ReadImage $ReadImage) }
         4 { return (Invoke-CreatorNameKey -State $State -In $in) }
@@ -250,10 +258,7 @@ function Invoke-CreatorKey {
         $State.Step++; $State.Control = 0
         return (& $result $State 'next')
     }
-    if ($in.Name -eq 'Back') {
-        $State.Step--; $State.Control = 0
-        return (& $result $State 'back')
-    }
+    if ($in.Name -eq 'Back' -or $in.Name -eq 'PageUp') { return (Step-CreatorBack -State $State) }
     $delta = 0
     if ($in.Name -eq 'Right') { $delta = 1 }
     if ($in.Name -eq 'Left') { $delta = -1 }
@@ -287,6 +292,16 @@ function Invoke-CreatorKey {
         }
     }
     & $result $State 'none'
+}
+
+function Step-CreatorBack {
+    # One step back, landing on a control that is not a text field: step 0's
+    # opacity (it has a scheme by then), the first control elsewhere.
+    param([Parameter(Mandatory)][hashtable]$State)
+    $State.Step = [int]$State.Step - 1
+    $State.Control = 0
+    if ($State.Step -eq 0 -and $State.Scheme) { $State.Control = 1 }
+    @{ State = $State; Action = 'back' }
 }
 
 function Invoke-CreatorImageKey {
@@ -406,6 +421,11 @@ function Invoke-CreatorHexKey {
         }
         'Enter' {
             $slot = @(Get-CreatorColorSlots)[[int]$State.Control]
+            $typed = [string]$State.HexEntry
+            if (-not $typed.Trim()) { return (& $result $State 'error:Type a colour as #rrggbb.') }
+            if (-not (ConvertTo-NormalHex $typed)) {
+                return (& $result $State "error:'$typed' is not a colour. Type a colour as #rrggbb.")
+            }
             try {
                 Set-CreatorColor -State $State -Slot $slot -Hex $State.HexEntry
             } catch {
@@ -429,12 +449,9 @@ function Invoke-CreatorNameKey {
             return (& $result $State 'none')
         }
         'Back' {
-            if ($name.Length -gt 0) {
-                $State.Name = $name.Substring(0, $name.Length - 1)
-                return (& $result $State 'none')
-            }
-            $State.Step = 3; $State.Control = 0
-            return (& $result $State 'back')
+            # Deletes only; on an empty name it does nothing (PageUp goes back).
+            if ($name.Length -gt 0) { $State.Name = $name.Substring(0, $name.Length - 1) }
+            return (& $result $State 'none')
         }
         'Enter' {
             if (-not $name) { return (& $result $State 'error:Type a name for the style.') }
@@ -587,9 +604,9 @@ function Get-CreatorPageLines {
             if ($null -ne $hexEntry) {
                 $lines.Add('')
                 $lines.Add(('  Hex for {0}: {1}{2}' -f $slots[$control], $hexEntry, $caret))
-                $hint = 'Type a colour as #rrggbb. Enter applies it, Esc leaves hex entry.'
+                $hint = 'Type a colour as #rrggbb. Enter applies it, Backspace deletes, Esc leaves hex entry.'
             } else {
-                $hint = 'Up/Down choose a colour, Left/Right lightness, Shift+Left/Right hue, H type a hex, P pull again from the image (keeps your changes), Enter next, Backspace back, Esc cancel.'
+                $hint = 'Up/Down choose a colour, Left/Right lightness, Shift+Left/Right hue, H type a hex, P pull again from the image (keeps your changes), Enter next, PgUp or Backspace previous step, Esc cancel.'
             }
             $showWarnings = $true
         }
@@ -597,18 +614,18 @@ function Get-CreatorPageLines {
             $lines.Add((& $row 0 'Font' ([string]$State.FontFace)))
             $lines.Add((& $row 1 'Font size' ([string]$State.FontSize)))
             $lines.Add((& $row 2 'Cursor' ([string]$State.CursorShape)))
-            $hint = 'Up/Down choose, Left/Right change, Enter next, Backspace back, Esc cancel.'
+            $hint = 'Up/Down choose, Left/Right change, Enter next, PgUp or Backspace previous step, Esc cancel.'
         }
         3 {
             $lines.Add((& $row 0 'Shape' ([string]$State.PromptShape)))
             $lines.Add((& $row 1 'Symbol' ([string]$State.Symbol)))
             $lines.Add((& $row 2 'Path colour' (& $swatch $State.PromptPathColor)))
             $lines.Add((& $row 3 'Symbol colour' (& $swatch $State.PromptSymbolColor)))
-            $hint = 'Up/Down choose, Left/Right change, Enter next, Backspace back, Esc cancel. The prompt shows in the sample below.'
+            $hint = 'Up/Down choose, Left/Right change, Enter next, PgUp or Backspace previous step, Esc cancel. The prompt shows in the sample below.'
         }
         4 {
             $lines.Add((& $row 0 'Name' ([string]$State.Name + $caret)))
-            $hint = 'Type a name. Enter saves the style and applies it, Backspace on an empty name goes back, Esc cancels.'
+            $hint = 'Type a name. Backspace deletes, Enter saves the style and applies it, PgUp previous step, Esc cancels.'
             $showWarnings = $true
         }
     }
