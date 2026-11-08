@@ -273,19 +273,20 @@ function Read-CreatorConsoleKey {
     [Console]::ReadKey($true)
 }
 
-function Remove-StaleCreatorScratch {
+function Remove-StaleScratchSessions {
     <#
     .SYNOPSIS
-    Remove the scratch sessions creators that are no longer running left.
+    Remove the scratch sessions previews that are no longer running left.
 
     .DESCRIPTION
-    Each creator writes its preview style to $Root\session-<PID> and removes
-    that folder on every way out its finally block sees. A closed tab is not
-    one of them -- pwsh is killed without running finally -- so the folder
-    stays. A session-<n> whose process is gone goes here; this process's own,
-    one whose process is still running (a creator open in another tab), and
-    anything not named session-<n> are left alone. Containment is proved
-    before each recursive delete (Test-PathIsUnderRoot).
+    The creator (.create-preview) and the tuner (.tune-preview) each write
+    their preview style to $Root\session-<PID> and remove that folder on every
+    way out their finally block sees. A closed tab is not one of them -- pwsh
+    is killed without running finally -- so the folder stays. A session-<n>
+    whose process is gone goes here; this process's own, one whose process is
+    still running (a preview open in another tab), and anything not named
+    session-<n> are left alone. Containment is proved before each recursive
+    delete (Test-PathIsUnderRoot).
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$Root)
@@ -409,7 +410,7 @@ function Invoke-TerminalStyleCreate {
     # Per process, like the tuner's .tune-preview: two creators in two tabs
     # never share (or delete) one folder. Sessions a closed tab left go first.
     $scratchRoot = Join-Path $script:TStylesDataRoot '.create-preview'
-    Remove-StaleCreatorScratch -Root $scratchRoot
+    Remove-StaleScratchSessions -Root $scratchRoot
     # And the half-built styles a tab closed mid-save left (over an hour old).
     Remove-StaleCreatingWork -Root (Join-Path $script:TStylesDataRoot '.creating')
     $scratchSession = Join-Path $scratchRoot ("session-{0}" -f $PID)
