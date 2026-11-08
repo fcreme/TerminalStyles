@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles tune` sweeps the scratch folders closed tabs left under `.tune-preview`.** The tuner writes its Windows Terminal preview to `.tune-preview/session-<PID>` in your data dir and removes that folder in a `finally` block on every way out of the tuner, but closing the tab kills PowerShell without running `finally`, so every tuner a closed tab ended left its folder there for good. `tstyles create` already swept its own `.create-preview` on start; the tuner now does the same, with the same function: a `session-<n>` folder whose process is gone is removed, and one whose process is still running (a tuner open in another tab), the tuner's own, and anything not named `session-<n>` are left alone.
+
 ## [0.9.7] - 2026-11-07
 
 ### Added

@@ -1378,6 +1378,11 @@ function Invoke-TerminalStyleTune {
     #     cache/session-<PID>/ behind. With the base's name back on the leaf it
     #     reuses the base's cache and marker exactly as it did before.
     $scratchRoot = Join-Path $script:TStylesDataRoot '.tune-preview'
+    # The finally below is the only clean-up, and a closed tab never reaches
+    # it (pwsh is killed without running finally), so every tuner a tab close
+    # ended left its session-<PID> here for good. Sessions whose process is
+    # gone go first, as the creator does with .create-preview.
+    Remove-StaleScratchSessions -Root $scratchRoot
     $scratchSession = Join-Path $scratchRoot ("session-{0}" -f $PID)
     $scratchDir  = Join-Path $scratchSession $baseName
     if ($tuneUsesSettings -and -not (Test-Path -LiteralPath $scratchDir)) {
