@@ -25,6 +25,13 @@ terminal that speaks OSC color sequences — and in **zsh** and **bash**, not ju
 PowerShell. Runs on PowerShell 7 and Windows PowerShell 5.1. Keep your own prompt
 (Oh My Posh / Starship) with `tstyles <name> -KeepPrompt`.
 
+**Make your own.** `tstyles create` builds a style from any picture on your
+computer: it pulls a palette from the image, lets you change any colour, pick
+a font, a cursor and a prompt, and previews every step live in the tab you are
+in — Esc puts everything back. Then `tstyles submit <name>` packs it up and
+opens a GitHub form if you'd like it in the bundled set. The creator needs
+Windows Terminal for now.
+
 ## Install
 
 ```powershell

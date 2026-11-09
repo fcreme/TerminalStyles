@@ -1,5 +1,12 @@
 ## Adding your own style
 
+On Windows Terminal, the quickest way is `tstyles create`: it builds a style
+step by step from a picture of yours (background, a palette pulled from the
+image, font, cursor and prompt), previewed live in the tab you run it in, and
+saves it as a normal style folder in your styles dir. `tstyles submit <name>`
+then offers it for the bundled catalogue. The rest of this page is the manual
+way, which works for any terminal.
+
 Drop a folder into `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`
 with:
 
