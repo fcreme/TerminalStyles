@@ -18,9 +18,67 @@ function Get-TerminalStylesInstallKind {
     # Note: $script:TStylesModuleRoot is set during module load. For installs
     # made before the dual-root refactor (sub-project C), the variable still
     # has the right value because the init block sets it from $PSScriptRoot.
+    #
+    # 'Scoop' and 'Homebrew' come from a marker file the package itself writes
+    # into the module folder: the Scoop manifest's post_install and the Homebrew
+    # formula's install step each leave a `.package-manager` naming themselves.
+    # Neither the repo nor the Gallery package carries one. Without it a copy
+    # installed by a package manager read as a Gallery install, so `tstyles
+    # update` ran Update-PSResource against a module PSResourceGet never
+    # installed, and `tstyles uninstall` called Uninstall-PSResource and left
+    # the package's copy where it was. A marker naming anything else is ignored
+    # rather than guessed at.
     $bootstrapDir = Get-TStylesDataRoot
     if ($script:TStylesModuleRoot -eq $bootstrapDir) { return 'Bootstrap' }
+    switch (Get-PackageManagerMarker -ModuleRoot $script:TStylesModuleRoot) {
+        'scoop'    { return 'Scoop' }
+        'homebrew' { return 'Homebrew' }
+    }
     return 'PSResourceGet'
+}
+
+function Get-PackageManagerMarker {
+    # The first line of <ModuleRoot>/.package-manager, trimmed and lower-cased,
+    # or $null when there is no such file or it cannot be read.
+    [CmdletBinding()]
+    param([AllowNull()][string]$ModuleRoot)
+    if (-not $ModuleRoot) { return $null }
+    $path = Join-Path $ModuleRoot '.package-manager'
+    try {
+        if (-not [System.IO.File]::Exists($path)) { return $null }
+        $first = @([System.IO.File]::ReadAllLines($path) | Where-Object { $_.Trim() }) | Select-Object -First 1
+        if (-not $first) { return $null }
+        return $first.Trim().ToLowerInvariant()
+    } catch { return $null }
+}
+
+function Get-PackageManagerCommand {
+    # The command the package manager that installed TerminalStyles uses for
+    # an update or an uninstall, as the user would type it.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][ValidateSet('Scoop', 'Homebrew')][string]$Kind,
+        [Parameter(Mandatory)][ValidateSet('Update', 'Uninstall')][string]$Action
+    )
+    switch ("$Kind/$Action") {
+        'Scoop/Update'       { 'scoop update terminalstyles' }
+        'Scoop/Uninstall'    { 'scoop uninstall terminalstyles' }
+        'Homebrew/Update'    { 'brew upgrade terminalstyles' }
+        'Homebrew/Uninstall' { 'brew uninstall terminalstyles' }
+    }
+}
+
+function Get-HomebrewStableModuleRoot {
+    # A Homebrew copy loads from a versioned Cellar folder, which the next
+    # `brew upgrade` deletes. Its opt/ link points at whichever version is
+    # current, so a loader written with that path keeps working across
+    # upgrades. Anything not shaped like a Cellar path comes back as it was.
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$ModuleRoot)
+    $sep = '[\\/]'
+    $m = [regex]::Match($ModuleRoot, "^(.*)${sep}Cellar${sep}terminalstyles${sep}[^\\/]+${sep}libexec${sep}?$")
+    if ($m.Success) { return (Join-Path (Join-Path (Join-Path $m.Groups[1].Value 'opt') 'terminalstyles') 'libexec') }
+    return $ModuleRoot
 }
 
 function Test-UpdateAvailable {
@@ -54,7 +112,15 @@ function Test-UpdateAvailable {
         } catch { }
     }
 
-    if ((Get-TerminalStylesInstallKind) -eq 'PSResourceGet') {
+    $kind = Get-TerminalStylesInstallKind
+    # A Scoop or Homebrew copy is updated by its package manager, which says
+    # for itself when a new version is in its bucket or tap (`scoop status`,
+    # `brew outdated`). The Gallery can be a release ahead of either, so
+    # announcing the Gallery's version here would tell the user to run an
+    # update that, for them, has nothing to fetch yet.
+    if ($kind -eq 'Scoop' -or $kind -eq 'Homebrew') { return $null }
+
+    if ($kind -eq 'PSResourceGet') {
         # This arm returned $null outright, on the reasoning that a Gallery copy
         # is updated by Update-PSResource whenever the user runs `tstyles
         # update`. But this notice is how they learn there is anything to run
@@ -320,7 +386,21 @@ function Invoke-TerminalStylesUpdate {
     # retry hint printed beneath the failure.
     $restoreTls = Enable-Tls12
     try {
-        switch (Get-TerminalStylesInstallKind) {
+        $kind = Get-TerminalStylesInstallKind
+        switch ($kind) {
+            { $_ -eq 'Scoop' -or $_ -eq 'Homebrew' } {
+                # The package manager owns these files: it recorded the version
+                # it installed, and the next `scoop update` or `brew upgrade`
+                # replaces the folder. Updating them from here would put a
+                # version in place that the package manager does not know about,
+                # or install a second copy from the Gallery beside it. So this
+                # names the command and changes nothing, and says so.
+                $cmd = Get-PackageManagerCommand -Kind $kind -Action Update
+                Write-Host ""
+                Write-Host ("  TerminalStyles was installed with {0}, so {0} updates it. Run:" -f $kind) -ForegroundColor Yellow
+                Write-Host "    $cmd" -ForegroundColor Cyan
+                Write-Host "  Nothing was changed." -ForegroundColor Gray
+            }
             'PSResourceGet' {
                 # Update-PSResource where PSResourceGet is present, and
                 # Update-Module where it is not. Windows PowerShell 5.1 ships
@@ -490,12 +570,21 @@ function Invoke-TerminalStylesRegister {
     # The two forms below must stay identical to install.ps1's -- there is a
     # test that compares them, because install.ps1 is fetched and piped to iex
     # before the module exists and so cannot dot-source this file.
-    $loaderImport = if ((Get-TerminalStylesInstallKind) -eq 'Bootstrap') {
+    # A Homebrew copy is not on the module path either: Homebrew's prefix on
+    # Apple silicon, /opt/homebrew, is not one of the folders pwsh searches. It
+    # gets the full-path form too, through opt/ rather than the versioned Cellar
+    # folder the next `brew upgrade` deletes. A Scoop copy IS on the module
+    # path -- Scoop adds its modules folder to PSModulePath -- so it takes the
+    # by-name form below.
+    $installKind = Get-TerminalStylesInstallKind
+    $loaderImport = if ($installKind -eq 'Bootstrap') {
         if ((Get-TStylesPlatform) -eq 'Windows') {
             'Import-Module "$env:LOCALAPPDATA\TerminalStyles\TerminalStyles.psd1" -DisableNameChecking'
         } else {
             'Import-Module "{0}" -DisableNameChecking' -f (Join-Path $script:TStylesModuleRoot 'TerminalStyles.psd1')
         }
+    } elseif ($installKind -eq 'Homebrew') {
+        'Import-Module "{0}" -DisableNameChecking' -f (Join-Path (Get-HomebrewStableModuleRoot -ModuleRoot $script:TStylesModuleRoot) 'TerminalStyles.psd1')
     } else {
         'Import-Module TerminalStyles -DisableNameChecking'
     }
@@ -1210,11 +1299,27 @@ function Invoke-TerminalStylesUninstall {
     # The install kind by what people call it. 'PSResourceGet' is this code's
     # name for every Gallery install, and printed as it is, it told an engine
     # without PSResourceGet that PSResourceGet had been detected.
-    $kindLabel = if ($kind -eq 'PSResourceGet') { 'a PowerShell Gallery install' } else { 'a bootstrap install' }
+    $kindLabel = switch ($kind) {
+        'PSResourceGet' { 'a PowerShell Gallery install' }
+        'Scoop'         { 'a Scoop install' }
+        'Homebrew'      { 'a Homebrew install' }
+        default         { 'a bootstrap install' }
+    }
+    # A package manager's copy is left to the package manager: deleting its
+    # folder from here leaves Scoop or Homebrew recording an install that is no
+    # longer there, and its own uninstall then fails on the missing files. So
+    # this command does everything else, and names the one command that is left.
+    $packageRemove = if ($kind -eq 'Scoop' -or $kind -eq 'Homebrew') {
+        Get-PackageManagerCommand -Kind $kind -Action Uninstall
+    }
     Write-Host "This will uninstall TerminalStyles (detected: $kindLabel):" -ForegroundColor Yellow
     switch ($kind) {
         'PSResourceGet' {
             Write-Host "  - $galleryRemove" -ForegroundColor Yellow
+        }
+        { $_ -eq 'Scoop' -or $_ -eq 'Homebrew' } {
+            Write-Host "  - Leave the module itself in place: $kind installed it, so remove it afterwards with" -ForegroundColor Yellow
+            Write-Host "      $packageRemove" -ForegroundColor Yellow
         }
         'Bootstrap' {
             Write-Host "  - Remove install-managed files from $dataDir" -ForegroundColor Yellow
@@ -1297,8 +1402,9 @@ function Invoke-TerminalStylesUninstall {
     # stripped out of the user's rc files and both $PROFILE files. With
     # -DeleteData it would have removed the data root outright, taking the
     # user's own authored and tuned styles with it.
-    $consequence = if ($DeleteData) { "DELETES $dataDir entirely, including your own styles" }
-                   else             { "removes install-managed files and the shell loader" }
+    $consequence = if ($DeleteData)    { "DELETES $dataDir entirely, including your own styles" }
+                   elseif ($packageRemove) { "removes the shell loader; the module stays until $packageRemove" }
+                   else                { "removes install-managed files and the shell loader" }
     if ($vscodeTargets.Count -gt 0) { $consequence += ", and takes the saved style out of VS Code's settings.json" }
     if (-not (Confirm-Action -Question 'Continue? [y/N]' -Yes:$Yes -Consequence $consequence)) {
         Write-Host "Cancelled." -ForegroundColor Gray
@@ -1313,6 +1419,12 @@ function Invoke-TerminalStylesUninstall {
     $installLeft = @()
     $moduleRemoved = $false
     switch ($kind) {
+        { $_ -eq 'Scoop' -or $_ -eq 'Homebrew' } {
+            # Not removed, by design (see $packageRemove above), and listed as
+            # still in place so the sign-off says the uninstall is not finished.
+            $installLeft = @($script:TStylesModuleRoot)
+            Write-Host ("  Left the module to {0}: {1}" -f $kind, $packageRemove) -ForegroundColor Gray
+        }
         'PSResourceGet' {
             $remover = ($galleryRemove -split ' ')[0]
             $before  = @(Get-InstalledModuleCopy)
@@ -1552,6 +1664,8 @@ function Invoke-TerminalStylesUninstall {
         foreach ($p in $installLeft) { Write-Host ("  {0}" -f $p) -ForegroundColor Yellow }
         if ($kind -eq 'Bootstrap') {
             Write-Host $(if ($one) { 'Delete it by hand.' } else { 'Delete them by hand.' }) -ForegroundColor Yellow
+        } elseif ($packageRemove) {
+            Write-Host ("To finish, run: {0}" -f $packageRemove) -ForegroundColor Yellow
         } else {
             # The remover first, because a copy installed for all users needs an
             # elevated shell to delete, and "by hand" said nothing of it. A copy
