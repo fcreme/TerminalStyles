@@ -364,7 +364,9 @@ function Get-TerminalStyleHelpData {
             Name = 'update'; Usage = 'update'; Summary = 'Update to the latest version'
             Detail = @("Updates TerminalStyles. PSGallery installs run Update-PSResource, or",
                        "Update-Module where PSResourceGet is not installed; bootstrap installs",
-                       "re-run the installer.")
+                       "re-run the installer. A Scoop or Homebrew install is left to its",
+                       "package manager: this names the command to run (scoop update",
+                       "terminalstyles, brew upgrade terminalstyles) and changes nothing.")
             Keys = @(); Examples = @('tstyles update')
         }
         [pscustomobject]@{
@@ -424,6 +426,10 @@ function Get-TerminalStyleHelpData {
                        "-- so an uninstall does not leave a shell sourcing a runtime it just",
                        "deleted. A ~/.bash_profile shell-init created, holding nothing else,",
                        "is deleted too.",
+                       "",
+                       "A Scoop or Homebrew install keeps the module itself: everything else",
+                       "is done, and the last line names the package manager's own uninstall",
+                       "(scoop uninstall terminalstyles, brew uninstall terminalstyles).",
                        "",
                        "A style saved to a VS Code-family editor's settings.json (VS Code,",
                        "Insiders, VSCodium, Cursor, Windsurf) is taken back out of it, from",

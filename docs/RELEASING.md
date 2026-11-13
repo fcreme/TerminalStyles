@@ -69,7 +69,21 @@ How to publish a new version of TerminalStyles.
    git push --tags
    ```
 
-8. **Verify** within ~1 minute at
+8. **Publish the GitHub Release, with the module zip.** Scoop and Homebrew
+   download the release's `TerminalStyles-<version>.zip`, not the Gallery
+   package, so a tag without a release is a version neither of them can see.
+   Releases stopped at v0.8.36 once and the next twenty-one tags had none,
+   until they were added by hand on 2026-11-10. The zip is the staged tree
+   from step 5, with its files at the root:
+
+   ```sh
+   cd out/TerminalStyles && zip -qrX ../../TerminalStyles-<version>.zip . && cd ../..
+   gh release create v<version> --verify-tag --title v<version> \
+     --notes-file <the version's CHANGELOG section> TerminalStyles-<version>.zip
+   shasum -a 256 TerminalStyles-<version>.zip   # for the bucket and the tap
+   ```
+
+9. **Verify** within ~1 minute at
    https://www.powershellgallery.com/packages/TerminalStyles/
 
    The tag push also starts the **Live Gallery check**
@@ -80,7 +94,7 @@ How to publish a new version of TerminalStyles.
    should be green within a few minutes. Everything else in CI mocks the
    Gallery, so a red leg here is what that engine's users are about to meet.
 
-9. **Smoke-test the install** in a clean shell (no module already
+10. **Smoke-test the install** in a clean shell (no module already
    loaded):
 
    ```powershell
