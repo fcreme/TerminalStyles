@@ -80,8 +80,21 @@ How to publish a new version of TerminalStyles.
    cd out/TerminalStyles && zip -qrX ../../TerminalStyles-<version>.zip . && cd ../..
    gh release create v<version> --verify-tag --title v<version> \
      --notes-file <the version's CHANGELOG section> TerminalStyles-<version>.zip
-   shasum -a 256 TerminalStyles-<version>.zip   # for the bucket and the tap
    ```
+
+   The bucket ([fcreme/scoop-terminalstyles](https://github.com/fcreme/scoop-terminalstyles))
+   and the tap ([fcreme/homebrew-terminalstyles](https://github.com/fcreme/homebrew-terminalstyles))
+   each have a daily **Bump to latest release** workflow that points them at
+   this zip, with its hash, and then installs it on a real runner. To ship
+   today instead of tomorrow, start both now and check they go green:
+
+   ```sh
+   gh workflow run bump.yml -R fcreme/scoop-terminalstyles
+   gh workflow run bump.yml -R fcreme/homebrew-terminalstyles
+   ```
+
+   A release with no zip is skipped with a warning, not an error, so a green
+   run that says "has no ... asset yet" means this step was missed.
 
 9. **Verify** within ~1 minute at
    https://www.powershellgallery.com/packages/TerminalStyles/
