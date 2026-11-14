@@ -49,6 +49,21 @@ tstyles
 
 Arrow keys preview each style live, Enter keeps it, Esc cancels.
 
+Or with a package manager, which then owns the install (`tstyles update`
+and `tstyles uninstall` hand over to it):
+
+```sh
+# Windows, Scoop
+scoop bucket add terminalstyles https://github.com/fcreme/scoop-terminalstyles
+scoop install terminalstyles
+
+# macOS / Linux, Homebrew (brings PowerShell with it)
+brew install fcreme/terminalstyles/terminalstyles
+```
+
+Then run `tstyles register` once, as above. For Homebrew, import it by
+path that first time: `pwsh -NoProfile -Command 'Import-Module "$(brew --prefix)/opt/terminalstyles/libexec/TerminalStyles.psd1" -DisableNameChecking; tstyles register'`.
+
 Prefer a one-line installer, or on a shell without PSResourceGet? See the
 [bootstrap installer](https://github.com/fcreme/TerminalStyles/wiki/Install#alternate-bootstrap-installer).
 
