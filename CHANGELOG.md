@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles current` prints nothing when its output is captured and no style is active** (#130). The help promised "nothing if none is detected", and scripts rely on it: `[ -n "$(tstyles current)" ]` is how a zsh or bash script asks whether a style is on. With no style active, though, the command wrote `(no bundled style currently active)` through `Write-Host`, wrapped in the hint colour, on every path. `Write-Host` is no way around stdout once pwsh's output is captured: `pwsh -c` writes it there like any other line. So that test answered yes, and the variable held escape bytes. Measured in zsh against an empty data root: `x=$(pwsh -c 'tstyles current')` held `ESC[38;2;160;160;160m(no bundled s...` before and is empty now. At a console the note is unchanged, and the help now says which of the two you get.
+
 ## [0.9.8] - 2026-11-16
 
 ### Added
