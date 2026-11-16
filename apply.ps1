@@ -106,7 +106,9 @@ function Read-Choice {
 # Main flow. Guarded so tests can dot-source this script for its functions
 # (set $TStylesApplyNoRun = $true before dot-sourcing) without running the
 # installer. A normal `pwsh -File apply.ps1` run never sets the var, so main runs.
-if (-not $TStylesApplyNoRun) {
+# Read through Get-Variable: only tests set it, and under Set-StrictMode
+# a bare read of a variable that does not exist is an error (#129).
+if (-not (Get-Variable -Name TStylesApplyNoRun -ValueOnly -ErrorAction SilentlyContinue)) {
 
 # --- Banner ---
 Write-Host ""
