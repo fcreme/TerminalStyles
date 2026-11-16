@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.7'
+    ModuleVersion     = '0.9.8'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.7: Two new commands. tstyles create builds a new style step by step in Windows Terminal, which previews it live: a background image from your computer, a palette pulled from it, font, cursor, a prompt shape and symbol, and a name; Esc or a closed tab puts settings.json back. tstyles submit checks a style you made against the catalogue''s rules, packs it into a zip and opens a GitHub form to offer it for the bundled catalogue; the maintainer decides.'
+            ReleaseNotes = 'v0.9.8: TerminalStyles can now be installed with Scoop (Windows) or Homebrew (macOS, Linux). A copy one of them installed is left to it: tstyles update names scoop update or brew upgrade and changes nothing, the update notice stays quiet, and tstyles uninstall keeps the module and ends on the package manager''s uninstall command. tstyles tune also cleans up the preview folders that closed tabs left behind.'
         }
     }
 }
