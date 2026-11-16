@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **koholint, phosphor and skyline set every PSReadLine colour, so switching to them no longer keeps three of the last style's** (#127). PSReadLine colours last for the session, and a style replaces only the keys it sets. These three styles left out `Keyword`, `Default` and `InlinePrediction`, which the other fifteen set. So after another style in the same session, those three colours stayed the old style's. Coming from gitbash, a light-background style, plain arguments stayed `#383838` on a near-black background until a new tab. Each now sets `Default` to its foreground, `Keyword` to an accent its table did not use yet (koholint's sand yellow at 6.3:1 on its blue, phosphor's brightest green at 18.1:1, skyline's warm sand at 10.0:1), and `InlinePrediction` to its comment colour. `InlinePrediction` goes in a call of its own, as in every other style, because Windows PowerShell 5.1's older PSReadLine does not know the key and an unknown key fails the whole call. `tests/Style-PSReadLine-Colours.Tests.ps1` runs every style's `profile.ps1` in a runspace of its own with `Set-PSReadLineOption` recording its calls, and checks both rules for all eighteen styles.
+
 ## [0.9.8] - 2026-11-16
 
 ### Added
