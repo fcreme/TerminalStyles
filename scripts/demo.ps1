@@ -719,7 +719,9 @@ if ($Record) {
 # maintainer's real styles and takes over the terminal. Mirrors
 # $TStylesInstallNoRun in install.ps1 and $TStylesApplyNoRun in apply.ps1. A
 # normal run never sets the var, so main runs.
-if (-not $TStylesDemoNoRun) {
+# Read through Get-Variable: only tests set it, and under Set-StrictMode
+# a bare read of a variable that does not exist is an error (#129).
+if (-not (Get-Variable -Name TStylesDemoNoRun -ValueOnly -ErrorAction SilentlyContinue)) {
     $names = Invoke-Prep
     if ($Prep) {
         Write-Host ""
