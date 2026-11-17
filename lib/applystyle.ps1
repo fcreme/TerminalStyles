@@ -211,9 +211,12 @@ function Show-CurrentStyle {
                 Write-Host $current
             }
         }
-    } else {
+    } elseif (-not $OutputRedirected) {
         Write-Host "$(Get-HintEscape)(no bundled style currently active)$([char]27)[0m"
     }
+    # Captured with no style active: nothing at all. Empty output is the answer
+    # a script reads (`[ -n "$(tstyles current)" ]`), and Write-Host is not a
+    # way around stdout there: a captured pwsh writes it to stdout like any line.
 }
 
 function Invoke-RandomStyle {
