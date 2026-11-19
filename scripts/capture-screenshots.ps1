@@ -19,6 +19,42 @@
 
 #Requires -Version 5.1
 
+function Get-CaptureOriginalStyle {
+    # The active style's name, straight from the module. Capturing
+    # `tstyles current` does not work here: at a console -- the only place this
+    # script runs -- it writes the name with Write-Host and returns nothing, so
+    # the restore below was always skipped (#133).
+    $module = Get-Module TerminalStyles
+    if (-not $module) { return $null }
+    $name = & $module { Get-CurrentStyleName }
+    if ($name) { return "$name" }
+    return $null
+}
+
+function Invoke-CaptureWithRestore {
+    # Runs the capture loop, then puts the original style back in `finally`,
+    # so a failed capture or Ctrl+C still leaves the maintainer where they were.
+    #
+    # -Apply is how a style gets applied. The default is the real `tstyles`;
+    # tests pass a recorder, because a function named `tstyles` cannot stand in
+    # for the module's: the alias wins, and the "stub" applies real styles.
+    param(
+        [AllowNull()][string]$OriginalStyle,
+        [Parameter(Mandatory)][scriptblock]$Capture,
+        [scriptblock]$Apply = { param($Name) tstyles $Name *>&1 | Out-Null }
+    )
+    try {
+        & $Capture
+    } finally {
+        if ($OriginalStyle) { & $Apply $OriginalStyle }
+    }
+}
+
+# Tests dot-source this file for its functions with $TStylesCaptureNoRun set;
+# everything below the guard needs a Windows Terminal tab. Same pattern as
+# $TStylesDemoNoRun in scripts/demo.ps1.
+if (Get-Variable -Name TStylesCaptureNoRun -ValueOnly -ErrorAction SilentlyContinue) { return }
+
 $ErrorActionPreference = 'Stop'
 
 # --- Win32 PrintWindow with PW_RENDERFULLCONTENT (works for WT) ---
@@ -99,11 +135,7 @@ if (-not $themes) {
 }
 
 # --- Save current theme so we can restore it at the end ---
-$originalTheme = (tstyles current 2>$null) -join ''
-$originalTheme = "$originalTheme".Trim()
-if (-not $originalTheme -or $originalTheme -match 'no bundled style') {
-    $originalTheme = $null
-}
+$originalTheme = Get-CaptureOriginalStyle
 
 Write-Host ""
 Write-Host "Capturing $($themes.Count) theme screenshots into:" -ForegroundColor Cyan
@@ -113,36 +145,36 @@ Write-Host "Don't touch the keyboard or change window focus while this runs." -F
 Write-Host "Starting in 3 seconds..." -ForegroundColor Yellow
 Start-Sleep -Seconds 3
 
-$captured = @()
-foreach ($theme in $themes) {
-    # Apply silently (Apply-StyleDirect's "Style applied: X" status line
-    # would clutter the screenshot if we let it print into the same tab).
-    tstyles $theme.Name *>&1 | Out-Null
+# A list, not an array: the loop runs inside a scriptblock, where `+=` would
+# only change a copy.
+$captured = [System.Collections.Generic.List[object]]::new()
+# The original theme goes back on in Invoke-CaptureWithRestore's finally.
+Invoke-CaptureWithRestore -OriginalStyle $originalTheme -Capture {
+    foreach ($theme in $themes) {
+        # Apply silently (Apply-StyleDirect's "Style applied: X" status line
+        # would clutter the screenshot if we let it print into the same tab).
+        tstyles $theme.Name *>&1 | Out-Null
 
-    # Wipe the tab and re-render just the banner + prompt fresh, so the
-    # screenshot is the cleanest possible representation of the theme.
-    Clear-Host
-    $stylePs1 = Join-Path $installDir 'current-style.ps1'
-    if (Test-Path -LiteralPath $stylePs1) {
-        . $stylePs1
+        # Wipe the tab and re-render just the banner + prompt fresh, so the
+        # screenshot is the cleanest possible representation of the theme.
+        Clear-Host
+        $stylePs1 = Join-Path $installDir 'current-style.ps1'
+        if (Test-Path -LiteralPath $stylePs1) {
+            . $stylePs1
+        }
+
+        # Give WT a beat to re-render colors, font, cursor, bg before snapping.
+        Start-Sleep -Milliseconds 700
+
+        $outFile = Join-Path $outDir "$($theme.Name).png"
+        try {
+            [WTScreenCapture]::CaptureForegroundTo($outFile)
+            $size = (Get-Item -LiteralPath $outFile).Length
+            [void]$captured.Add([pscustomobject]@{ Name = $theme.Name; Path = $outFile; Bytes = $size })
+        } catch {
+            Write-Host "  ! Failed to capture $($theme.Name): $_" -ForegroundColor Red
+        }
     }
-
-    # Give WT a beat to re-render colors, font, cursor, bg before snapping.
-    Start-Sleep -Milliseconds 700
-
-    $outFile = Join-Path $outDir "$($theme.Name).png"
-    try {
-        [WTScreenCapture]::CaptureForegroundTo($outFile)
-        $size = (Get-Item -LiteralPath $outFile).Length
-        $captured += [pscustomobject]@{ Name = $theme.Name; Path = $outFile; Bytes = $size }
-    } catch {
-        Write-Host "  ! Failed to capture $($theme.Name): $_" -ForegroundColor Red
-    }
-}
-
-# --- Restore the original theme ---
-if ($originalTheme) {
-    tstyles $originalTheme *>&1 | Out-Null
 }
 
 Clear-Host
