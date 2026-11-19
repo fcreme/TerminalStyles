@@ -47,6 +47,11 @@ if (Get-Module -ListAvailable PSReadLine) {
             Member    = "#1faa3f"
             Type      = "#24b06a"
             Comment   = "#2f6b3a"
+            # Keyword: the brightest green; amber stays the error colour.
+            # Default: the foreground. Both are set so that switching here
+            # from another style replaces them (#127).
+            Keyword   = "#d6ffe0"
+            Default   = "#33ff5e"
             Error     = "#ffb000"
             # The SAME dark green the scheme paints, as a background escape:
             # PSReadLine highlights the input line and the terminal highlights
@@ -54,5 +59,11 @@ if (Get-Module -ListAvailable PSReadLine) {
             # with two colours. #14401f is rgb(20,64,31).
             Selection = "$([char]27)[48;2;20;64;31m"
         } -ErrorAction Stop
+    } catch { }
+    # Its own call, like every other style: Windows PowerShell 5.1's older
+    # PSReadLine does not know this key, and an unknown key fails the whole
+    # call, so in the table above it would take every colour down with it.
+    try {
+        Set-PSReadLineOption -Colors @{ InlinePrediction = "#2f6b3a" } -ErrorAction Stop
     } catch { }
 }

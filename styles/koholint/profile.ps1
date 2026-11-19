@@ -45,6 +45,11 @@ if (Get-Module -ListAvailable PSReadLine) {
             Member    = "#b894f8"
             Type      = "#58b0d8"
             Comment   = "#a8a8d0"
+            # Keyword: the scheme's sand yellow, its one unused warm accent.
+            # Default: the foreground. Both are set so that switching here
+            # from another style replaces them (#127).
+            Keyword   = "#f8a840"
+            Default   = "#f8f8f8"
             Error     = "#f87858"
             # The SAME blue the scheme paints, as a background escape rather
             # than a hex colour -- PSReadLine highlights the input line and the
@@ -52,5 +57,11 @@ if (Get-Module -ListAvailable PSReadLine) {
             # disagree fill one drag with two colours. #4058f8 is rgb(64,88,248).
             Selection = "$([char]27)[48;2;64;88;248m"
         } -ErrorAction Stop
+    } catch { }
+    # Its own call, like every other style: Windows PowerShell 5.1's older
+    # PSReadLine does not know this key, and an unknown key fails the whole
+    # call, so in the table above it would take every colour down with it.
+    try {
+        Set-PSReadLineOption -Colors @{ InlinePrediction = "#a8a8d0" } -ErrorAction Stop
     } catch { }
 }
