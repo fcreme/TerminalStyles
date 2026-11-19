@@ -1262,7 +1262,9 @@ function Resolve-ExecutionPolicy {
 # Main flow. Guarded so tests can dot-source this script for its functions
 # (set $TStylesInstallNoRun = $true) without running the installer. A normal
 # `iwr | iex` run never sets the var, so main runs.
-if (-not $TStylesInstallNoRun) {
+# Read through Get-Variable: only tests set it, and under Set-StrictMode
+# a bare read of a variable that does not exist is an error (#129).
+if (-not (Get-Variable -Name TStylesInstallNoRun -ValueOnly -ErrorAction SilentlyContinue)) {
 
     # Force UTF-8 console output as defense-in-depth for install messaging.
     # Windows only: chcp is a Windows console command, and `$null = & chcp ... 2>&1`

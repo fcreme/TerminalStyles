@@ -98,8 +98,10 @@ function Get-TerminalStyleHelpData {
         }
         [pscustomobject]@{
             Name = 'current'; Usage = 'current'; Summary = 'Print the active style name'
-            Detail = @("Prints just the name of the currently applied style (or nothing",
-                       "if none is detected).")
+            Detail = @("Prints just the name of the currently applied style. When none is",
+                       "detected it prints nothing if its output is captured or piped, so",
+                       '[ -n "$(tstyles current)" ] asks whether a style is on, and a',
+                       "short note saying so at a console.")
             Keys = @(); Examples = @('tstyles current')
         }
                 [pscustomobject]@{

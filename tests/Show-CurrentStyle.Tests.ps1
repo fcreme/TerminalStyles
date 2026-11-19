@@ -118,6 +118,17 @@ Describe 'Show-CurrentStyle' {
             ($script:said -join "`n") | Should -Match 'no bundled style currently active'
         }
 
+        It 'prints nothing at all when captured and no style is active' {
+            # `[ -n "$(tstyles current)" ]` is how a script asks "is a style on?".
+            # The coloured "(no bundled style ...)" line went out through
+            # Write-Host, which a captured pwsh writes to stdout like any other
+            # line, so that test answered yes and the variable held escape bytes.
+            Mock Get-CurrentStyleName { $null }
+            $out = Show-CurrentStyle -OutputRedirected $true | Out-String
+            $out | Should -BeNullOrEmpty -Because 'stdout is the answer, and the answer is: no style'
+            @($script:said).Count | Should -Be 0 -Because 'Write-Host reaches stdout when pwsh is captured'
+        }
+
         It 'defaults -OutputRedirected to the console, so the seam changes nothing by itself' {
             # The parameter exists to be testable, not to change behaviour: with
             # nothing bound it must still read [Console]::IsOutputRedirected.
