@@ -44,6 +44,35 @@
 # (~/.wezterm.lua, $WEZTERM_CONFIG_FILE), and the next apply would no longer
 # repaint the running windows. A rewritten one stays found and watched, and the
 # rewrite itself is what makes WezTerm reload into the user's own config.
+#
+# PER-TAB MODE (measured 2026-11-20, wezterm 20260917-114457-b09b56c2). Probed in
+# a sandbox instance (`wezterm-gui --config-file <probe.lua> start
+# --always-new-process`) by scripting it from Lua (update-status, gui-startup,
+# a log file), never the user's config:
+#
+#   * Overrides SURVIVE a reload. After window:set_config_overrides{
+#     window_background_opacity = 0.5 }, touching a required module reloaded the
+#     config and window:get_config_overrides() still returned the override, and
+#     effective_config() still showed 0.5. (window-config-reloaded also fires
+#     about once a second while overrides are set, so a handler there must be
+#     cheap and idempotent.)
+#   * There is NO working "none" for color_scheme. Overriding it to '' or to a
+#     name that is not in color_schemes is accepted by set_config_overrides but
+#     logs `ERROR config::config > Your configuration specifies color_scheme=""
+#     but that scheme was not found`, and effective_config().resolved_palette is
+#     left nil (no palette at all). `background = {}` does work: it leaves zero
+#     layers and the plain palette background. Because color_scheme cannot be
+#     unset, the base config cannot be "the last-applied style" with unstyled
+#     windows overriding it away.
+#   * A split starts UNTAGGED. After pane:split{ direction = 'Right' } the new
+#     pane's get_user_vars().TERMINALSTYLES_STYLE is nil, while the sibling still
+#     reads its tag, and window:active_tab():panes() lists both, so the style of
+#     a tab can be read from any of its panes.
+#   * The new-window first frame (Cmd+N with the style delivered only by an
+#     override from update-status) was NOT measured here; it is still owed.
+#
+# DECISION. base = the user's own look: every styled window, the default included,
+# gets its look as an override, and an unstyled window clears its overrides.
 
 function Get-WezTermModuleDir {
     <#
