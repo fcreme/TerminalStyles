@@ -12,7 +12,8 @@ tstyles update
   installed (Windows PowerShell 5.1 ships without it).
 - **Bootstrap (`iwr | iex`)** → re-runs the bootstrap one-liner.
 
-After update, open a new tab (or run `Import-Module TerminalStyles -Force -DisableNameChecking`) for the new version to take effect.
+After an update in a PowerShell session, open a new tab (or run `Import-Module TerminalStyles -Force -DisableNameChecking`) for the new version to take effect.
+From zsh or bash there is nothing to reload: each `tstyles` command runs in a fresh PowerShell, so the next one already uses the new version.
 
 ### How the update check works
 

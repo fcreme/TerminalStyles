@@ -285,3 +285,101 @@ Describe 'tstyles update on Windows PowerShell 5.1' {
         }
     }
 }
+
+Describe 'tstyles update from zsh or bash names no PowerShell command' {
+    # From zsh or bash, `tstyles` is the function in shell/tstyles.sh. It runs
+    # each command in a pwsh of its own, through the generated tstyles-cli.ps1,
+    # and that file sets $global:TStylesNoAutoLoad. That pwsh exits when the
+    # command does, so no session is left holding the old module, and the next
+    # `tstyles` imports the new one by itself. Both arms still closed on a
+    # PowerShell reload command, and zsh answered it with
+    # "command not found: Import-Module".
+    InModuleScope TerminalStyles {
+        BeforeAll {
+            if (-not (Get-Command Update-PSResource -ErrorAction SilentlyContinue)) {
+                Set-Item function:script:Update-PSResource {
+                    param([string]$Name, [switch]$TrustRepository)
+                }
+            }
+        }
+        BeforeEach {
+            $script:savedNoAuto = $global:TStylesNoAutoLoad
+            Mock Update-PSResource { }
+            Mock Get-InstalledReleaseNotes { 'Notes.' }
+            # Never the real installer, for the Bootstrap arm.
+            Mock Invoke-WebRequest { [pscustomobject]@{ Content = '$null' } }
+            Mock Invoke-Expression { }
+        }
+        AfterEach {
+            $global:TStylesNoAutoLoad = $script:savedNoAuto
+        }
+
+        It 'a Gallery update from zsh says the next tstyles runs it, and names no Import-Module' {
+            $global:TStylesNoAutoLoad = $true
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            $script:calls = 0
+            Mock Get-NewestInstalledVersion { $script:calls++; if ($script:calls -eq 1) { '0.9.8' } else { '0.9.9' } }
+
+            $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$true 6>&1 | Out-String
+
+            $out | Should -Match 'Updated 0\.9\.8 -> 0\.9\.9'
+            $out | Should -Not -Match 'Import-Module' -Because 'zsh has no such command, and nothing is left to reload'
+            $out | Should -Match 'next tstyles command'
+        }
+
+        It 'a Gallery update in a pwsh session still names Import-Module' {
+            $global:TStylesNoAutoLoad = $false
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            $script:calls = 0
+            Mock Get-NewestInstalledVersion { $script:calls++; if ($script:calls -eq 1) { '0.9.8' } else { '0.9.9' } }
+
+            $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$true 6>&1 | Out-String
+
+            $out | Should -Match 'Import-Module TerminalStyles -Force -DisableNameChecking' `
+                -Because 'this session still holds the old module'
+        }
+
+        It 'an unreadable version from zsh names no Import-Module' {
+            $global:TStylesNoAutoLoad = $true
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            Mock Get-NewestInstalledVersion { $null }
+
+            $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$true 6>&1 | Out-String
+
+            $out | Should -Match 'cannot say'
+            $out | Should -Not -Match 'Import-Module'
+        }
+
+        It 'an unreadable version in a pwsh session still names Import-Module' {
+            $global:TStylesNoAutoLoad = $false
+            Mock Get-TerminalStylesInstallKind { 'PSResourceGet' }
+            Mock Get-NewestInstalledVersion { $null }
+
+            $out = Invoke-TerminalStylesUpdate -HasPSResourceGet:$true 6>&1 | Out-String
+
+            $out | Should -Match 'Import-Module TerminalStyles -Force -DisableNameChecking'
+        }
+
+        It 'a bootstrap update from zsh says the next tstyles runs it, and names no $PROFILE' {
+            $global:TStylesNoAutoLoad = $true
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+
+            $out = Invoke-TerminalStylesUpdate -Force 6>&1 | Out-String
+
+            Should -Invoke Invoke-Expression -Times 1 -Exactly
+            $out | Should -Match 'Update complete'
+            $out | Should -Not -Match '\$PROFILE' -Because 'dot-sourcing a PowerShell profile is not a zsh command'
+            $out | Should -Not -Match 'pwsh tab'
+            $out | Should -Match 'next tstyles command'
+        }
+
+        It 'a bootstrap update in a pwsh session still names . $PROFILE' {
+            $global:TStylesNoAutoLoad = $false
+            Mock Get-TerminalStylesInstallKind { 'Bootstrap' }
+
+            $out = Invoke-TerminalStylesUpdate -Force 6>&1 | Out-String
+
+            $out | Should -Match '\. \$PROFILE'
+        }
+    }
+}

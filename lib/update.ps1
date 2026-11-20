@@ -450,8 +450,18 @@ function Invoke-TerminalStylesUpdate {
                                 Write-Host "  $notes" -ForegroundColor Gray
                             }
                             Write-Host ""
-                            Write-Host "  Open a new tab to use it, or run:" -ForegroundColor Yellow
-                            Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                            # From zsh or bash, $TStylesNoAutoLoad is set by the
+                            # generated tstyles-cli.ps1, and this pwsh exits when
+                            # the command does: nothing holds the old module, and
+                            # the next `tstyles` imports the new one by name.
+                            # Import-Module is not a zsh command either -- zsh
+                            # answered "command not found: Import-Module".
+                            if ($global:TStylesNoAutoLoad) {
+                                Write-Host "  Your next tstyles command uses it." -ForegroundColor Yellow
+                            } else {
+                                Write-Host "  Open a new tab to use it, or run:" -ForegroundColor Yellow
+                                Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                            }
                         }
                         default {
                             # The version could not be read on one side or the other.
@@ -459,8 +469,12 @@ function Invoke-TerminalStylesUpdate {
                             # than picking the cheerful branch.
                             Write-Host "  Update ran. Could not read the installed version, so this cannot say" -ForegroundColor Yellow
                             Write-Host "  whether anything changed. Check with: tstyles help" -ForegroundColor Yellow
-                            Write-Host "  Open a new tab, or run:" -ForegroundColor Yellow
-                            Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                            # Not from zsh or bash, as above: `tstyles help` there
+                            # already runs whatever is installed now.
+                            if (-not $global:TStylesNoAutoLoad) {
+                                Write-Host "  Open a new tab, or run:" -ForegroundColor Yellow
+                                Write-Host "    Import-Module TerminalStyles -Force -DisableNameChecking" -ForegroundColor Cyan
+                            }
                         }
                     }
                 } catch {
@@ -499,9 +513,17 @@ function Invoke-TerminalStylesUpdate {
                     $installerScript = (Invoke-WebRequest -Uri 'https://raw.githubusercontent.com/fcreme/TerminalStyles/main/install.ps1' -UseBasicParsing).Content
                     Invoke-Expression $installerScript
                     Write-Host ""
-                    Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
-                    Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
-                    Write-Host "  . `$PROFILE" -ForegroundColor Cyan
+                    # From zsh or bash there is no session to reload, as in the
+                    # Gallery arm above: the generated tstyles-cli.ps1 imports
+                    # the data root by path, and the installer has just
+                    # rewritten it in place. `. $PROFILE` is no zsh command.
+                    if ($global:TStylesNoAutoLoad) {
+                        Write-Host "Update complete. Your next tstyles command uses it." -ForegroundColor Yellow
+                    } else {
+                        Write-Host "Update complete. To use the new tstyles code in THIS session," -ForegroundColor Yellow
+                        Write-Host "open a new pwsh tab, or run:" -ForegroundColor Yellow
+                        Write-Host "  . `$PROFILE" -ForegroundColor Cyan
+                    }
                 } catch {
                     Write-Host "Update failed: $_" -ForegroundColor Red
                     Write-Host "You can retry manually:" -ForegroundColor Yellow

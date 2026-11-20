@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tstyles update` from zsh or bash no longer ends on a PowerShell command.** After a Gallery update it said "Open a new tab to use it, or run: `Import-Module TerminalStyles -Force -DisableNameChecking`", and after a bootstrap update "open a new pwsh tab, or run: `. $PROFILE`". Both are for a PowerShell session that still holds the old module. From zsh or bash, `tstyles` is the function in `shell/tstyles.sh`, which runs every command in a pwsh of its own through the generated `tstyles-cli.ps1`. That pwsh exits when the command does, and the next one imports the new version by itself: by name on a Gallery install, where the newest wins, and by path on a bootstrap install, which the installer has just rewritten in place. So the line asked for a reload that was never needed, in a shell that cannot run it: zsh answered `command not found: Import-Module`. `tstyles-cli.ps1` sets `$TStylesNoAutoLoad`, which the picker and the direct apply already read as "this is not an interactive pwsh session", and both arms now read it too. From zsh or bash they say "Your next tstyles command uses it." The unreadable-version case keeps its "Check with: tstyles help" and drops the reload line. In a PowerShell session nothing changes. `tests/Update-SaysWhatChanged.Tests.ps1` drives each of the three closing messages with the flag set and unset.
+
 ## [0.9.9] - 2026-11-19
 
 ### Fixed
