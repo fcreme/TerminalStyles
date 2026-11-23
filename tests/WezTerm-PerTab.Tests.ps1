@@ -614,3 +614,37 @@ Describe 'Test-WezTermTabModule' {
         }
     }
 }
+
+Describe 'Invoke-StartupPaletteReplay' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $dir = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            [void][System.IO.Directory]::CreateDirectory($dir)
+            [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'),
+                (@{ name = 'alpha'; background = '#101010'; foreground = '#eeeeee' } | ConvertTo-Json),
+                [System.Text.UTF8Encoding]::new($false))
+            $script:styleDir = $dir
+            Mock Get-CurrentStyleRecord { [pscustomobject]@{ name = 'alpha' } }
+            Mock Get-StyleDir { $script:styleDir }
+            Mock Invoke-TerminalStyleOscApply { $true }
+        }
+        It 'startup does not repaint in per-tab mode' {
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Test-WezTermPerTab { $true }
+            Invoke-StartupPaletteReplay
+            Should -Invoke Invoke-TerminalStyleOscApply -Times 0 -Exactly
+        }
+        It 'startup still repaints in WezTerm outside per-tab mode' {
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Test-WezTermPerTab { $false }
+            Invoke-StartupPaletteReplay
+            Should -Invoke Invoke-TerminalStyleOscApply -Times 1 -Exactly
+        }
+        It 'startup does not repaint in Windows Terminal' {
+            Mock Get-TerminalKind { 'WindowsTerminal' }
+            Mock Test-WezTermPerTab { $false }
+            Invoke-StartupPaletteReplay
+            Should -Invoke Invoke-TerminalStyleOscApply -Times 0 -Exactly
+        }
+    }
+}

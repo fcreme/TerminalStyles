@@ -2523,6 +2523,46 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg 
 # Idempotent; gated by a marker file.
 Invoke-TerminalStylesStateMigration
 
+function Invoke-StartupPaletteReplay {
+    <#
+    .SYNOPSIS
+    Re-emits the applied style's palette into this new shell's terminal.
+
+    .DESCRIPTION
+    Windows Terminal reads its colors from settings.json, which the apply
+    already wrote, so the palette is live before this shell even starts.
+    OSC-driven terminals have no such persistence: the escape sequences only
+    ever touched the tab they were emitted into. Re-emit them here so a new
+    tab/window/split comes up in the applied style instead of the terminal's
+    own default.
+
+    Skipped on WT to avoid fighting its own scheme, and skipped in WezTerm
+    per-tab mode, where each tab wears its own style through the generated Lua
+    module and the LAST applied style's palette would be painted over a tab
+    that should wear another. The -ne test and Test-WezTermPerTab's own kind and
+    platform checks run before anything reads the user's wezterm.lua, so a
+    shell outside WezTerm pays nothing for the new condition. Failures are
+    swallowed -- a missing color is never worth blocking a shell from starting.
+    #>
+    [CmdletBinding()]
+    param()
+    if ((Get-TerminalKind) -eq 'WindowsTerminal') { return }
+    if (Test-WezTermPerTab) { return }
+    try {
+        $record = Get-CurrentStyleRecord
+        if ($record -and $record.name) {
+            $styleDir = Get-StyleDir -StyleName $record.name
+            if ($styleDir) {
+                $schemePath = Join-Path $styleDir 'scheme.json'
+                if (Test-Path -LiteralPath $schemePath) {
+                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    [void](Invoke-TerminalStyleOscApply -Scheme $scheme)
+                }
+            }
+        }
+    } catch { }
+}
+
 # === Auto-load the currently selected style at shell startup ===
 # Gated on Test-StyledHost rather than Test-InWindowsTerminal: hosts that cannot
 # render a style (a plain pipe, a dumb console) would show a half-themed look --
@@ -2537,32 +2577,7 @@ Invoke-TerminalStylesStateMigration
 # one. Same shape as $TStylesApplyNoRun / $TStylesInstallNoRun.
 if (-not $TStylesNoAutoLoad -and (Test-StyledHost) -and (Test-HostOutputVisible)) {
 
-    # Windows Terminal reads its colors from settings.json, which the apply
-    # already wrote, so the palette is live before this shell even starts.
-    # OSC-driven terminals have no such persistence: the escape sequences only
-    # ever touched the tab they were emitted into. Re-emit them here so a new
-    # tab/window/split comes up in the applied style instead of the terminal's
-    # own default.
-    #
-    # Skipped on WT to avoid fighting its own scheme, and skipped when the
-    # terminal can persist a real config AND we wrote one (that path handles
-    # itself). Failures are swallowed inside Write-HostOscPacket -- a missing
-    # color is never worth blocking a shell from starting.
-    if ((Get-TerminalKind) -ne 'WindowsTerminal') {
-        try {
-            $record = Get-CurrentStyleRecord
-            if ($record -and $record.name) {
-                $styleDir = Get-StyleDir -StyleName $record.name
-                if ($styleDir) {
-                    $schemePath = Join-Path $styleDir 'scheme.json'
-                    if (Test-Path -LiteralPath $schemePath) {
-                        $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                        [void](Invoke-TerminalStyleOscApply -Scheme $scheme)
-                    }
-                }
-            }
-        } catch { }
-    }
+    Invoke-StartupPaletteReplay
 
     # Guarded, because this runs on EVERY module import -- which means every new
     # shell tab, and (through the generated shim) every `tstyles` command run

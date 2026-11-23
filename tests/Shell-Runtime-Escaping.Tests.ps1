@@ -662,3 +662,60 @@ exit
             -Because "bash still gets the style's prompt template"
     }
 }
+
+Describe 'the palette replay in WezTerm per-tab mode' {
+    # In per-tab mode every tab wears its own style through the generated Lua
+    # module, so a new shell replaying current-style.osc (the LAST applied
+    # style's palette) would paint that style over a tab that should wear
+    # another. The runtime keys on the `wezterm-pertab` marker under the data
+    # root plus WEZTERM_PANE; either one alone must still replay, because the
+    # marker outlives a switch to another terminal and WEZTERM_PANE exists
+    # before any per-tab module does.
+    #
+    # Driven through a real pty (ts_load returns early without one) with a
+    # sentinel palette, so the assertion is on bytes the shell really wrote.
+    BeforeAll {
+        function script:Invoke-ReplayProbe {
+            param([string]$Shell, [bool]$Pane, [bool]$Marker)
+            $name = 'replay-' + [guid]::NewGuid().Guid.Substring(0, 8)
+            $root = Join-Path $TestDrive $name
+            $data = Join-Path $root 'data'
+            New-Item -ItemType Directory -Path $data -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $data 'current-style.osc'), 'XYZ')
+            if ($Marker) { [System.IO.File]::WriteAllText((Join-Path $data 'wezterm-pertab'), '') }
+            $paneLine = if ($Pane) { "export WEZTERM_PANE=3" } else { "unset WEZTERM_PANE" }
+            $rcText = "export TSTYLES_DATA='$data'`n$paneLine`n. '$($script:runtime)'`nexit`n"
+            if ($Shell -eq 'bash') {
+                $rc = Join-Path $root 'rc.sh'
+                [System.IO.File]::WriteAllText($rc, $rcText)
+                $exec = "exec bash --init-file '$rc' -i"
+            } else {
+                $zdot = Join-Path $root 'zdot'
+                New-Item -ItemType Directory -Path $zdot -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $zdot '.zshrc'), $rcText)
+                $exec = "ZDOTDIR='$zdot'; export ZDOTDIR`nexec zsh -d -i"
+            }
+            $w = script:New-PtyWrapper -Dir $root -Name 'w' -Exec $exec
+            return script:Invoke-UnderPty -Command $w -LogPath (Join-Path $root 'log')
+        }
+    }
+
+    It 'bash: skips the replay in a WezTerm pane once a per-tab module exists' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'bash' -Pane $true -Marker $true | Should -Not -Match 'XYZ'
+    }
+    It 'bash: still replays in WezTerm without the marker' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'bash' -Pane $true -Marker $false | Should -Match 'XYZ'
+    }
+    It 'bash: still replays outside WezTerm with the marker' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'bash' -Pane $false -Marker $true | Should -Match 'XYZ'
+    }
+    It 'zsh: skips the replay in a WezTerm pane once a per-tab module exists' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'zsh' -Pane $true -Marker $true | Should -Not -Match 'XYZ'
+    }
+    It 'zsh: still replays in WezTerm without the marker' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'zsh' -Pane $true -Marker $false | Should -Match 'XYZ'
+    }
+    It 'zsh: still replays outside WezTerm with the marker' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'zsh' -Pane $false -Marker $true | Should -Match 'XYZ'
+    }
+}

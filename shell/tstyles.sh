@@ -292,9 +292,16 @@ ts_load() {
     fi
     _ts_loaded=1
 
-    # 1. Colors. The packet was rendered at apply time.
+    # 1. Colors. The packet was rendered at apply time. Not in a WezTerm pane
+    # once a per-tab module exists (the marker): every tab wears its own style
+    # there, and replaying the LAST applied style's palette would paint it over
+    # a tab that should wear another. Either condition alone still replays.
     if [ -r "$TSTYLES_DATA/current-style.osc" ]; then
-        cat "$TSTYLES_DATA/current-style.osc"
+        if [ -n "${WEZTERM_PANE-}" ] && [ -e "$TSTYLES_DATA/wezterm-pertab" ]; then
+            :
+        else
+            cat "$TSTYLES_DATA/current-style.osc"
+        fi
     fi
 
     # 2. Prompt + banner.
