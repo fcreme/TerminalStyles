@@ -127,6 +127,24 @@ Describe 'Restore-TuneBaseLook' {
             [System.IO.File]::GetLastWriteTimeUtc($script:settingsPath) | Should -Be $t
         }
 
+        It 'Restore-TuneBaseLook sends the reset in per-tab mode' {
+            # Per tab, the window's colour scheme already follows this tab's
+            # tag, so handing the palette back IS the restore -- a re-emitted
+            # opened scheme would hold the pane instead of its tag. And it is
+            # a palette question only: per tab is not a settings file, so the
+            # session branch must not run.
+            Mock Test-WezTermPerTab { $true }
+            Mock Restore-FilePreview { throw 'per tab has no settings.json to put back' }
+            $script:oscSent = [System.Collections.Generic.List[string]]::new()
+            Mock Write-HostOscPacket { $script:oscSent.Add($Packet); $true }
+
+            Restore-TuneBaseLook -State $script:tuneState -Session @{ Kind = 'WindowsTerminal' } `
+                -OpenedScheme $script:opened | Should -Be 'reverted'
+            $script:oscSent.Count | Should -Be 1
+            $script:oscSent[0] | Should -BeExactly (Get-OscResetPacket)
+            Should -Invoke Restore-FilePreview -Times 0 -Exactly
+        }
+
         It 'finishes the revert, and answers failed, when the put-back cannot be written' {
             $s = & $script:newSession
             Mock Write-SettingsAtomic { [System.IO.File]::WriteAllText($Path, $Json, [System.Text.UTF8Encoding]::new($false)) }

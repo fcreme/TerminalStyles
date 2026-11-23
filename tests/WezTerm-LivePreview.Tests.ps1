@@ -222,3 +222,55 @@ Describe 'previewing a style does not move the layout' {
         }
     }
 }
+
+Describe 'per tab, the picker previews a style in its own tab only' {
+    # Per tab, the module already carries every installed style's look, so the
+    # picker stops rewriting it: an arrow key tags this pane with the preview
+    # tag, which the generated Lua honours only on the pane that carries it, and
+    # Esc puts this tab's own tag back. Built by pure functions, because the
+    # picker body that sends them needs a console no test can give it.
+    InModuleScope TerminalStyles {
+        It 'previews by tag, not by rewriting the module' {
+            Get-WezTermPickerPreviewPacket -StyleName 'rain' |
+                Should -BeExactly (Get-WezTermTagPacket -Value '/preview/rain')
+        }
+
+        It 'Esc puts back this tab''s own tag and hands colours to the window scheme' {
+            # The reset first: the preview's OSC retint painted this pane, and
+            # the window scheme -- this tab's style, through its tag -- has to
+            # show through again.
+            $script:tabRecord = 'kitty'
+            Mock Get-WezTermTabRecord { $script:tabRecord }
+            $p = Get-WezTermPickerRevertPacket
+            $p.StartsWith((Get-OscResetPacket)) | Should -BeTrue
+            $p.EndsWith((Get-WezTermTagPacket -Value 'kitty')) | Should -BeTrue
+            $p | Should -BeExactly ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value 'kitty'))
+
+            # A tab with no record was never tagged, so the preview tag is
+            # cleared rather than replaced: the tab shows what it showed before.
+            $script:tabRecord = $null
+            Get-WezTermPickerRevertPacket |
+                Should -BeExactly ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value ''))
+            Should -Invoke Get-WezTermTabRecord -Times 2 -Exactly
+        }
+
+        It 'an unstyled tab gets the unstyled tag back, not an empty one' {
+            # '' in the record is a tab reset to unstyled. An empty tag would
+            # clear the variable, and an untagged pane shows its pin -- the
+            # new-tab default it was first seen with, not unstyled.
+            Mock Get-WezTermTabRecord { '' }
+            Get-WezTermPickerRevertPacket |
+                Should -BeExactly ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value $script:WezTermTagUnstyled))
+        }
+
+        It 'the revert packet is the reset in per-tab mode' {
+            # A regression pin on the arm the picker's, the tuner's and show's
+            # Esc now select per tab: the window scheme already follows this
+            # tab's tag, and colours set on a pane by OSC outrank it, so a
+            # re-emitted palette would hold the pane instead of its tag.
+            $s = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8'; cursorColor = '#ff3d5a' }
+            Get-RevertOscPacket -UseSettingsFile:$true -HadStartingStyle:$true -StartingScheme $s |
+                Should -BeExactly (Get-OscResetPacket)
+        }
+    }
+}

@@ -1254,7 +1254,14 @@ function Invoke-TerminalStyle {
     # It is quiet by design: Publish-StyleWezTermConfig prints the not-wired
     # notice and resolves backgrounds, which is right once on confirm and wrong
     # sixty times a minute.
-    $wezPreviewable = ($termKind -eq 'WezTerm') -and (Test-WezTermStyleWired)
+    #
+    # All of the above is WezTerm on Windows now. Per tab ($wezPerTab), the
+    # module already carries every style's look and rewriting it would restyle
+    # every tab, so a preview is a tag on this pane and Esc this tab's own tag
+    # back: no file is written mid-preview, so no session, no recovery and no
+    # layout pin.
+    $wezPerTab = ($termKind -eq 'WezTerm') -and (Test-WezTermPerTab -Kind $termKind)
+    $wezPreviewable = ($termKind -eq 'WezTerm') -and -not $wezPerTab -and (Test-WezTermStyleWired)
     $wezSession = $null
     $wezRecovered = $null
     if ($wezPreviewable) {
@@ -1299,6 +1306,7 @@ function Invoke-TerminalStyle {
 
     $previewWezTerm = {
         param([int]$i)
+        if ($wezPerTab) { Write-HostOscPacket -Packet (Get-WezTermPickerPreviewPacket -StyleName $styles[$i].Name) | Out-Null; return }
         if (-not $wezPreviewable) { return }
         try {
             $sd = $styles[$i].FullName
@@ -1323,6 +1331,7 @@ function Invoke-TerminalStyle {
     }
 
     $restoreWezTerm = {
+        if ($wezPerTab) { Write-HostOscPacket -Packet (Get-WezTermPickerRevertPacket) | Out-Null; return }
         if (-not $wezSession) { return }
         $wr = Restore-FilePreview -Session $wezSession -End
         if ($wr.Status -ne 'none') { $pickerState.WezRestore = $wr }
@@ -1723,6 +1732,12 @@ function Invoke-TerminalStyle {
     # question is never put to a pipe.
     if ($termKind -eq 'VSCode') { $vscodeSession = New-VSCodePreviewSession }
 
+    # Per-tab WezTerm: the module once, so a style made since the last apply
+    # can be previewed too. It is deterministic, so an unchanged set of styles
+    # writes nothing and WezTerm does not reload. Below the console guard, so
+    # a redirected run writes nothing at all.
+    if ($wezPerTab) { [void](Write-WezTermTabModule -DefaultStyle (Get-CurrentStyleRecord).name) }
+
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
     # May the preview move the title at all? Asked ONCE, of the same snapshot
@@ -2010,7 +2025,8 @@ function Invoke-TerminalStyle {
             if (-not $useSettingsFile) {
                 # The OSC retint carried the palette; on WezTerm everything else
                 # the style has -- background, font, padding, cursor, opacity --
-                # lives in the generated module, so previewing means rewriting it.
+                # lives in the generated module, so previewing means rewriting it
+                # -- or, per tab, tagging this pane with a look it already holds.
                 & $previewWezTerm $i
                 & $previewVSCode $i
                 if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
@@ -2072,7 +2088,7 @@ function Invoke-TerminalStyle {
             try { & $restoreOriginalSettings } catch { $pickerState.SettingsRestoreError = "$_" }
             & $restoreWezTerm
             & $restoreVSCode
-            Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$useSettingsFile `
+            Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:($useSettingsFile -or $wezPerTab) `
                 -HadStartingStyle:$hadCurrentStyle -StartingScheme $schemes[$startIdx]) | Out-Null
             $pickerState.Reverted = $true
         }
@@ -2277,7 +2293,8 @@ function Invoke-TerminalStyle {
                                        -Scheme $schemes[$idx] `
                                        -Theme $wtTheme -Kind $termKind | Out-Null
             # The publish owns the module now; the preview session is over.
-            [void](Complete-FilePreview -Session $wezSession)
+            # Per tab there was none: the publish has tagged this tab already.
+            if ($wezSession) { [void](Complete-FilePreview -Session $wezSession) }
 
             # ...and VS Code's settings.json, the fourth writer. With the
             # session, so the commit undoes the PREVIEW on disk rather than the

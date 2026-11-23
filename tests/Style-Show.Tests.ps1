@@ -31,6 +31,10 @@ Describe 'Invoke-TerminalStyleShow' {
             $script:Osc   = "$([char]27)]11;"   # "set this colour"
             $script:Reset = "$([char]27)]104"   # "take your palette back"
         }
+        # Which revert is right also depends on whether this is a per-tab
+        # WezTerm session, which is ambient too: pinned off here, and on in
+        # the one test that is about it.
+        BeforeEach { Mock -CommandName Test-WezTermPerTab -MockWith { $false } }
 
         # Which restore packet `show` ends with depends on whether a style was
         # applied when it ran, and that is ambient: a dev box has one on, a CI
@@ -66,6 +70,21 @@ Describe 'Invoke-TerminalStyleShow' {
                 -Because 'the restore must be the last thing written'
             $painted[-1] | Should -Not -Match ([regex]::Escape($script:Osc)) `
                 -Because 'there was no style to put back'
+        }
+
+        It 'hands this WezTerm tab back to its own style in per-tab mode' {
+            # Per tab, the window's colour scheme already follows this tab's
+            # tag, so the reset IS the restore: a re-emitted eva would hold
+            # the pane by OSC instead of its tag.
+            Mock -CommandName Get-CurrentStyleName -MockWith { 'eva' }
+            Mock -CommandName Test-WezTermPerTab -MockWith { $true }
+            $painted = [System.Collections.Generic.List[string]]::new()
+            Invoke-TerminalStyleShow -Name 'koholint' -Interactive $true `
+                -ReadKey { } -Write { param($l) $painted.Add($l) }.GetNewClosure()
+            $painted[-1] | Should -BeExactly (Get-OscResetPacket) `
+                -Because 'the restore must be the last thing written, and per tab it is the reset'
+            @($painted | Where-Object { $_ -match [regex]::Escape($script:Osc) }).Count | Should -Be 1 `
+                -Because 'one to paint the preview, and no second scheme to put back'
         }
 
         It 'puts the terminal back even when the preview throws' {
