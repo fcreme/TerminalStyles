@@ -843,6 +843,10 @@ Describe 'deleting the active style in WezTerm takes it out of the generated mod
             [System.IO.File]::WriteAllText((Join-Path $script:root '.installed-files'), "styles/eva`n", $enc)
 
             Mock Get-TerminalKind             { 'WezTerm' }
+            # The single-style world this Describe is about. Unmocked, a
+            # developer whose real wezterm.lua carries the require line would
+            # run these through the per-tab path instead.
+            Mock Test-WezTermPerTab           { $false }
             Mock Get-WezTermModulePath        { Join-Path $script:root 'terminalstyles.lua' }
             Mock Write-HostOscPacket          { $true }
             Mock Show-UpdateNoticeIfAvailable {}
