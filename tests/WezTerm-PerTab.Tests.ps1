@@ -648,3 +648,41 @@ Describe 'Invoke-StartupPaletteReplay' {
         }
     }
 }
+
+Describe 'Get-CurrentStyleName in per-tab mode' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            # No current-style.ps1, so the byte-compare finds nothing and the answer
+            # is decided by the per-tab record or the global one alone.
+            $script:origCurrent = $script:TStylesCurrent
+            $script:TStylesCurrent = Join-Path $TestDrive 'no-current-style.ps1'
+            Mock Get-CurrentStyleRecord { [pscustomobject]@{ name = 'kitty' } }
+            Mock Get-StyleDir { "$TestDrive/$StyleName" }
+            Mock Test-WezTermPerTab { $true }
+            Mock Get-WezTermTabRecord { 'neon-rain' }
+        }
+        AfterEach { $script:TStylesCurrent = $script:origCurrent }
+
+        It "names this tab's style over the last applied one" {
+            Get-CurrentStyleName | Should -BeExactly 'neon-rain'
+        }
+        It 'is $null for a tab reset to unstyled' {
+            Mock Get-WezTermTabRecord { '' }
+            Get-CurrentStyleName | Should -BeNullOrEmpty
+        }
+        It 'falls back to the last applied style when this tab has no record' {
+            Mock Get-WezTermTabRecord { $null }
+            Get-CurrentStyleName | Should -BeExactly 'kitty'
+        }
+        It "falls back when this tab's style was deleted" {
+            Mock Get-WezTermTabRecord { 'gone' }
+            Mock Get-StyleDir { if ($StyleName -eq 'gone') { $null } else { "$TestDrive/$StyleName" } }
+            Get-CurrentStyleName | Should -BeExactly 'kitty'
+        }
+        It 'ignores the record off per-tab mode' {
+            Mock Test-WezTermPerTab { $false }
+            Get-CurrentStyleName | Should -BeExactly 'kitty'
+            Should -Invoke Get-WezTermTabRecord -Times 0 -Exactly
+        }
+    }
+}

@@ -846,6 +846,20 @@ function Get-CurrentStyleName {
     # Detects which bundled style is currently active by byte-comparing
     # current-style.ps1 against each style's profile.ps1. Returns $null
     # if nothing matches (custom profile, no current style, etc).
+    #
+    # In WezTerm per-tab mode each tab wears its own style, and the per-tab
+    # record names it, so that answers first: '' is a tab reset to unstyled (no
+    # style, whatever the last applied one was), a name that still resolves is
+    # this tab's style, and no entry -- or a style since deleted -- falls through
+    # to the global answer below. Off per-tab mode the record is not even read.
+    if (Test-WezTermPerTab) {
+        $tab = Get-WezTermTabRecord
+        if ($null -ne $tab) {
+            if ($tab -eq '') { return $null }
+            if (Get-StyleDir -StyleName $tab) { return $tab }
+        }
+    }
+
     if (Test-Path -LiteralPath $script:TStylesCurrent) {
         $current = [System.IO.File]::ReadAllText($script:TStylesCurrent, [System.Text.UTF8Encoding]::new($false))
         foreach ($style in (Get-AvailableStyles)) {
