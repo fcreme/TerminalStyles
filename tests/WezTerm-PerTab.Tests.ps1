@@ -876,6 +876,44 @@ Describe 'Test-WezTermTabModule' {
     }
 }
 
+Describe 'Test-WezTermPerTabShell' {
+    # The question a new shell asks before it replays the last style's palette.
+    # shell/tstyles.sh asks it in sh: WEZTERM_PANE set and the marker present.
+    # The pty tests in tests/Shell-Runtime-Escaping.Tests.ps1 drive that half
+    # through the same marker path, so the two cannot drift apart.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:origRoot = $script:TStylesDataRoot
+            $script:origPane = $env:WEZTERM_PANE
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            [void][System.IO.Directory]::CreateDirectory($script:TStylesDataRoot)
+        }
+        AfterEach {
+            $script:TStylesDataRoot = $script:origRoot
+            $env:WEZTERM_PANE = $script:origPane
+        }
+        It 'is true in a WezTerm pane with the marker, <Pane>/<Marker> -> <Want>' -ForEach @(
+            @{ Pane = '3'; Marker = $true;  Want = $true }
+            @{ Pane = '3'; Marker = $false; Want = $false }
+            @{ Pane = '';  Marker = $true;  Want = $false }
+            @{ Pane = '';  Marker = $false; Want = $false }
+        ) {
+            $env:WEZTERM_PANE = $Pane
+            if ($Marker) { [System.IO.File]::WriteAllText((Get-WezTermTabMarkerPath), '') }
+            Test-WezTermPerTabShell | Should -Be $Want
+        }
+        It 'reads no wezterm.lua and asks no terminal' {
+            # Cheap on purpose: it runs in every new pwsh.
+            Mock Test-WezTermStyleWired { throw 'read wezterm.lua' }
+            Mock Test-WezTermPerTab { throw 'asked the full predicate' }
+            Mock Get-TerminalKind { throw 'asked the terminal' }
+            $env:WEZTERM_PANE = '3'
+            [System.IO.File]::WriteAllText((Get-WezTermTabMarkerPath), '')
+            Test-WezTermPerTabShell | Should -BeTrue
+        }
+    }
+}
+
 Describe 'Invoke-StartupPaletteReplay' {
     InModuleScope TerminalStyles {
         BeforeEach {
@@ -888,24 +926,33 @@ Describe 'Invoke-StartupPaletteReplay' {
             Mock Get-CurrentStyleRecord { [pscustomobject]@{ name = 'alpha' } }
             Mock Get-StyleDir { $script:styleDir }
             Mock Invoke-TerminalStyleOscApply { $true }
+            # What a new shell asks is the zsh/bash loader's question, never
+            # the full one, which reads wezterm.lua.
+            Mock Test-WezTermPerTab { throw 'startup must not read wezterm.lua' }
         }
-        It 'startup does not repaint in per-tab mode' {
+        It 'startup does not repaint in a WezTerm pane once a per-tab module exists' {
             Mock Get-TerminalKind { 'WezTerm' }
-            Mock Test-WezTermPerTab { $true }
+            Mock Test-WezTermPerTabShell { $true }
             Invoke-StartupPaletteReplay
             Should -Invoke Invoke-TerminalStyleOscApply -Times 0 -Exactly
+            Should -Invoke Test-WezTermPerTabShell -Times 1 -Exactly
         }
-        It 'startup still repaints in WezTerm outside per-tab mode' {
+        It 'startup still repaints in WezTerm when no per-tab module was written' {
             Mock Get-TerminalKind { 'WezTerm' }
-            Mock Test-WezTermPerTab { $false }
+            Mock Test-WezTermPerTabShell { $false }
             Invoke-StartupPaletteReplay
             Should -Invoke Invoke-TerminalStyleOscApply -Times 1 -Exactly
         }
         It 'startup does not repaint in Windows Terminal' {
             Mock Get-TerminalKind { 'WindowsTerminal' }
-            Mock Test-WezTermPerTab { $false }
+            Mock Test-WezTermPerTabShell { $false }
             Invoke-StartupPaletteReplay
             Should -Invoke Invoke-TerminalStyleOscApply -Times 0 -Exactly
+        }
+        It 'a predicate that throws does not stop the shell from starting' {
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Test-WezTermPerTabShell { throw 'data root unreadable' }
+            { Invoke-StartupPaletteReplay } | Should -Not -Throw
         }
     }
 }

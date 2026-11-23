@@ -2619,19 +2619,20 @@ function Invoke-StartupPaletteReplay {
     tab/window/split comes up in the applied style instead of the terminal's
     own default.
 
-    Skipped on WT to avoid fighting its own scheme, and skipped in WezTerm
-    per-tab mode, where each tab wears its own style through the generated Lua
-    module and the LAST applied style's palette would be painted over a tab
-    that should wear another. The -ne test and Test-WezTermPerTab's own kind and
-    platform checks run before anything reads the user's wezterm.lua, so a
-    shell outside WezTerm pays nothing for the new condition. Failures are
-    swallowed -- a missing color is never worth blocking a shell from starting.
+    Skipped on WT to avoid fighting its own scheme, and skipped in a WezTerm
+    pane once a per-tab module exists, where each tab wears its own style
+    through the generated Lua module and the LAST applied style's palette would
+    be painted over a tab that should wear another. That is the zsh/bash
+    loader's question (Test-WezTermPerTabShell), so every shell in a tab gets
+    the same answer, and it reads no wezterm.lua. Inside the try with the rest:
+    failures are swallowed -- a missing color is never worth blocking a shell
+    from starting.
     #>
     [CmdletBinding()]
     param()
     if ((Get-TerminalKind) -eq 'WindowsTerminal') { return }
-    if (Test-WezTermPerTab) { return }
     try {
+        if (Test-WezTermPerTabShell) { return }
         $record = Get-CurrentStyleRecord
         if ($record -and $record.name) {
             $styleDir = Get-StyleDir -StyleName $record.name

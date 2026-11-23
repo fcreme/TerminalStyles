@@ -1168,6 +1168,26 @@ function Get-WezTermTabMarkerPath {
     Join-Path $script:TStylesDataRoot 'wezterm-pertab'
 }
 
+function Test-WezTermPerTabShell {
+    <#
+    .SYNOPSIS
+    Should a new shell in this pane skip replaying the last style's palette?
+
+    .DESCRIPTION
+    True in a WezTerm pane (WEZTERM_PANE set) once a per-tab module was
+    written (the marker, Get-WezTermTabMarkerPath). The question the zsh/bash
+    loader asks in sh (shell/tstyles.sh, ts_load), asked the same way here for
+    pwsh, so every shell in a tab agrees on it. Cheap on purpose: it runs at
+    every pwsh start, and reads neither wezterm.lua nor the terminal.
+    Everything else asks Test-WezTermPerTab.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if (-not $env:WEZTERM_PANE) { return $false }
+    return (Test-Path -LiteralPath (Get-WezTermTabMarkerPath))
+}
+
 function Get-WezTermBackgroundCandidates {
     <#
     .SYNOPSIS

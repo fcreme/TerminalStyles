@@ -772,13 +772,16 @@ Describe 'the palette replay in WezTerm per-tab mode' {
     # In per-tab mode every tab wears its own style through the generated Lua
     # module, so a new shell replaying current-style.osc (the LAST applied
     # style's palette) would paint that style over a tab that should wear
-    # another. The runtime keys on the `wezterm-pertab` marker under the data
-    # root plus WEZTERM_PANE; either one alone must still replay, because the
-    # marker outlives a switch to another terminal and WEZTERM_PANE exists
-    # before any per-tab module does.
+    # another. The runtime keys on the per-tab marker under the data root plus
+    # WEZTERM_PANE; either one alone must still replay, because the marker
+    # outlives a switch to another terminal and WEZTERM_PANE exists before any
+    # per-tab module does. pwsh asks the same (Test-WezTermPerTabShell).
     #
     # Driven through a real pty (ts_load returns early without one) with a
     # sentinel palette, so the assertion is on bytes the shell really wrote.
+    # The marker is written where the PowerShell side names it for this data
+    # root (Get-WezTermTabMarkerPath), never at a name retyped here, so the
+    # shell half and the PowerShell half cannot drift apart.
     BeforeAll {
         function script:Invoke-ReplayProbe {
             param([string]$Shell, [bool]$Pane, [bool]$Marker)
@@ -787,7 +790,12 @@ Describe 'the palette replay in WezTerm per-tab mode' {
             $data = Join-Path $root 'data'
             New-Item -ItemType Directory -Path $data -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $data 'current-style.osc'), 'XYZ')
-            if ($Marker) { [System.IO.File]::WriteAllText((Join-Path $data 'wezterm-pertab'), '') }
+            $markerPath = InModuleScope TerminalStyles -Parameters @{ Data = $data } {
+                param($Data)
+                $saved = $script:TStylesDataRoot
+                try { $script:TStylesDataRoot = $Data; Get-WezTermTabMarkerPath } finally { $script:TStylesDataRoot = $saved }
+            }
+            if ($Marker) { [System.IO.File]::WriteAllText($markerPath, '') }
             $paneLine = if ($Pane) { "export WEZTERM_PANE=3" } else { "unset WEZTERM_PANE" }
             $rcText = "export TSTYLES_DATA='$data'`n$paneLine`n. '$($script:runtime)'`nexit`n"
             if ($Shell -eq 'bash') {
