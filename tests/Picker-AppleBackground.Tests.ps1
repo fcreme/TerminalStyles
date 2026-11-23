@@ -154,10 +154,14 @@ Describe 'both apply paths deliver the background' {
             $publish.Parent.Extent.Text | Should -Not -Match 'Out-Null'
             $clears = @(& $cmd 'Clear-Host' | Where-Object { $_.Extent.StartOffset -gt $publish.Extent.StartOffset })
             $clears.Count | Should -BeGreaterThan 0 -Because 'control: the commit clears the screen after the publish'
+            # Every replay, not just this one: per-tab WezTerm keeps its module
+            # publish's notice the same way (Get-WezTermPickerCommit).
             $replay = @(& $cmd 'Write-HostRecord')
-            $replay.Count | Should -Be 1
-            $replay[0].Extent.Text | Should -Match '\$backgroundNotes'
-            $replay[0].Extent.StartOffset | Should -BeGreaterThan $clears[0].Extent.StartOffset
+            @($replay | Where-Object { $_.Extent.Text -match '\$backgroundNotes' }).Count | Should -Be 1
+            foreach ($r in $replay) {
+                $r.Extent.StartOffset | Should -BeGreaterThan $clears[0].Extent.StartOffset `
+                    -Because "$($r.Extent.Text) replays what was said before the clear"
+            }
         }
 
         It '-NewWindow reaches every path that declares it' {

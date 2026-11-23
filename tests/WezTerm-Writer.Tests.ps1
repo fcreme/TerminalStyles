@@ -1128,6 +1128,62 @@ Describe 'Publish-StyleWezTermConfig per tab' {
             Should -Invoke Set-WezTermTabRecord -Times 0 -Exactly
         }
 
+        It 'records the unstyled tag as '''', the record''s word for unstyled, and still sends the tag' {
+            # The tag says /unstyled to the Lua; the record says '' to every
+            # reader (Get-WezTermTabRecord, Get-CurrentStyleName). Recorded as
+            # the tag, a reset tab read as no style at all and fell through to
+            # whatever was last applied anywhere. Through the real record, in
+            # this Describe's data root, keyed by a socket that exists.
+            $sock = Join-Path $script:root 'gui-sock'
+            [System.IO.File]::WriteAllText($sock, '')
+            $savedSock = $env:WEZTERM_UNIX_SOCKET; $savedPane = $env:WEZTERM_PANE
+            try {
+                $env:WEZTERM_UNIX_SOCKET = $sock; $env:WEZTERM_PANE = '7'
+                Invoke-WezTermTabTag -Value $script:WezTermTagUnstyled -WithReset -OutputRedirected $false |
+                    Should -Be 'painted'
+                Get-WezTermTabRecord | Should -BeExactly ''
+                Should -Invoke Write-HostOscPacket -Times 1 -Exactly -ParameterFilter {
+                    $Packet -ceq ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value '/unstyled')) }
+
+                Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $false | Should -Be 'painted'
+                Get-WezTermTabRecord | Should -BeExactly 'eva' -Because 'a style name is recorded as it is sent'
+            } finally {
+                $env:WEZTERM_UNIX_SOCKET = $savedSock; $env:WEZTERM_PANE = $savedPane
+            }
+        }
+
+        It 'per-tab: a failed module write says what this tab and new ones get, true for both doors' {
+            # `tstyles <name>` leaves this tab in the new palette; the picker's
+            # confirm puts the tab back to its own style. "WezTerm keeps your
+            # colors from this session" was true of the first and false of the
+            # second, so per tab the notice says only what holds for both.
+            Mock Test-WezTermPerTab { $true }
+            Mock Write-WezTermTabModule { 'failed' }
+            Mock Invoke-WezTermTabTag { 'painted' }
+            $lines = [System.Collections.Generic.List[string]]::new()
+            Mock Write-Host { $lines.Add([string]$Object) }
+
+            Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h | Out-Null
+
+            $lines | Should -Contain ('  Could not write ' + (Get-WezTermModulePath -HomeDir $script:h))
+            $lines | Should -Contain '  This tab keeps the colors it has now, and new tabs and windows will not'
+            $lines | Should -Contain '  get this style''s colors.'
+            ($lines -join ' ') | Should -Not -Match 'keeps your colors from this session'
+        }
+
+        It 'off per-tab: a failed module write keeps its wording' {
+            Mock Test-WezTermPerTab { $false }
+            Mock Write-WezTermStyleModule { 'failed' }
+            $lines = [System.Collections.Generic.List[string]]::new()
+            Mock Write-Host { $lines.Add([string]$Object) }
+
+            Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h | Out-Null
+
+            $lines | Should -Contain '  WezTerm keeps your colors from this session, but a new window will not.'
+        }
+
         It 'painted: writes the tag packet, records the value, and leads with the OSC reset under -WithReset' {
             Mock Set-WezTermTabRecord { 'ok' }
             Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $false | Should -Be 'painted'

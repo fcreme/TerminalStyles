@@ -983,7 +983,15 @@ function Publish-StyleWezTermConfig {
     if ($status -eq 'failed') {
         Write-Host ""
         Write-Host "  Could not write $path" -ForegroundColor Yellow
-        Write-Host "  WezTerm keeps your colors from this session, but a new window will not." -ForegroundColor DarkGray
+        # Per tab, true of both doors: `tstyles <name>` leaves this tab in the
+        # new palette, and the picker's confirm puts the tab back to its own
+        # style (Get-WezTermPickerCommit). New tabs take the module's default.
+        if ($perTab) {
+            Write-Host "  This tab keeps the colors it has now, and new tabs and windows will not" -ForegroundColor DarkGray
+            Write-Host "  get this style's colors." -ForegroundColor DarkGray
+        } else {
+            Write-Host "  WezTerm keeps your colors from this session, but a new window will not." -ForegroundColor DarkGray
+        }
         return $null
     }
 
@@ -1020,7 +1028,10 @@ function Invoke-WezTermTabTag {
     reached no terminal, nothing was tagged and no record is written: the
     record says what a tab carries, and a tab that was never told carries
     nothing. On 'painted' the tab's record is updated, which is what a later
-    process reads back.
+    process reads back. The unstyled tag is recorded as '', the record's word
+    for unstyled that every reader asks about (Get-WezTermTabRecord); recorded
+    as the tag, it named no style, and Get-CurrentStyleName fell through to the
+    last style applied in any tab.
     #>
     [CmdletBinding()]
     [OutputType([string])]
@@ -1033,7 +1044,9 @@ function Invoke-WezTermTabTag {
     $packet = Get-WezTermTagPacket -Value $Value
     if ($WithReset) { $packet = (Get-OscResetPacket) + $packet }
     if (-not (Write-HostOscPacket -Packet $packet)) { return 'noterminal' }
-    Set-WezTermTabRecord -Value $Value | Out-Null
+    $recorded = $Value
+    if ($Value -ceq $script:WezTermTagUnstyled) { $recorded = '' }
+    Set-WezTermTabRecord -Value $recorded | Out-Null
     return 'painted'
 }
 

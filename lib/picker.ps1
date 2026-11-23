@@ -408,6 +408,41 @@ function Get-WezTermPickerRevertPacket {
     return ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value $tag))
 }
 
+function Get-WezTermPickerCommit {
+    <#
+    .SYNOPSIS
+    What a per-tab picker confirm's WezTerm publish came to, read from its
+    output captured with 6>&1. Returns @{ Applied; Notes; Label; NameColor; Packet }.
+
+    .DESCRIPTION
+    Publish-StyleWezTermConfig returns the module path once the module is
+    written and this tab tagged, and nothing when the write failed, having
+    printed why. The picker clears the screen after it, which wiped that notice
+    and left "Style applied" on screen, with the pane still on the PREVIEW tag
+    and its record on the style it had. So:
+
+      Notes     what the publish printed, for the picker to print below the clear.
+      Label     the confirm line's head: '  Style applied: ', or on a failed
+                write '  Not applied in WezTerm: ' -- the prompt and the
+                current-style record may still have changed, so it names only
+                what did not.
+      NameColor Green, or Yellow on a failed write.
+      Packet    $null, or on a failed write Get-WezTermPickerRevertPacket: the
+                tab back to its own tag, so the pane matches its record.
+
+    Per-tab only: off per-tab the picker keeps its own call as it was.
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][AllowNull()][object[]]$Output)
+    $notes = @(@($Output) | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+    $paths = @(@($Output) | Where-Object { $_ -is [string] -and $_ })
+    if ($paths.Count -gt 0) {
+        return @{ Applied = $true; Notes = $notes; Label = '  Style applied: '; NameColor = 'Green'; Packet = $null }
+    }
+    return @{ Applied = $false; Notes = $notes; Label = '  Not applied in WezTerm: '; NameColor = 'Yellow'
+              Packet = (Get-WezTermPickerRevertPacket) }
+}
+
 function Invoke-PickerLoop {
     # The interactive picker's selection loop, with all I/O / rendering / input
     # injected as seams so it can be driven by tests. Owns ONLY the highlight

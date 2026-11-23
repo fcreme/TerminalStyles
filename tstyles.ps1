@@ -2188,6 +2188,8 @@ function Invoke-TerminalStyle {
         # What Publish-StyleBackgroundProfile said, from the non-WT arm, for the
         # same reason.
         $backgroundNotes = @()
+        # Per-tab WezTerm only: what the module publish came to and said.
+        $wezCommit = $null
         if ($useSettingsFile) {
             # The commit, first: the preview on disk is the style when the file
             # still holds it; a file that changed while the picker was open has
@@ -2288,12 +2290,21 @@ function Invoke-TerminalStyle {
                         [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
                 } catch { $wtTheme = $null }
             }
-            Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
-                                       -StyleDir $selectedStyle.FullName `
-                                       -Scheme $schemes[$idx] `
-                                       -Theme $wtTheme -Kind $termKind | Out-Null
+            # Per tab, what it says is kept for below the Clear-Host, and a
+            # failed write puts this tab back to its own tag: it has not been
+            # tagged, so it still wears the preview (Get-WezTermPickerCommit).
+            if ($wezPerTab) {
+                $wezCommit = Get-WezTermPickerCommit -Output @(Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
+                                 -StyleDir $selectedStyle.FullName -Scheme $schemes[$idx] -Theme $wtTheme -Kind $termKind 6>&1)
+                if ($wezCommit.Packet) { Write-HostOscPacket -Packet $wezCommit.Packet | Out-Null }
+            } else {
+                Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
+                                           -StyleDir $selectedStyle.FullName `
+                                           -Scheme $schemes[$idx] `
+                                           -Theme $wtTheme -Kind $termKind | Out-Null
+            }
             # The publish owns the module now; the preview session is over.
-            # Per tab there was none: the publish has tagged this tab already.
+            # Per tab there was none.
             if ($wezSession) { [void](Complete-FilePreview -Session $wezSession) }
 
             # ...and VS Code's settings.json, the fourth writer. With the
@@ -2337,12 +2348,17 @@ function Invoke-TerminalStyle {
 
         Clear-Host
         Write-Host ""
-        Write-Host "  Style applied: " -NoNewline
-        Write-Host $selectedStyle.Name -ForegroundColor Green
+        # Per tab, a failed module write is not "Style applied" (Get-WezTermPickerCommit).
+        $appliedLabel = "  Style applied: "; $appliedColor = 'Green'
+        if ($wezCommit) { $appliedLabel = $wezCommit.Label; $appliedColor = $wezCommit.NameColor }
+        Write-Host $appliedLabel -NoNewline
+        Write-Host $selectedStyle.Name -ForegroundColor $appliedColor
         if ($promptResult) {
             $promptNote = Get-CurrentStylePromptFailureNote -Result $promptResult
             if ($promptNote) { Write-Host $promptNote -ForegroundColor Yellow }
         }
+        # ...and what the WezTerm publish said, kept from before the clear.
+        if ($wezCommit) { Write-HostRecord -Record $wezCommit.Notes }
         Write-Host ""
         Show-FilePreviewResult -Result $pickerState.SettingsCommit
         Show-FilePreviewResult -Result $pickerRecovered

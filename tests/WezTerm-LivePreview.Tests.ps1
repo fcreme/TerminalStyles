@@ -274,3 +274,60 @@ Describe 'per tab, the picker previews a style in its own tab only' {
         }
     }
 }
+
+Describe 'per tab, a picker confirm whose module write fails says so and puts the tab back' {
+    # Publish-StyleWezTermConfig prints why it failed and returns nothing, and
+    # the picker clears the screen after it: the notice was wiped, "Style
+    # applied" printed over it, and the pane kept the PREVIEW tag while its
+    # record kept the style it had. Get-WezTermPickerCommit reads the publish's
+    # captured output (6>&1) so the picker body only prints and sends what it
+    # answers. Driven here through the real publisher, sandboxed as above.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData = $script:TStylesDataRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:h = Join-Path $script:root 'home'
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:TStylesDataRoot = Join-Path $script:root 'data'
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            Mock Get-StyleBundledBackground { $null }
+            Mock Write-HostOscPacket { $true }
+            Mock Test-WezTermPerTab { $true }
+            Mock Test-WezTermStyleWired { $true }
+            Mock Invoke-WezTermTabTag { 'painted' }
+            Mock Get-WezTermTabRecord { 'eva' }
+            $script:publish = {
+                @(Publish-StyleWezTermConfig -StyleName 'forest' -StyleDir '/tmp/forest' -Scheme $script:scheme `
+                    -Kind 'WezTerm' -HomeDir $script:h 6>&1)
+            }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'a written module is applied: the success line, nothing to send, nothing to add' {
+            Mock Write-WezTermTabModule { 'written' }
+            $c = Get-WezTermPickerCommit -Output (& $script:publish)
+            $c.Applied | Should -BeTrue
+            $c.Label | Should -BeExactly '  Style applied: '
+            $c.NameColor | Should -Be 'Green'
+            $c.Packet | Should -BeNullOrEmpty
+            @($c.Notes).Count | Should -Be 0
+            Should -Invoke Invoke-WezTermTabTag -Times 1 -Exactly -Because 'the publish tagged this tab itself'
+        }
+
+        It 'a failed write is not applied: its notice is kept for below the clear, and this tab goes back' {
+            Mock Write-WezTermTabModule { 'failed' }
+            $c = Get-WezTermPickerCommit -Output (& $script:publish)
+            $c.Applied | Should -BeFalse
+            $c.Label | Should -BeExactly '  Not applied in WezTerm: '
+            $c.NameColor | Should -Be 'Yellow'
+            # The preview tag goes, and this tab's own tag comes back, with the
+            # palette handed to the window scheme that tag selects.
+            $c.Packet | Should -BeExactly ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value 'eva'))
+            $text = @($c.Notes | ForEach-Object { "$($_.MessageData)" }) -join "`n"
+            $text | Should -Match ([regex]::Escape('Could not write ' + (Get-WezTermModulePath -HomeDir $script:h)))
+            $text | Should -Match ([regex]::Escape('This tab keeps the colors it has now'))
+            Should -Invoke Invoke-WezTermTabTag -Times 0 -Exactly -Because 'a failed write tags nothing'
+        }
+    }
+}

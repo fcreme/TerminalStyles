@@ -315,3 +315,52 @@ Describe 'the reset help says what it does to WezTerm, and what a tab can keep' 
         }
     }
 }
+
+Describe 'tstyles reset in per-tab WezTerm, through the real tab record' {
+    # The record's word for unstyled is '' (Get-WezTermTabRecord); the tag's is
+    # /unstyled. Recorded as the tag, a reset tab read to Get-CurrentStyleName
+    # as no entry at all, which then answered with the last style applied
+    # ANYWHERE: reset here, apply in another tab, and this tab reported that
+    # style, and its picker opened on it. The bundled styles stay where they
+    # are, so that a name the global record holds really resolves.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedCurrent = $script:TStylesCurrent
+            $script:savedSock    = $env:WEZTERM_UNIX_SOCKET
+            $script:savedPane    = $env:WEZTERM_PANE
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:root -Force | Out-Null
+            $script:TStylesDataRoot = $script:root
+            $script:TStylesCurrent  = Join-Path $script:root 'current-style.ps1'
+            $script:wezPath = Join-Path $script:root 'terminalstyles.lua'
+            $env:WEZTERM_UNIX_SOCKET = Join-Path $script:root 'gui-sock'
+            [System.IO.File]::WriteAllText($env:WEZTERM_UNIX_SOCKET, '')
+            $env:WEZTERM_PANE = '0'
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Get-WezTermModulePath { $script:wezPath }
+            Mock Write-HostOscPacket { $true }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-WezTermPerTab { $true }
+        }
+        AfterEach {
+            $script:TStylesDataRoot = $script:savedData
+            $script:TStylesCurrent  = $script:savedCurrent
+            $env:WEZTERM_UNIX_SOCKET = $script:savedSock
+            $env:WEZTERM_PANE        = $script:savedPane
+        }
+
+        It 'a reset tab stays unstyled after another tab applies a style' {
+            Set-WezTermTabRecord -Value 'eva' | Should -Be 'ok'
+            Set-CurrentStyleRecord -StyleName 'eva' -Kind 'WezTerm'
+            Get-CurrentStyleName | Should -Be 'eva' -Because 'the fixture: this tab wears eva'
+
+            Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-Null
+
+            # Another tab applies kitty, which the global record now names.
+            Set-CurrentStyleRecord -StyleName 'kitty' -Kind 'WezTerm'
+            Get-CurrentStyleName | Should -BeNullOrEmpty -Because 'this tab was reset, whatever another tab applied since'
+            Get-WezTermTabRecord | Should -BeExactly '' -Because 'reset records this tab as unstyled'
+        }
+    }
+}
