@@ -290,14 +290,14 @@ Describe 'delete is wired into the command surface' {
         $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
         foreach ($sub in 'trash', 'restore') {
             $src | Should -Match "\`$Arg -eq '$sub'"
-            $src.IndexOf("`$Arg -eq '$sub'") | Should -BeLessThan $src.IndexOf('$styleMatch = Get-AvailableStyles')
+            $src.IndexOf("`$Arg -eq '$sub'") | Should -BeLessThan $src.IndexOf('$styleMatch = Get-ListedStyleName')
         }
     }
 
     It 'Invoke-TerminalStyle routes delete before it tries to match a style' {
         $src = (Get-Command Invoke-TerminalStyle).ScriptBlock.ToString()
         $src | Should -Match "\`$Arg -eq 'delete'"
-        $src.IndexOf("`$Arg -eq 'delete'") | Should -BeLessThan $src.IndexOf('$styleMatch = Get-AvailableStyles')
+        $src.IndexOf("`$Arg -eq 'delete'") | Should -BeLessThan $src.IndexOf('$styleMatch = Get-ListedStyleName')
     }
 }
 

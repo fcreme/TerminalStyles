@@ -743,6 +743,109 @@ Describe 'Write-WezTermTabModule' {
     }
 }
 
+Describe 'a style name typed in another case, per tab' {
+    # Get-AvailableStyles matches a name case-insensitively and, on a
+    # case-insensitive file system, Get-StyleDir resolves 'EVA' to the folder
+    # 'eva'. But the module's LOOKS keys are folder names and Lua compares
+    # strings exactly, so a DEFAULT or a tag of 'EVA' named no look: the tab
+    # fell to its pin, new tabs opened unstyled, and the apply printed success.
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:origRoot = $script:TStylesDataRoot
+            $script:origCurrent = $script:TStylesCurrent
+            $script:TStylesDataRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+            $script:evaDir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') 'eva'
+            [void][System.IO.Directory]::CreateDirectory($script:evaDir)
+            [System.IO.File]::WriteAllText((Join-Path $script:evaDir 'scheme.json'),
+                (@{ name = 'eva'; background = '#0a0006'; foreground = '#ffe8e8' } | ConvertTo-Json),
+                [System.Text.UTF8Encoding]::new($false))
+            $script:modPath = Join-Path (Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))) 'terminalstyles.lua'
+            # The module path is mocked, never derived: unmocked it is the
+            # operator's own ~/.config/wezterm/terminalstyles.lua.
+            Mock Get-WezTermModulePath { $script:modPath }
+            Mock Get-AvailableStyles { @(Get-Item -LiteralPath $script:evaDir) }
+            $script:tagged = [System.Collections.Generic.List[string]]::new()
+            Mock Invoke-WezTermTabTag { $script:tagged.Add($Value); 'painted' }
+            Mock Write-Host { }
+        }
+        AfterEach {
+            $script:TStylesDataRoot = $script:origRoot
+            $script:TStylesCurrent = $script:origCurrent
+        }
+
+        It 'tstyles EVA writes the default eva and tags this tab eva' {
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Test-WezTermPerTab { $true }
+            Mock Test-WezTermStyleWired { $true }
+            Mock Write-HostOscPacket { $true }
+            Mock Show-UpdateNoticeIfAvailable { }
+            Mock Publish-StyleVSCodeConfig { $null }
+            Mock Get-StyleBundledBackground { $null }
+
+            Invoke-TerminalStyle -Arg 'EVA'
+
+            $text = [System.IO.File]::ReadAllText($script:modPath, [System.Text.UTF8Encoding]::new($false))
+            @($text -split '\r?\n') -ccontains "local DEFAULT = 'eva'" | Should -BeTrue -Because 'LOOKS is keyed by the folder name'
+            @($script:tagged) | Should -HaveCount 1
+            $script:tagged[0] | Should -BeExactly 'eva'
+            (Get-CurrentStyleRecord).name | Should -BeExactly 'eva'
+        }
+
+        It 'the dispatcher hands the apply the listed name' {
+            Mock Apply-StyleDirect { }
+            Invoke-TerminalStyle -Arg 'EVA'
+            Should -Invoke Apply-StyleDirect -Times 1 -Exactly -ParameterFilter { $StyleName -ceq 'eva' }
+        }
+
+        It 'Publish-StyleWezTermConfig puts the listed name in the module and the tag, from any door' {
+            # The tuner's save and delete's re-apply reach the publisher with a
+            # name as the user typed it, not through the dispatcher.
+            Mock Test-WezTermPerTab { $true }
+            Mock Test-WezTermStyleWired { $true }
+            Mock Get-StyleBundledBackground { $null }
+            $scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+
+            Publish-StyleWezTermConfig -StyleName 'EVA' -StyleDir $script:evaDir -Scheme $scheme -Kind 'WezTerm' | Out-Null
+
+            $text = [System.IO.File]::ReadAllText($script:modPath, [System.Text.UTF8Encoding]::new($false))
+            @($text -split '\r?\n') -ccontains "local DEFAULT = 'eva'" | Should -BeTrue
+            $script:tagged[0] | Should -BeExactly 'eva'
+        }
+
+        It 'Write-WezTermTabModule writes a default in another case as the listed name' {
+            # The picker's open writes the recorded name, and delete writes the
+            # name it was asked to delete: both through here.
+            Write-WezTermTabModule -DefaultStyle 'EVA' | Should -Be 'written'
+            $text = [System.IO.File]::ReadAllText($script:modPath, [System.Text.UTF8Encoding]::new($false))
+            @($text -split '\r?\n') -ccontains "local DEFAULT = 'eva'" | Should -BeTrue
+        }
+
+        It 'Write-WezTermTabModule keeps a default no style is listed under' {
+            Write-WezTermTabModule -DefaultStyle 'gone' | Should -Be 'written'
+            $text = [System.IO.File]::ReadAllText($script:modPath, [System.Text.UTF8Encoding]::new($false))
+            @($text -split '\r?\n') -ccontains "local DEFAULT = 'gone'" | Should -BeTrue
+        }
+    }
+}
+
+Describe 'Get-ListedStyleName' {
+    InModuleScope TerminalStyles {
+        It 'answers with the listed spelling, an exact match first, and $null for none' {
+            Mock Get-AvailableStyles { @([pscustomobject]@{ Name = 'EVA' }, [pscustomobject]@{ Name = 'eva' }, [pscustomobject]@{ Name = 'kitty' }) }
+            Get-ListedStyleName -Name 'eva' | Should -BeExactly 'eva'
+            Get-ListedStyleName -Name 'EVA' | Should -BeExactly 'EVA'
+            Get-ListedStyleName -Name 'KITTY' | Should -BeExactly 'kitty'
+            Get-ListedStyleName -Name 'nope' | Should -BeNullOrEmpty
+            Get-ListedStyleName -Name '' | Should -BeNullOrEmpty
+        }
+        It 'reads a list it is given instead of listing again' {
+            Mock Get-AvailableStyles { throw 'must not list' }
+            Get-ListedStyleName -Name 'ALPHA' -Listed @('beta', 'alpha') | Should -BeExactly 'alpha'
+        }
+    }
+}
+
 Describe 'Test-WezTermTabModule' {
     InModuleScope TerminalStyles {
         BeforeEach {

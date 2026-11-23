@@ -1699,6 +1699,14 @@ function Write-WezTermTabModule {
         }
     })
 
+    # The default under its listed name, which is what LOOKS is keyed by: the
+    # picker's open writes the recorded name and delete the name it was given,
+    # either of which may be as the user typed it. A name nothing is listed
+    # under is kept as given, and the Lua draws it as unstyled.
+    if ($DefaultStyle) {
+        $listed = Get-ListedStyleName -Name $DefaultStyle -Listed @($styles | ForEach-Object { $_.Name })
+        if ($listed) { $DefaultStyle = $listed }
+    }
     $lua = Get-WezTermTabModuleLua -Styles $styles -DefaultStyle $DefaultStyle
     $status = Write-WezTermModuleText -Path (Get-WezTermModulePath @splat) -Text $lua
     if ($status -ne 'failed') {

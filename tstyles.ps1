@@ -842,6 +842,41 @@ function Get-AvailableStyles {
     @(@($user) + @($bundled | Where-Object { $_.Name -notin $userNames })) | Sort-Object Name
 }
 
+function Get-ListedStyleName {
+    <#
+    .SYNOPSIS
+    The name a style is listed under, for a name typed in any case; $null when
+    no style is listed under it.
+
+    .DESCRIPTION
+    The listed name is the folder's own spelling (Get-AvailableStyles). An
+    exact match wins, else the first that matches ignoring case, which is how
+    the dispatcher has always matched a style argument.
+
+    Why it matters: on a case-insensitive file system Get-StyleDir resolves
+    'EVA' to the folder 'eva', so a miscased name applies, and every later step
+    carried it as typed. In WezTerm per-tab mode that broke the tab: the
+    module's LOOKS table is keyed by folder name and Lua compares strings
+    exactly, so a DEFAULT or a tag of 'EVA' named no look at all. The
+    dispatcher, the per-tab publish and the per-tab module writer all ask here.
+
+    -Listed is the names to search, for a caller that has already listed them.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Name,
+        [string[]]$Listed
+    )
+    if (-not $Name) { return $null }
+    if (-not $PSBoundParameters.ContainsKey('Listed')) {
+        $Listed = @(Get-AvailableStyles | ForEach-Object { $_.Name })
+    }
+    foreach ($n in $Listed) { if ($n -ceq $Name) { return $n } }
+    foreach ($n in $Listed) { if ($n -eq $Name) { return $n } }
+    return $null
+}
+
 function Get-CurrentStyleName {
     # Detects which bundled style is currently active by byte-comparing
     # current-style.ps1 against each style's profile.ps1. Returns $null
@@ -1061,11 +1096,12 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'profiles')             { Invoke-TerminalStyleProfiles -Clean:$Clean -Yes:$Yes; return }
     if ($Arg -eq 'vscode')               { Invoke-TerminalStyleVSCode -Action $SubArg; return }
 
-    # If $Arg matches a bundled style, apply it directly (no picker).
+    # If $Arg matches a bundled style, apply it directly (no picker), under the
+    # name it is listed by: 'EVA' applies 'eva' (Get-ListedStyleName says why).
     if ($Arg) {
-        $styleMatch = Get-AvailableStyles | Where-Object Name -eq $Arg | Select-Object -First 1
+        $styleMatch = Get-ListedStyleName -Name $Arg
         if ($styleMatch) {
-            Apply-StyleDirect -StyleName $Arg -Target $Target `
+            Apply-StyleDirect -StyleName $styleMatch -Target $Target `
                 -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided `
                 -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
             return

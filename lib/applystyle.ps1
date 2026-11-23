@@ -971,8 +971,15 @@ function Publish-StyleWezTermConfig {
     # marker the zsh/bash loader reads goes, so a user who removed the wiring
     # line gets that loader's replay of the last-applied palette back.
     $perTab = Test-WezTermPerTab -Kind $Kind @splat
+    # The listed spelling for the module's default and this tab's tag: the Lua
+    # finds a look by its exact name (Get-ListedStyleName). Not every door is
+    # the dispatcher's, which already passes it: the tuner's save and delete's
+    # re-apply come here with the name as it was typed.
+    $tabName = $StyleName
     if ($perTab) {
-        $status = Write-WezTermTabModule -DefaultStyle $StyleName @splat
+        $listed = Get-ListedStyleName -Name $StyleName
+        if ($listed) { $tabName = $listed }
+        $status = Write-WezTermTabModule -DefaultStyle $tabName @splat
     } else {
         Remove-Item -LiteralPath (Get-WezTermTabMarkerPath) -Force -ErrorAction SilentlyContinue
         $status = Write-WezTermStyleModule -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
@@ -1012,7 +1019,7 @@ function Publish-StyleWezTermConfig {
     }
     # After the module, so a tab is never tagged with a style the module does
     # not know yet. A 'failed' write returned above and tags nothing.
-    if ($perTab) { Invoke-WezTermTabTag -Value $StyleName | Out-Null }
+    if ($perTab) { Invoke-WezTermTabTag -Value $tabName | Out-Null }
     return $path
 }
 
