@@ -491,9 +491,9 @@ Describe 'Get-WezTermTabModuleLua' {
             # Measured 2026-11-23 against wezterm 20260917-114457-b09b56c2:
             # effective_config() of a config that sets none of these keys.
             $m = Get-WezTermTabModuleLua -Styles @() -DefaultStyle $null
-            $m | Should -Match ([regex]::Escape("color_schemes['TerminalStyles ' .. UNSTYLED] = wezterm.color.get_default_colors()"))
+            $m | Should -Match ([regex]::Escape("local schemes = { [BUILTIN.color_scheme] = wezterm.color.get_default_colors() }"))
             foreach ($line in @(
-                "  color_scheme = 'TerminalStyles ' .. UNSTYLED,",
+                "  color_scheme = PREFIX .. UNSTYLED,",
                 '  background = {},',
                 '  window_background_opacity = 1.0,',
                 '  macos_window_background_blur = 0,',
@@ -521,14 +521,107 @@ Describe 'Get-WezTermTabModuleLua' {
         It 'stamps a sync with the user''s own values, taken before the default is applied' {
             # Without it an edit to wezterm.lua never reached a window that
             # holds an override: the stamp still matched after the reload.
+            # The scheme the user's own color_scheme names is part of it: an
+            # unstyled window carries a copy of that scheme (see the test of
+            # self-contained looks below), so an edit to it must reach them.
             $lines = @((Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty) -split '\r?\n' | ForEach-Object { $_.Trim() })
             $lines -ccontains "local stamp = want .. '@' .. GENERATION .. '@' .. USERPRINT" | Should -BeTrue
-            $capture = [array]::IndexOf($lines, 'for _, k in ipairs(KEYS) do USER[k] = copy(config[k]) end')
-            $print = [array]::IndexOf($lines, 'USERPRINT = fingerprint(USER)')
-            $base = [array]::IndexOf($lines, 'for k, v in pairs(look_of(DEFAULT or UNSTYLED)) do config[k] = v end')
+            $capture = [array]::IndexOf($lines, 'for _, k in ipairs(KEYS) do user[k] = copy(config[k]) end')
+            $scheme = [array]::IndexOf($lines, 'user_scheme = copy(config.color_schemes[user.color_scheme])')
+            $print = [array]::IndexOf($lines, 'USERPRINT = fingerprint({ user, user_scheme })')
+            $base = [array]::IndexOf($lines, 'local base = look_of(DEFAULT or UNSTYLED)')
             $capture | Should -BeGreaterThan -1
-            $print | Should -BeGreaterThan $capture
+            $scheme | Should -BeGreaterThan $capture
+            $print | Should -BeGreaterThan $scheme
             $base | Should -BeGreaterThan $print
+        }
+
+        # R21. Each of the four below was checked in a sandbox WezTerm (the
+        # final-fix-wave report); the text pins what was measured.
+
+        It 'gives every window a complete look, the default''s included' {
+            # A window showing the default used to hold none of a look's keys,
+            # so a rewrite that moved the default painted the NEW default in it
+            # until its sync put the old look back.
+            $m = Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty
+            $lines = @($m -split '\r?\n' | ForEach-Object { $_.Trim() })
+            $m | Should -Not -Match 'want ~= \(DEFAULT or UNSTYLED\)'
+            $strip = [array]::IndexOf($lines, 'for _, k in ipairs(KEYS) do overrides[k] = nil end')
+            $look = [array]::IndexOf($lines, 'local look, scheme = look_of(want)')
+            $merge = [array]::IndexOf($lines, 'for k, v in pairs(look) do overrides[k] = v end')
+            $set = [array]::IndexOf($lines, 'window:set_config_overrides(overrides)')
+            $strip | Should -BeGreaterThan -1
+            $look | Should -BeGreaterThan $strip
+            $merge | Should -Be ($look + 1) -Because 'the merge is unconditional'
+            $set | Should -BeGreaterThan $merge
+        }
+
+        It 'makes each look carry the scheme it names, keeping the window''s other schemes' {
+            # Measured: an override's color_schemes REPLACES the base config's
+            # whole table, so a name only the base registers is "not found"
+            # there -- and the scheme a window names has to travel with it, or
+            # the window loses its palette when this file is deleted.
+            $m = Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty
+            $lines = @($m -split '\r?\n' | ForEach-Object { $_.Trim() })
+            $lines -ccontains "local PREFIX = 'TerminalStyles '" | Should -BeTrue
+            $keep = [array]::IndexOf($lines, 'if type(k) ~= ''string'' or k:sub(1, #PREFIX) ~= PREFIX then schemes[k] = v end')
+            $own = [array]::IndexOf($lines, 'if scheme then schemes[look.color_scheme] = scheme end')
+            $put = [array]::IndexOf($lines, 'overrides.color_schemes = schemes')
+            $set = [array]::IndexOf($lines, 'window:set_config_overrides(overrides)')
+            $keep | Should -BeGreaterThan -1
+            $own | Should -BeGreaterThan $keep
+            $put | Should -BeGreaterThan $own
+            $set | Should -BeGreaterThan $put
+        }
+
+        It 'gives an unstyled look the scheme it draws: WezTerm''s default, or the user''s own registered one' {
+            # A builtin name the user picked needs nothing carried: measured,
+            # it still resolves under an override's color_schemes.
+            $lines = @((Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty) -split '\r?\n' | ForEach-Object { $_.Trim() })
+            $start = [array]::IndexOf($lines, 'local function look_of(name)')
+            $fromUser = [array]::IndexOf($lines, 'local scheme = USER_SCHEME')
+            $none = [array]::IndexOf($lines, 'if USER.color_scheme == nil then scheme = wezterm.color.get_default_colors() end')
+            $styled = [array]::IndexOf($lines, 'scheme = look.scheme')
+            $start | Should -BeGreaterThan -1
+            $fromUser | Should -BeGreaterThan $start
+            $none | Should -Be ($fromUser + 1)
+            $styled | Should -BeGreaterThan $none
+            $lines -ccontains 'return t, scheme' | Should -BeTrue
+        }
+
+        It 'lets the style''s palette win over the user''s colors in a styled look' {
+            # Measured: colors lays over color_scheme key by key, so a user's
+            # colors.background drew over every style's background. Every key
+            # the style's scheme sets is dropped from the user's copy; the
+            # rest (tab bar parts, say) stays.
+            $lines = @((Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty) -split '\r?\n' | ForEach-Object { $_.Trim() })
+            $copy = [array]::IndexOf($lines, 't.colors = t.colors or {}')
+            $named = [array]::IndexOf($lines, 't.color_scheme = PREFIX .. name')
+            $drop = [array]::IndexOf($lines, 'for k in pairs(look.scheme) do t.colors[k] = nil end')
+            $tab = [array]::IndexOf($lines, 'if look.tab_bg then')
+            $copy | Should -BeGreaterThan -1
+            $named | Should -BeGreaterThan $copy
+            $drop | Should -BeGreaterThan $named
+            $tab | Should -BeGreaterThan $drop
+        }
+
+        It 'works everything out before it writes to config, inside a pcall that logs once' {
+            # M6. The wiring line's pcall guards only the require; an error in
+            # apply_to_config is a config error, which costs the user their
+            # whole wezterm.lua.
+            $lines = @((Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty) -split '\r?\n' | ForEach-Object { $_.Trim() })
+            $fn = [array]::IndexOf($lines, 'function M.apply_to_config(config)')
+            $fn | Should -BeGreaterThan -1
+            $lines[$fn + 1] | Should -BeExactly 'local ok, err = pcall(function()'
+            $base = [array]::IndexOf($lines, 'local base = look_of(DEFAULT or UNSTYLED)')
+            $firstWrite = -1
+            for ($i = $fn + 1; $i -lt $lines.Count; $i++) {
+                if ($lines[$i] -cmatch '^config(\.|\[)') { $firstWrite = $i; break }
+            }
+            $firstWrite | Should -BeGreaterThan $base -Because 'nothing is written to config until every value is worked out'
+            $logged = @($lines | Where-Object { $_ -clike 'if not ok then wezterm.log_error(*' })
+            $logged.Count | Should -Be 1
+            [array]::IndexOf($lines, 'return config') | Should -BeGreaterThan ([array]::IndexOf($lines, $logged[0]))
         }
 
         It 'keeps the window''s other overrides, and reads them only once a sync is needed' {

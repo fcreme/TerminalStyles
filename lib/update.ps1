@@ -1594,9 +1594,10 @@ function Invoke-TerminalStylesUninstall {
         } else {
             Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
             if ($wezWasPerTab) {
-                # The overrides a window holds survive a reload (header of
-                # lib/wezterm.ps1), so deleting the module does not unstyle
-                # windows already open.
+                # Every window holds a complete override that carries its own
+                # scheme, and such an override outlives the module (measured;
+                # header of lib/wezterm.ps1), so deleting the module does not
+                # unstyle windows already open, palette included.
                 Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm." -ForegroundColor Gray
             }
             # The empty file the zsh/bash loader reads to skip its palette

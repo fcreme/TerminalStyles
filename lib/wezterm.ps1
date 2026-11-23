@@ -84,20 +84,50 @@
 #     same build: effective_config() of a config that sets none of them):
 #     window_background_opacity 1.0, macos_window_background_blur 0,
 #     default_cursor_style 'SteadyBlock', colors nil, background empty.
+#   * An override's color_schemes REPLACES the base config's whole table
+#     (measured 2026-11-23, same build). An override { color_schemes =
+#     { ['TerminalStyles Y'] = <table> }, color_scheme = <a name only the base
+#     config registers> } logged `ERROR config::config > Your configuration
+#     specifies color_scheme="TerminalStyles Base" but that scheme was not
+#     found` and left resolved_palette nil; so did a name the user's own
+#     color_schemes registers. A name WezTerm has built in ('Builtin Light')
+#     still resolved. An override that carries the scheme it names drew it, on a
+#     base config that registers no such name, with no ERROR.
+#   * Such an override OUTLIVES the module (same build). Two windows holding
+#     one kept their whole look, palette included, when the module the base
+#     config required was replaced by one that applies nothing and again when
+#     it was deleted. Each change reloaded the config by itself (a required file
+#     is watched), no ERROR was logged, and a window opened after the delete
+#     drew the user's own config. Re-measured with the generated module: three
+#     windows (kitty, unstyled, the default) kept their palettes through a
+#     rewrite and through the delete. That is why `tstyles uninstall` can say
+#     windows already open keep their look until they are closed.
+#   * The user's `colors` lies over color_scheme KEY BY KEY (same build). With
+#     colors = { background = '#123456' }, an override naming a scheme whose
+#     background is '#abcdef' drew '#123456'; with colors = {} in the override
+#     it drew '#abcdef'; with the synthesized default scheme it drew '#123456'
+#     and the default foreground.
+#   * colors.tab_bar.active_tab needs fg_color whenever it has bg_color (same
+#     build): { bg_color = '#ff0000' } alone is "missing field `fg_color`", and
+#     WezTerm refuses the WHOLE override ("Failed to apply config overrides to
+#     window"), or, in a config, the whole config.
 #
-# DECISION (2026-11-23; it replaces "base = the user's own look", recorded on
-# 2026-11-20 while color_scheme seemed to have no "none"). Both keys have a
-# working "none" -- the synthesized default scheme and `background = {}` -- so
-# base = the LAST-APPLIED STYLE, as the design chose: apply_to_config applies the
-# default style to the config itself, a window showing the default carries none
-# of a look's keys as overrides, and every other window, an unstyled one
+# DECISION (2026-11-23, final wave; it replaces two earlier ones: "base = the
+# user's own look", recorded on 2026-11-20 while color_scheme seemed to have no
+# "none", and "a window showing the default carries no override", which let a
+# rewrite that moved the default paint the NEW default in such a window until
+# its sync put the old look back). Base = the LAST-APPLIED STYLE, which now only
+# decides a new window's first frame. EVERY window, one showing the default
 # included, carries a COMPLETE override over every key a look sets, filled from
-# the user's own value and then from WezTerm's, for a key the style leaves
-# alone. (The qualifier: with NO default the base is itself unstyled, so an
-# unstyled window already shows it and gets `{}` rather than a complete
-# override.) Overrides on any other key are the user's and are kept. The new-window
-# first-frame question is moot in this mode: a new window starts from the base
-# config, and the base config already is the default style.
+# the user's own value and then from WezTerm's for a key the style leaves alone,
+# and the override is SELF-CONTAINED: it carries the scheme it names in its own
+# color_schemes (the style's, the synthesized default, or the scheme the user's
+# own color_scheme names when their config registers it), because of the
+# replacement measured above. A styled look drops from its copy of the user's
+# colors every key the style's scheme sets, so the style's palette wins in a
+# styled tab, and an unstyled one keeps them all, so it is exactly the user's
+# own look. Overrides on any other key, and color_schemes entries not named
+# 'TerminalStyles ...', are the user's and are kept.
 
 function Get-WezTermModuleDir {
     <#
@@ -1305,12 +1335,19 @@ function Get-WezTermTabModuleLua {
     GENERATION is the first 16 hex digits of the SHA-256 of this text with the
     stamp itself blank. Every window stores "<wanted>@<GENERATION>@<user>" once
     it is synced, <user> being a fingerprint of the user's own values for the
-    keys a look sets, and skips a sync whose stamp matches. So a rewritten
-    module (a new default changes what the base config draws) or an edited
-    wezterm.lua re-syncs every window once, and the reload that
-    set_config_overrides itself causes ends at the compare instead of looping.
-    A sync replaces only the keys a look sets and keeps every other override
-    the window holds.
+    keys a look sets (and of the scheme their own color_scheme names), and skips
+    a sync whose stamp matches. So a rewritten module or an edited wezterm.lua
+    re-syncs every window once, and the reload that set_config_overrides itself
+    causes ends at the compare instead of looping.
+
+    Every window gets a complete, self-contained look, the default's included:
+    every key a look sets, and the scheme it names in its own color_schemes.
+    So a rewrite that moves the default shows in no window, and a window keeps
+    its look when the module is deleted (the measurements are in this file's
+    header). A sync replaces only the keys a look sets and our own schemes, and
+    keeps every other override the window holds. apply_to_config runs inside a
+    pcall of its own and writes to config only after every value is worked out,
+    so an error there leaves the user's config as they wrote it.
 
     The reserved tag values are interpolated from $script:WezTermTagVar and its
     siblings, never retyped, so the PowerShell that writes a tag and the Lua
@@ -1347,20 +1384,26 @@ function Get-WezTermTabModuleLua {
     [void]$sb.AppendLine('}')
     $lua = @'
 
+-- Every scheme this file registers is named PREFIX .. <style>.
+local PREFIX = 'TerminalStyles '
+
 -- What WezTerm draws for a key nobody set, for a look to fill in. The "none"
--- scheme is WezTerm's own default palette, registered in apply_to_config.
+-- scheme is WezTerm's own default palette, under a name no style can take
+-- ('/' is never in a style name).
 local BUILTIN = {
-  color_scheme = 'TerminalStyles ' .. UNSTYLED,
+  color_scheme = PREFIX .. UNSTYLED,
   background = {},
   window_background_opacity = 1.0,
   macos_window_background_blur = 0,
   default_cursor_style = 'SteadyBlock',
 }
 
--- Your own values for every key a look sets, read before the default style
--- is applied over them, and their fingerprint, which is part of every sync
--- stamp so an edit to your wezterm.lua reaches windows holding an override.
+-- Your own values for every key a look sets, and the scheme your own
+-- color_scheme names when your config registers it, read before the default
+-- style is applied over them; and their fingerprint, which is part of every
+-- sync stamp so an edit to your wezterm.lua reaches windows holding an override.
 local USER = {}
+local USER_SCHEME = nil
 local USERPRINT = ''
 local KEYS = { 'color_scheme', 'background', 'window_background_opacity',
                'macos_window_background_blur', 'default_cursor_style', 'colors' }
@@ -1399,10 +1442,13 @@ local function exists(path)
   return f ~= nil
 end
 
--- A COMPLETE table over KEYS. An override replaces only the keys it carries
--- and the base config holds the default style, so a key left out would show
--- the default's value. A key the style leaves alone is yours, else WezTerm's.
--- colors is always your own table with the style's active tab merged in.
+-- A COMPLETE table over KEYS, and the scheme table its color_scheme names (nil
+-- for a name WezTerm has built in). An override replaces only the keys it
+-- carries, so a key left out would show the base config's value. A key the
+-- style leaves alone is yours, else WezTerm's. colors is your own table, with
+-- the style's active tab merged in and without the keys the style's scheme
+-- sets: WezTerm lays colors over the scheme key by key, so your own
+-- background would otherwise draw over every style's.
 local function look_of(name)
   local t = {}
   for _, k in ipairs(KEYS) do
@@ -1411,9 +1457,13 @@ local function look_of(name)
     t[k] = copy(v)
   end
   t.colors = t.colors or {}
+  local scheme = USER_SCHEME
+  if USER.color_scheme == nil then scheme = wezterm.color.get_default_colors() end
   local look = LOOKS[name]
   if look then
-    t.color_scheme = 'TerminalStyles ' .. name
+    t.color_scheme = PREFIX .. name
+    scheme = look.scheme
+    for k in pairs(look.scheme) do t.colors[k] = nil end
     if look.cursor then t.default_cursor_style = look.cursor end
     if look.opacity then t.window_background_opacity = look.opacity end
     if look.blur then t.macos_window_background_blur = look.blur end
@@ -1451,7 +1501,7 @@ local function look_of(name)
     if #layers > 0 then t.background = layers end
   end
   if not DARWIN then t.macos_window_background_blur = nil end
-  return t
+  return t, scheme
 end
 
 -- A tag names a style; a preview tag counts only on the pane that carries it.
@@ -1508,9 +1558,13 @@ local function wanted(window, pane)
 end
 
 -- set_config_overrides only when the wanted look changed, this file did, or
--- your own values did. Only the keys a look sets are replaced: any other
--- override (a font-size toggle in your own config, say) is kept. The base
--- config is the default style, so showing it takes none of those keys.
+-- your own values did. Every window carries a COMPLETE look, the default's
+-- included, so a rewrite that changes the base config shows in no window
+-- before its sync. Each look carries the scheme it names: an override's
+-- color_schemes replaces the base config's whole table, so a window keeps its
+-- palette with this file gone. Only the keys a look sets are replaced, and
+-- only the schemes named PREFIX ..: any other override (a font-size toggle in
+-- your own config, say) is kept.
 local function sync(window, pane)
   if not window or not pane then return end
   local want = wanted(window, pane)
@@ -1520,36 +1574,56 @@ local function sync(window, pane)
   wezterm.GLOBAL[key] = stamp
   local overrides = window:get_config_overrides() or {}
   for _, k in ipairs(KEYS) do overrides[k] = nil end
-  if want ~= (DEFAULT or UNSTYLED) then
-    for k, v in pairs(look_of(want)) do overrides[k] = v end
+  local look, scheme = look_of(want)
+  for k, v in pairs(look) do overrides[k] = v end
+  local schemes = {}
+  for k, v in pairs(overrides.color_schemes or {}) do
+    if type(k) ~= 'string' or k:sub(1, #PREFIX) ~= PREFIX then schemes[k] = v end
   end
+  if scheme then schemes[look.color_scheme] = scheme end
+  overrides.color_schemes = schemes
   window:set_config_overrides(overrides)
 end
 
+-- In a pcall of its own: the wiring line's pcall guards only the require, and
+-- an error here would be a config error, which costs you your whole
+-- wezterm.lua. Every value is worked out before the first write to config, so
+-- an error leaves config as you wrote it, and is logged once.
 function M.apply_to_config(config)
-  for _, k in ipairs(KEYS) do USER[k] = copy(config[k]) end
-  USERPRINT = fingerprint(USER)
-  config.color_schemes = config.color_schemes or {}
-  config.color_schemes['TerminalStyles ' .. UNSTYLED] = wezterm.color.get_default_colors()
-  for name, look in pairs(LOOKS) do
-    config.color_schemes['TerminalStyles ' .. name] = look.scheme
-  end
-  for k, v in pairs(look_of(DEFAULT or UNSTYLED)) do config[k] = v end
+  local ok, err = pcall(function()
+    local user, user_scheme = {}, nil
+    for _, k in ipairs(KEYS) do user[k] = copy(config[k]) end
+    if type(user.color_scheme) == 'string' and type(config.color_schemes) == 'table' then
+      user_scheme = copy(config.color_schemes[user.color_scheme])
+    end
+    USER, USER_SCHEME = user, user_scheme
+    USERPRINT = fingerprint({ user, user_scheme })
+    local schemes = { [BUILTIN.color_scheme] = wezterm.color.get_default_colors() }
+    for name, look in pairs(LOOKS) do schemes[PREFIX .. name] = look.scheme end
+    local base = look_of(DEFAULT or UNSTYLED)
 
-  -- update-status fires on every tab switch as well as on its interval.
-  wezterm.on('update-status', function(window, pane)
-    sync(window, pane)
+    -- Only writes from here on. The base config draws the default style: a
+    -- new window's first frame, before its own sync.
+    config.color_schemes = config.color_schemes or {}
+    for name, scheme in pairs(schemes) do config.color_schemes[name] = scheme end
+    for k, v in pairs(base) do config[k] = v end
+
+    -- update-status fires on every tab switch as well as on its interval.
+    wezterm.on('update-status', function(window, pane)
+      sync(window, pane)
+    end)
+    -- A tag written by tstyles shows at once.
+    wezterm.on('user-var-changed', function(window, pane, name, value)
+      if name == VAR then sync(window, window:active_pane()) end
+    end)
+    -- A rewrite of this file, or an edit to your own config, changes what a
+    -- window should show; the stamp makes the reload that set_config_overrides
+    -- causes stop at the compare.
+    wezterm.on('window-config-reloaded', function(window, pane)
+      sync(window, window:active_pane())
+    end)
   end)
-  -- A tag written by tstyles shows at once.
-  wezterm.on('user-var-changed', function(window, pane, name, value)
-    if name == VAR then sync(window, window:active_pane()) end
-  end)
-  -- A rewrite of this file, or an edit to your own config, changes what a
-  -- window should show; the stamp makes the reload that set_config_overrides
-  -- causes stop at the compare.
-  wezterm.on('window-config-reloaded', function(window, pane)
-    sync(window, window:active_pane())
-  end)
+  if not ok then wezterm.log_error('TerminalStyles could not apply its styles; this config load is as you wrote it: ' .. tostring(err)) end
   return config
 end
 
