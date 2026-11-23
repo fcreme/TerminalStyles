@@ -1196,6 +1196,42 @@ Describe 'Publish-StyleWezTermConfig per tab' {
             ($lines -join ' ') | Should -Not -Match 'keeps your colors from this session'
         }
 
+        It 'hands the tag the OutputRedirected it is given, <Redirected>' -ForEach @(
+            @{ Redirected = $true }
+            @{ Redirected = $false }
+        ) {
+            # The seam Apply-StyleNonWT carries for the console check. Not
+            # forwarded, the tag asked [Console] itself, so a test or caller that
+            # pinned the seam still got the real console's answer for the tag.
+            Mock Test-WezTermPerTab { $true }
+            Mock Test-WezTermStyleWired { $true }
+            Mock Write-WezTermTabModule { 'written' }
+            Mock Invoke-WezTermTabTag { 'painted' }
+            Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h -OutputRedirected $Redirected | Out-Null
+            Should -Invoke Invoke-WezTermTabTag -Times 1 -Exactly -ParameterFilter { $OutputRedirected -eq $Redirected }
+        }
+
+        It 'Apply-StyleNonWT hands its OutputRedirected to the WezTerm publisher, <Redirected>' -ForEach @(
+            @{ Redirected = $true }
+            @{ Redirected = $false }
+        ) {
+            $savedCurrent = $script:TStylesCurrent
+            try {
+                $script:TStylesCurrent = Join-Path $script:TStylesDataRoot 'current-style.ps1'
+                $dir = Join-Path (Join-Path $script:TStylesDataRoot 'styles') 'alpha'
+                New-Item -ItemType Directory -Path $dir -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $dir 'scheme.json'),
+                    (@{ name = 'alpha'; background = '#101010'; foreground = '#eeeeee' } | ConvertTo-Json),
+                    [System.Text.UTF8Encoding]::new($false))
+                Mock Get-TerminalKind { 'WezTerm' }
+                Mock Publish-StyleWezTermConfig { $null }
+                Mock Publish-StyleVSCodeConfig { $null }
+                Apply-StyleNonWT -StyleName 'alpha' -StyleDir $dir -OutputRedirected $Redirected | Out-Null
+                Should -Invoke Publish-StyleWezTermConfig -Times 1 -Exactly -ParameterFilter { $OutputRedirected -eq $Redirected }
+            } finally { $script:TStylesCurrent = $savedCurrent }
+        }
+
         It 'off per-tab: a failed module write keeps its wording' {
             Mock Test-WezTermPerTab { $false }
             Mock Write-WezTermStyleModule { 'failed' }

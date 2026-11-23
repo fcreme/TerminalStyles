@@ -949,7 +949,10 @@ function Publish-StyleWezTermConfig {
         [Parameter(Mandatory)][string]$Kind,
         [string]$HomeDir,
         # Test seam, as Test-WezTermPerTab's: which wording the notice gets.
-        [string]$Platform = (Get-TStylesPlatform)
+        [string]$Platform = (Get-TStylesPlatform),
+        # The caller's console check, handed on to the per-tab tag
+        # (Invoke-WezTermTabTag), so a caller that pins it pins the tag too.
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
     )
 
     if ($Kind -ne 'WezTerm') { return $null }
@@ -1019,7 +1022,7 @@ function Publish-StyleWezTermConfig {
     }
     # After the module, so a tab is never tagged with a style the module does
     # not know yet. A 'failed' write returned above and tags nothing.
-    if ($perTab) { Invoke-WezTermTabTag -Value $tabName | Out-Null }
+    if ($perTab) { Invoke-WezTermTabTag -Value $tabName -OutputRedirected $OutputRedirected | Out-Null }
     return $path
 }
 
@@ -1281,7 +1284,7 @@ function Apply-StyleNonWT {
     Publish-StyleBackgroundProfile -StyleName $StyleName -StyleDir $StyleDir `
         -Scheme $scheme -Kind $kind -NewWindow:$NewWindow | Out-Null
     Publish-StyleWezTermConfig -StyleName $StyleName -StyleDir $StyleDir `
-        -Scheme $scheme -Theme $theme -Kind $kind | Out-Null
+        -Scheme $scheme -Theme $theme -Kind $kind -OutputRedirected $OutputRedirected | Out-Null
     # The fourth writer, called beside the third for the reason the picker's
     # confirm gives: every publisher the direct path calls, the picker calls.
     Show-VSCodeWriteResult -Result (Publish-StyleVSCodeConfig -StyleName $StyleName -StyleDir $StyleDir -Kind $kind)
