@@ -266,6 +266,48 @@ Describe 'Get-WezTermStyleLook' {
             $l = Get-WezTermStyleLook -StyleName eva -Scheme $script:scheme -Theme $script:theme -BackgroundCandidates @('/c/background.gif')
             script:Get-LookTopLine $l 'image' | Should -BeLike '*, opacity = 1 },'
         }
+
+        It 'writes a number Lua can load for an image opacity that overflows' {
+            # pwsh 7 parses '-1e400' as -Infinity, which wrote `opacity =
+            # -Infinity`: unary minus on a nil global, so the whole module
+            # failed to load. Not finite reads as not given.
+            foreach ($v in '-1e400', '1e400', 'NaN') {
+                $script:theme.backgroundImageOpacity = $v
+                $l = Get-WezTermStyleLook -StyleName eva -Scheme $script:scheme -Theme $script:theme -BackgroundCandidates @('/c/background.gif')
+                script:Get-LookTopLine $l 'image' | Should -BeLike '*, opacity = 1 },' -Because "'$v' is not a finite number"
+            }
+        }
+
+        It 'clamps an image opacity to 0..1' {
+            $script:theme.backgroundImageOpacity = 1.5
+            $l = Get-WezTermStyleLook -StyleName eva -Scheme $script:scheme -Theme $script:theme -BackgroundCandidates @('/c/background.gif')
+            script:Get-LookTopLine $l 'image' | Should -BeLike '*, opacity = 1 },'
+            $script:theme.backgroundImageOpacity = -0.25
+            $l = Get-WezTermStyleLook -StyleName eva -Scheme $script:scheme -Theme $script:theme -BackgroundCandidates @('/c/background.gif')
+            script:Get-LookTopLine $l 'image' | Should -BeLike '*, opacity = 0 },'
+        }
+    }
+}
+
+Describe 'Get-WezTermImageOpacity' {
+    InModuleScope TerminalStyles {
+        It 'passes a finite value in 0..1 through, number or string' {
+            Get-WezTermImageOpacity 0.35 | Should -Be 0.35
+            Get-WezTermImageOpacity '0.35' | Should -Be 0.35
+            Get-WezTermImageOpacity 0 | Should -Be 0
+            Get-WezTermImageOpacity 1 | Should -Be 1
+        }
+        It 'reads nothing, a non-number and a non-finite number as fully opaque' {
+            foreach ($v in $null, '', '40%', 'NaN', '-1e400', '1e400', [double]::NegativeInfinity, [double]::NaN) {
+                $r = Get-WezTermImageOpacity $v
+                $r | Should -Be 1 -Because "'$v' is not a finite number"
+                [double]::IsInfinity($r) -or [double]::IsNaN($r) | Should -BeFalse
+            }
+        }
+        It 'clamps to 0..1' {
+            Get-WezTermImageOpacity 1.5 | Should -Be 1
+            Get-WezTermImageOpacity '-0.25' | Should -Be 0
+        }
     }
 }
 

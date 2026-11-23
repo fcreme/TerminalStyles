@@ -361,6 +361,43 @@ function Get-WezTermWindowOpacity {
     [math]::Round($parsed / 100.0, 4)
 }
 
+function Get-WezTermImageOpacity {
+    <#
+    .SYNOPSIS
+    theme.json backgroundImageOpacity -> the image layer's opacity, always a
+    finite number in 0..1. Both generators use it.
+
+    .DESCRIPTION
+    Not given, not a number ('40%'), or not finite reads as 1, fully opaque,
+    which is what a style naming no image opacity gets. Not finite matters on
+    pwsh 7, where '-1e400' parses as -Infinity: written into the module that is
+    `-Infinity`, unary minus on an undefined global, and the whole module fails
+    to load. Out of range is clamped, as Windows Terminal clamps it. A value in
+    0..1 comes back unchanged, so the single-style module writes every value
+    Windows Terminal accepts exactly as it did when it cast with [double].
+
+    A number is taken as it is, never through a string: Windows PowerShell 5.1
+    formats a double to 15 significant digits, so the round trip could move it.
+    A string is parsed with InvariantCulture, the decimal point JSON uses.
+    #>
+    [CmdletBinding()]
+    [OutputType([double])]
+    param([AllowNull()]$Opacity)
+
+    if ($null -eq $Opacity) { return 1.0 }
+    $parsed = 0.0
+    if ($Opacity -is [string]) {
+        if (-not [double]::TryParse($Opacity, [System.Globalization.NumberStyles]::Float,
+                                    [cultureinfo]::InvariantCulture, [ref]$parsed)) { return 1.0 }
+    } else {
+        try { $parsed = [double]$Opacity } catch { return 1.0 }
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) { return 1.0 }
+    if ($parsed -lt 0) { return 0.0 }
+    if ($parsed -gt 1) { return 1.0 }
+    return $parsed
+}
+
 function Get-WezTermTabForeground {
     <#
     .SYNOPSIS
@@ -628,10 +665,10 @@ function Get-WezTermStyleLua {
 
     # The point of the whole file.
     if ($BackgroundImage) {
+        # The per-tab look's rule: a value Windows Terminal accepts is written
+        # as it always was, and one it does not no longer throws.
         $bgOpacity = 1.0
-        if ($Theme -and $null -ne $Theme.backgroundImageOpacity) {
-            $bgOpacity = [double]$Theme.backgroundImageOpacity
-        }
+        if ($Theme) { $bgOpacity = Get-WezTermImageOpacity $Theme.backgroundImageOpacity }
         $size = Get-WezTermBackgroundSize ($Theme.backgroundImageStretchMode)
         [void]$sb.AppendLine("")
         [void]$sb.AppendLine("  -- Layer 1 is the style's own background colour. With any background")
@@ -1206,12 +1243,7 @@ function Get-WezTermStyleLook {
         if ($Theme) {
             $stretch = $Theme.backgroundImageStretchMode
             $align = $Theme.backgroundImageAlignment
-            $parsed = 0.0
-            if ($null -ne $Theme.backgroundImageOpacity -and
-                [double]::TryParse("$($Theme.backgroundImageOpacity)", [System.Globalization.NumberStyles]::Float,
-                                   $inv, [ref]$parsed)) {
-                $imageOpacity = $parsed
-            }
+            $imageOpacity = Get-WezTermImageOpacity $Theme.backgroundImageOpacity
         }
         $size = Get-WezTermBackgroundSize $stretch
         $al = Get-WezTermBackgroundAlignment $align

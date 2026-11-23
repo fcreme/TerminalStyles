@@ -157,6 +157,30 @@ Describe 'Get-WezTermStyleLua' {
                 } finally { [System.Threading.Thread]::CurrentThread.CurrentCulture = $saved }
             }
 
+            It 'reads an image opacity that is not a number as fully opaque, rather than throwing' {
+                # The per-tab look's rule (Get-WezTermImageOpacity), shared: the
+                # [double] cast here threw on '40%' and took the apply with it.
+                foreach ($v in '40%', '-1e400', 'NaN') {
+                    $script:theme.backgroundImageOpacity = $v
+                    $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme `
+                        -Theme $script:theme -BackgroundImage '/abs/b.gif'
+                    @($lua -split '\r?\n' | Where-Object { $_.Trim() -ceq 'opacity = 1,' }).Count |
+                        Should -Be 1 -Because "'$v' is not a usable opacity"
+                }
+            }
+
+            It 'writes a valid image opacity exactly as before' {
+                # The shared rule must not move a value Windows Terminal itself
+                # accepts: 0 to 1, as a number or as a string of one.
+                foreach ($pair in @(@(0, '0'), @(0.4, '0.4'), @(1, '1'), @('0.35', '0.35'), @(0.123456789, '0.123456789'))) {
+                    $script:theme.backgroundImageOpacity = $pair[0]
+                    $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme `
+                        -Theme $script:theme -BackgroundImage '/abs/b.gif'
+                    @($lua -split '\r?\n' | Where-Object { $_.Trim() -ceq "opacity = $($pair[1])," }).Count |
+                        Should -Be 1 -Because "$($pair[0]) is written as it was"
+                }
+            }
+
             It 'emits no background block for a style that ships none' {
                 $lua = Get-WezTermStyleLua -StyleName 'sober' -Scheme $script:scheme -Theme $script:theme
                 $lua | Should -Not -Match 'config\.background'
