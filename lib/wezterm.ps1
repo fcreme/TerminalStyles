@@ -910,3 +910,141 @@ function Test-WezTermStyleWired {
     }
     return $false
 }
+
+# The tag a tab carries: a user variable the generated Lua module reads per tab.
+# A `/` cannot appear in any resolvable style name (Test-StyleNameIsSingleSegment),
+# so the two markers below cannot collide with a style.
+$script:WezTermTagVar           = 'TERMINALSTYLES_STYLE'
+$script:WezTermTagUnstyled      = '/unstyled'
+$script:WezTermTagPreviewPrefix = '/preview/'
+
+function Test-WezTermPerTab {
+    <#
+    .SYNOPSIS
+    Does this session style one WezTerm tab at a time?
+
+    .DESCRIPTION
+    True only inside WezTerm, off Windows, with the require line wired into the
+    config WezTerm loads. -Kind, -Platform and -HomeDir are test seams; -HomeDir
+    is forwarded only when bound, so an unbound one means the live $HOME.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [string]$Kind = (Get-TerminalKind),
+        [string]$Platform = (Get-TStylesPlatform),
+        [string]$HomeDir
+    )
+    if ($Kind -ne 'WezTerm') { return $false }
+    if ($Platform -eq 'Windows') { return $false }
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+    return [bool](Test-WezTermStyleWired @splat)
+}
+
+function Get-WezTermTagPacket {
+    <#
+    .SYNOPSIS
+    The escape sequence that sets this tab's TERMINALSTYLES_STYLE user variable.
+
+    .DESCRIPTION
+    ESC ] 1337 ; SetUserVar=NAME=<base64 of UTF-8 Value> BEL. Inside tmux it is
+    wrapped in a DCS passthrough with every ESC doubled. An empty Value is valid
+    and clears the tag.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value,
+        [bool]$InTmux = [bool]$env:TMUX
+    )
+    $esc = [string][char]27
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Value))
+    $packet = "$esc]1337;SetUserVar=$($script:WezTermTagVar)=$b64$([char]7)"
+    if ($InTmux) { return "${esc}Ptmux;" + $packet.Replace($esc, "$esc$esc") + "$esc\" }
+    return $packet
+}
+
+function Get-WezTermTabKey {
+    # "<socket>|<pane>" identifies one WezTerm pane across processes; $null when
+    # either half is missing, i.e. outside WezTerm.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    if (-not $env:WEZTERM_UNIX_SOCKET -or -not $env:WEZTERM_PANE) { return $null }
+    return "$($env:WEZTERM_UNIX_SOCKET)|$($env:WEZTERM_PANE)"
+}
+
+function Get-WezTermTabRecordPath {
+    Join-Path $script:TStylesDataRoot 'wezterm-tabs.json'
+}
+
+function Read-WezTermTabRecordTable {
+    # key -> value, as an ordered hashtable. Throws on an unreadable file; a
+    # missing file is an empty table. Walks PSObject.Properties because Windows
+    # PowerShell 5.1 has no ConvertFrom-Json -AsHashtable.
+    $path = Get-WezTermTabRecordPath
+    $table = [ordered]@{}
+    if (-not [System.IO.File]::Exists($path)) { return $table }
+    $text = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
+    $obj = $text | ConvertFrom-Json
+    if ($obj -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($p in $obj.PSObject.Properties) { $table[$p.Name] = [string]$p.Value }
+    }
+    return $table
+}
+
+function Set-WezTermTabRecord {
+    <#
+    .SYNOPSIS
+    Remember which style this tab carries, so a later process can read it back.
+
+    .DESCRIPTION
+    Writes wezterm-tabs.json under the data root: key -> value, where '' means
+    unstyled. Every entry whose socket (the part before `|`) no longer exists is
+    dropped, so the file does not grow with every WezTerm session. A socket is
+    not a regular file, hence Test-Path rather than a file-only check. A corrupt
+    existing file is treated as empty and rewritten.
+    Returns 'ok', 'failed', or 'nokey' (not inside WezTerm; nothing written).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+
+    $key = Get-WezTermTabKey
+    if (-not $key) { return 'nokey' }
+    try {
+        $table = [ordered]@{}
+        try { $table = Read-WezTermTabRecordTable } catch { $table = [ordered]@{} }
+        $kept = [ordered]@{}
+        foreach ($k in $table.Keys) {
+            $sock = $k.Split('|')[0]
+            if ($sock -and (Test-Path -LiteralPath $sock)) { $kept[$k] = $table[$k] }
+        }
+        $kept[$key] = $Value
+        $path = Get-WezTermTabRecordPath
+        $dir = Split-Path -Parent $path
+        if (-not [System.IO.Directory]::Exists($dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
+        $json = $kept | ConvertTo-Json -Depth 2
+        [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+        return 'ok'
+    } catch { return 'failed' }
+}
+
+function Get-WezTermTabRecord {
+    <#
+    .SYNOPSIS
+    This tab's recorded value; $null when there is no key, no file, an unreadable
+    file, or no entry. '' (unstyled) is a real answer, distinct from $null.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $key = Get-WezTermTabKey
+    if (-not $key) { return $null }
+    try {
+        $table = Read-WezTermTabRecordTable
+        if ($table.Contains($key)) { return [string]$table[$key] }
+    } catch { }
+    return $null
+}
