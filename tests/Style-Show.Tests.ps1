@@ -30,6 +30,7 @@ Describe 'Invoke-TerminalStyleShow' {
         BeforeAll {
             $script:Osc   = "$([char]27)]11;"   # "set this colour"
             $script:Reset = "$([char]27)]104"   # "take your palette back"
+            . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1')
         }
         # Which revert is right also depends on whether this is a per-tab
         # WezTerm session, which is ambient too: pinned off here, and on in
@@ -81,7 +82,8 @@ Describe 'Invoke-TerminalStyleShow' {
             $painted = [System.Collections.Generic.List[string]]::new()
             Invoke-TerminalStyleShow -Name 'koholint' -Interactive $true `
                 -ReadKey { } -Write { param($l) $painted.Add($l) }.GetNewClosure()
-            $painted[-1] | Should -BeExactly (Get-OscResetPacket) `
+            # By bytes: on pwsh 7 -BeExactly ignores ESC and BEL.
+            Assert-SameBytes -Actual $painted[-1] -Expected (Get-OscResetPacket) `
                 -Because 'the restore must be the last thing written, and per tab it is the reset'
             @($painted | Where-Object { $_ -match [regex]::Escape($script:Osc) }).Count | Should -Be 1 `
                 -Because 'one to paint the preview, and no second scheme to put back'

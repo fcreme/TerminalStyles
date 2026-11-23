@@ -46,6 +46,7 @@ Describe 'Restore-TuneBaseLook' {
     # here against a real settings.json in $TestDrive, with the data root there
     # too, so the record and copy the session keeps stay in the sandbox.
     InModuleScope TerminalStyles {
+        BeforeAll { . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1') }
         BeforeEach {
             $script:savedRoot = $script:TStylesDataRoot
             $sand = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
@@ -141,7 +142,8 @@ Describe 'Restore-TuneBaseLook' {
             Restore-TuneBaseLook -State $script:tuneState -Session @{ Kind = 'WindowsTerminal' } `
                 -OpenedScheme $script:opened | Should -Be 'reverted'
             $script:oscSent.Count | Should -Be 1
-            $script:oscSent[0] | Should -BeExactly (Get-OscResetPacket)
+            # By bytes: on pwsh 7 -BeExactly ignores ESC and BEL.
+            Assert-SameBytes -Actual $script:oscSent[0] -Expected (Get-OscResetPacket)
             Should -Invoke Restore-FilePreview -Times 0 -Exactly
         }
 

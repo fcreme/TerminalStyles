@@ -52,20 +52,26 @@ Describe 'WezTerm tag constants' {
 }
 
 Describe 'Get-WezTermTagPacket' {
+    # Compared by bytes (tests/Assert-SameBytes.ps1). On pwsh 7 -BeExactly and
+    # .StartsWith ignore ESC and BEL, so the tmux test passed a wrap whose ESCs
+    # were never doubled.
     InModuleScope TerminalStyles {
+        BeforeAll { . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1') }
+
         It 'base64-encodes the UTF-8 value' {
             $p = Get-WezTermTagPacket -Value "o'brién" -InTmux $false
-            $p | Should -BeExactly ("$([char]27)]1337;SetUserVar=TERMINALSTYLES_STYLE=" +
+            Assert-SameBytes -Actual $p -Expected ("$([char]27)]1337;SetUserVar=TERMINALSTYLES_STYLE=" +
                 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes("o'brién")) + "$([char]7)")
         }
         It 'wraps for tmux with every ESC doubled' {
-            $p = Get-WezTermTagPacket -Value kitty -InTmux $true
-            $p.StartsWith("$([char]27)Ptmux;$([char]27)$([char]27)]1337;") | Should -BeTrue
-            $p.EndsWith("$([char]27)\") | Should -BeTrue
+            $esc = [string][char]27
+            Assert-SameBytes -Actual (Get-WezTermTagPacket -Value kitty -InTmux $true) `
+                -Expected ("${esc}Ptmux;${esc}${esc}]1337;SetUserVar=TERMINALSTYLES_STYLE=" +
+                           [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes('kitty')) + "$([char]7)${esc}\")
         }
         It 'encodes an empty value as an empty user var' {
-            Get-WezTermTagPacket -Value '' -InTmux $false |
-                Should -BeExactly "$([char]27)]1337;SetUserVar=TERMINALSTYLES_STYLE=$([char]7)"
+            Assert-SameBytes -Actual (Get-WezTermTagPacket -Value '' -InTmux $false) `
+                -Expected "$([char]27)]1337;SetUserVar=TERMINALSTYLES_STYLE=$([char]7)"
         }
     }
 }

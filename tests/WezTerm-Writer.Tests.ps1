@@ -1047,7 +1047,11 @@ Describe 'the background sits where the style puts it' {
 }
 
 Describe 'Publish-StyleWezTermConfig per tab' {
+    # Packets are compared by bytes (Test-SameBytes, tests/Assert-SameBytes.ps1):
+    # on pwsh 7 -ceq ignores ESC and BEL, and a filter that cannot see them
+    # matches a packet that lost them.
     InModuleScope TerminalStyles {
+        BeforeAll { . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1') }
         BeforeEach {
             $script:savedData = $script:TStylesDataRoot
             $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
@@ -1167,7 +1171,7 @@ Describe 'Publish-StyleWezTermConfig per tab' {
                     Should -Be 'painted'
                 Get-WezTermTabRecord | Should -BeExactly ''
                 Should -Invoke Write-HostOscPacket -Times 1 -Exactly -ParameterFilter {
-                    $Packet -ceq ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value '/unstyled')) }
+                    Test-SameBytes -Actual $Packet -Expected ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value '/unstyled')) }
 
                 Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $false | Should -Be 'painted'
                 Get-WezTermTabRecord | Should -BeExactly 'eva' -Because 'a style name is recorded as it is sent'
@@ -1248,12 +1252,12 @@ Describe 'Publish-StyleWezTermConfig per tab' {
             Mock Set-WezTermTabRecord { 'ok' }
             Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $false | Should -Be 'painted'
             Should -Invoke Write-HostOscPacket -Times 1 -Exactly -ParameterFilter {
-                $Packet -ceq (Get-WezTermTagPacket -Value 'eva') }
+                Test-SameBytes -Actual $Packet -Expected (Get-WezTermTagPacket -Value 'eva') }
             Should -Invoke Set-WezTermTabRecord -Times 1 -Exactly -ParameterFilter { $Value -eq 'eva' }
 
             Invoke-WezTermTabTag -Value '/unstyled' -WithReset -OutputRedirected $false | Should -Be 'painted'
             Should -Invoke Write-HostOscPacket -Times 1 -Exactly -ParameterFilter {
-                $Packet -ceq ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value '/unstyled')) }
+                Test-SameBytes -Actual $Packet -Expected ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value '/unstyled')) }
         }
     }
 }
