@@ -119,8 +119,11 @@ style of its **active tab** and changes as you switch tabs. A **new tab** opens
 in the last style applied anywhere, and a **split** takes the style of its tab.
 When WezTerm quits, each tab forgets its own style: after a restart every tab
 opens in the last style applied. `tstyles current`, the marker in `tstyles list`,
-`tstyles tune` with no name, `random` and `delete` answer for the tab you are in;
-a tab with no style of its own reports the last style applied.
+`tstyles tune` with no name, `random` and `delete` name the style last applied
+**in the pane you are in**. A pane where none was applied (a split, or a tab
+opened before the last apply) reports the last style applied anywhere, which may
+not be the one that tab shows: `tstyles` cannot read the module's memory of what
+each tab was opened in.
 
 How it works: `~/.config/wezterm/terminalstyles.lua` carries the look of every
 installed style. `tstyles` tags the tab it runs in with an OSC 1337 user
@@ -128,13 +131,15 @@ variable (`TERMINALSTYLES_STYLE`), and the module sets that window's config
 overrides to match the tag of its active tab. A per-tab record
 (`wezterm-tabs.json`, in the data folder) lets `tstyles` itself remember which
 style each tab wears, since a tab's tag cannot be read back. Applying a style
-also makes it the default for new tabs, which rewrites the module. Inside tmux
-the tag only reaches WezTerm with `set -g allow-passthrough on` in your
-`tmux.conf`.
+also makes it the default for new tabs, which rewrites the module. Every window
+holds a complete set of overrides for the look it shows, the style's color scheme
+included, so a rewrite never shows in a window before it is synced, and the
+windows keep their look if the module is deleted. Inside tmux the tag needs
+`set -g allow-passthrough on` in your `tmux.conf` (not tested on a real tmux).
 
-New zsh and bash shells in WezTerm no longer replay the last style's palette
-over their tab, since that would paint the last style's colors over a tab
-wearing another one.
+New zsh, bash and pwsh shells in WezTerm no longer replay the last style's
+palette over their tab, since that would paint the last style's colors over a
+tab wearing another one.
 
 `tstyles reset`, run in WezTerm, puts **that tab** back to your own look and
 makes new tabs open unstyled; other tabs keep their styles. Deleting the style
@@ -156,10 +161,14 @@ background, the cursor shape, the tab accent color, and for a style that asks
 for transparency the window opacity, with `macos_window_background_blur` added
 only on macOS, behind a `wezterm.target_triple` test, so the same file stays
 valid on Linux. Where your own `wezterm.lua` sets one of those keys too, a
-styled tab wins for that key. **Font, size and padding are not set by a style
+styled tab wins for that key; that includes a `colors` table of yours, whose
+entries for the palette keys the style's scheme sets are left out in a styled
+tab, while the rest of it (tab bar colors, say) stays. An unstyled tab is your
+own look exactly. **Font, size and padding are not set by a style
 off Windows**: a font or padding belongs to the whole window, and changing it on
-each tab switch would reflow your text. Set them in your own `wezterm.lua`;
-`tstyles font` and the "can't show" notice say so.
+each tab switch would reflow your text. Set them in your own `wezterm.lua`:
+`tstyles font <name>` prints the `config.font` line to add, and the "can't
+show" notice names font and padding.
 
 **On Windows**, WezTerm keeps the older behavior: every apply rewrites the
 module and restyles every tab, and the style sets the font and padding too.

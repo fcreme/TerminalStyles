@@ -91,10 +91,12 @@ function Get-TerminalStyleHelpData {
                        "changes with the tab you switch to. A new tab takes the last style",
                        "applied anywhere, a split takes its tab's, and a restart forgets",
                        "each tab's own style. Font, size and padding are not set by a",
-                       "style there: they come from your own wezterm.lua. For the keys a",
+                       "style there: they come from your own wezterm.lua, and tstyles",
+                       "font <name> prints the line that sets the font. For the keys a",
                        "style does set (colours, background, opacity, blur, cursor, tab",
-                       "colour), a styled tab wins over your own lines. Inside tmux, WezTerm",
-                       "only hears the tab's style with `set -g allow-passthrough on`.",
+                       "colour), a styled tab wins over your own lines, a colors table",
+                       "included. Inside tmux, WezTerm only hears the tab's style with",
+                       '`set -g allow-passthrough on` (not tested on a real tmux).',
                        "WezTerm on Windows still restyles every tab.",
                        "",
                        "Whatever the current terminal cannot show is named as the style is",
@@ -115,8 +117,10 @@ function Get-TerminalStyleHelpData {
                        "detected it prints nothing if its output is captured or piped, so",
                        '[ -n "$(tstyles current)" ] asks whether a style is on, and a',
                        "short note saying so at a console. In a WezTerm that styles one tab",
-                       "at a time (see apply), it names this tab's style, as list, tune and",
-                       "random do; with no record for the tab, the last style applied.")
+                       "at a time (see apply), it names the style last applied in this",
+                       "pane, as list, tune and random do. A pane where none was (a split,",
+                       "or a tab opened before the last apply) gets the last style applied",
+                       "anywhere, which may not be the one that tab shows.")
             Keys = @(); Examples = @('tstyles current')
         }
                 [pscustomobject]@{
@@ -453,10 +457,9 @@ function Get-TerminalStyleHelpData {
                        "Insiders, VSCodium, Cursor, Windsurf) is taken back out of it, from",
                        "its record; a key you changed by hand since is left alone.",
                        "",
-                       "The generated WezTerm module (terminalstyles.lua) is deleted.",
-                       "WezTerm windows already open keep their look until you close them",
-                       "or restart WezTerm; after deleting a per-tab module the command",
-                       "says so.",
+                       "The generated WezTerm module (terminalstyles.lua) is deleted. When",
+                       "it was the per-tab one, WezTerm windows already open keep their look",
+                       "until you close them or restart WezTerm, and the command says so.",
                        "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
                        "The confirmation names every file it is about to change, `$PROFILE,",

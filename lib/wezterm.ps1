@@ -823,9 +823,10 @@ function Write-WezTermModuleText {
     written has one place to land. Through here: an apply
     (Write-WezTermStyleModule), the picker's preview (which calls
     Write-WezTermStyleModule), the picker's preview and Esc (Write-FilePreview
-    and Restore-FilePreview), and reset (Clear-WezTermStyleModule). Only the
-    removal of a module a picker session itself created does not go through
-    here.
+    and Restore-FilePreview), reset (Clear-WezTermStyleModule), and every write
+    of the per-tab module (Write-WezTermTabModule: apply, reset, delete and the
+    picker's open, in per-tab mode). Only the removal of a module a picker
+    session itself created does not go through here.
 
     UTF-8 without BOM, not Get-RcFileEncoding. The file belongs wholly to
     TerminalStyles: it is written whole, and read back only by TerminalStyles --

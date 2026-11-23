@@ -34,10 +34,11 @@ as you switch tabs. A new tab opens in the last style applied anywhere, and a
 split takes the style of its tab. WezTerm forgets each tab's own style when it
 quits; after a restart every tab opens in the last style applied. Font, size and
 padding are no longer set by a style there: they come from your own
-`wezterm.lua` (`tstyles font` says so). For the keys a style does set (colours,
-background, opacity, blur, cursor, tab colour), a styled tab wins over your own
-lines. Inside tmux, add `set -g allow-passthrough on` so WezTerm hears which
-style a tab wears. On Windows, WezTerm keeps restyling every tab.
+`wezterm.lua` (`tstyles font <name>` prints the line that sets it). For the keys
+a style does set (colours, background, opacity, blur, cursor, tab colour), a
+styled tab wins over your own lines, a `colors` table included. Inside tmux,
+WezTerm hears which style a tab wears only with `set -g allow-passthrough on`
+(not tested on a real tmux). On Windows, WezTerm keeps restyling every tab.
 
 **Make your own.** `tstyles create` builds a style from any picture on your
 computer: it pulls a palette from the image, lets you change any colour, pick
