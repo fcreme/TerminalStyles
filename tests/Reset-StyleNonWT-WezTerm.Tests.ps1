@@ -243,13 +243,28 @@ Describe 'tstyles reset in per-tab WezTerm resets this tab and the default, noth
             $out | Should -Match ([regex]::Escape('New tabs open unstyled'))
         }
 
-        It 'per-tab: a failed module write names the module and claims no reset' {
+        It 'per-tab: a failed module write says this tab was reset, and that only the new-tab default failed' {
+            # The tag went out before the module write, so this tab WAS reset;
+            # what failed is the default new tabs open in, which lives in the
+            # module. Saying neither left the user to guess which half held.
             Mock Write-WezTermTabModule { 'failed' }
             $out = Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String -Width 500
+            $out | Should -Match ([regex]::Escape('Reset this WezTerm tab to your own look'))
+            $out | Should -Match 'clear the style new tabs open in from WezTerm''s module'
             $out | Should -Match ([regex]::Escape($script:wezPath))
-            $out | Should -Not -Match 'Reset this WezTerm tab'
             $out | Should -Not -Match 'New tabs open unstyled'
             $out | Should -Match 'last style you applied'
+        }
+
+        It 'per-tab: a failed module write with a tag that reached no terminal claims no reset at all' {
+            Mock Write-WezTermTabModule { 'failed' }
+            Mock Invoke-WezTermTabTag { 'noterminal' }
+            $out = Reset-StyleNonWT -OutputRedirected:$true 6>&1 | Out-String -Width 500
+            $out | Should -Not -Match 'Reset this WezTerm tab'
+            $out | Should -Match 'This tab was not reset'
+            $out | Should -Match 'clear the style new tabs open in from WezTerm''s module'
+            $out | Should -Match ([regex]::Escape($script:wezPath))
+            $out | Should -Not -Match 'New tabs open unstyled'
         }
     }
 }

@@ -1609,7 +1609,21 @@ function Reset-StyleNonWT {
     $wezPath = if ($kind -eq 'WezTerm') { Get-WezTermModulePath } else { $null }
 
     Write-Host ""
-    if ($wez -eq 'failed') {
+    if ($wez -eq 'failed' -and $perTab) {
+        # Per tab, the tag went out BEFORE the module write, so this tab's own
+        # reset stands or falls on its own: say which, then what failed, which
+        # is only the default new tabs open in (the module's DEFAULT).
+        if ($repainted) {
+            Write-Host "  Reset this WezTerm tab to your own look." -ForegroundColor Yellow
+            Write-Host "  But it could not clear the style new tabs open in from WezTerm's module:" -ForegroundColor Yellow
+        } else {
+            Write-Host "  This tab was not reset: its output is not a terminal." -ForegroundColor Yellow
+            Write-Host "  Nor could it clear the style new tabs open in from WezTerm's module:" -ForegroundColor Yellow
+        }
+        Write-Host "    $wezPath" -ForegroundColor Yellow
+        Write-Host "  Make it writable and run tstyles reset again, or delete it by hand; until" -ForegroundColor Yellow
+        Write-Host "  then new WezTerm tabs open in the last style you applied." -ForegroundColor Yellow
+    } elseif ($wez -eq 'failed') {
         # First, because every other line below is false while the module
         # still styles this window and every new one. The record is cleared all
         # the same, as it is when the VS Code half fails, so this names the file
@@ -1618,11 +1632,7 @@ function Reset-StyleNonWT {
         Write-Host "  Could not take the style out of WezTerm's module:" -ForegroundColor Yellow
         Write-Host "    $wezPath" -ForegroundColor Yellow
         Write-Host "  Make it writable and run tstyles reset again, or delete it by hand; until" -ForegroundColor Yellow
-        if ($perTab) {
-            Write-Host "  then new WezTerm tabs open in the last style you applied." -ForegroundColor Yellow
-        } else {
-            Write-Host "  then WezTerm keeps applying the last style." -ForegroundColor Yellow
-        }
+        Write-Host "  then WezTerm keeps applying the last style." -ForegroundColor Yellow
     } elseif ($perTab -and $repainted) {
         Write-Host "  Reset this WezTerm tab to your own look."
         Write-Host "  New tabs open unstyled; other open tabs keep their styles."
