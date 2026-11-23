@@ -83,10 +83,11 @@
 # 2026-11-20 while color_scheme seemed to have no "none"). Both keys have a
 # working "none" -- the synthesized default scheme and `background = {}` -- so
 # base = the LAST-APPLIED STYLE, as the design chose: apply_to_config applies the
-# default style to the config itself, a window showing the default carries no
-# overrides, and every other window, an unstyled one included, carries a
-# COMPLETE override over every key a look sets, filled from the user's own value
-# and then from WezTerm's, for a key the style leaves alone. The new-window
+# default style to the config itself, a window showing the default carries none
+# of a look's keys as overrides, and every other window, an unstyled one
+# included, carries a COMPLETE override over every key a look sets, filled from
+# the user's own value and then from WezTerm's, for a key the style leaves
+# alone. Overrides on any other key are the user's and are kept. The new-window
 # first-frame question is moot in this mode: a new window starts from the base
 # config, and the base config already is the default style.
 
@@ -1226,11 +1227,14 @@ function Get-WezTermTabModuleLua {
     look like it from their first frame.
 
     GENERATION is the first 16 hex digits of the SHA-256 of this text with the
-    stamp itself blank. Every window stores "<wanted>@<GENERATION>" once it is
-    synced and skips a sync whose stamp matches, so a rewritten module -- a new
-    default changes what an empty override draws -- re-syncs every window
-    once, and the reload that set_config_overrides itself causes ends at the
-    compare instead of looping.
+    stamp itself blank. Every window stores "<wanted>@<GENERATION>@<user>" once
+    it is synced, <user> being a fingerprint of the user's own values for the
+    keys a look sets, and skips a sync whose stamp matches. So a rewritten
+    module (a new default changes what the base config draws) or an edited
+    wezterm.lua re-syncs every window once, and the reload that
+    set_config_overrides itself causes ends at the compare instead of looping.
+    A sync replaces only the keys a look sets and keeps every other override
+    the window holds.
 
     The reserved tag values are interpolated from $script:WezTermTagVar and its
     siblings, never retyped, so the PowerShell that writes a tag and the Lua
@@ -1280,8 +1284,10 @@ local BUILTIN = {
 }
 
 -- Your own values for every key a look sets, read before the default style
--- is applied over them.
+-- is applied over them, and their fingerprint, which is part of every sync
+-- stamp so an edit to your wezterm.lua reaches windows holding an override.
 local USER = {}
+local USERPRINT = ''
 local KEYS = { 'color_scheme', 'background', 'window_background_opacity',
                'macos_window_background_blur', 'default_cursor_style', 'colors' }
 
@@ -1290,6 +1296,27 @@ local function copy(v)
   local t = {}
   for k, x in pairs(v) do t[k] = copy(x) end
   return t
+end
+
+-- Sorted keys, because pairs() order differs between Lua states, and plain
+-- values only, so no userdata address enters it: an unchanged config gives
+-- the same string on every evaluation.
+local function fingerprint(v)
+  local kind = type(v)
+  if kind == 'string' then return string.format('%q', v) end
+  if kind == 'number' or kind == 'boolean' then return tostring(v) end
+  if kind ~= 'table' then return kind end
+  local keys = {}
+  for k in pairs(v) do keys[#keys + 1] = k end
+  table.sort(keys, function(a, b)
+    local ta, tb = type(a), type(b)
+    if ta ~= tb then return ta < tb end
+    if ta == 'boolean' then return b and not a end
+    return (ta == 'number' or ta == 'string') and a < b
+  end)
+  local parts = {}
+  for _, k in ipairs(keys) do parts[#parts + 1] = fingerprint(k) .. '=' .. fingerprint(v[k]) end
+  return '{' .. table.concat(parts, ',') .. '}'
 end
 
 local function exists(path)
@@ -1324,12 +1351,15 @@ local function look_of(name)
     end
     -- The style's own colour first: with any layer list WezTerm stops drawing
     -- the pane's solid background, so whatever the image does not cover would
-    -- show the desktop. The image is the first candidate on disk NOW, so one
-    -- downloaded after this file was written is found.
+    -- show the desktop. Its alpha is the window opacity this look carries
+    -- (the style's, else yours), because with a layer list WezTerm takes the
+    -- layer's alpha and does not multiply in window_background_opacity. The
+    -- image is the first candidate on disk NOW, so one downloaded after this
+    -- file was written is found.
     local layers = {}
     if look.base then
       layers[#layers + 1] = { source = { Color = look.base }, width = '100%', height = '100%',
-                              opacity = look.opacity }
+                              opacity = look.opacity or t.window_background_opacity }
     end
     for _, path in ipairs(look.images or {}) do
       if exists(path) then
@@ -1369,49 +1399,62 @@ local function tag_of(pane)
   return nil
 end
 
--- The style a window should show: its active pane's tag, else that of
--- another pane in the same tab (a new split starts untagged), else the pane's
--- pin -- the default it opened under, kept in wezterm.GLOBAL because this
--- file's locals reset on every config reload.
+-- The style a window should show, one per tab: its active pane's tag, else
+-- another pane's tag in the same tab (a new split starts untagged), else the
+-- pane's pin. A pane is pinned at first sight to what its tab shows then --
+-- another pane's tag, else another pane's pin, else the default -- and the pin
+-- follows another pane's tag, so a split keeps its tab's look after a default
+-- change or after the tagged pane closes. Pins live in wezterm.GLOBAL because
+-- this file's locals reset on every config reload.
 local function wanted(window, pane)
   local own = resolve(tag_of(pane), true)
   if own then return own end
+  local key = 'ts_pin_' .. pane:pane_id()
+  local theirs, their_pin = nil, nil
   local tab = window:active_tab()
   if tab then
     for _, other in ipairs(tab:panes()) do
       if other:pane_id() ~= pane:pane_id() then
-        local theirs = resolve(tag_of(other), false)
-        if theirs then return theirs end
+        theirs = resolve(tag_of(other), false)
+        if theirs then break end
+        if their_pin == nil then their_pin = wezterm.GLOBAL['ts_pin_' .. other:pane_id()] end
       end
     end
   end
-  local key = 'ts_pin_' .. pane:pane_id()
+  if theirs then
+    if wezterm.GLOBAL[key] ~= theirs then wezterm.GLOBAL[key] = theirs end
+    return theirs
+  end
   local pin = wezterm.GLOBAL[key]
   if pin == nil then
-    pin = DEFAULT or UNSTYLED
+    pin = their_pin or DEFAULT or UNSTYLED
     wezterm.GLOBAL[key] = pin
   end
   return pin
 end
 
--- set_config_overrides only when the wanted look changed, or this file did.
--- {} is the base config, which is the default style.
+-- set_config_overrides only when the wanted look changed, this file did, or
+-- your own values did. Only the keys a look sets are replaced: any other
+-- override (a font-size toggle in your own config, say) is kept. The base
+-- config is the default style, so showing it takes none of those keys.
 local function sync(window, pane)
   if not window or not pane then return end
   local want = wanted(window, pane)
-  local stamp = want .. '@' .. GENERATION
+  local stamp = want .. '@' .. GENERATION .. '@' .. USERPRINT
   local key = 'ts_win_' .. window:window_id()
   if wezterm.GLOBAL[key] == stamp then return end
   wezterm.GLOBAL[key] = stamp
-  if want == (DEFAULT or UNSTYLED) then
-    window:set_config_overrides({})
-  else
-    window:set_config_overrides(look_of(want))
+  local overrides = window:get_config_overrides() or {}
+  for _, k in ipairs(KEYS) do overrides[k] = nil end
+  if want ~= (DEFAULT or UNSTYLED) then
+    for k, v in pairs(look_of(want)) do overrides[k] = v end
   end
+  window:set_config_overrides(overrides)
 end
 
 function M.apply_to_config(config)
   for _, k in ipairs(KEYS) do USER[k] = copy(config[k]) end
+  USERPRINT = fingerprint(USER)
   config.color_schemes = config.color_schemes or {}
   config.color_schemes['TerminalStyles ' .. UNSTYLED] = wezterm.color.get_default_colors()
   for name, look in pairs(LOOKS) do
@@ -1427,8 +1470,9 @@ function M.apply_to_config(config)
   wezterm.on('user-var-changed', function(window, pane, name, value)
     if name == VAR then sync(window, window:active_pane()) end
   end)
-  -- A rewrite of this file changes what {} draws in every window; the stamp
-  -- makes the reload that set_config_overrides causes stop at the compare.
+  -- A rewrite of this file, or an edit to your own config, changes what a
+  -- window should show; the stamp makes the reload that set_config_overrides
+  -- causes stop at the compare.
   wezterm.on('window-config-reloaded', function(window, pane)
     sync(window, window:active_pane())
   end)
