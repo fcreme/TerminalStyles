@@ -56,6 +56,12 @@
 #     effective_config() still showed 0.5. (window-config-reloaded also fires
 #     about once a second while overrides are set, so a handler there must be
 #     cheap and idempotent.)
+#     CORRECTION (2026-11-23, same build): the "about once a second" was the
+#     probe's own doing. WezTerm watches the config file's folder, and the probe
+#     logged into it, so every log write reloaded the config. With nothing
+#     written there, one reload came in 11 s, and it was the touch that poked
+#     it. A handler there still has to be cheap and idempotent, but the event
+#     does not tick on its own.
 #   * color_scheme has no LITERAL "none". Overriding it to '' or to a name that
 #     is not in color_schemes is accepted by set_config_overrides but logs
 #     `ERROR config::config > Your configuration specifies color_scheme=""
@@ -87,7 +93,9 @@
 # of a look's keys as overrides, and every other window, an unstyled one
 # included, carries a COMPLETE override over every key a look sets, filled from
 # the user's own value and then from WezTerm's, for a key the style leaves
-# alone. Overrides on any other key are the user's and are kept. The new-window
+# alone. (The qualifier: with NO default the base is itself unstyled, so an
+# unstyled window already shows it and gets `{}` rather than a complete
+# override.) Overrides on any other key are the user's and are kept. The new-window
 # first-frame question is moot in this mode: a new window starts from the base
 # config, and the base config already is the default style.
 

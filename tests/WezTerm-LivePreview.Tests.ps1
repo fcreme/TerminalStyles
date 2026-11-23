@@ -1,8 +1,12 @@
 # WezTerm adds the files it `require`s to its config reload watch list, so
-# rewriting the generated module restyles a RUNNING window. That makes it the one
-# terminal off Windows where arrowing through the picker can preview the whole
-# style -- background, font, padding, cursor shape, opacity -- and not just the
-# palette the OSC retint carries.
+# rewriting the generated module restyles a RUNNING window. Where TerminalStyles
+# styles one tab at a time (off Windows, with the wiring line in wezterm.lua) the
+# picker no longer rewrites the module: each arrow key tags its own pane with a
+# `/preview/<name>` user var, and the module, which already carries every style's
+# look, shows it in that window only. The rewrite-per-arrow preview these tests
+# cover is what Windows WezTerm and an unwired WezTerm still use: there it is the
+# one terminal where arrowing through the picker can preview the style's
+# background and opacity and not just the palette the OSC retint carries.
 #
 # Two properties are load-bearing and neither is obvious from reading the picker:
 # the preview runs on the input thread and must never reach the network, and Esc

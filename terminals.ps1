@@ -297,7 +297,9 @@ function Get-TerminalCapability {
             # `window_padding`, claimed on Windows only. Off Windows the per-tab
             # module styles one tab at a time, and a font or padding is a
             # property of the whole window: the module does not write either,
-            # so both stay the user's own and the notice names them. Font here is a promise about the STYLE APPLY --
+            # so both stay the user's own and the notice names them.
+            #
+            # Font, where it is claimed, is a promise about the STYLE APPLY --
             # the face a style declares in its theme.json. `tstyles font <name>`
             # asks a different question and must not read this flag; it asks
             # Test-FontCommandCanApply (lib/fonts.ps1), because the only font
