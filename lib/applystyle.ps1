@@ -1480,6 +1480,65 @@ function Apply-StyleDirect {
     }
 }
 
+function Clear-NewTabDefault {
+    <#
+    .SYNOPSIS
+    Take away what NEW shells and tabs would open in: the applied-style record,
+    the staged zsh/bash files, current-style.ps1, and WezTerm's generated module.
+    Returns 'none' | 'cleared' | 'failed' (the module's outcome; 'none' outside
+    WezTerm).
+
+    .DESCRIPTION
+    The half of a reset that is about the future. It touches nothing of THIS
+    shell or tab: no OSC, no tag, no prompt function. `tstyles reset` calls it
+    after repainting this tab, and `tstyles delete` calls it alone when the style
+    being deleted is the one new tabs open in but this tab wears another. In
+    per-tab WezTerm the module is rewritten with no default and every tab's own
+    tag is left alone; off per-tab the single-style module is cleared.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([string]$Kind, [bool]$PerTab)
+
+    Clear-CurrentStyleRecord
+    Clear-ShellStyleState
+
+    # Restore the user's own prompt for new shells by removing the style's loader
+    # target. The prompt function already installed in THIS session stays until
+    # the shell restarts -- same behaviour as the Windows Terminal path.
+    if (Test-Path -LiteralPath $script:TStylesCurrent) {
+        Remove-Item -LiteralPath $script:TStylesCurrent -Force -ErrorAction SilentlyContinue
+    }
+
+    # WezTerm's generated module, which every WezTerm window loads. In WezTerm
+    # only, like the apply half (Publish-StyleWezTermConfig declines every other
+    # kind). When a reset calls this, it runs after the OSC reset: that drops
+    # this tab's own colour override, and the rewrite then makes WezTerm reload
+    # this tab and every other into the user's config.
+    $wez = 'none'
+    $wezPath = $null
+    if ($Kind -eq 'WezTerm') {
+        $wezPath = Get-WezTermModulePath
+        # As for an apply: the reset owns the module from here.
+        Remove-FilePreviewRecord -Kind WezTerm -Path $wezPath
+        if ($PerTab) {
+            # Never gated on Test-WezTermModuleStyled: it calls any per-tab
+            # module styled, and "is there a style to take out" is the wrong
+            # question here anyway -- another tab, or this one, may carry a
+            # style whatever the default holds. The rewrite clears the default
+            # new tabs open in and leaves every tab's own tag alone.
+            $wez = switch (Write-WezTermTabModule -DefaultStyle $null) {
+                'failed' { 'failed' }
+                default  { 'cleared' }
+            }
+        } else {
+            $wez = Clear-WezTermStyleModule
+        }
+    }
+
+    return $wez
+}
+
 function Reset-StyleNonWT {
     # `tstyles reset` off Windows Terminal.
     #
@@ -1524,42 +1583,10 @@ function Reset-StyleNonWT {
     } else {
         $repainted = Invoke-TerminalStyleOscReset -Kind $kind
     }
-    Clear-CurrentStyleRecord
-    Clear-ShellStyleState
-
-    # Restore the user's own prompt by removing the style's loader target. The
-    # prompt function already installed in THIS session stays until the shell
-    # restarts -- same behaviour as the Windows Terminal path.
-    if (Test-Path -LiteralPath $script:TStylesCurrent) {
-        Remove-Item -LiteralPath $script:TStylesCurrent -Force -ErrorAction SilentlyContinue
-    }
-
-    # WezTerm's generated module, which every WezTerm window loads. In WezTerm
-    # only, like the VS Code half below and like the apply half
-    # (Publish-StyleWezTermConfig declines every other kind). After the OSC
-    # reset: that drops this tab's own colour override, and the rewrite then
-    # makes WezTerm reload this tab and every other into the user's config. The
-    # path is resolved once, for both lines that name it.
-    $wez = 'none'
-    $wezPath = $null
-    if ($kind -eq 'WezTerm') {
-        $wezPath = Get-WezTermModulePath
-        # As for an apply: the reset owns the module from here.
-        Remove-FilePreviewRecord -Kind WezTerm -Path $wezPath
-        if ($perTab) {
-            # Never gated on Test-WezTermModuleStyled: it calls any per-tab
-            # module styled, and "is there a style to take out" is the wrong
-            # question here anyway -- another tab, or this one, may carry a
-            # style whatever the default holds. The rewrite clears the default
-            # new tabs open in and leaves every tab's own tag alone.
-            $wez = switch (Write-WezTermTabModule -DefaultStyle $null) {
-                'failed' { 'failed' }
-                default  { 'cleared' }
-            }
-        } else {
-            $wez = Clear-WezTermStyleModule
-        }
-    }
+    # What every NEW shell and tab gets: one rule, shared with `tstyles delete`
+    # (the style new tabs open in, deleted from another tab).
+    $wez = Clear-NewTabDefault -Kind $kind -PerTab $perTab
+    $wezPath = if ($kind -eq 'WezTerm') { Get-WezTermModulePath } else { $null }
 
     Write-Host ""
     if ($wez -eq 'failed') {

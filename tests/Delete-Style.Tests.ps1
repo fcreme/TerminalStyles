@@ -1316,3 +1316,124 @@ Describe 'the containment proof in front of the move and the recursive delete' {
         }
     }
 }
+
+# In WezTerm per-tab mode "the active style" is two things: what THIS tab wears
+# (what delete's reset / re-apply is keyed on, as `tstyles reset` and apply act
+# on this tab plus new tabs) and what NEW tabs open in (the global record and
+# the module's default). Deleting the style new tabs open in, from a tab that
+# wears another one, used to reconcile nothing: the record and the module
+# default went on naming a style that no longer existed.
+Describe 'delete in a WezTerm tab reconciles the new-tab default' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedModule  = $script:TStylesModuleRoot
+            $script:savedCurrent = $script:TStylesCurrent
+
+            $script:caseRoot = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:dataRoot = Join-Path $script:caseRoot 'data'
+            $script:modRoot  = Join-Path $script:caseRoot 'mod'
+            $enc = [System.Text.UTF8Encoding]::new($false)
+            foreach ($d in 'eva', 'tabby', 'mine') {
+                $p = Join-Path $script:dataRoot "styles/$d"
+                New-Item -ItemType Directory -Path $p -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $p 'scheme.json'), '{}', $enc)
+            }
+            New-Item -ItemType Directory -Path (Join-Path $script:modRoot 'styles/eva') -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:modRoot 'styles/eva/scheme.json'), '{}', $enc)
+            foreach ($d in 'tabby', 'mine') {
+                [System.IO.File]::WriteAllText((Join-Path $script:dataRoot "styles/$d/tune.json"), '{"base":"eva"}', $enc)
+            }
+            [System.IO.File]::WriteAllText((Join-Path $script:dataRoot '.installed-files'), "styles/eva`n", $enc)
+            $script:TStylesDataRoot   = $script:dataRoot
+            $script:TStylesModuleRoot = $script:modRoot
+            $script:TStylesCurrent    = Join-Path $script:dataRoot 'current-style.ps1'
+
+            $script:modCalls = [System.Collections.Generic.List[string]]::new()
+            $script:tagCalls = [System.Collections.Generic.List[string]]::new()
+            $script:tabRec   = 'tabby'
+            Mock Get-TerminalKind             { 'WezTerm' }
+            Mock Test-WezTermPerTab           { $true }
+            Mock Get-WezTermTabRecord         { $script:tabRec }
+            Mock Get-WezTermModulePath        { Join-Path $script:dataRoot 'terminalstyles.lua' }
+            Mock Write-HostOscPacket          { $true }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-InteractiveConsole      { $false }
+            Mock Write-WezTermTabModule       { $script:modCalls.Add("default=$DefaultStyle"); 'written' }
+            Mock Invoke-WezTermTabTag         { $script:tagCalls.Add("tag=$Value reset=$($WithReset.IsPresent)"); 'painted' }
+            Mock Set-WezTermTabRecord         { 'ok' }
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesCurrent    = $script:savedCurrent
+        }
+
+        It 'a: deleting the style this tab wears resets the tab and the new-tab default' {
+            $script:tabRec = 'mine'
+            Set-CurrentStyleRecord -StyleName 'tabby' -Kind 'WezTerm'
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String -Width 500
+            $out | Should -Match 'RESET this WezTerm tab to your own look, and new tabs open unstyled'
+            $script:tagCalls | Should -Contain 'tag=/unstyled reset=True'
+            $script:modCalls | Should -Contain 'default='
+            Get-CurrentStyleRecord | Should -BeNullOrEmpty
+        }
+
+        It 'b: deleting the new-tab default from another tab clears only the default' {
+            Set-CurrentStyleRecord -StyleName 'mine' -Kind 'WezTerm'
+            [System.IO.File]::WriteAllText($script:TStylesCurrent, '# some prompt')
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String -Width 500
+            $out | Should -Match "New WezTerm tabs will open unstyled, because 'mine' is the style they open in; this tab keeps its own style"
+            $out | Should -Not -Match 'RESET this WezTerm tab'
+            Get-CurrentStyleRecord | Should -BeNullOrEmpty
+            Test-Path -LiteralPath $script:TStylesCurrent | Should -BeFalse
+            @($script:modCalls) | Should -Be @('default=')
+            @($script:tagCalls).Count | Should -Be 0 -Because 'this tab keeps its style'
+            Should -Invoke Write-HostOscPacket -Times 0 -Exactly
+        }
+
+        It 'b-reveal: deleting a shadowing default only refreshes the module default' {
+            New-Item -ItemType Directory -Path (Join-Path $script:modRoot 'styles/mine') -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $script:modRoot 'styles/mine/scheme.json'), '{}')
+            Set-CurrentStyleRecord -StyleName 'mine' -Kind 'WezTerm'
+            [System.IO.File]::WriteAllText($script:TStylesCurrent, '# some prompt')
+            $plan = Get-StyleDeletePlan -Name 'mine'
+            $plan.RevealDir | Should -Not -BeNullOrEmpty -Because 'otherwise this is the not-revealed case'
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String -Width 500
+            $out | Should -Match "New WezTerm tabs will open in the bundled 'mine' instead of yours"
+            @($script:modCalls) | Should -Be @('default=mine')
+            (Get-CurrentStyleRecord).name | Should -Be 'mine'
+            Test-Path -LiteralPath $script:TStylesCurrent | Should -BeTrue
+            @($script:tagCalls).Count | Should -Be 0
+            Should -Invoke Write-HostOscPacket -Times 0 -Exactly
+        }
+
+        It 'c: neither this tab nor the default wears it: nothing is reconciled' {
+            Set-CurrentStyleRecord -StyleName 'tabby' -Kind 'WezTerm'
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String -Width 500
+            $out | Should -Not -Match 'New WezTerm tabs'
+            $out | Should -Not -Match 'RESET'
+            @($script:modCalls).Count | Should -Be 0
+            @($script:tagCalls).Count | Should -Be 0
+            (Get-CurrentStyleRecord).name | Should -Be 'tabby'
+        }
+
+        It 'd: Reset-StyleNonWT hands the new-tab default to Clear-NewTabDefault' {
+            Mock Clear-NewTabDefault { 'cleared' }
+            Reset-StyleNonWT 6>&1 | Out-Null
+            Should -Invoke Clear-NewTabDefault -Times 1 -Exactly
+        }
+
+        It 'e: off per-tab, deleting the global style resets exactly as before' {
+            Mock Test-WezTermPerTab { $false }
+            Mock Get-TerminalKind   { 'WezTerm' }
+            Set-CurrentStyleRecord -StyleName 'mine' -Kind 'WezTerm'
+            $out = Invoke-TerminalStyleDelete -Name 'mine' -Yes 6>&1 | Out-String -Width 500
+            $out | Should -Match "RESET the terminal to its unstyled default, because 'mine' is active"
+            $out | Should -Not -Match 'WezTerm tab'
+            Should -Invoke Write-WezTermTabModule -Times 0 -Exactly
+            Should -Invoke Invoke-WezTermTabTag -Times 0 -Exactly
+            Get-CurrentStyleRecord | Should -BeNullOrEmpty
+        }
+    }
+}

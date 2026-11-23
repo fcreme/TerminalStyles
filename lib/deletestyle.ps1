@@ -350,6 +350,7 @@ function Get-StyleDeletePlan {
     $plan = [pscustomobject]@{
         Ok = $false; Reason = $null; Name = $Name; Dir = $null; Origin = $null
         IsLink = $false; RevealDir = $null; WasActive = $false
+        PerTab = $false; WasDefault = $false
         Children = @(); KeptCache = $null; KeptProfile = $null
         TrashPath = $null; Consequence = $null; SweepTargets = @()
     }
@@ -392,6 +393,19 @@ function Get-StyleDeletePlan {
     # afterwards, and in opposite directions depending on whether the name
     # survives.
     try { $plan.WasActive = ((Get-CurrentStyleName) -eq $Name) } catch { }
+
+    # WezTerm per-tab mode splits "active" in two. WasActive (above) is what
+    # THIS tab wears, and is reconciled by the reset / re-apply as always. What
+    # NEW tabs open in is the global record, which another tab may be the one
+    # to delete: WasDefault is that case, and only the new-tab default is
+    # reconciled for it -- this tab keeps the style it wears.
+    try {
+        $plan.PerTab = [bool](Test-WezTermPerTab)
+        if ($plan.PerTab -and -not $plan.WasActive) {
+            $rec = Get-CurrentStyleRecord
+            $plan.WasDefault = [bool]($rec -and $rec.name -eq $Name)
+        }
+    } catch { }
 
     # After RevealDir on purpose: what a tuned child keeps depends on whether
     # the name survives the delete, and on what it resolves to if it does.
@@ -563,10 +577,20 @@ function Show-StyleDeletePlan {
     }
 
     if ($Plan.WasActive) {
-        if ($Plan.RevealDir) {
+        if ($Plan.PerTab -and $Plan.RevealDir) {
+            Write-Host "  - RE-APPLY the bundled '$($Plan.Name)' to this WezTerm tab, and new tabs open in it, because yours is the style here" -ForegroundColor Yellow
+        } elseif ($Plan.PerTab) {
+            Write-Host "  - RESET this WezTerm tab to your own look, and new tabs open unstyled, because '$($Plan.Name)' is the style here" -ForegroundColor Yellow
+        } elseif ($Plan.RevealDir) {
             Write-Host "  - RE-APPLY the bundled '$($Plan.Name)' now, because yours is the active style" -ForegroundColor Yellow
         } else {
             Write-Host "  - RESET the terminal to its unstyled default, because '$($Plan.Name)' is active" -ForegroundColor Yellow
+        }
+    } elseif ($Plan.WasDefault) {
+        if ($Plan.RevealDir) {
+            Write-Host "  - New WezTerm tabs will open in the bundled '$($Plan.Name)' instead of yours, because it is the style they open in" -ForegroundColor Yellow
+        } else {
+            Write-Host "  - New WezTerm tabs will open unstyled, because '$($Plan.Name)' is the style they open in; this tab keeps its own style" -ForegroundColor Yellow
         }
     }
 
@@ -1010,6 +1034,18 @@ function Invoke-TerminalStyleDelete {
             Apply-StyleDirect -StyleName $plan.Name -Target $Target
         } else {
             Reset-StyleDirect -Target $Target -KnownStyleName $plan.Name
+        }
+    } elseif ($plan.WasDefault) {
+        # Only the default new tabs open in. Not Reset-StyleDirect: this tab
+        # wears another style and keeps it, so nothing is repainted here.
+        $status = if ($plan.RevealDir) {
+            Write-WezTermTabModule -DefaultStyle $plan.Name
+        } else {
+            Clear-NewTabDefault -Kind (Get-TerminalKind) -PerTab $true
+        }
+        if ($status -eq 'failed') {
+            Write-Host "  Could not update WezTerm's module: $(Get-WezTermModulePath)" -ForegroundColor Yellow
+            Write-Host "  New tabs may still open in '$($plan.Name)' until it is writable." -ForegroundColor Yellow
         }
     }
 }
