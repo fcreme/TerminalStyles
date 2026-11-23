@@ -1093,8 +1093,7 @@ Describe 'Publish-StyleWezTermConfig per tab' {
 
             $r | Should -BeNullOrEmpty
             Should -Invoke Invoke-WezTermTabTag -Times 0 -Exactly
-            ($out -join "`
-") | Should -Match ([regex]::Escape((Get-WezTermModulePath -HomeDir $script:h)))
+            ($out -join ' ') | Should -Match ([regex]::Escape((Get-WezTermModulePath -HomeDir $script:h)))
         }
 
         It 'off per-tab: writes the single-style module exactly as before' {

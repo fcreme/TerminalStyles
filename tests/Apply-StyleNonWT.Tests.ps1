@@ -725,8 +725,9 @@ Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
 
         It 'names font and padding on WezTerm off Windows, where the per-tab module writes neither' {
             Mock Get-TStylesPlatform { 'MacOS' }
-            $line = @(script:Get-ApplyOutput -Kind 'WezTerm' -split "`
-" |
+            # Split on either line ending: Out-String ends lines with the
+            # platform's, which is CR LF on the Windows legs.
+            $line = @(script:Get-ApplyOutput -Kind 'WezTerm' -split '\r?\n' |
                       Where-Object { $_ -match "can't show" })
             @($line).Count | Should -Be 1
             $line[0] | Should -Match 'font'
