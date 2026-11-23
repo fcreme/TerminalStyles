@@ -947,7 +947,9 @@ function Publish-StyleWezTermConfig {
         [Parameter(Mandatory)]$Scheme,
         $Theme,
         [Parameter(Mandatory)][string]$Kind,
-        [string]$HomeDir
+        [string]$HomeDir,
+        # Test seam, as Test-WezTermPerTab's: which wording the notice gets.
+        [string]$Platform = (Get-TStylesPlatform)
     )
 
     if ($Kind -ne 'WezTerm') { return $null }
@@ -991,7 +993,13 @@ function Publish-StyleWezTermConfig {
         Write-Host "  It does nothing until your wezterm.lua loads it. Add this line," -ForegroundColor DarkGray
         Write-Host "  above the final `"return config`":" -ForegroundColor DarkGray
         Write-Host "    $(Get-WezTermWiringLine)" -ForegroundColor Cyan
-        Write-Host "  Then each style you apply restyles the tab you run it in, background" -ForegroundColor DarkGray
+        # Windows has no per-tab mode (Test-WezTermPerTab), so wiring there gives
+        # the single-style module, which repaints the whole window.
+        if ($Platform -eq 'Windows') {
+            Write-Host "  Then every style you apply repaints the running window, background" -ForegroundColor DarkGray
+        } else {
+            Write-Host "  Then each style you apply restyles the tab you run it in, background" -ForegroundColor DarkGray
+        }
         Write-Host "  animation included." -ForegroundColor DarkGray
     }
     # After the module, so a tab is never tagged with a style the module does

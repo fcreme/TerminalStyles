@@ -1083,6 +1083,23 @@ Describe 'Publish-StyleWezTermConfig per tab' {
             $lua | Should -Match ([regex]::Escape("config.color_scheme = 'TerminalStyles eva'"))
         }
 
+        It 'the not-wired notice promises <Promise> on <Platform>' -ForEach @(
+            @{ Platform = 'Windows'; Promise = 'every style you apply repaints the running window'; Not = 'restyles the tab' }
+            @{ Platform = 'MacOS';   Promise = 'each style you apply restyles the tab you run it in'; Not = 'repaints the running window' }
+            @{ Platform = 'Linux';   Promise = 'each style you apply restyles the tab you run it in'; Not = 'repaints the running window' }
+        ) {
+            Mock Test-WezTermPerTab { $false }
+            $lines = [System.Collections.Generic.List[string]]::new()
+            Mock Write-Host { $lines.Add([string]$Object) }
+            # No config under $script:h: not wired, so the notice prints.
+            Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h -Platform $Platform | Out-Null
+            $text = $lines -join ' '
+            $text | Should -Match 'Then '
+            $text | Should -Match ([regex]::Escape($Promise))
+            $text | Should -Not -Match ([regex]::Escape($Not))
+        }
+
         It 'off per-tab: removes the per-tab marker' {
             Mock Test-WezTermPerTab { $false }
             $marker = Get-WezTermTabMarkerPath
