@@ -311,6 +311,29 @@ Describe 'Get-WezTermImageOpacity' {
     }
 }
 
+Describe 'the per-tab module''s default line' {
+    InModuleScope TerminalStyles {
+        It 'is the one form the generator writes and the reader reads' {
+            $none = Get-WezTermTabModuleLua -Styles @() -DefaultStyle $null
+            $some = Get-WezTermTabModuleLua -Styles @() -DefaultStyle "o'brien"
+            @($none -split '\r?\n') -ccontains (Get-WezTermTabDefaultLine -DefaultStyle $null) | Should -BeTrue
+            @($some -split '\r?\n') -ccontains (Get-WezTermTabDefaultLine -DefaultStyle "o'brien") | Should -BeTrue
+            Test-WezTermTabModuleDefault -Text $none | Should -BeFalse
+            Test-WezTermTabModuleDefault -Text $some | Should -BeTrue
+        }
+        It 'reads CR LF and LF alike' {
+            $none = (Get-WezTermTabModuleLua -Styles @() -DefaultStyle $null) -replace '\r?\n', "`r`n"
+            Test-WezTermTabModuleDefault -Text $none | Should -BeFalse
+            $none = (Get-WezTermTabModuleLua -Styles @() -DefaultStyle $null) -replace '\r?\n', "`n"
+            Test-WezTermTabModuleDefault -Text $none | Should -BeFalse
+        }
+        It 'is not fooled by a style named nil' {
+            # `local DEFAULT = 'nil'` names a style; only the bare nil is none.
+            Test-WezTermTabModuleDefault -Text (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'nil') | Should -BeTrue
+        }
+    }
+}
+
 Describe 'Get-WezTermBackgroundCandidates' {
     InModuleScope TerminalStyles {
         BeforeEach {

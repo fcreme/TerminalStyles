@@ -1254,6 +1254,42 @@ function Get-WezTermStyleLook {
     $sb.ToString()
 }
 
+function Get-WezTermTabDefaultLine {
+    # The per-tab module's `local DEFAULT = ...` line: the style new tabs open
+    # in, or nil for none (after a reset). The one rule for its form:
+    # Get-WezTermTabModuleLua writes it and Test-WezTermTabModuleDefault reads
+    # it back, so the two cannot come to disagree about what "no default" looks
+    # like.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([AllowNull()][AllowEmptyString()][string]$DefaultStyle)
+    if ($DefaultStyle) { return "local DEFAULT = $(ConvertTo-WezTermLuaString $DefaultStyle)" }
+    return 'local DEFAULT = nil'
+}
+
+function Test-WezTermTabModuleDefault {
+    <#
+    .SYNOPSIS
+    Does this per-tab module text name a default style for new tabs?
+
+    .DESCRIPTION
+    $false only when a line is exactly Get-WezTermTabDefaultLine's no-default
+    form (-ceq, so a style named 'nil', written quoted, still counts as a
+    default). Split on CR LF or LF, since AppendLine writes CR LF on Windows.
+    A text with no DEFAULT line at all reads as having one: the caller then says
+    the module styles more, not less, and that is the answer that sends the user
+    to look.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+    $none = Get-WezTermTabDefaultLine -DefaultStyle $null
+    foreach ($line in ("$Text" -split '\r?\n')) {
+        if ($line -ceq $none) { return $false }
+    }
+    return $true
+}
+
 function Get-WezTermTabModuleLua {
     <#
     .SYNOPSIS
@@ -1264,7 +1300,7 @@ function Get-WezTermTabModuleLua {
     $Styles items are @{ Name; Scheme; Theme; BackgroundCandidates }.
     $DefaultStyle is the last-applied style, or $null / '' for none (after a
     reset); the base config carries it, so a new window and an untagged tab
-    look like it from their first frame.
+    look like it from their first frame. Its line is Get-WezTermTabDefaultLine's.
 
     GENERATION is the first 16 hex digits of the SHA-256 of this text with the
     stamp itself blank. Every window stores "<wanted>@<GENERATION>@<user>" once
@@ -1288,8 +1324,6 @@ function Get-WezTermTabModuleLua {
     )
 
     $q = { param($v) ConvertTo-WezTermLuaString $v }
-    $default = 'nil'
-    if ($DefaultStyle) { $default = & $q $DefaultStyle }
 
     $head = [System.Text.StringBuilder]::new()
     Add-WezTermModuleHeader -Builder $head -What "with every installed style's look"
@@ -1298,7 +1332,7 @@ function Get-WezTermTabModuleLua {
     [void]$head.AppendLine('local M = {}')
 
     $sb = [System.Text.StringBuilder]::new()
-    [void]$sb.AppendLine("local DEFAULT = $default")
+    [void]$sb.AppendLine((Get-WezTermTabDefaultLine -DefaultStyle $DefaultStyle))
     [void]$sb.AppendLine("local VAR, UNSTYLED, PREVIEW = $(& $q $script:WezTermTagVar), " +
                          "$(& $q $script:WezTermTagUnstyled), $(& $q $script:WezTermTagPreviewPrefix)")
     [void]$sb.AppendLine("local DARWIN = wezterm.target_triple:find('darwin') ~= nil")

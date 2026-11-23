@@ -1573,10 +1573,11 @@ function Invoke-TerminalStylesUninstall {
             $wezLeftAdvice = if ($wezWasPerTab) {
                 # Not "the last style": a per-tab module styles the tabs that
                 # wear one, and new tabs only while a default is set -- a
-                # reset leaves `local DEFAULT = nil` (Get-WezTermTabModuleLua).
+                # reset leaves none (Get-WezTermTabDefaultLine, the generator's
+                # one rule for that line, read back by the helper below).
                 $wezHasDefault = $false
                 try {
-                    $wezHasDefault = [System.IO.File]::ReadAllText($wezPath, [System.Text.UTF8Encoding]::new($false)) -notmatch '(?m)^local DEFAULT = nil\s*$'
+                    $wezHasDefault = Test-WezTermTabModuleDefault -Text ([System.IO.File]::ReadAllText($wezPath, [System.Text.UTF8Encoding]::new($false)))
                 } catch { }
                 if ($wezHasDefault) {
                     'Delete it by hand; until then it keeps styling the tabs that wear a style, and new tabs.'
