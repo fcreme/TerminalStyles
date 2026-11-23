@@ -96,6 +96,24 @@ Describe 'Get-FontPickerFooter' {
                     Should -Match 'Ghostty'
             }
         }
+
+        It 'sends WezTerm off Windows to config.font in wezterm.lua, still in two lines' {
+            # WezTerm reads its font from a file and has no list to choose from;
+            # off Windows nothing of ours writes it.
+            $f = @(Get-FontPickerFooter -Owner 'terminal' -TerminalName 'WezTerm' -Kind 'WezTerm')
+            $f.Count | Should -Be 2
+            ($f -join ' ') | Should -Match 'config\.font'
+            ($f -join ' ') | Should -Match 'wezterm\.lua'
+            ($f -join ' ') | Should -Not -Match 'choose it there'
+            ($f -join ' ') | Should -Not -Match 'installs it and sets'
+        }
+
+        It 'reaches the frame the picker draws' {
+            $cat = @([pscustomobject]@{ name = 'Fira Code'; family = 'Fira Code'; license = 'OFL-1.1'; description = 'x' })
+            $frame = (Get-FontPickerFrame -Catalog $cat -Index 0 -Owner 'terminal' -TerminalName 'WezTerm' -Kind 'WezTerm' -Width 200) -join "`n"
+            $frame | Should -Match 'config\.font'
+            $frame | Should -Not -Match 'choose it there'
+        }
     }
 }
 

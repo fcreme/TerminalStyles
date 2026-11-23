@@ -673,8 +673,14 @@ function Show-FontList {
         }
         default {
             Write-Host "  Install one with: tstyles font <name>" -ForegroundColor DarkGray
-            Write-Host ("  {0} takes its font from its own settings, so choose it there once installed." -f
-                        $listName) -ForegroundColor DarkGray
+            if ($listKind -eq 'WezTerm') {
+                # A file, not a list to choose from: see the command's own line.
+                Write-Host "  WezTerm takes its font from your wezterm.lua: once one is installed, set" -ForegroundColor DarkGray
+                Write-Host "  config.font = wezterm.font('<family>') there." -ForegroundColor DarkGray
+            } else {
+                Write-Host ("  {0} takes its font from its own settings, so choose it there once installed." -f
+                            $listName) -ForegroundColor DarkGray
+            }
         }
     }
 }
@@ -692,7 +698,13 @@ function Get-FontPickerFooter {
     sits directly above the key that is supposed to do it.
     #>
     [CmdletBinding()]
-    param([string]$Owner, [string]$TerminalName)
+    param(
+        [string]$Owner,
+        [string]$TerminalName,
+        # Which terminal, for the one whose own settings are a file rather than
+        # a list: WezTerm off Windows, where the per-tab module writes no font.
+        [string]$Kind
+    )
 
     # ALWAYS two lines, blank-padded, for the same reason the scroll indicators
     # are always emitted: the frame is overwritten in place and a footer that
@@ -706,8 +718,15 @@ function Get-FontPickerFooter {
         'command' { @("Enter installs it and sets it as $TerminalName's font.", '') }
         'style'   { @("Enter installs it. The applied style sets $TerminalName's font.",
                       'tstyles tune <style> keeps a font with a style.') }
-        default   { @("Enter installs it. $TerminalName takes its font from its own",
-                      'settings, so choose it there once installed.') }
+        default   {
+            if ($Kind -eq 'WezTerm') {
+                @("Enter installs it. $TerminalName takes its font from your",
+                  'wezterm.lua: set config.font there once installed.')
+            } else {
+                @("Enter installs it. $TerminalName takes its font from its own",
+                  'settings, so choose it there once installed.')
+            }
+        }
     }
 }
 
@@ -743,6 +762,7 @@ function Get-FontPickerFrame {
         [int]$Width = 100,
         [string]$Owner = 'terminal',
         [string]$TerminalName = 'This terminal',
+        [string]$Kind,
         [string]$HintEscape = ''
     )
 
@@ -786,7 +806,7 @@ function Get-FontPickerFrame {
     $state = if (Test-FontInstalled -Family $sel.family -Installed $Installed) { 'installed' } else { 'not installed' }
     $out.Add("$HintEscape  $($sel.license) -- $state$reset")
     $out.Add('')
-    foreach ($line in (Get-FontPickerFooter -Owner $Owner -TerminalName $TerminalName)) {
+    foreach ($line in (Get-FontPickerFooter -Owner $Owner -TerminalName $TerminalName -Kind $Kind)) {
         if ($line) {
             $out.Add("$HintEscape  " + (Get-SentenceSummary -Notes $line -MaxLength $room) + $reset)
         } else { $out.Add('') }
@@ -844,7 +864,7 @@ function Invoke-FontPicker {
     # and a flag left $true would mean the SECOND picker of a session never
     # clears the screen it is about to paint over.
     $script:FontPickerCtx = @{
-        Catalog = $Catalog; Installed = $Installed; Owner = $owner
+        Catalog = $Catalog; Installed = $Installed; Owner = $owner; Kind = $kind
         Terminal = $tname;  Hint = $hint; Write = $Write; Cleared = $false
     }
 
@@ -876,7 +896,7 @@ function Invoke-FontPicker {
         $el = "$([char]27)[K"
         foreach ($line in (Get-FontPickerFrame -Catalog $c.Catalog -Installed $c.Installed -Index $idx `
                             -WindowHeight $wh -Width $w -Owner $c.Owner -TerminalName $c.Terminal `
-                            -HintEscape $c.Hint)) {
+                            -Kind $c.Kind -HintEscape $c.Hint)) {
             & $c.Write ($el + $line)
         }
     }
@@ -971,6 +991,14 @@ function Invoke-TerminalStyleFont {
             if ($fontKind -eq 'WezTerm') {
                 Write-Host "  Or set config.font AFTER the terminalstyles require line in your own config." -ForegroundColor DarkGray
             }
+        } elseif ($fontKind -eq 'WezTerm') {
+            # WezTerm off Windows: the per-tab module writes no font, so it is
+            # wezterm.lua's own -- and a file, not a list, so "listed there" was
+            # false. The line goes anywhere in it: nothing of ours sets the
+            # font for it to come after. Quoted by the generator's own rule.
+            Write-Host ("  {0} takes its font from your wezterm.lua, so tstyles font cannot set it for you." -f $fontName) -ForegroundColor DarkGray
+            Write-Host ("  '{0}' is installed. To use it, set it in your wezterm.lua:" -f $font.family) -ForegroundColor DarkGray
+            Write-Host ("    config.font = wezterm.font({0})" -f (ConvertTo-WezTermLuaString $font.family)) -ForegroundColor Cyan
         } else {
             Write-Host ("  {0} takes its font from its own settings, so tstyles font cannot apply it for you." -f $fontName) -ForegroundColor DarkGray
             Write-Host ("  '{0}' is installed and will be listed there." -f $font.family) -ForegroundColor DarkGray
