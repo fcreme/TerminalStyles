@@ -197,7 +197,10 @@ function Get-TerminalCapability {
     # is on. Several arms below justify a $false by naming that notice; the
     # notice used to ask two hardcoded questions and mention none of them,
     # which made the justification circular.
-    param([string]$Kind = (Get-TerminalKind))
+    param(
+        [string]$Kind = (Get-TerminalKind),
+        [string]$Platform = (Get-TStylesPlatform)
+    )
 
     # Baseline: nothing. Each block below turns on only what it can prove.
     $caps = @{}
@@ -291,7 +294,10 @@ function Get-TerminalCapability {
             # style ships one. Terminal.app gets a still first frame at best.
             #
             # Font and Padding are `config.font`/`font_size` and
-            # `window_padding`. Font here is a promise about the STYLE APPLY --
+            # `window_padding`, claimed on Windows only. Off Windows the per-tab
+            # module styles one tab at a time, and a font or padding is a
+            # property of the whole window: the module does not write either,
+            # so both stay the user's own and the notice names them. Font here is a promise about the STYLE APPLY --
             # the face a style declares in its theme.json. `tstyles font <name>`
             # asks a different question and must not read this flag; it asks
             # Test-FontCommandCanApply (lib/fonts.ps1), because the only font
@@ -334,8 +340,8 @@ function Get-TerminalCapability {
             # as it is on every terminal but Windows Terminal.
             $caps.OscPalette      = $true
             $caps.Persist         = $true
-            $caps.Font            = $true
-            $caps.Padding         = $true
+            $caps.Font            = ($Platform -eq 'Windows')
+            $caps.Padding         = ($Platform -eq 'Windows')
             $caps.BackgroundImage = $true
             $caps.Opacity         = $true
             $caps.CursorShape     = $true

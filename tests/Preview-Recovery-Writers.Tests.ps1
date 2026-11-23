@@ -103,6 +103,7 @@ Describe 'the WezTerm apply and reset own the module from the moment they write 
             $script:module = Get-WezTermModulePath -HomeDir $script:home2
             Mock Get-WezTermModulePath { $script:module }
             Mock Get-StyleBundledBackground { $null }
+            Mock Test-WezTermPerTab { $false }
             Mock Write-Host {}
             $script:read = {
                 param($Name)

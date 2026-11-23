@@ -74,7 +74,17 @@ Describe 'tstyles font does not chase a settings.json that cannot exist' {
             Should -Invoke Find-WTSettingsPath -Times 0 -Exactly
         }
 
-        It 'tells a WezTerm user where the font does belong' {
+        It 'tells a WezTerm user off Windows that the terminal takes its font from its own settings' {
+            Mock Get-TStylesPlatform { 'MacOS' }
+            Mock Get-TerminalKind { 'WezTerm' }
+            $out = Invoke-TerminalStyleFont -Name 'JetBrains Mono' 6>&1 | Out-String
+            $out | Should -Match 'takes its font from its own settings'
+            $out | Should -Not -Match 'The applied style sets' -Because 'the per-tab module sets no font'
+            $out | Should -Not -Match 'AFTER the terminalstyles require line'
+        }
+
+        It 'tells a WezTerm user on Windows where the font does belong' {
+            Mock Get-TStylesPlatform { 'Windows' }
             # WezTerm has no font picker to be "listed there" in -- it reads a
             # config file, which is also where a style apply writes config.font.
             Mock Get-TerminalKind { 'WezTerm' }
@@ -205,6 +215,9 @@ Describe 'the font messages name whoever really decides the font' {
             # for Terminal.app, iTerm2, Ghostty, kitty and Alacritty. FALSE for
             # WezTerm since 0.8.29, where the generated module sets config.font
             # from the applied style.
+            # WezTerm is 'style' only on Windows, where the single-style module
+            # writes config.font; off it the font is wezterm.lua's own.
+            Mock Get-TStylesPlatform { 'Windows' }
             Get-FontOwner -Kind 'WindowsTerminal' | Should -Be 'command'
             Get-FontOwner -Kind 'WezTerm'         | Should -Be 'style'
             foreach ($k in 'AppleTerminal', 'ITerm2', 'Ghostty', 'Kitty', 'Alacritty', 'VSCode') {
@@ -212,10 +225,18 @@ Describe 'the font messages name whoever really decides the font' {
             }
         }
 
+        It 'answers terminal for WezTerm off Windows' {
+            foreach ($plat in 'MacOS', 'Linux') {
+                Mock Get-TStylesPlatform ([scriptblock]::Create("'$plat'"))
+                Get-FontOwner -Kind 'WezTerm' | Should -Be 'terminal' -Because $plat
+            }
+        }
+
         It 'agrees with the two things it is derived from' {
             # The bug was two messages answering this separately. One predicate
             # now, and it must stay consistent with the writer gate and the
             # capability flag rather than becoming a third opinion.
+            Mock Get-TStylesPlatform { 'Windows' }   # so WezTerm's 'style' arm is the one exercised
             foreach ($k in 'WindowsTerminal', 'WezTerm', 'AppleTerminal', 'ITerm2', 'Ghostty',
                            'Kitty', 'Alacritty', 'VSCode') {
                 $owner = Get-FontOwner -Kind $k
@@ -240,6 +261,7 @@ Describe 'the font messages name whoever really decides the font' {
             $out = (Show-FontList 6>&1 | Out-String)
             $out | Should -Not -BeNullOrEmpty
 
+            Mock Get-TStylesPlatform { 'Windows' }
             Mock Get-TerminalKind { 'WezTerm' }
             $wez = (Show-FontList 6>&1 | Out-String)
             $wez | Should -Not -Match 'choose it there' `

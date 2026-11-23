@@ -963,8 +963,19 @@ function Publish-StyleWezTermConfig {
     # preview goes first, or a preview byte-identical to this apply would let
     # the next recovery, or that picker's Esc, put the old module back over it.
     Remove-FilePreviewRecord -Kind WezTerm -Path (Get-WezTermModulePath @splat)
-    $status = Write-WezTermStyleModule -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
-                                       -BackgroundImage $bg @splat
+    # Per tab: the module carries every style's look and this style becomes the
+    # default for NEW tabs; this tab is then tagged, and only a tagged tab takes
+    # a style's look. Off per-tab, the single-style module as before -- and the
+    # marker the zsh/bash loader reads goes, so a user who removed the wiring
+    # line gets that loader's replay of the last-applied palette back.
+    $perTab = Test-WezTermPerTab -Kind $Kind @splat
+    if ($perTab) {
+        $status = Write-WezTermTabModule -DefaultStyle $StyleName @splat
+    } else {
+        Remove-Item -LiteralPath (Get-WezTermTabMarkerPath) -Force -ErrorAction SilentlyContinue
+        $status = Write-WezTermStyleModule -StyleName $StyleName -Scheme $Scheme -Theme $Theme `
+                                           -BackgroundImage $bg @splat
+    }
     $path = Get-WezTermModulePath @splat
 
     if ($status -eq 'failed') {
@@ -980,10 +991,42 @@ function Publish-StyleWezTermConfig {
         Write-Host "  It does nothing until your wezterm.lua loads it. Add this line," -ForegroundColor DarkGray
         Write-Host "  above the final `"return config`":" -ForegroundColor DarkGray
         Write-Host "    $(Get-WezTermWiringLine)" -ForegroundColor Cyan
-        Write-Host "  Then every style you apply repaints the running window, background" -ForegroundColor DarkGray
+        Write-Host "  Then each style you apply restyles the tab you run it in, background" -ForegroundColor DarkGray
         Write-Host "  animation included." -ForegroundColor DarkGray
     }
+    # After the module, so a tab is never tagged with a style the module does
+    # not know yet. A 'failed' write returned above and tags nothing.
+    if ($perTab) { Invoke-WezTermTabTag -Value $StyleName | Out-Null }
     return $path
+}
+
+function Invoke-WezTermTabTag {
+    <#
+    .SYNOPSIS
+    Tag this WezTerm tab with a style, so the per-tab module restyles it.
+    Returns 'painted' | 'noterminal'.
+
+    .DESCRIPTION
+    Writes Get-WezTermTagPacket (after Get-OscResetPacket under -WithReset)
+    through Write-HostOscPacket. With -OutputRedirected, or when the write
+    reached no terminal, nothing was tagged and no record is written: the
+    record says what a tab carries, and a tab that was never told carries
+    nothing. On 'painted' the tab's record is updated, which is what a later
+    process reads back.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value,
+        [switch]$WithReset,
+        [bool]$OutputRedirected = [Console]::IsOutputRedirected
+    )
+    if ($OutputRedirected) { return 'noterminal' }
+    $packet = Get-WezTermTagPacket -Value $Value
+    if ($WithReset) { $packet = (Get-OscResetPacket) + $packet }
+    if (-not (Write-HostOscPacket -Packet $packet)) { return 'noterminal' }
+    Set-WezTermTabRecord -Value $Value | Out-Null
+    return 'painted'
 }
 
 function Set-CurrentStylePrompt {
@@ -1461,7 +1504,18 @@ function Reset-StyleNonWT {
     # nothing had been sent at all. Still a bool on purpose: Get-OscResetPacket
     # is a constant and is never empty, so the `nocolors` answer its apply
     # sibling has cannot arise here.
-    $repainted = Invoke-TerminalStyleOscReset -Kind $kind
+    # Per-tab WezTerm resets through the tag instead: its packet leads with the
+    # same OSC reset, so one write both hands this tab's colours back and tells
+    # the module this tab is unstyled.
+    $perTab = ($kind -eq 'WezTerm') -and (Test-WezTermPerTab -Kind $kind)
+    $tagStatus = $null
+    if ($perTab) {
+        $tagStatus = Invoke-WezTermTabTag -Value $script:WezTermTagUnstyled -WithReset `
+                                          -OutputRedirected $OutputRedirected
+        $repainted = ($tagStatus -eq 'painted')
+    } else {
+        $repainted = Invoke-TerminalStyleOscReset -Kind $kind
+    }
     Clear-CurrentStyleRecord
     Clear-ShellStyleState
 
@@ -1484,7 +1538,19 @@ function Reset-StyleNonWT {
         $wezPath = Get-WezTermModulePath
         # As for an apply: the reset owns the module from here.
         Remove-FilePreviewRecord -Kind WezTerm -Path $wezPath
-        $wez = Clear-WezTermStyleModule
+        if ($perTab) {
+            # Never gated on Test-WezTermModuleStyled: it calls any per-tab
+            # module styled, and "is there a style to take out" is the wrong
+            # question here anyway -- another tab, or this one, may carry a
+            # style whatever the default holds. The rewrite clears the default
+            # new tabs open in and leaves every tab's own tag alone.
+            $wez = switch (Write-WezTermTabModule -DefaultStyle $null) {
+                'failed' { 'failed' }
+                default  { 'cleared' }
+            }
+        } else {
+            $wez = Clear-WezTermStyleModule
+        }
     }
 
     Write-Host ""
@@ -1497,7 +1563,19 @@ function Reset-StyleNonWT {
         Write-Host "  Could not take the style out of WezTerm's module:" -ForegroundColor Yellow
         Write-Host "    $wezPath" -ForegroundColor Yellow
         Write-Host "  Make it writable and run tstyles reset again, or delete it by hand; until" -ForegroundColor Yellow
-        Write-Host "  then WezTerm keeps applying the last style." -ForegroundColor Yellow
+        if ($perTab) {
+            Write-Host "  then new WezTerm tabs open in the last style you applied." -ForegroundColor Yellow
+        } else {
+            Write-Host "  then WezTerm keeps applying the last style." -ForegroundColor Yellow
+        }
+    } elseif ($perTab -and $repainted) {
+        Write-Host "  Reset this WezTerm tab to your own look."
+        Write-Host "  New tabs open unstyled; other open tabs keep their styles."
+    } elseif ($perTab) {
+        # Not painted: the tag never reached a terminal, so this tab was not
+        # told and neither was its colour state. The default did clear.
+        Write-Host "  This tab was not reset: its output is not a terminal, so nothing could" -ForegroundColor Yellow
+        Write-Host "  restyle it. New tabs open unstyled; other open tabs keep their styles." -ForegroundColor Yellow
     } elseif ($repainted) {
         Write-Host "  Reset " -NoNewline
         Write-Host (Get-TerminalDisplayName -Kind $kind) -ForegroundColor Cyan -NoNewline
@@ -1529,7 +1607,7 @@ function Reset-StyleNonWT {
     }
     # VS Code's wording, plus the path, which XDG_CONFIG_HOME moves. Nothing for
     # 'none': there was no style in the module to take out.
-    if ($wez -eq 'cleared') {
+    if ($wez -eq 'cleared' -and -not $perTab) {
         Write-Host "  Took the style back out of WezTerm's module ($wezPath)." -ForegroundColor DarkGray
     }
     # VS Code's settings.json, when a style was saved there. From its record,

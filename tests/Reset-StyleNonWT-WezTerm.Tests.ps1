@@ -49,6 +49,9 @@ Describe 'tstyles reset in WezTerm takes the style out of the generated module' 
             Mock Get-WezTermModulePath { $script:wezPath }
             Mock Write-HostOscPacket { $true }
             Mock Show-UpdateNoticeIfAvailable {}
+            # The single-style world these tests describe. Unmocked, the answer
+            # would be the live $HOME's wiring line.
+            Mock Test-WezTermPerTab { $false }
 
             # What `tstyles eva` leaves in WezTerm: the module, and the record.
             Write-WezTermStyleModule -StyleName 'eva' `
@@ -172,6 +175,125 @@ Describe 'tstyles reset in WezTerm takes the style out of the generated module' 
             [System.IO.Directory]::Exists($script:wezPath) | Should -BeFalse
             $out | Should -Not -Match ([regex]::Escape("WezTerm's module"))
             $out | Should -Match 'to its unstyled default' -Because 'with no module, the OSC reset is the whole reset'
+        }
+    }
+}
+
+Describe 'tstyles reset in per-tab WezTerm resets this tab and the default, nothing else' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedModule  = $script:TStylesModuleRoot
+            $script:savedCurrent = $script:TStylesCurrent
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:root -Force | Out-Null
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            $script:TStylesCurrent    = Join-Path $script:root 'current-style.ps1'
+            $script:wezPath = Join-Path $script:root 'terminalstyles.lua'
+
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Get-WezTermModulePath { $script:wezPath }
+            Mock Write-HostOscPacket { $true }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-WezTermPerTab { $true }
+            Mock Invoke-WezTermTabTag { 'painted' }
+            Mock Write-WezTermTabModule { 'written' }
+            Mock Clear-WezTermStyleModule { 'cleared' }
+            Set-CurrentStyleRecord -StyleName 'eva' -Kind 'WezTerm'
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesCurrent    = $script:savedCurrent
+        }
+
+        It 'per-tab: tags this tab unstyled, clears the default, and leaves other tabs alone' {
+            Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-Null
+            Should -Invoke Invoke-WezTermTabTag -Times 1 -Exactly -ParameterFilter {
+                $Value -eq '/unstyled' -and $WithReset }
+            Should -Invoke Write-WezTermTabModule -Times 1 -Exactly -ParameterFilter { [string]::IsNullOrEmpty($DefaultStyle) }
+            Should -Invoke Clear-WezTermStyleModule -Times 0
+            Get-CurrentStyleRecord | Should -BeNullOrEmpty
+        }
+
+        It 'per-tab: says it reset this tab' {
+            $out = Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String -Width 500
+            $out | Should -Match ([regex]::Escape('Reset this WezTerm tab to your own look.'))
+            $out | Should -Match ([regex]::Escape('New tabs open unstyled; other open tabs keep their styles.'))
+            $out | Should -Not -Match 'to its unstyled default'
+            $out | Should -Match 'Open a new tab to restore your default prompt'
+        }
+
+        It 'per-tab: is not refused because the default is already empty' {
+            # The reset a styled-nowhere module needs: another tab may still
+            # carry a style. Test-WezTermModuleStyled would call this module
+            # styled whatever it holds; the point is that nothing asks it.
+            Mock Write-WezTermTabModule { 'unchanged' }
+            $out = Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String -Width 500
+            Should -Invoke Invoke-WezTermTabTag -Times 1 -Exactly
+            $out | Should -Match ([regex]::Escape('Reset this WezTerm tab to your own look.'))
+        }
+
+        It 'per-tab: does not claim the tab was reset when the tag reached no terminal' {
+            Mock Invoke-WezTermTabTag { 'noterminal' }
+            $out = Reset-StyleNonWT -OutputRedirected:$true 6>&1 | Out-String -Width 500
+            $out | Should -Not -Match 'Reset this WezTerm tab'
+            $out | Should -Match 'This tab was not reset'
+            $out | Should -Match ([regex]::Escape('New tabs open unstyled'))
+        }
+
+        It 'per-tab: a failed module write names the module and claims no reset' {
+            Mock Write-WezTermTabModule { 'failed' }
+            $out = Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String -Width 500
+            $out | Should -Match ([regex]::Escape($script:wezPath))
+            $out | Should -Not -Match 'Reset this WezTerm tab'
+            $out | Should -Not -Match 'New tabs open unstyled'
+            $out | Should -Match 'last style you applied'
+        }
+    }
+}
+
+Describe 'tstyles reset in per-tab WezTerm, through the real writer' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData    = $script:TStylesDataRoot
+            $script:savedModule  = $script:TStylesModuleRoot
+            $script:savedCurrent = $script:TStylesCurrent
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            New-Item -ItemType Directory -Path $script:root -Force | Out-Null
+            $script:TStylesDataRoot   = $script:root
+            $script:TStylesModuleRoot = $script:root
+            $script:TStylesCurrent    = Join-Path $script:root 'current-style.ps1'
+            $script:wezPath = Join-Path $script:root 'terminalstyles.lua'
+            Mock Get-TerminalKind { 'WezTerm' }
+            Mock Get-WezTermModulePath { $script:wezPath }
+            Mock Write-HostOscPacket { $true }
+            Mock Show-UpdateNoticeIfAvailable {}
+            Mock Test-WezTermPerTab { $true }
+            Mock Invoke-WezTermTabTag { 'painted' }
+        }
+        AfterEach {
+            $script:TStylesDataRoot   = $script:savedData
+            $script:TStylesModuleRoot = $script:savedModule
+            $script:TStylesCurrent    = $script:savedCurrent
+        }
+
+        It 'rewrites a styled per-tab module to one with no default, and resets again on the empty one' {
+            Write-WezTermTabModule -DefaultStyle 'eva' | Should -Be 'written'
+            $read = { [System.IO.File]::ReadAllText($script:wezPath, [System.Text.UTF8Encoding]::new($false)) }
+            (& $read) | Should -Match "local DEFAULT = 'eva'" -Because 'the fixture has a default to clear'
+
+            $out = Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String -Width 500
+            (& $read) | Should -Match 'local DEFAULT = nil'
+            Test-WezTermTabModule -Path $script:wezPath | Should -BeTrue
+            $out | Should -Match ([regex]::Escape('Reset this WezTerm tab to your own look.'))
+
+            # That module is one Test-WezTermModuleStyled calls styled with no
+            # default in it. A second reset must still run, and say so.
+            $out2 = Reset-StyleNonWT -OutputRedirected:$false 6>&1 | Out-String -Width 500
+            $out2 | Should -Match ([regex]::Escape('Reset this WezTerm tab to your own look.'))
+            Should -Invoke Invoke-WezTermTabTag -Times 2 -Exactly -ParameterFilter { $Value -eq '/unstyled' -and $WithReset }
         }
     }
 }

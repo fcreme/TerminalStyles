@@ -848,7 +848,10 @@ Describe 'the WezTerm capability table matches what the writer emits' {
         }
 
         It 'claims exactly what Get-WezTermStyleLua writes' {
-            $caps = Get-TerminalCapability -Kind 'WezTerm'
+            # -Platform Windows: font and padding are claimed there only (the
+            # per-tab module off Windows writes neither), and pinning it keeps
+            # all four CI legs asserting the same thing.
+            $caps = Get-TerminalCapability -Kind 'WezTerm' -Platform Windows
             $caps.OscPalette      | Should -BeTrue
             $caps.BackgroundImage | Should -BeTrue -Because 'the animated GIF is the point'
             $caps.Font            | Should -BeTrue
@@ -878,7 +881,7 @@ Describe 'the WezTerm capability table matches what the writer emits' {
             # prompt sets it.
             $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:capScheme `
                 -Theme $script:capTheme -BackgroundImage '/abs/eva/background.gif'
-            if ((Get-TerminalCapability -Kind 'WezTerm')[$Flag]) {
+            if ((Get-TerminalCapability -Kind 'WezTerm' -Platform Windows)[$Flag]) {
                 $lua | Should -Match $Option -Because "WezTerm claims $Flag"
             } else {
                 $lua | Should -Not -Match $Option -Because "WezTerm does not claim $Flag"
@@ -1015,6 +1018,109 @@ Describe 'the background sits where the style puts it' {
             }
             $checked   | Should -BeGreaterThan 10 -Because 'a loop that never ran would pass silently'
             $nonCentre | Should -BeGreaterThan 0  -Because 'if every style centred, this would pass against the hardcoded value it replaced'
+        }
+    }
+}
+
+Describe 'Publish-StyleWezTermConfig per tab' {
+    InModuleScope TerminalStyles {
+        BeforeEach {
+            $script:savedData = $script:TStylesDataRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:h = Join-Path $script:root 'home'
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:TStylesDataRoot = Join-Path $script:root 'data'
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            Mock Get-StyleBundledBackground { $null }
+            Mock Write-HostOscPacket { $true }
+            Mock Write-Host {}
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'per-tab: writes the per-tab module with this style as default and tags this tab' {
+            Mock Test-WezTermPerTab { $true }
+            Mock Write-WezTermTabModule { 'written' }
+            Mock Write-WezTermStyleModule { 'written' }
+            Mock Invoke-WezTermTabTag { 'painted' }
+
+            $r = Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h
+
+            $r | Should -Be (Get-WezTermModulePath -HomeDir $script:h)
+            Should -Invoke Write-WezTermTabModule -Times 1 -Exactly -ParameterFilter { $DefaultStyle -eq 'eva' }
+            Should -Invoke Write-WezTermStyleModule -Times 0 -Exactly
+            Should -Invoke Invoke-WezTermTabTag -Times 1 -Exactly -ParameterFilter { $Value -eq 'eva' }
+        }
+
+        It 'per-tab: a failed module write names the module, tags nothing and returns nothing' {
+            Mock Test-WezTermPerTab { $true }
+            Mock Write-WezTermTabModule { 'failed' }
+            Mock Invoke-WezTermTabTag { 'painted' }
+            $out = [System.Collections.Generic.List[string]]::new()
+            Mock Write-Host { $out.Add([string]$Object) } -ParameterFilter { $true }
+
+            $r = Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h
+
+            $r | Should -BeNullOrEmpty
+            Should -Invoke Invoke-WezTermTabTag -Times 0 -Exactly
+            ($out -join "`
+") | Should -Match ([regex]::Escape((Get-WezTermModulePath -HomeDir $script:h)))
+        }
+
+        It 'off per-tab: writes the single-style module exactly as before' {
+            Mock Test-WezTermPerTab { $false }
+            Mock Write-WezTermTabModule { 'written' }
+            Mock Invoke-WezTermTabTag { 'painted' }
+
+            Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h | Out-Null
+
+            Should -Invoke Write-WezTermTabModule -Times 0 -Exactly
+            Should -Invoke Invoke-WezTermTabTag -Times 0 -Exactly
+            $lua = [System.IO.File]::ReadAllText((Get-WezTermModulePath -HomeDir $script:h), [System.Text.UTF8Encoding]::new($false))
+            $lua | Should -Match ([regex]::Escape("config.color_scheme = 'TerminalStyles eva'"))
+        }
+
+        It 'off per-tab: removes the per-tab marker' {
+            Mock Test-WezTermPerTab { $false }
+            $marker = Get-WezTermTabMarkerPath
+            [System.IO.File]::WriteAllText($marker, '')
+            [System.IO.File]::Exists($marker) | Should -BeTrue -Because 'the fixture'
+
+            Publish-StyleWezTermConfig -StyleName 'eva' -StyleDir '/tmp/eva' -Scheme $script:scheme `
+                -Kind 'WezTerm' -HomeDir $script:h | Out-Null
+
+            [System.IO.File]::Exists($marker) | Should -BeFalse
+        }
+
+        It 'redirected output: no tag bytes reach the stream and no record is written' {
+            Mock Set-WezTermTabRecord { 'ok' }
+            Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $true | Should -Be 'noterminal'
+            Invoke-WezTermTabTag -Value '/unstyled' -WithReset -OutputRedirected $true | Should -Be 'noterminal'
+            Should -Invoke Write-HostOscPacket -Times 0 -Exactly
+            Should -Invoke Set-WezTermTabRecord -Times 0 -Exactly
+            [System.IO.File]::Exists((Get-WezTermTabRecordPath)) | Should -BeFalse
+        }
+
+        It 'a write that reached no terminal is noterminal and records nothing' {
+            Mock Write-HostOscPacket { $false }
+            Mock Set-WezTermTabRecord { 'ok' }
+            Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $false | Should -Be 'noterminal'
+            Should -Invoke Set-WezTermTabRecord -Times 0 -Exactly
+        }
+
+        It 'painted: writes the tag packet, records the value, and leads with the OSC reset under -WithReset' {
+            Mock Set-WezTermTabRecord { 'ok' }
+            Invoke-WezTermTabTag -Value 'eva' -OutputRedirected $false | Should -Be 'painted'
+            Should -Invoke Write-HostOscPacket -Times 1 -Exactly -ParameterFilter {
+                $Packet -ceq (Get-WezTermTagPacket -Value 'eva') }
+            Should -Invoke Set-WezTermTabRecord -Times 1 -Exactly -ParameterFilter { $Value -eq 'eva' }
+
+            Invoke-WezTermTabTag -Value '/unstyled' -WithReset -OutputRedirected $false | Should -Be 'painted'
+            Should -Invoke Write-HostOscPacket -Times 1 -Exactly -ParameterFilter {
+                $Packet -ceq ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value '/unstyled')) }
         }
     }
 }
