@@ -138,9 +138,10 @@ fonts you already had.
 Applying the font to a profile is a **Windows Terminal** thing —
 `settings.json` is the only config file `tstyles font` writes. On every
 other terminal the install is the whole job, and the command says so. The
-font is then chosen in your terminal's own settings — or, on WezTerm and on
-VS Code with saving on, by the applied style: `tstyles tune` saves a font
-into a style.
+font is then chosen in your terminal's own settings — or, on VS Code with
+saving on, and on WezTerm on Windows, by the applied style: `tstyles tune`
+saves a font into a style. WezTerm on macOS and Linux takes its font from your
+own `wezterm.lua`.
 
 The first time you run `tstyles`, a one-time prompt offers to install the
 whole set. Decline it and you're never asked again — `tstyles font` is
@@ -216,11 +217,14 @@ record: earlier values come back, and a key you changed by hand since is left
 alone and named. No `.bak` is written for that. Elsewhere there is no
 `settings.json` to strip: the reset is an escape sequence handing color control
 back to the terminal's own profile, so there is nothing to back up and no
-`.bak` is written. In WezTerm that profile includes the module TerminalStyles
-generated, `~/.config/wezterm/terminalstyles.lua`, so the reset also rewrites
-it to one that applies nothing. The tab you reset in and every new tab come up
-in your own `wezterm.lua`, and other open tabs lose what the module set: the
-font, padding, cursor shape, opacity, tab color, background and color scheme.
+`.bak` is written. In WezTerm off Windows, with the `require` line in your
+`wezterm.lua`, the reset puts the tab you run it in back to your own look and
+makes new tabs open unstyled; other open tabs keep their styles (see
+[Terminals and Shells](Terminals-and-Shells.md#animated-backgrounds-on-wezterm)).
+Without that line, and on Windows, the profile includes the module TerminalStyles
+generated, `~/.config/wezterm/terminalstyles.lua`, so the reset rewrites
+it to one that applies nothing: the tab you reset in and every new tab come up
+in your own `wezterm.lua`, and other open tabs lose what the module set.
 WezTerm keeps colors an escape sequence set as that tab's own, though, so the
 tab you applied a style in can keep its colors until you close it or run
 `tstyles reset` there. A reset run in another terminal leaves the module alone,

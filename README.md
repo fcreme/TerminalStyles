@@ -12,8 +12,9 @@
 **Switch terminal themes live.** Run `tstyles`, arrow through 18 themes
 previewing each one *in your current tab* — **Enter** keeps it, **Esc** reverts to
 exactly how it looked before. The palette, the cursor color and the prompt
-repaint instantly on any terminal that speaks OSC; on **Windows Terminal** and
-**WezTerm** the font, opacity and animated background come with them. All in one
+repaint instantly on any terminal that speaks OSC; on **Windows Terminal** the
+font, opacity and animated background come with them, and on **WezTerm** the
+opacity and animated background do (not the font; see below). All in one
 command, all non-destructive.
 
 <p align="center">
@@ -24,6 +25,19 @@ Works on **Windows Terminal**, **macOS Terminal.app**, **iTerm2**, and any
 terminal that speaks OSC color sequences — and in **zsh** and **bash**, not just
 PowerShell. Runs on PowerShell 7 and Windows PowerShell 5.1. Keep your own prompt
 (Oh My Posh / Starship) with `tstyles <name> -KeepPrompt`.
+
+**WezTerm styles one tab at a time** (macOS and Linux, once your `wezterm.lua` has
+the one `require` line that the first `tstyles <name>` prints). `tstyles <name>`
+restyles the tab you run it in and leaves the others alone. WezTerm draws one
+background per window, so a window shows the style of its active tab and changes
+as you switch tabs. A new tab opens in the last style applied anywhere, and a
+split takes the style of its tab. WezTerm forgets each tab's own style when it
+quits; after a restart every tab opens in the last style applied. Font, size and
+padding are no longer set by a style there: they come from your own
+`wezterm.lua` (`tstyles font` says so). For the keys a style does set (colours,
+background, opacity, blur, cursor, tab colour), a styled tab wins over your own
+lines. Inside tmux, add `set -g allow-passthrough on` so WezTerm hears which
+style a tab wears. On Windows, WezTerm keeps restyling every tab.
 
 **Make your own.** `tstyles create` builds a style from any picture on your
 computer: it pulls a palette from the image, lets you change any colour, pick

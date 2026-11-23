@@ -16,10 +16,13 @@
   delivered through a generated `.terminal` profile, which means a new window
   (`tstyles <name> -NewWindow`). Tab accent color, font, cursor shape, window
   transparency and interior padding are the same story: they live in a config
-  file. Off Windows Terminal, WezTerm's generated Lua module carries all five,
-  so a WezTerm window gets everything the eighteen bundled styles declare
-  except the tab title (the style's prompt sets that anyway) and the
-  experimental CRT effect, which WezTerm has no equivalent for. A VS
+  file. Off Windows Terminal, WezTerm's generated Lua module carries the tab
+  accent color, cursor shape and window transparency; the font and interior
+  padding are left to your own `wezterm.lua` off Windows, because WezTerm
+  styles one tab at a time there and a font is a property of the whole window.
+  So a WezTerm window gets what the eighteen bundled styles declare except the
+  font, the padding, the tab title (the style's prompt sets that anyway) and
+  the experimental CRT effect, which WezTerm has no equivalent for. A VS
   Code-family editor's `settings.json` carries the font and the cursor shape
   once you have said yes to it being written, and has no setting for the other
   three. Both doors — `tstyles <name>` and the picker — name every field the

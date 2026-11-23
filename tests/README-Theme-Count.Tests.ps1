@@ -81,9 +81,13 @@ Describe 'the README counts the themes it ships' {
         # since 0.8.29, and off Windows it is the ONLY terminal that animates
         # one. The sentence credited Windows Terminal alone, which read as "not
         # on your Mac" to every macOS reader.
-        $m = [regex]::Match($script:Readme, '(?s)font, opacity and animated background')
-        $m.Success | Should -BeTrue
-        $before = $script:Readme.Substring(0, $m.Index)
-        $before.Substring([Math]::Max(0, $before.Length - 160)) | Should -Match 'WezTerm'
+        # WezTerm no longer takes the FONT from a style off Windows, so the
+        # sentence names it for the opacity and the animated background.
+        $found = $false
+        foreach ($m in [regex]::Matches($script:Readme, '(?s)opacity and animated background')) {
+            $before = $script:Readme.Substring(0, $m.Index)
+            if ($before.Substring([Math]::Max(0, $before.Length - 160)) -match 'WezTerm') { $found = $true }
+        }
+        $found | Should -BeTrue
     }
 }

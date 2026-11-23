@@ -55,7 +55,7 @@ unaffected.
 | | Colors | Cursor | Font | Opacity | Background image | Tab color |
 |---|---|---|---|---|---|---|
 | Windows Terminal ² | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
-| WezTerm | ✅ | ✅ shape + color | ✅ | ✅ | ✅ animated | ✅ |
+| WezTerm ³ | ✅ | ✅ shape + color | — (✅ on Windows) | ✅ | ✅ animated | ✅ |
 | Terminal.app | ✅ | color only | — | — | ✅ still, new window | — |
 | iTerm2 | ✅ | color only | — | — | — | — |
 | Ghostty / kitty / Alacritty | ✅ | color only | — | — | — | — |
@@ -78,6 +78,10 @@ out of its reach: in a WSL tab a style brings the colors, the cursor color and
 the prompt, and `tstyles font` installs into the distro, where Windows Terminal
 does not look for fonts. To give that profile the rest, apply the style from a
 PowerShell tab of the same Windows Terminal: `tstyles <name> -Target '<profile>'`.
+
+³ Off Windows, a style in WezTerm does not set the font, size or padding: they
+come from your own `wezterm.lua`. See
+[Animated backgrounds on WezTerm](#animated-backgrounds-on-wezterm).
 
 So the dashes above describe this tool, not the emulator. iTerm2 would honour a
 Dynamic Profile; nothing here writes one yet. They are marked `—` rather than
@@ -107,29 +111,58 @@ The `pcall` above is what bounds the damage the other way too: if the generated
 module is ever missing or broken, your own config still loads and you simply
 lose the style.
 
-Applying a style rewrites `~/.config/wezterm/terminalstyles.lua`, and because
-WezTerm watches every file it `require`s, the running window repaints on the
-spot — background animation included. No new window, no restart. `tstyles`
-prints the line above until it can see it in your config. `tstyles reset`, run
-in WezTerm, rewrites the same file to one that applies nothing, and the same
-reload takes the style back off (the tab you applied a style in can keep its
-colors; see [Resetting a profile](Using-tstyles.md#resetting-a-profile)). `tstyles uninstall` deletes the file.
-The picker previews by rewriting the same file as you arrow. Esc puts back
-the module it found — unless another tstyles command rewrote it meanwhile,
-which it then leaves, and says so. A picker closed without Enter or Esc is
-put right by the next picker, which restores the module it found, or by the
-next apply or reset.
+`tstyles` prints the line above until it can see it in your config. Off Windows,
+with it in place, `tstyles <name>` restyles **the tab you
+run it in**, background animation included, and leaves every other tab and
+window as it was. WezTerm draws one background per window, so a window shows the
+style of its **active tab** and changes as you switch tabs. A **new tab** opens
+in the last style applied anywhere, and a **split** takes the style of its tab.
+When WezTerm quits, each tab forgets its own style: after a restart every tab
+opens in the last style applied. `tstyles current`, the marker in `tstyles list`,
+`tstyles tune` with no name, `random` and `delete` answer for the tab you are in;
+a tab with no style of its own reports the last style applied.
 
-The module carries the rest of the style too: the palette as a named color
-scheme, the font and its size, the interior padding, the cursor shape, the tab
-accent color, and — for a style that asks for transparency — the window
-opacity, with `macos_window_background_blur` added only on macOS, behind a
-`wezterm.target_triple` test, so the same file stays valid on Linux. The tab
-accent color is merged into `config.colors` key by key rather than assigned, so
-whatever you already set there survives.
+How it works: `~/.config/wezterm/terminalstyles.lua` carries the look of every
+installed style. `tstyles` tags the tab it runs in with an OSC 1337 user
+variable (`TERMINALSTYLES_STYLE`), and the module sets that window's config
+overrides to match the tag of its active tab. A per-tab record
+(`wezterm-tabs.json`, in the data folder) lets `tstyles` itself remember which
+style each tab wears, since a tab's tag cannot be read back. Applying a style
+also makes it the default for new tabs, which rewrites the module. Inside tmux
+the tag only reaches WezTerm with `set -g allow-passthrough on` in your
+`tmux.conf`.
 
-Applying a style reports which parts the current terminal cannot show, so a
-plainer result is never a mystery.
+New zsh and bash shells in WezTerm no longer replay the last style's palette
+over their tab, since that would paint the last style's colors over a tab
+wearing another one.
+
+`tstyles reset`, run in WezTerm, puts **that tab** back to your own look and
+makes new tabs open unstyled; other tabs keep their styles. Deleting the style
+new tabs open in, from another tab, makes new tabs open unstyled and leaves the
+tab you ran it in as it was. `tstyles uninstall` deletes the module file;
+WezTerm windows already open keep their look until you close them or restart
+WezTerm, and it says so.
+
+The picker previews in its own tab only. Each arrow key tags that tab with a
+`/preview/<name>` tag, with no file written; Esc puts the tab's own style
+back, and Enter applies the style in that tab. (On Windows, and without the
+`require` line, the picker still previews by rewriting the module as you arrow:
+Esc puts back the module it found, unless another tstyles command rewrote it
+meanwhile, which it then leaves, and says so. A picker closed without Enter or
+Esc is put right by the next picker, or by the next apply or reset.)
+
+**What a style sets in WezTerm.** The palette as a named color scheme, the
+background, the cursor shape, the tab accent color, and for a style that asks
+for transparency the window opacity, with `macos_window_background_blur` added
+only on macOS, behind a `wezterm.target_triple` test, so the same file stays
+valid on Linux. Where your own `wezterm.lua` sets one of those keys too, a
+styled tab wins for that key. **Font, size and padding are not set by a style
+off Windows**: a font or padding belongs to the whole window, and changing it on
+each tab switch would reflow your text. Set them in your own `wezterm.lua`;
+`tstyles font` and the "can't show" notice say so.
+
+**On Windows**, WezTerm keeps the older behavior: every apply rewrites the
+module and restyles every tab, and the style sets the font and padding too.
 
 ### Background images on Terminal.app
 

@@ -64,7 +64,8 @@ tstyles uninstall
 The confirmation lists every file it is about to edit by name — each
 engine's `$PROFILE`, each shell rc file that actually carries a block,
 each VS Code-family `settings.json` a style was saved to, and the
-generated WezTerm style module, which it deletes. If it cannot strip one
+generated WezTerm style module, which it deletes (WezTerm windows already open
+keep their look until you close them or restart WezTerm, and it says so). If it cannot strip one
 (a read-only profile, or a block hand-edited down to a stray `BEGIN`), it
 names that file at the end instead of closing on "TerminalStyles
 uninstalled." The same goes for anything else it could not remove — a
