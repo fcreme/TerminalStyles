@@ -75,8 +75,22 @@ BeforeAll {
     }
 
     # Run a command under a real pty and return everything it printed.
+    #
+    # BOUNDED. It waited on `script` for as long as that took, and on
+    # ubuntu-latest one replay probe never ended (run 45207345656, cancelled
+    # by hand after 47 minutes), with a log that said nothing about why. Past
+    # -TimeoutSeconds it kills the whole process tree and THROWS, which fails
+    # the test, with every process still running under `script` (state,
+    # terminal process group, wait channel) and the log so far, so the next
+    # hang names its own cause.
+    #
+    # Both flavours are fed `exit` on stdin. BSD's always was; util-linux's was
+    # fed nothing, so a shell that never reached its rc's own `exit` (a job
+    # left stopped, say, which makes zsh refuse the first exit) waited at its
+    # prompt for good. Run through .NET's Process for the wait: a shell
+    # `timeout` is not on macOS.
     function script:Invoke-UnderPty {
-        param([string]$Command, [string]$LogPath)
+        param([string]$Command, [string]$LogPath, [int]$TimeoutSeconds = 60)
         $isUtilLinux = $false
         try {
             # util-linux prints "util-linux" in its version banner; BSD script
@@ -85,10 +99,59 @@ BeforeAll {
             $isUtilLinux = $v -match 'util-linux'
         } catch { $isUtilLinux = $false }
 
+        $psi = [System.Diagnostics.ProcessStartInfo]::new('script')
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
         if ($isUtilLinux) {
-            & script -q -c $Command $LogPath *> $null
+            foreach ($a in @('-q', '-c', $Command, $LogPath)) { $psi.ArgumentList.Add($a) }
         } else {
-            'exit' | & script -q $LogPath $Command *> $null
+            foreach ($a in @('-q', $LogPath, $Command)) { $psi.ArgumentList.Add($a) }
+        }
+        $p = [System.Diagnostics.Process]::Start($psi)
+        try {
+            # Drained as it comes: `script` copies the session to its stdout
+            # too, and a full pipe would stop it as surely as a stuck shell.
+            $drainOut = $p.StandardOutput.ReadToEndAsync()
+            $drainErr = $p.StandardError.ReadToEndAsync()
+            try {
+                $p.StandardInput.Write("exit`n")
+                $p.StandardInput.Close()
+            } catch { }
+            if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
+                # Every process under `script`, by parent id, before the kill.
+                $table = @{}
+                foreach ($row in @(& ps -A -o pid=,ppid=)) {
+                    $f = "$row".Trim() -split '\s+'
+                    if ($f.Count -ge 2) { $table[$f[0]] = $f[1] }
+                }
+                $tree = [System.Collections.Generic.List[string]]::new()
+                $tree.Add([string]$p.Id)
+                for ($i = 0; $i -lt $tree.Count; $i++) {
+                    foreach ($k in @($table.Keys)) {
+                        if ($table[$k] -eq $tree[$i] -and -not $tree.Contains($k)) { $tree.Add($k) }
+                    }
+                }
+                $listing = (& ps -o pid,pgid,tpgid,stat,wchan,command -p ($tree -join ',') 2>&1 | Out-String)
+                # The children first, and gently: `script` then sees its child
+                # go, flushes the log it buffers and exits. A SIGKILL to it
+                # loses that buffer. Whatever is left goes hard.
+                foreach ($id in @($tree | Select-Object -Skip 1)) { try { & kill -TERM $id 2>$null } catch { } }
+                [void]$p.WaitForExit(3000)
+                try { $p.Kill($true) } catch { }
+                foreach ($id in $tree) { try { & kill -9 $id 2>$null } catch { } }
+                [void]$p.WaitForExit(5000)
+                $log = ''
+                if (Test-Path -LiteralPath $LogPath) { $log = [System.IO.File]::ReadAllText($LogPath) }
+                throw ("script did not exit within $TimeoutSeconds s, so its process tree was killed: $Command`n" +
+                       "--- still running then ---`n$listing" +
+                       "--- the log so far ($LogPath) ---`n$log")
+            }
+            [void]$drainOut.Wait(5000)
+            [void]$drainErr.Wait(5000)
+        } finally {
+            $p.Dispose()
         }
         if (Test-Path -LiteralPath $LogPath) {
             return [System.IO.File]::ReadAllText($LogPath)
@@ -141,6 +204,48 @@ exit 0
         [System.IO.File]::WriteAllText($w, "#!/bin/sh`n$Exec`n")
         & chmod +x $w
         return $w
+    }
+}
+
+Describe 'the pty helper is bounded' {
+    # A probe whose shell never exits used to hang the whole run: the helper
+    # waited on `script` for as long as it took, and run 45207345656 sat in one
+    # replay probe on ubuntu-latest until it was cancelled by hand 47 minutes
+    # in, with nothing in the log to say why. Now it fails the test, with the
+    # processes still running and the log so far.
+    It 'fails within its bound, naming what was still running, when the command does not exit' -Skip:(-not $script:HasScript) {
+        $root = Join-Path $TestDrive ('pty-hang-' + [guid]::NewGuid().Guid.Substring(0, 8))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        # Not exec: the wrapper's own command line, which holds this unique
+        # path, stays in the process table for the leftover check below.
+        $w = script:New-PtyWrapper -Dir $root -Name 'hang' -Exec "echo PTY-STARTED; sleep 60"
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $err = $null
+        try {
+            script:Invoke-UnderPty -Command $w -LogPath (Join-Path $root 'log') -TimeoutSeconds 3 | Out-Null
+        } catch { $err = $_ }
+        $clock.Stop()
+
+        $err | Should -Not -BeNullOrEmpty -Because 'a command that does not exit must fail the test, not hang the run'
+        $clock.Elapsed.TotalSeconds | Should -BeLessThan 30
+        "$err" | Should -Match 'did not exit within 3 s'
+        "$err" | Should -Match 'sleep 60' -Because 'the listing names the process it was waiting on'
+        "$err" | Should -Match 'PTY-STARTED' -Because 'and the log shows how far the command got'
+        $left = @(& ps -A -o command= | Where-Object { $_ -like "*$root*" })
+        $left | Should -HaveCount 0 -Because 'the whole process tree is killed, not left running'
+    }
+
+    It 'lets an interactive shell left at its prompt exit on the exit it is fed' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        # No `exit` in the rc. Both flavours of `script` are fed one on stdin;
+        # util-linux's used to be fed nothing, so a shell that never reached
+        # the rc's own exit waited at its prompt for good.
+        $root = Join-Path $TestDrive ('pty-fed-' + [guid]::NewGuid().Guid.Substring(0, 8))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $rc = Join-Path $root 'rc.sh'
+        [System.IO.File]::WriteAllText($rc, "echo TSPROBE-READY`n")
+        $w = script:New-PtyWrapper -Dir $root -Name 'fed' -Exec "exec bash --init-file '$rc' -i"
+        $text = script:Invoke-UnderPty -Command $w -LogPath (Join-Path $root 'log') -TimeoutSeconds 30
+        $text | Should -Match 'TSPROBE-READY'
     }
 }
 
