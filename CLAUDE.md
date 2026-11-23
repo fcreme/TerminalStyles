@@ -62,11 +62,12 @@ the code that delivers it.
 
 There are exactly four config writers in the repo: `Merge-StyleIntoSettings` (Windows
 Terminal `settings.json`), `New-AppleTerminalProfile` (Terminal.app `.terminal` plist),
-WezTerm's generated Lua module (two generators for one file: `Get-WezTermStyleLua`, one
-style for every window, still used on Windows and when the module is not wired; and
+WezTerm's generated Lua module (one file, three generators: `Get-WezTermStyleLua`, one
+style for every window, still used on Windows and when the module is not wired;
+`Get-WezTermUnstyledLua`, the do-nothing module a reset leaves on those same paths; and
 `Get-WezTermTabModuleLua`, every style's look plus the per-tab handlers, used off Windows
-once `wezterm.lua` loads it — both build each scheme through `Add-WezTermSchemeBody`, so a
-scheme rule changes in one place) and `Invoke-VSCodeStyleApply`
+once `wezterm.lua` loads it — the two that carry a style build each scheme through
+`Add-WezTermSchemeBody`, so a scheme rule changes in one place) and `Invoke-VSCodeStyleApply`
 (a VS Code-family editor's `settings.json`, written from `lib/vscodewriter.ps1` —
 `Publish-StyleVSCodeConfig` and the picker's preview session — only after the user has
 said yes for that editor, so its capability flags are conditional too, on
