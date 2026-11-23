@@ -114,8 +114,8 @@ Describe 'per-tab record' {
         }
         It 'drops entries whose socket no longer exists' {
             $dead = Join-Path $TestDrive 'dead.sock'
-            [System.IO.File]::WriteAllText($script:recFile,
-                ('{"' + $dead + '|1":"eva","' + $script:liveSock + '|9":"kitty"}'))
+            $fixture = [ordered]@{ "$dead|1" = 'eva'; "$($script:liveSock)|9" = 'kitty' } | ConvertTo-Json
+            [System.IO.File]::WriteAllText($script:recFile, $fixture, [System.Text.UTF8Encoding]::new($false))
             Set-WezTermTabRecord -Value 'x' | Should -BeExactly 'ok'
             $text = [System.IO.File]::ReadAllText($script:recFile)
             $text | Should -Not -BeLike '*dead.sock*'
