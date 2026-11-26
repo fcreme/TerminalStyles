@@ -1603,7 +1603,8 @@ function Invoke-TerminalStylesUninstall {
                 # file is gone drops that layer, and only that, at its next
                 # config reload (measured, same header).
                 if ($DeleteData) {
-                    Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm, except a background image whose file -DeleteData removes: each window drops that the next time WezTerm reloads its config." -ForegroundColor Gray
+                    Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm," -ForegroundColor Gray
+                    Write-Host "  except a background image -DeleteData removes: that goes at WezTerm's next config reload." -ForegroundColor Gray
                 } else {
                     Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm." -ForegroundColor Gray
                 }

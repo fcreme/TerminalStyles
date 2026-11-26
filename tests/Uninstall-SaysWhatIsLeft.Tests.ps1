@@ -656,7 +656,8 @@ Describe 'tstyles uninstall' {
                 $out | Should -Match 'Removed the WezTerm style module'
                 $out | Should -Not -Match '(?m)keep their look until you close them or restart WezTerm\.\s*$' `
                     -Because 'the unqualified claim is false once the images are gone'
-                $out | Should -Match '(?m)^  WezTerm windows already open keep their look until you close them or restart WezTerm, except a background image whose file -DeleteData removes: each window drops that the next time WezTerm reloads its config\.\s*$'
+                $out | Should -Match '(?m)^  WezTerm windows already open keep their look until you close them or restart WezTerm,\s*$'
+                $out | Should -Match '(?m)^  except a background image -DeleteData removes: that goes at WezTerm''s next config reload\.\s*$'
             }
 
             It 'does not say that when the module it removed was the single-style one' {
