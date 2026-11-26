@@ -1393,21 +1393,27 @@ function Get-WezTermTabModuleLua {
     look like it from their first frame. Its line is Get-WezTermTabDefaultLine's.
 
     GENERATION is the first 16 hex digits of the SHA-256 of this text with the
-    stamp itself blank. Every window stores "<wanted>@<GENERATION>@<user>" once
-    it is synced, <user> being a fingerprint of the user's own values for the
-    keys a look sets (and of the scheme their own color_scheme names), and skips
-    a sync whose stamp matches. So a rewritten module or an edited wezterm.lua
-    re-syncs every window once, and the reload that set_config_overrides itself
-    causes ends at the compare instead of looping.
+    stamp itself blank. Every window stores "<wanted>@<GENERATION>@<USERGEN>"
+    once it is synced, and skips a sync whose stamp matches. USERGEN is a
+    counter kept in wezterm.GLOBAL that moves whenever the fingerprint of the
+    user's own values moves: their values for the keys a look sets, the scheme
+    their own color_scheme names, and every scheme their config registers. A
+    counter, so the stamp stays short however many schemes they register. So a
+    rewritten module or an edited wezterm.lua re-syncs every window once, and
+    the reload that set_config_overrides itself causes ends at the compare
+    instead of looping.
 
     Every window gets a complete, self-contained look, the default's included:
-    every key a look sets, and the scheme it names in its own color_schemes.
-    So a rewrite that moves the default shows in no window, and a window keeps
-    its look when the module is deleted (the measurements are in this file's
-    header). A sync replaces only the keys a look sets and our own schemes, and
-    keeps every other override the window holds. apply_to_config runs inside a
-    pcall of its own and writes to config only after every value is worked out,
-    so an error there leaves the user's config as they wrote it.
+    every key a look sets, the scheme it names, and every scheme the user's
+    config registers, in its own color_schemes (an override's color_schemes
+    replaces the base config's whole table). So a rewrite that moves the default
+    shows in no window, a window keeps its look when the module is deleted, and
+    a color_scheme the user sets at runtime finds their scheme (the measurements
+    are in this file's header). A sync replaces only the keys a look sets, our
+    own schemes and the ones the user's config registers, and keeps every other
+    override the window holds. apply_to_config runs inside a pcall of its own
+    and writes to config only after every value is worked out, so an error
+    there leaves the user's config as they wrote it.
 
     The reserved tag values are interpolated from $script:WezTermTagVar and its
     siblings, never retyped, so the PowerShell that writes a tag and the Lua
@@ -1444,8 +1450,13 @@ function Get-WezTermTabModuleLua {
     [void]$sb.AppendLine('}')
     $lua = @'
 
--- Every scheme this file registers is named PREFIX .. <style>.
+-- Every scheme this file registers is named PREFIX .. <style>; ours() is the
+-- one test for it, so the schemes a sync drops and the ones it copies from
+-- your config cannot disagree about what is ours.
 local PREFIX = 'TerminalStyles '
+local function ours(name)
+  return type(name) == 'string' and name:sub(1, #PREFIX) == PREFIX
+end
 
 -- What WezTerm draws for a key nobody set, for a look to fill in. The "none"
 -- scheme is WezTerm's own default palette, under a name no style can take
@@ -1460,13 +1471,16 @@ local BUILTIN = {
 
 -- Your own values for every key a look sets, the scheme your own color_scheme
 -- names when your config registers it, and every scheme your config registers,
--- read before the default style is applied over them; and their fingerprint,
--- which is part of every sync stamp so an edit to your wezterm.lua reaches
--- windows holding an override.
+-- read before the default style is applied over them. USERGEN changes whenever
+-- any of them does, and is part of every sync stamp, so an edit to your
+-- wezterm.lua reaches windows holding an override. It is a counter, not their
+-- fingerprint: with every scheme of yours in it the fingerprint can run to
+-- hundreds of kilobytes, and a window's stamp is built and compared on every
+-- status tick and kept per window. The one fingerprint lives in wezterm.GLOBAL.
 local USER = {}
 local USER_SCHEME = nil
 local USER_SCHEMES = {}
-local USERPRINT = ''
+local USERGEN = ''
 local KEYS = { 'color_scheme', 'background', 'window_background_opacity',
                'macos_window_background_blur', 'default_cursor_style', 'colors' }
 
@@ -1633,7 +1647,7 @@ end
 local function sync(window, pane)
   if not window or not pane then return end
   local want = wanted(window, pane)
-  local stamp = want .. '@' .. GENERATION .. '@' .. USERPRINT
+  local stamp = want .. '@' .. GENERATION .. '@' .. USERGEN
   local key = 'ts_win_' .. window:window_id()
   if wezterm.GLOBAL[key] == stamp then return end
   wezterm.GLOBAL[key] = stamp
@@ -1643,7 +1657,7 @@ local function sync(window, pane)
   for k, v in pairs(look) do overrides[k] = v end
   local schemes = {}
   for k, v in pairs(overrides.color_schemes or {}) do
-    if type(k) ~= 'string' or k:sub(1, #PREFIX) ~= PREFIX then schemes[k] = v end
+    if not ours(k) then schemes[k] = v end
   end
   for k, v in pairs(USER_SCHEMES) do schemes[k] = v end
   if scheme then schemes[look.color_scheme] = scheme end
@@ -1664,11 +1678,16 @@ function M.apply_to_config(config)
     end
     if type(config.color_schemes) == 'table' then
       for name, s in pairs(config.color_schemes) do
-        if type(name) ~= 'string' or name:sub(1, #PREFIX) ~= PREFIX then user_schemes[name] = copy(s) end
+        if not ours(name) then user_schemes[name] = copy(s) end
       end
     end
     USER, USER_SCHEME, USER_SCHEMES = user, user_scheme, user_schemes
-    USERPRINT = fingerprint({ user, user_scheme, user_schemes })
+    local fp = fingerprint({ user, user_scheme, user_schemes })
+    if wezterm.GLOBAL.ts_userprint ~= fp then
+      wezterm.GLOBAL.ts_userprint = fp
+      wezterm.GLOBAL.ts_usergen = (wezterm.GLOBAL.ts_usergen or 0) + 1
+    end
+    USERGEN = tostring(wezterm.GLOBAL.ts_usergen)
     local schemes = { [BUILTIN.color_scheme] = wezterm.color.get_default_colors() }
     for name, look in pairs(LOOKS) do schemes[PREFIX .. name] = look.scheme end
     local base = look_of(DEFAULT or UNSTYLED)
