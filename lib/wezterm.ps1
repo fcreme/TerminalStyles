@@ -1199,9 +1199,11 @@ function Get-WezTermTabRecord {
 $script:WezTermTabModuleMarker = '-- TerminalStyles per-tab module'
 
 function Get-WezTermTabMarkerPath {
-    # The empty file that says "the WezTerm module is the per-tab one", for the
-    # zsh/bash loader, which cannot ask PowerShell. Written beside the per-tab
-    # record, under the data root.
+    # The empty file that says "the WezTerm module is the per-tab one", read at
+    # every shell start: by the zsh/bash loader, which cannot ask PowerShell,
+    # and by pwsh (Test-WezTermPerTabShell), which asks it the same way so the
+    # shells in a tab agree. Written beside the per-tab record, under the data
+    # root.
     Join-Path $script:TStylesDataRoot 'wezterm-pertab'
 }
 
@@ -1728,10 +1730,11 @@ function Write-WezTermTabModule {
     path the module checks when it builds a look.
 
     The write is Write-WezTermModuleText's. On 'written' or 'unchanged' the
-    marker file (Get-WezTermTabMarkerPath) is written too, for the zsh/bash
-    loader. Best-effort: a data root that cannot take an empty file cannot take
-    the per-tab record either, and the loader without the marker only replays
-    the last-applied palette, as before per-tab mode.
+    marker file (Get-WezTermTabMarkerPath) is written too, for the shells that
+    start in a WezTerm pane (the zsh/bash loader, and pwsh through
+    Test-WezTermPerTabShell). Best-effort: a data root that cannot take an
+    empty file cannot take the per-tab record either, and a shell without the
+    marker only replays the last-applied palette, as before per-tab mode.
 
     -HomeDir is the module path's seam, forwarded only when bound (CLAUDE.md);
     a test also points $script:TStylesDataRoot at $TestDrive, which holds the

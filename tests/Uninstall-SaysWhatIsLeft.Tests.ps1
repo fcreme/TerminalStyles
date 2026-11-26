@@ -671,8 +671,8 @@ Describe 'tstyles uninstall' {
             }
 
             It 'deletes the per-tab marker file with the module, and says nothing about it' {
-                # The zsh/bash loader skips its palette replay while this file
-                # exists; left behind, a reinstall would skip the replay.
+                # New zsh, bash and pwsh shells skip their palette replay while
+                # this file exists; left behind, a reinstall would skip it.
                 $script:wez = Get-WezTermModulePath -HomeDir $script:h
                 New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
                 [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'x'), [System.Text.UTF8Encoding]::new($false))

@@ -1608,9 +1608,11 @@ function Invoke-TerminalStylesUninstall {
                     Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm." -ForegroundColor Gray
                 }
             }
-            # The empty file the zsh/bash loader reads to skip its palette
-            # replay: with the module gone it would make a reinstall skip
-            # the replay until the next apply. Kept while the module is.
+            # The empty file every new shell reads to skip its palette
+            # replay (the zsh/bash loader, and pwsh through
+            # Test-WezTermPerTabShell): with the module gone it would make a
+            # reinstall skip the replay until the next apply. Kept while the
+            # module is.
             Remove-Item -LiteralPath (Get-WezTermTabMarkerPath) -Force -ErrorAction SilentlyContinue
         }
     }

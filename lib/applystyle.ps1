@@ -971,8 +971,9 @@ function Publish-StyleWezTermConfig {
     # Per tab: the module carries every style's look and this style becomes the
     # default for NEW tabs; this tab is then tagged, and only a tagged tab takes
     # a style's look. Off per-tab, the single-style module as before -- and the
-    # marker the zsh/bash loader reads goes, so a user who removed the wiring
-    # line gets that loader's replay of the last-applied palette back.
+    # marker every new shell reads goes (the zsh/bash loader, and pwsh through
+    # Test-WezTermPerTabShell), so a user who removed the wiring line gets
+    # their shells' replay of the last-applied palette back.
     $perTab = Test-WezTermPerTab -Kind $Kind @splat
     # The listed spelling for the module's default and this tab's tag: the Lua
     # finds a look by its exact name (Get-ListedStyleName). Not every door is
