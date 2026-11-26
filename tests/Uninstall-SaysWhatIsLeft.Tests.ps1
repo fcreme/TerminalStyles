@@ -640,6 +640,25 @@ Describe 'tstyles uninstall' {
                 $out | Should -Match '(?m)^  WezTerm windows already open keep their look until you close them or restart WezTerm\.\s*$'
             }
 
+            It 'says -DeleteData costs open WezTerm windows their background image' {
+                # Measured (2026-11-26, same build as the lib/wezterm.ps1
+                # header): a window whose override draws an image file that is
+                # then deleted keeps its palette and the rest of its look, and
+                # drops the image at its next config reload ("Failed to load
+                # background ... No such file or directory"). Every background
+                # image lives under the data folder, which -DeleteData deletes.
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'x'), [System.Text.UTF8Encoding]::new($false))
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -DeleteData -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'Removed the WezTerm style module'
+                $out | Should -Not -Match '(?m)keep their look until you close them or restart WezTerm\.\s*$' `
+                    -Because 'the unqualified claim is false once the images are gone'
+                $out | Should -Match '(?m)^  WezTerm windows already open keep their look until you close them or restart WezTerm, except a background image whose file -DeleteData removes: each window drops that the next time WezTerm reloads its config\.\s*$'
+            }
+
             It 'does not say that when the module it removed was the single-style one' {
                 $script:wez = Get-WezTermModulePath -HomeDir $script:h
                 New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null

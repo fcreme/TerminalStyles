@@ -1597,8 +1597,16 @@ function Invoke-TerminalStylesUninstall {
                 # Every window holds a complete override that carries its own
                 # scheme, and such an override outlives the module (measured;
                 # header of lib/wezterm.ps1), so deleting the module does not
-                # unstyle windows already open, palette included.
-                Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm." -ForegroundColor Gray
+                # unstyle windows already open, palette included. Its image
+                # layer is the exception under -DeleteData: every background
+                # image lives under the data folder, and a window whose image
+                # file is gone drops that layer, and only that, at its next
+                # config reload (measured, same header).
+                if ($DeleteData) {
+                    Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm, except a background image whose file -DeleteData removes: each window drops that the next time WezTerm reloads its config." -ForegroundColor Gray
+                } else {
+                    Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm." -ForegroundColor Gray
+                }
             }
             # The empty file the zsh/bash loader reads to skip its palette
             # replay: with the module gone it would make a reinstall skip

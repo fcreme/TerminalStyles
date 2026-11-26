@@ -146,7 +146,9 @@ makes new tabs open unstyled; other tabs keep their styles. Deleting the style
 new tabs open in, from another tab, makes new tabs open unstyled and leaves the
 tab you ran it in as it was. `tstyles uninstall` deletes the module file;
 WezTerm windows already open keep their look until you close them or restart
-WezTerm, and it says so.
+WezTerm, and it says so. With `-DeleteData` they drop their background image
+the next time WezTerm reloads its config, since its file goes with the data
+folder; the colours stay.
 
 The picker previews in its own tab only. Each arrow key tags that tab with a
 `/preview/<name>` tag, with no file written; Esc puts the tab's own style

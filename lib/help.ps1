@@ -460,6 +460,8 @@ function Get-TerminalStyleHelpData {
                        "The generated WezTerm module (terminalstyles.lua) is deleted. When",
                        "it was the per-tab one, WezTerm windows already open keep their look",
                        "until you close them or restart WezTerm, and the command says so.",
+                       "With -DeleteData they drop their background image the next time",
+                       "WezTerm reloads its config: its file goes with the data folder.",
                        "",
                        "Your saved styles and state are preserved unless you pass -DeleteData.",
                        "The confirmation names every file it is about to change, `$PROFILE,",
