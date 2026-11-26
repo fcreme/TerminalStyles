@@ -418,6 +418,27 @@ Describe 'Get-WezTermStyleLua' {
                 $lua | Should -Match "config\.colors\.tab_bar\.active_tab\.fg_color = '$Text'"
             }
 
+            It 'gives a <Digits>-digit tab colour its text colour too (<Accent> is drawn as <Drawn>)' -ForEach @(
+                # WezTerm reads #rrrgggbbb and #rrrrggggbbbb the way XParseColor
+                # does, keeping each channel's top 8 bits: its first two hex
+                # digits (measured on 20260917-114457-b09b56c2: '#fff000000'
+                # drew #ff0000, '#0000ffff0000' drew #00ff00). A bg_color with no
+                # fg_color is "missing field `fg_color`", and WezTerm refuses the
+                # whole config for it. The second and third cases are dark as
+                # drawn and white read by their LAST two digits, so they also
+                # pin which digits count.
+                @{ Digits = 9;  Accent = '#fff000000';    Drawn = '#ff0000'; Text = '#000000' }
+                @{ Digits = 9;  Accent = '#0ff0ff0ff';    Drawn = '#0f0f0f'; Text = '#ffffff' }
+                @{ Digits = 12; Accent = '#00ff00ff00ff'; Drawn = '#000000'; Text = '#ffffff' }
+                @{ Digits = 12; Accent = '#ffff0000ffff'; Drawn = '#ff00ff'; Text = '#000000' }
+            ) {
+                $t = $script:theme.PSObject.Copy()
+                $t.tabColor = $Accent
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Match ("config\.colors\.tab_bar\.active_tab\.bg_color = '" + [regex]::Escape($Accent) + "'")
+                $lua | Should -Match "config\.colors\.tab_bar\.active_tab\.fg_color = '$Text'"
+            }
+
             It 'says nothing about the tab bar for a colour WezTerm would reject' {
                 # #RRGGBBAA is not three channels; SrgbaTuple::from_str rejects
                 # it, and a rejected colour is a config error.

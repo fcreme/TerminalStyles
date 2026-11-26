@@ -227,6 +227,20 @@ Describe 'Get-WezTermStyleLook' {
                 Should -BeExactly "    image = { width = 'Cover', height = 'Cover', h = 'Center', v = 'Middle', opacity = 0.4 },"
         }
 
+        It 'carries the tab text colour with a <Accent> tab colour' -ForEach @(
+            # Hand-worked from WezTerm's reading (each channel's first two hex
+            # digits): #0f0f0f wants white text, #ff00ff black. A tab_bg the Lua
+            # sets without its tab_fg is "missing field `fg_color`", and WezTerm
+            # refuses the window's whole override, palette and all (measured).
+            @{ Accent = '#0ff0ff0ff';    Text = '#ffffff' }
+            @{ Accent = '#ffff0000ffff'; Text = '#000000' }
+        ) {
+            $script:theme.tabColor = $Accent
+            $l = Get-WezTermStyleLook -StyleName eva -Scheme $script:scheme -Theme $script:theme -BackgroundCandidates @()
+            script:Get-LookTopLine $l 'tab_bg' | Should -BeExactly "    tab_bg = '$Accent',"
+            script:Get-LookTopLine $l 'tab_fg' | Should -BeExactly "    tab_fg = '$Text',"
+        }
+
         It 'builds the scheme by the single-style module''s rule' {
             # One rule, shared: the same keys, and ansi/brights whole or not at
             # all. brightCyan is broken so the brights half has to be dropped.

@@ -442,14 +442,24 @@ function Get-WezTermTabForeground {
     same choice Windows Terminal makes is made here: WCAG relative luminance,
     then whichever of black and white contrasts further from it.
 
-    $null for a colour ConvertTo-NormalHex cannot reduce to #rrggbb -- WezTerm
-    also accepts #rrrgggbbb and #rrrrggggbbbb, which no consumer in this
-    project can decode. The caller then emits bg_color alone and leaves
-    WezTerm's own fg_color in place, which is a worse tab and a valid config.
+    WezTerm also accepts #rrrgggbbb and #rrrrggggbbbb (Test-WezTermHexColor),
+    which ConvertTo-NormalHex does not decode. WezTerm reads them the way
+    XParseColor does and keeps each channel's top 8 bits, i.e. its first two
+    hex digits (measured, same build as the header: '#fff000000' drew #ff0000,
+    '#0000ffff0000' drew #00ff00), so they are reduced here to the #rrggbb
+    WezTerm draws.
+
+    $null for anything else. The caller then writes no tab colour at all: a
+    bg_color without an fg_color is "missing field `fg_color`", and WezTerm
+    refuses the whole override, or the whole config (measured; see the header).
     #>
     param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Background)
 
     $hex = ConvertTo-NormalHex $Background
+    if (-not $hex -and $Background -match '^#([0-9a-fA-F]{9}|[0-9a-fA-F]{12})$') {
+        $n = ($Background.Length - 1) / 3
+        $hex = '#' + (-join (0..2 | ForEach-Object { $Background.Substring(1 + $_ * $n, 2) }))
+    }
     if (-not $hex) { return $null }
     $chan = foreach ($i in 1, 3, 5) {
         $v = [Convert]::ToInt32($hex.Substring($i, 2), 16) / 255
@@ -681,16 +691,17 @@ function Get-WezTermStyleLua {
     # the accent colour and erase the active/inactive distinction. Windows
     # Terminal's tabColor tints the tab of the profile in front, which is the
     # active one.
-    if ($Theme -and (Test-WezTermHexColor $Theme.tabColor)) {
+    #
+    # Both colours or neither: a bg_color without its fg_color costs the user
+    # their whole config (Get-WezTermTabForeground).
+    $tabFg = if ($Theme -and (Test-WezTermHexColor $Theme.tabColor)) { Get-WezTermTabForeground $Theme.tabColor }
+    if ($tabFg) {
         [void]$sb.AppendLine("")
         [void]$sb.AppendLine("  config.colors = config.colors or {}")
         [void]$sb.AppendLine("  config.colors.tab_bar = config.colors.tab_bar or {}")
         [void]$sb.AppendLine("  config.colors.tab_bar.active_tab = config.colors.tab_bar.active_tab or {}")
         [void]$sb.AppendLine("  config.colors.tab_bar.active_tab.bg_color = $(& $q $Theme.tabColor)")
-        $tabFg = Get-WezTermTabForeground $Theme.tabColor
-        if ($tabFg) {
-            [void]$sb.AppendLine("  config.colors.tab_bar.active_tab.fg_color = $(& $q $tabFg)")
-        }
+        [void]$sb.AppendLine("  config.colors.tab_bar.active_tab.fg_color = $(& $q $tabFg)")
     }
 
     # The point of the whole file.
@@ -1276,10 +1287,12 @@ function Get-WezTermStyleLook {
         # Get-WezTermStyleLua for what an unknown field costs.
         if ($Theme.useAcrylic) { [void]$sb.AppendLine('    blur = 20,') }
     }
-    if ($Theme -and (Test-WezTermHexColor $Theme.tabColor)) {
+    # Both or neither, as in Get-WezTermStyleLua: a tab_bg without its tab_fg
+    # costs the window its whole override.
+    $tabFg = if ($Theme -and (Test-WezTermHexColor $Theme.tabColor)) { Get-WezTermTabForeground $Theme.tabColor }
+    if ($tabFg) {
         [void]$sb.AppendLine("    tab_bg = $(& $q $Theme.tabColor),")
-        $tabFg = Get-WezTermTabForeground $Theme.tabColor
-        if ($tabFg) { [void]$sb.AppendLine("    tab_fg = $(& $q $tabFg),") }
+        [void]$sb.AppendLine("    tab_fg = $(& $q $tabFg),")
     }
     if (Test-WezTermHexColor $Scheme.background) {
         [void]$sb.AppendLine("    base = $(& $q $Scheme.background),")
