@@ -66,7 +66,9 @@ engine's `$PROFILE`, each shell rc file that actually carries a block,
 each VS Code-family `settings.json` a style was saved to, and the
 generated WezTerm style module, which it deletes (when that was the per-tab
 module, WezTerm windows already open keep their look until you close them or
-restart WezTerm, and it says so). If it cannot strip one
+restart WezTerm, and it says so; with `-DeleteData` they drop their background
+image the next time WezTerm reloads its config, since its file goes with the
+data folder). If it cannot strip one
 (a read-only profile, or a block hand-edited down to a stray `BEGIN`), it
 names that file at the end instead of closing on "TerminalStyles
 uninstalled." The same goes for anything else it could not remove — a

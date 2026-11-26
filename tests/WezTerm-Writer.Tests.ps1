@@ -418,6 +418,39 @@ Describe 'Get-WezTermStyleLua' {
                 $lua | Should -Match "config\.colors\.tab_bar\.active_tab\.fg_color = '$Text'"
             }
 
+            It 'picks the text for the colour WezTerm draws for a <Digits>-digit tab colour (<Accent> is drawn as <Drawn>)' -ForEach @(
+                # WezTerm reads every form the way XParseColor does, keeping
+                # each channel's top 8 bits (measured on 20260917-114457-b09b56c2:
+                # '#fff000000' drew #ff0000, '#0000ffff0000' drew #00ff00, and
+                # '#777' drew #707070, where Windows Terminal draws #777777). A
+                # bg_color with no fg_color is "missing field `fg_color`", and
+                # WezTerm refuses the whole config for it. The 9- and 12-digit
+                # cases that are dark as drawn would be white read by their LAST
+                # two digits, so they also pin which digits count; #777 takes
+                # black text read as #777777 and white as drawn.
+                @{ Digits = 3;  Accent = '#777';          Drawn = '#707070'; Text = '#ffffff' }
+                @{ Digits = 9;  Accent = '#fff000000';    Drawn = '#ff0000'; Text = '#000000' }
+                @{ Digits = 9;  Accent = '#0ff0ff0ff';    Drawn = '#0f0f0f'; Text = '#ffffff' }
+                @{ Digits = 12; Accent = '#00ff00ff00ff'; Drawn = '#000000'; Text = '#ffffff' }
+                @{ Digits = 12; Accent = '#ffff0000ffff'; Drawn = '#ff00ff'; Text = '#000000' }
+            ) {
+                $t = $script:theme.PSObject.Copy()
+                $t.tabColor = $Accent
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $t
+                $lua | Should -Match ("config\.colors\.tab_bar\.active_tab\.bg_color = '" + [regex]::Escape($Accent) + "'")
+                $lua | Should -Match "config\.colors\.tab_bar\.active_tab\.fg_color = '$Text'"
+            }
+
+            It 'writes no tab colour at all when it cannot work out the text for it' {
+                # Both or neither: a bg_color without its fg_color costs the
+                # user their whole config (measured). Every colour
+                # Test-WezTermHexColor accepts decodes today, so this pins the
+                # rule for the day the check and the decoder drift apart.
+                Mock Get-WezTermTabForeground { $null }
+                $lua = Get-WezTermStyleLua -StyleName 'eva' -Scheme $script:scheme -Theme $script:theme
+                $lua | Should -Not -Match 'tab_bar'
+            }
+
             It 'says nothing about the tab bar for a colour WezTerm would reject' {
                 # #RRGGBBAA is not three channels; SrgbaTuple::from_str rejects
                 # it, and a rejected colour is a config error.
@@ -821,6 +854,49 @@ Describe 'Test-WezTermStyleWired' {
         It 'never creates a file it was only asked about' {
             Test-WezTermStyleWired -HomeDir $script:h | Out-Null
             Test-Path -LiteralPath (Join-Path $script:h '.config/wezterm/wezterm.lua') | Should -BeFalse
+        }
+
+        Context 'the ambient config paths' {
+            BeforeEach {
+                # A wired config outside the sandbox: what WEZTERM_CONFIG_FILE
+                # names in every WezTerm pane (WezTerm sets it), and what
+                # XDG_CONFIG_HOME leads to on a machine that sets that.
+                $script:elsewhere = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+                New-Item -ItemType Directory -Path (Join-Path $script:elsewhere 'wezterm') -Force | Out-Null
+                $script:wired = Join-Path (Join-Path $script:elsewhere 'wezterm') 'wezterm.lua'
+                [System.IO.File]::WriteAllText($script:wired, (Get-WezTermWiringLine) + "`n")
+                $script:savedEnv = @{}
+                foreach ($n in 'WEZTERM_CONFIG_FILE', 'XDG_CONFIG_HOME') {
+                    $script:savedEnv[$n] = [Environment]::GetEnvironmentVariable($n)
+                    [Environment]::SetEnvironmentVariable($n, $null)
+                }
+                $script:envValue = @{ WEZTERM_CONFIG_FILE = $script:wired; XDG_CONFIG_HOME = $script:elsewhere }
+            }
+            AfterEach {
+                foreach ($n in $script:savedEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $script:savedEnv[$n]) }
+            }
+
+            It 'keeps a bound -HomeDir away from <Var>' -ForEach @(
+                @{ Var = 'WEZTERM_CONFIG_FILE' }
+                @{ Var = 'XDG_CONFIG_HOME' }
+            ) {
+                # A bound -HomeDir is a sandbox, as it is for Get-WezTermModuleDir
+                # (CLAUDE.md). Run inside WezTerm, the 'is false' cases above
+                # read the operator's own wezterm.lua through this variable, and
+                # failed when it was wired.
+                [Environment]::SetEnvironmentVariable($Var, $script:envValue[$Var])
+                Test-WezTermStyleWired -HomeDir $script:h | Should -BeFalse
+            }
+
+            It 'still puts <Var> first when no -HomeDir is bound' -ForEach @(
+                @{ Var = 'WEZTERM_CONFIG_FILE' }
+                @{ Var = 'XDG_CONFIG_HOME' }
+            ) {
+                # WezTerm's own lookup order, which the real check must keep
+                # following: these come before ~/.config/wezterm/wezterm.lua.
+                [Environment]::SetEnvironmentVariable($Var, $script:envValue[$Var])
+                @(Get-WezTermConfigCandidate)[0] | Should -Be $script:wired
+            }
         }
     }
 }

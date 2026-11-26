@@ -717,7 +717,7 @@ Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
             # -match is case-insensitive and matches substrings, so this is asked
             # of the notice line alone rather than of a transcript that also
             # carries the style's own tabTitle text.
-            $line = @(script:Get-ApplyOutput -Kind 'AppleTerminal' -split "`n" |
+            $line = @((script:Get-ApplyOutput -Kind 'AppleTerminal') -split '\r?\n' |
                       Where-Object { $_ -match "can't show" })
             @($line).Count | Should -Be 1
             $line[0] | Should -Not -Match 'tab title'
@@ -727,7 +727,7 @@ Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
             Mock Get-TStylesPlatform { 'MacOS' }
             # Split on either line ending: Out-String ends lines with the
             # platform's, which is CR LF on the Windows legs.
-            $line = @(script:Get-ApplyOutput -Kind 'WezTerm' -split '\r?\n' |
+            $line = @((script:Get-ApplyOutput -Kind 'WezTerm') -split '\r?\n' |
                       Where-Object { $_ -match "can't show" })
             @($line).Count | Should -Be 1
             $line[0] | Should -Match 'font'
@@ -751,7 +751,7 @@ Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
             # The same style, one terminal along, still prints all four -- so
             # the silence above is the capability record and not a notice that
             # stopped working.
-            $line = @(script:Get-ApplyOutput -Kind 'Ghostty' -split "`n" |
+            $line = @((script:Get-ApplyOutput -Kind 'Ghostty') -split '\r?\n' |
                       Where-Object { $_ -match "can't show" })
             @($line).Count | Should -Be 1
             $line[0] | Should -Match 'cursor shape'
