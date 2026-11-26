@@ -169,6 +169,31 @@ Describe 'submission' {
                 @(Get-StyleSubmissionProblems -StyleDir $dir) | Should -Be @("meta.json's description must be one line of at most 90 characters (it is 91).")
             }
 
+            It 'refuses a <Field> holding a character that would act on the terminal or hide from it' -ForEach @(
+                @{ Field = 'description'; Json = '{"description":"warm \u001b]0;x\u0007 dusk"}' }
+                @{ Field = 'quote';       Json = '{"description":"Warm dusk.","quote":"a' + [string][char]92 + 'u202eb"}' }
+            ) {
+                # The rule Get-StyleMeta shows such text by (ConvertTo-VisibleText):
+                # the catalogue takes plain text, so nothing it ships needs it.
+                $dir = New-TestCreatedStyle
+                [System.IO.File]::WriteAllText((Join-Path $dir 'meta.json'), $Json, $script:utf8)
+                @(Get-StyleSubmissionProblems -StyleDir $dir) |
+                    Where-Object { $_ -like "meta.json's $Field holds a control or invisible character*" } |
+                    Should -HaveCount 1
+            }
+
+            It 'refuses a tabTitle holding a C1 control' {
+                # The same character class as the description: the old check
+                # stopped at \x00-\x1F and \x7F.
+                $dir = New-TestCreatedStyle
+                $themePath = Join-Path $dir 'theme.json'
+                $t = [System.IO.File]::ReadAllText($themePath, $script:utf8) | ConvertFrom-Json
+                $t.tabTitle = 'a' + [char]0x9B + 'b'
+                [System.IO.File]::WriteAllText($themePath, ($t | ConvertTo-Json -Depth 5), $script:utf8)
+                @(Get-StyleSubmissionProblems -StyleDir $dir) |
+                    Where-Object { $_ -like "theme.json's 'tabTitle'*" } | Should -HaveCount 1
+            }
+
             It 'refuses a name the catalogue already uses' {
                 $dir = New-TestCreatedStyle
                 $cat = Join-Path $TestDrive ('cat-' + [guid]::NewGuid().ToString('N'))

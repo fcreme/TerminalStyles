@@ -25,6 +25,11 @@ param(
     [switch]$Yes
 )
 
+# ConvertTo-VisibleText, the one rule for printing text somebody else wrote:
+# the module shows a style's description and title by it too. lib/text.ps1 is
+# plain functions, so it loads before the module this script imports later.
+. (Join-Path (Join-Path (Split-Path $PSScriptRoot -Parent) 'lib') 'text.ps1')
+
 $script:ReviewRepo = 'fcreme/TerminalStyles'
 $script:ReviewMaxEntries = 16
 $script:ReviewMaxBytes = 4MB
@@ -111,21 +116,6 @@ function Expand-SubmissionZip {
     } finally {
         if ($zip) { $zip.Dispose() }
     }
-}
-
-function ConvertTo-VisibleText {
-    # Text from a submission, safe to print: every control character but
-    # newline and tab is shown as \xNN, so an escape sequence in a prompt
-    # file is read, not obeyed by the maintainer's terminal; and every
-    # invisible format character (\p{Cf}: bidi overrides, zero-width
-    # characters) as \uNNNN, so code cannot display as something other
-    # than what it runs.
-    param([AllowEmptyString()][string]$Text)
-    [regex]::Replace($Text, '[\x00-\x08\x0B-\x1F\x7F\u0080-\u009F]|\p{Cf}', {
-        param($m)
-        $c = [int][char]$m.Value
-        if ($c -le 0xFF) { '\x{0:x2}' -f $c } else { '\u{0:x4}' -f $c }
-    })
 }
 
 function New-SubmissionReadme {

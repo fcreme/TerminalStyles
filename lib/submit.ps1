@@ -45,7 +45,10 @@ function Get-SubmittedThemeProblems {
     param([Parameter(Mandatory)]$Theme, [Parameter(Mandatory)][string]$Name)
 
     $p = New-Object System.Collections.Generic.List[string]
-    $isText = { param($v, [int]$max) ($v -is [string]) -and $v.Length -le $max -and ($v -notmatch '[\x00-\x1F\x7F]') }
+    # Plain one-line text by ConvertTo-VisibleText's rule, the one every
+    # display of a style's text uses: no control character (C0, DEL or C1) and
+    # no invisible format character.
+    $isText = { param($v, [int]$max) ($v -is [string]) -and $v.Length -le $max -and ((ConvertTo-VisibleText -Text $v -SingleLine) -ceq $v) }
     $isNum = { param($v) ($v -is [int]) -or ($v -is [long]) -or ($v -is [double]) -or ($v -is [decimal]) }
     $checks = [ordered]@{
         colorScheme                        = { param($v) ($v -is [string]) -and ($v -ceq $Name) }
@@ -296,6 +299,14 @@ function Get-StyleSubmissionProblems {
     }
     if ($quote -and ($quote -match "[`r`n]" -or $quote.Length -gt $limits.Quote)) {
         $p.Add("meta.json's quote must be one line of at most $($limits.Quote) characters (it is $($quote.Length)).")
+    }
+    # The rule Get-StyleMeta shows them by: a description or quote that holds a
+    # control or invisible character would reach every picker row as \xNN, and
+    # the catalogue ships plain text.
+    foreach ($field in @(@{ Name = 'description'; Text = $desc }, @{ Name = 'quote'; Text = $quote })) {
+        if ($field.Text -and (ConvertTo-VisibleText -Text $field.Text) -cne $field.Text) {
+            $p.Add("meta.json's $($field.Name) holds a control or invisible character: $(ConvertTo-VisibleText -Text $field.Text).")
+        }
     }
 
     # Callers wrap in @(): a bare return unrolls to nothing when empty.

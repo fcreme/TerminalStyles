@@ -44,6 +44,17 @@ Describe 'every bundled style describes itself' {
         $m.Description | Should -Not -Match "`n" -Because 'it is one line, not a paragraph'
     }
 
+    It '<Name>''s description and quote are text the visible-text rule leaves alone' -ForEach $script:StyleDirs {
+        # Get-StyleMeta shows every control or invisible formatting character
+        # as \xNN or \uNNNN. A bundled style must not lose anything to that: a
+        # zero-width joiner inside an emoji would come out as a visible U+200D.
+        $raw = [System.IO.File]::ReadAllText((Join-Path $Dir 'meta.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        foreach ($v in @("$($raw.description)".Trim(), "$($raw.quote)".Trim())) {
+            InModuleScope TerminalStyles { param($t) ConvertTo-VisibleText -Text $t -SingleLine } -Parameters @{ t = $v } |
+                Should -BeExactly $v
+        }
+    }
+
     It '<Name>''s quote is a quote, not a second description' -ForEach $script:StyleDirs {
         $m = InModuleScope TerminalStyles { param($d) Get-StyleMeta -StyleDir $d } -Parameters @{ d = $Dir }
         if ($m.Quote) {
@@ -77,6 +88,20 @@ Describe 'Get-StyleMeta degrades instead of throwing' {
 
         It 'answers empty for a directory that is not there at all' {
             { Get-StyleMeta -StyleDir (Join-Path $TestDrive 'absent') } | Should -Not -Throw
+        }
+
+        It 'shows an escape sequence in the description instead of sending it, and keeps the quote on one line' {
+            # Audit #89: list, show and the picker print these, so a style that
+            # was only being browsed could retitle the window or write the
+            # clipboard (OSC 52).
+            $d = Join-Path $TestDrive 'loud'
+            New-Item -ItemType Directory -Path $d -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $d 'meta.json'),
+                '{"description":"a\u001b]52;c;eA==\u0007b","quote":"line\none"}',
+                [System.Text.UTF8Encoding]::new($false))
+            $m = Get-StyleMeta -StyleDir $d
+            $m.Description | Should -BeExactly 'a\x1b]52;c;eA==\x07b'
+            $m.Quote       | Should -BeExactly 'line one'
         }
     }
 }

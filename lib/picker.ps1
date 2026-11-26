@@ -39,10 +39,34 @@ function Get-StyleMeta {
         $m = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
     } catch { return $empty }
     if (-not $m) { return $empty }
+    # Shown, not obeyed (audit #89): list, show and the picker print these, so
+    # an escape sequence in them acted on the terminal while the style was
+    # only being browsed. One line each, by contract.
     @{
-        Description = "$($m.description)".Trim()
-        Quote       = "$($m.quote)".Trim()
+        Description = ConvertTo-VisibleText -Text "$($m.description)".Trim() -SingleLine
+        Quote       = ConvertTo-VisibleText -Text "$($m.quote)".Trim() -SingleLine
     }
+}
+
+function Get-StyleTitlePreview {
+    <#
+    .SYNOPSIS
+    The tab title the picker previews for a style, safe to set: its theme.json
+    tabTitle through ConvertTo-VisibleText, or $null when there is none.
+
+    .DESCRIPTION
+    The picker sets $Host.UI.RawUI.WindowTitle to it on every arrow key, and
+    off Windows that setter writes an OSC title sequence with the text inside
+    it -- so a BEL or ESC in a tabTitle ended the sequence early and sent the
+    rest to the terminal, for a style that was only highlighted (audit #89).
+    $null too for a theme.json that will not parse (Read-StyleJson): the
+    picker drops such a style before it gets here.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$StyleDir)
+    try { $theme = Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json' } catch { return $null }
+    if ($null -eq $theme -or -not $theme.PSObject.Properties.Match('tabTitle').Count) { return $null }
+    ConvertTo-VisibleText -Text "$($theme.tabTitle)" -SingleLine
 }
 
 function Get-PickerFramePlan {

@@ -1572,16 +1572,12 @@ function Invoke-TerminalStyle {
     # does), so we have to set WindowTitle explicitly on each arrow change
     # to make the title preview live. Themes without a tabTitle simply
     # leave the current title untouched while highlighted.
+    # Through Get-StyleTitlePreview, which shows a control character instead of
+    # handing it to the title setter (audit #89).
     $titles = @{}
     for ($i = 0; $i -lt $styles.Count; $i++) {
-        $tp = Join-Path $styles[$i].FullName 'theme.json'
-        if (-not (Test-Path -LiteralPath $tp)) { continue }
-        try {
-            $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            if ($theme.PSObject.Properties.Match('tabTitle').Count -gt 0) {
-                $titles[$i] = $theme.tabTitle
-            }
-        } catch { }
+        $title = Get-StyleTitlePreview -StyleDir $styles[$i].FullName
+        if ($null -ne $title) { $titles[$i] = $title }
     }
 
     # Background prefetch: kick off ONE job that downloads any missing GIFs
