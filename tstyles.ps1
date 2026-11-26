@@ -2221,6 +2221,9 @@ function Invoke-TerminalStyle {
         $backgroundNotes = @()
         # Per-tab WezTerm only: what the module publish came to and said.
         $wezCommit = $null
+        # Windows Terminal only: the theme.json keys the commit did not write,
+        # the line `tstyles <name>` prints, shown below the clear.
+        $themeSkippedNote = $null
         if ($useSettingsFile) {
             # The commit, first: the preview on disk is the style when the file
             # still holds it; a file that changed while the picker was open has
@@ -2248,6 +2251,9 @@ function Invoke-TerminalStyle {
                 & $showPendingUpdate
                 return
             }
+            $pickedPayload = Get-StyleSettingsPayload -StyleDir $pickedDir
+            $themeSkippedNote = Get-ThemeSkippedNote -Skipped @($pickedPayload.Skipped) `
+                                    -NothingWritten:([bool]$pickedPayload.NothingApplicable)
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
                 $isPwshTarget = $true
@@ -2394,6 +2400,10 @@ function Invoke-TerminalStyle {
         Show-FilePreviewResult -Result $pickerState.SettingsCommit
         Show-FilePreviewResult -Result $pickerRecovered
         Show-FilePreviewResult -Result $wezRecovered
+        if ($themeSkippedNote) {
+            Write-Host $themeSkippedNote -ForegroundColor Yellow
+            Write-Host ""
+        }
 
         # The same notice `tstyles <name>` prints, from the same function, so the
         # two doors say the same thing about the same failure. This is the door

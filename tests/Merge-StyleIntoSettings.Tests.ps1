@@ -49,6 +49,40 @@ Describe 'Merge-StyleIntoSettings' {
             $entry.opacity     | Should -Be 90
         }
 
+        It 'writes only the keys reset takes back, and leaves the profile''s own commandline alone' {
+            # Audit #44: every theme.json key used to be copied onto the profile,
+            # while reset strips only $script:TStylesThemeFields. A style could
+            # set the profile's commandline, reset left it there, and the user's
+            # own was gone from the file and from the .bak.
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'theme.json'),
+                '{"colorScheme":"eva","tabTitle":"EVA","commandline":"evil.exe","elevate":true}',
+                [System.Text.UTF8Encoding]::new($false))
+            $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @(
+                [pscustomobject]@{ name = 'PowerShell'; guid = '{x}'; commandline = 'pwsh.exe' }) } }
+
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `
+                -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
+
+            $entry = $out.profiles.list | Where-Object name -eq 'PowerShell'
+            $entry.tabTitle    | Should -Be 'EVA'
+            $entry.commandline | Should -Be 'pwsh.exe'
+            @($entry.PSObject.Properties.Name) | Should -Not -Contain 'elevate'
+        }
+
+        It 'leaves settings untouched when theme.json holds no key it applies' {
+            # Nothing would reference the scheme: the same reason a style with no
+            # theme.json writes nothing.
+            [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'theme.json'),
+                '{"commandline":"evil.exe"}', [System.Text.UTF8Encoding]::new($false))
+            $s = [pscustomobject]@{ profiles = [pscustomobject]@{ list = @([pscustomobject]@{ name = 'PowerShell'; guid = '{x}' }) } }
+            $before = $s | ConvertTo-Json -Depth 10
+
+            $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:styleDir `
+                -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
+
+            ($out | ConvertTo-Json -Depth 10) | Should -Be $before
+        }
+
         It 'treats <case> as no scheme' -ForEach @(
             @{ case = '"schemes": null';                    value = 'null';                 expected = 'eva' }
             @{ case = 'a null element in schemes[]';        value = '[null,{"name":"keep"}]'; expected = 'keep,eva' }

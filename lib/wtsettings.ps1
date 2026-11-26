@@ -233,6 +233,105 @@ function Test-ManagedBackgroundPath {
     return $false
 }
 
+function Test-LocalImagePath {
+    <#
+    .SYNOPSIS
+    Is this backgroundImage a file on this computer, rather than one Windows
+    Terminal would fetch from somewhere else?
+
+    .DESCRIPTION
+    False for a network path (\\server\share, //server/share) and for a URL,
+    except the schemes that name local files: ms-appdata:, ms-appx: and
+    file:/// (three slashes: no host). Environment variables are expanded
+    first, the way Windows Terminal expands them, so %LOGONSERVER%\share\x.png
+    is the network path it becomes. A theme.json is the one input here other
+    people write, and a network path in it makes the user's machine reach out
+    to that one, with the user's credentials on Windows, every time the tab
+    draws.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+
+    $v = [Environment]::ExpandEnvironmentVariables($Value)
+    if ($v.StartsWith('\\') -or $v.StartsWith('//')) { return $false }
+    if ($v -match '^([A-Za-z][A-Za-z0-9+.\-]+):') {
+        $uriScheme = $Matches[1].ToLowerInvariant()
+        if ($uriScheme -in 'ms-appdata', 'ms-appx') { return $true }
+        if ($uriScheme -eq 'file') { return ($v -match '^(?i)file:///') }
+        return $false
+    }
+    return $true
+}
+
+function Select-StyleThemeFields {
+    <#
+    .SYNOPSIS
+    The theme.json fields an apply may put on a Windows Terminal profile, and
+    the ones it skips.
+
+    .DESCRIPTION
+    Exactly $script:TStylesThemeFields, the keys Reset-StyleDirect strips, so
+    an apply writes nothing a reset cannot take back (audit #44: every key
+    used to be copied, a commandline included, and reset left it). Matched
+    case-sensitively, because Windows Terminal's keys are: `TabTitle` is not
+    `tabTitle`. A backgroundImage is kept only as the {{BACKGROUND_IMAGE}}
+    placeholder or a local file (Test-LocalImagePath).
+
+    Returns @{ Fields = [ordered] name -> value; Skipped = @(@{ Name; Reason }) }.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][AllowNull()]$Theme)
+
+    $fields  = [ordered]@{}
+    $skipped = New-Object System.Collections.Generic.List[object]
+    if ($null -ne $Theme) {
+        foreach ($prop in @($Theme.PSObject.Properties | Where-Object { $_.MemberType -eq 'NoteProperty' })) {
+            $name = $prop.Name
+            if (-not ($script:TStylesThemeFields -ccontains $name)) {
+                $skipped.Add([pscustomobject]@{ Name = $name; Reason = 'tstyles reset could not take it back' })
+                continue
+            }
+            if ($name -ceq 'backgroundImage') {
+                $v = $prop.Value
+                $local = ($v -is [string]) -and (($v -ceq '{{BACKGROUND_IMAGE}}') -or (Test-LocalImagePath -Value $v))
+                if (-not $local) {
+                    $skipped.Add([pscustomobject]@{ Name = $name; Reason = 'not a file on this computer' })
+                    continue
+                }
+            }
+            $fields[$name] = $prop.Value
+        }
+    }
+    # ToArray, not @(): on pwsh 7.7 @() over an EMPTY generic List throws
+    # "Argument types do not match" (measured on 7.7.0-preview.4).
+    [pscustomobject]@{ Fields = $fields; Skipped = $skipped.ToArray() }
+}
+
+function Get-ThemeSkippedNote {
+    <#
+    .SYNOPSIS
+    The one line an apply prints about the theme.json keys it did not write, or
+    $null when it skipped none.
+
+    .DESCRIPTION
+    Each key by name, with its reason only where it is not the usual one (a
+    backgroundImage that is not a local file). -NothingWritten for the apply
+    whose theme.json had no key left to write, which therefore wrote nothing.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Skipped,
+        [switch]$NothingWritten
+    )
+    if ($Skipped.Count -eq 0) { return $null }
+    $names = foreach ($s in $Skipped) {
+        if ($s.Reason -eq 'tstyles reset could not take it back') { $s.Name } else { "$($s.Name) ($($s.Reason))" }
+    }
+    $tail = if ($NothingWritten) { ', so nothing was written to settings.json.' } else { '.' }
+    "  Not applied from theme.json: $($names -join ', '). A style sets only what tstyles reset can take back off a profile$tail"
+}
+
 function Get-StyleSettingsPayload {
     <#
     .SYNOPSIS
@@ -267,16 +366,22 @@ function Get-StyleSettingsPayload {
     param([Parameter(Mandatory)][string]$StyleDir)
 
     if (-not (Test-Path -LiteralPath (Join-Path $StyleDir 'scheme.json'))) {
-        return [pscustomobject]@{ Ok = $false; Missing = 'scheme.json'; Unreadable = $null }
+        return [pscustomobject]@{ Ok = $false; Missing = 'scheme.json'; Unreadable = $null; NothingApplicable = $false; Skipped = @() }
     }
     $bad = Get-StyleUnreadableFile -StyleDir $StyleDir
     if ($bad) {
-        return [pscustomobject]@{ Ok = $false; Missing = $null; Unreadable = $bad.Message }
+        return [pscustomobject]@{ Ok = $false; Missing = $null; Unreadable = $bad.Message; NothingApplicable = $false; Skipped = @() }
     }
     if (-not (Test-Path -LiteralPath (Join-Path $StyleDir 'theme.json'))) {
-        return [pscustomobject]@{ Ok = $false; Missing = 'theme.json'; Unreadable = $null }
+        return [pscustomobject]@{ Ok = $false; Missing = 'theme.json'; Unreadable = $null; NothingApplicable = $false; Skipped = @() }
     }
-    return [pscustomobject]@{ Ok = $true; Missing = $null; Unreadable = $null }
+    # A theme.json with no key the merge writes (Select-StyleThemeFields) is
+    # the no-theme.json case again: nothing would reference the scheme.
+    # Skipped is what the caller names, once, after the apply.
+    $picked = Select-StyleThemeFields -Theme (Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json')
+    $none = ($picked.Fields.Count -eq 0)
+    return [pscustomobject]@{ Ok = (-not $none); Missing = $null; Unreadable = $null
+                              NothingApplicable = $none; Skipped = @($picked.Skipped) }
 }
 
 function Get-WTProfileShape {
@@ -996,6 +1101,10 @@ function Merge-StyleIntoSettings {
     $themePath = Join-Path $StyleDir 'theme.json'
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
     $theme = Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json'
+    # Only what reset takes back (audit #44). Nothing left to write is the
+    # no-theme.json case above: the scheme would be referenced by nothing.
+    $picked = Select-StyleThemeFields -Theme $theme
+    if ($picked.Fields.Count -eq 0) { return $Settings }
 
     # The lazy creation, guarded rather than assumed (Initialize-WTDefaultsEntry,
     # shared with Set-ProfileFont; it covers an absent key and a null). Add-Member needs a
@@ -1084,9 +1193,7 @@ function Merge-StyleIntoSettings {
     # theme.json keys are optional and hand-authorable -- README documents the
     # file that way and Get-AvailableStyles admits a folder without one -- so
     # this is a question about the style in front of us, never a constant.
-    $themeBgNames = @($theme.PSObject.Properties |
-                      Where-Object { $_.Name -in $bgFields } |
-                      ForEach-Object { $_.Name })
+    $themeBgNames = @($picked.Fields.Keys | Where-Object { $_ -in $bgFields })
     # An image of ours ends up on the entry -- shadowing profiles.defaults --
     # only when the merge is applying one AND this theme.json names the key
     # that carries it.
@@ -1132,8 +1239,8 @@ function Merge-StyleIntoSettings {
         }
     }
 
-    foreach ($prop in $theme.PSObject.Properties) {
-        $name  = $prop.Name
+    foreach ($prop in @($picked.Fields.GetEnumerator())) {
+        $name  = $prop.Key
         $value = $prop.Value
 
         if ($name -in $bgFields) {

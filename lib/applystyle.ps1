@@ -1442,9 +1442,15 @@ function Apply-StyleDirect {
         return
     }
     if (-not $payload.Ok) {
-        # theme.json absent: nothing for Windows Terminal's settings.json, but
-        # the prompt/banner half below is still the style's whole job off WT.
-        Write-Host "  '$StyleName' ships no theme.json, so nothing was written to settings.json." -ForegroundColor DarkGray
+        if ($payload.NothingApplicable) {
+            # theme.json is there but holds no key the merge writes: nothing
+            # for settings.json, said once with the keys it skipped.
+            Write-Host (Get-ThemeSkippedNote -Skipped $payload.Skipped -NothingWritten) -ForegroundColor Yellow
+        } else {
+            # theme.json absent: nothing for Windows Terminal's settings.json, but
+            # the prompt/banner half below is still the style's whole job off WT.
+            Write-Host "  '$StyleName' ships no theme.json, so nothing was written to settings.json." -ForegroundColor DarkGray
+        }
     } else {
         # Rolling backup: the on-disk settings.json to settings.json.bak before
         # any mutation. One file, overwritten on each direct apply -- a one-line
@@ -1485,6 +1491,10 @@ function Apply-StyleDirect {
         if ($null -eq $merged) { return }
         $settings = $merged
         Write-SettingsFile -Path $settingsPath -Settings $settings
+        # The keys of theme.json the merge did not write (Select-StyleThemeFields),
+        # named once; nothing when there were none.
+        $skippedNote = Get-ThemeSkippedNote -Skipped $payload.Skipped
+        if ($skippedNote) { Write-Host $skippedNote -ForegroundColor Yellow }
     }
 
     # Detect pwsh target for profile.ps1 install + live reload

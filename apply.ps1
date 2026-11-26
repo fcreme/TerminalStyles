@@ -239,6 +239,11 @@ if ($payload.Ok) {
     # --- Save settings.json (UTF-8, atomic, full depth; keeps any BOM) ---
     Write-SettingsFile -Path $SettingsPath -Settings $settings
     Write-Host "settings.json updated." -ForegroundColor Green
+    # theme.json keys the module's merge did not write, named once.
+    $skippedNote = Get-ThemeSkippedNote -Skipped $payload.Skipped
+    if ($skippedNote) { Write-Host $skippedNote -ForegroundColor Yellow }
+} elseif ($payload.NothingApplicable) {
+    Write-Host (Get-ThemeSkippedNote -Skipped $payload.Skipped -NothingWritten) -ForegroundColor Yellow
 } else {
     Write-Host "'$Style' ships no theme.json, so settings.json was not changed." -ForegroundColor DarkGray
 }
