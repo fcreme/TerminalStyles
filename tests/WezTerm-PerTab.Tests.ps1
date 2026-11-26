@@ -241,6 +241,15 @@ Describe 'Get-WezTermStyleLook' {
             script:Get-LookTopLine $l 'tab_fg' | Should -BeExactly "    tab_fg = '$Text',"
         }
 
+        It 'carries no tab colour when it cannot work out the text for it' {
+            # Both or neither, as in the single-style module: a tab_bg without
+            # its tab_fg costs the window its whole override (measured).
+            Mock Get-WezTermTabForeground { $null }
+            $l = Get-WezTermStyleLook -StyleName eva -Scheme $script:scheme -Theme $script:theme -BackgroundCandidates @()
+            $l | Should -Not -Match 'tab_bg'
+            $l | Should -Not -Match 'tab_fg'
+        }
+
         It 'builds the scheme by the single-style module''s rule' {
             # One rule, shared: the same keys, and ansi/brights whole or not at
             # all. brightCyan is broken so the brights half has to be dropped.

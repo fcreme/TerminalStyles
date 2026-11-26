@@ -111,9 +111,10 @@
 #     build): { bg_color = '#ff0000' } alone is "missing field `fg_color`", and
 #     WezTerm refuses the WHOLE override ("Failed to apply config overrides to
 #     window"), or, in a config, the whole config. Re-measured 2026-11-26 with
-#     '#fff000000': refused alone; with an fg_color it drew #ff0000, and
-#     '#0000ffff0000' drew #00ff00. A 9- or 12-digit colour keeps each
-#     channel's top 8 bits, as XParseColor does (Get-WezTermTabForeground).
+#     '#fff000000': refused alone; with an fg_color it drew #ff0000,
+#     '#0000ffff0000' drew #00ff00, and '#777' drew #707070 (not #777777). Every
+#     form keeps each channel's top 8 bits, as XParseColor does
+#     (Get-WezTermTabForeground).
 #   * A runtime color_scheme over an override that carries color_schemes
 #     (2026-11-26, same build): a key binding's set_config_overrides naming a
 #     scheme only the base config registers logged "scheme was not found" and
@@ -460,12 +461,11 @@ function Get-WezTermTabForeground {
     same choice Windows Terminal makes is made here: WCAG relative luminance,
     then whichever of black and white contrasts further from it.
 
-    WezTerm also accepts #rrrgggbbb and #rrrrggggbbbb (Test-WezTermHexColor),
-    which ConvertTo-NormalHex does not decode. WezTerm reads them the way
-    XParseColor does and keeps each channel's top 8 bits, i.e. its first two
-    hex digits (measured, same build as the header: '#fff000000' drew #ff0000,
-    '#0000ffff0000' drew #00ff00), so they are reduced here to the #rrggbb
-    WezTerm draws.
+    The luminance is that of the colour WezTerm DRAWS, which is not always the
+    one Windows Terminal or CSS would: WezTerm reads every form it accepts
+    (Test-WezTermHexColor) the way XParseColor does and keeps each channel's top
+    8 bits (measured, same build as the header): '#777' drew #707070, not
+    #777777; '#fff000000' drew #ff0000; '#0000ffff0000' drew #00ff00.
 
     $null for anything else. The caller then writes no tab colour at all: a
     bg_color without an fg_color is "missing field `fg_color`", and WezTerm
@@ -473,14 +473,13 @@ function Get-WezTermTabForeground {
     #>
     param([Parameter(Mandatory)][AllowEmptyString()][AllowNull()][string]$Background)
 
-    $hex = ConvertTo-NormalHex $Background
-    if (-not $hex -and $Background -match '^#([0-9a-fA-F]{9}|[0-9a-fA-F]{12})$') {
-        $n = ($Background.Length - 1) / 3
-        $hex = '#' + (-join (0..2 | ForEach-Object { $Background.Substring(1 + $_ * $n, 2) }))
-    }
-    if (-not $hex) { return $null }
-    $chan = foreach ($i in 1, 3, 5) {
-        $v = [Convert]::ToInt32($hex.Substring($i, 2), 16) / 255
+    if (-not (Test-WezTermHexColor $Background)) { return $null }
+    $n = ($Background.Length - 1) / 3
+    if ($n -ne [math]::Floor($n)) { return $null }
+    $chan = foreach ($i in 0..2) {
+        $digits = $Background.Substring(1 + $i * $n, $n)
+        $top = if ($n -eq 1) { $digits + '0' } else { $digits.Substring(0, 2) }
+        $v = [Convert]::ToInt32($top, 16) / 255
         if ($v -le 0.03928) { $v / 12.92 } else { [math]::Pow((($v + 0.055) / 1.055), 2.4) }
     }
     $l = 0.2126 * $chan[0] + 0.7152 * $chan[1] + 0.0722 * $chan[2]
