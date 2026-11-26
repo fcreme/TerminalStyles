@@ -46,6 +46,7 @@ Describe 'Restore-TuneBaseLook' {
     # here against a real settings.json in $TestDrive, with the data root there
     # too, so the record and copy the session keeps stay in the sandbox.
     InModuleScope TerminalStyles {
+        BeforeAll { . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1') }
         BeforeEach {
             $script:savedRoot = $script:TStylesDataRoot
             $sand = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
@@ -125,6 +126,25 @@ Describe 'Restore-TuneBaseLook' {
             Restore-TuneBaseLook -State $script:tuneState -UseSettingsFile -Session $s -OpenedScheme $script:opened | Should -Be 'reverted'
             $script:tuneState.SettingsRestoreError | Should -BeNullOrEmpty
             [System.IO.File]::GetLastWriteTimeUtc($script:settingsPath) | Should -Be $t
+        }
+
+        It 'Restore-TuneBaseLook sends the reset in per-tab mode' {
+            # Per tab, the window's colour scheme already follows this tab's
+            # tag, so handing the palette back IS the restore -- a re-emitted
+            # opened scheme would hold the pane instead of its tag. And it is
+            # a palette question only: per tab is not a settings file, so the
+            # session branch must not run.
+            Mock Test-WezTermPerTab { $true }
+            Mock Restore-FilePreview { throw 'per tab has no settings.json to put back' }
+            $script:oscSent = [System.Collections.Generic.List[string]]::new()
+            Mock Write-HostOscPacket { $script:oscSent.Add($Packet); $true }
+
+            Restore-TuneBaseLook -State $script:tuneState -Session @{ Kind = 'WindowsTerminal' } `
+                -OpenedScheme $script:opened | Should -Be 'reverted'
+            $script:oscSent.Count | Should -Be 1
+            # By bytes: on pwsh 7 -BeExactly ignores ESC and BEL.
+            Assert-SameBytes -Actual $script:oscSent[0] -Expected (Get-OscResetPacket)
+            Should -Invoke Restore-FilePreview -Times 0 -Exactly
         }
 
         It 'finishes the revert, and answers failed, when the put-back cannot be written' {

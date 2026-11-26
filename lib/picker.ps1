@@ -331,7 +331,9 @@ function Get-RevertOscPacket {
     right on Windows Terminal -- settings.json has just been restored and WT
     repaints from it. Off Windows Terminal there is no such file: the style the
     user arrived with was itself only escape sequences, so a reset drops them to
-    the stock palette instead of back to their style.
+    the stock palette instead of back to their style. Except in per-tab
+    WezTerm, where the callers ask as Windows Terminal does: the window's scheme
+    follows the tab's tag, so the reset is the tab's own style.
 
     Both copies of that rule were pinned by nothing but a `-Match` against the
     caller's own source text, which cannot see which arm is which: swapping the
@@ -345,7 +347,9 @@ function Get-RevertOscPacket {
     #>
     [CmdletBinding()]
     param(
-        # $true on Windows Terminal, where a settings.json was just restored.
+        # $true on Windows Terminal, where a settings.json was just restored,
+        # and in per-tab WezTerm, whose window scheme follows the tab's tag:
+        # wherever the terminal's own config repaints once the OSC goes.
         [Parameter(Mandatory)][bool]$UseSettingsFile,
         # Was a style actually active when the preview opened? NOT the same
         # question as "is $StartingScheme non-null": with nothing applied the
@@ -363,6 +367,80 @@ function Get-RevertOscPacket {
         if ($packet) { return $packet }
     }
     return (Get-OscResetPacket)
+}
+
+function Get-WezTermPickerPreviewPacket {
+    <#
+    .SYNOPSIS
+    What the picker sends on an arrow key in per-tab WezTerm: the preview tag.
+
+    .DESCRIPTION
+    Per tab, the module already carries every installed style's look, so a
+    preview is a tag rather than a module rewrite: the generated Lua honours a
+    /preview/<name> tag only on the pane that carries it, so no other tab moves.
+    Pure, so the picker body, which no test can drive, sends it in one line.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][string]$StyleName)
+    return (Get-WezTermTagPacket -Value ($script:WezTermTagPreviewPrefix + $StyleName))
+}
+
+function Get-WezTermPickerRevertPacket {
+    <#
+    .SYNOPSIS
+    What the picker's Esc sends in per-tab WezTerm: the OSC reset, then this
+    tab's own tag back.
+
+    .DESCRIPTION
+    The reset hands the pane's colours back to the window scheme, which follows
+    the tag; the tag is the one this tab's record names. A tab with no record
+    was never tagged, so its tag is cleared ('') and it shows what it showed
+    before. A record of '' is a tab reset to unstyled, and gets the unstyled
+    tag: an empty one would leave the pane on its pin, the new-tab default.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $tag = Get-WezTermTabRecord
+    if ($null -eq $tag) { $tag = '' }
+    elseif ($tag -eq '') { $tag = $script:WezTermTagUnstyled }
+    return ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value $tag))
+}
+
+function Get-WezTermPickerCommit {
+    <#
+    .SYNOPSIS
+    What a per-tab picker confirm's WezTerm publish came to, read from its
+    output captured with 6>&1. Returns @{ Applied; Notes; Label; NameColor; Packet }.
+
+    .DESCRIPTION
+    Publish-StyleWezTermConfig returns the module path once the module is
+    written and this tab tagged, and nothing when the write failed, having
+    printed why. The picker clears the screen after it, which wiped that notice
+    and left "Style applied" on screen, with the pane still on the PREVIEW tag
+    and its record on the style it had. So:
+
+      Notes     what the publish printed, for the picker to print below the clear.
+      Label     the confirm line's head: '  Style applied: ', or on a failed
+                write '  Not applied in WezTerm: ' -- the prompt and the
+                current-style record may still have changed, so it names only
+                what did not.
+      NameColor Green, or Yellow on a failed write.
+      Packet    $null, or on a failed write Get-WezTermPickerRevertPacket: the
+                tab back to its own tag, so the pane matches its record.
+
+    Per-tab only: off per-tab the picker keeps its own call as it was.
+    #>
+    [CmdletBinding()]
+    param([AllowEmptyCollection()][AllowNull()][object[]]$Output)
+    $notes = @(@($Output) | Where-Object { $_ -is [System.Management.Automation.InformationRecord] })
+    $paths = @(@($Output) | Where-Object { $_ -is [string] -and $_ })
+    if ($paths.Count -gt 0) {
+        return @{ Applied = $true; Notes = $notes; Label = '  Style applied: '; NameColor = 'Green'; Packet = $null }
+    }
+    return @{ Applied = $false; Notes = $notes; Label = '  Not applied in WezTerm: '; NameColor = 'Yellow'
+              Packet = (Get-WezTermPickerRevertPacket) }
 }
 
 function Invoke-PickerLoop {
@@ -1050,6 +1128,11 @@ function Invoke-TerminalStyleShow {
         $ReadKey = { [void][Console]::ReadKey($true) }
     }
 
+    # Per-tab WezTerm puts back with the reset: the window's scheme follows
+    # this tab's tag, so handing the palette back IS this tab's own style.
+    # Asked here, not in the finally, which should do nothing but write.
+    $perTab = Test-WezTermPerTab -Kind $kind
+
     try {
         & $Write (Get-SchemeOscPacket -Scheme $scheme)
         foreach ($l in $lines) { & $Write $l }
@@ -1061,7 +1144,7 @@ function Invoke-TerminalStyleShow {
         # put the terminal back: leaving someone in a palette they did not
         # choose, with no record of it anywhere, is the one outcome this
         # command cannot have.
-        & $Write (Get-RevertOscPacket -UseSettingsFile $false `
+        & $Write (Get-RevertOscPacket -UseSettingsFile $perTab `
                     -HadStartingStyle ([bool]$startScheme) -StartingScheme $startScheme)
     }
 }

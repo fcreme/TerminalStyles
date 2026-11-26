@@ -230,6 +230,34 @@ Describe 'Get-TerminalCapability' {
     }
 }
 
+Describe 'Get-TerminalCapability, WezTerm font and padding' {
+    InModuleScope TerminalStyles {
+        BeforeAll { Mock Test-VSCodeWriterActive { $false } }
+
+        It 'WezTerm claims font and padding only on Windows' {
+            (Get-TerminalCapability -Kind WezTerm -Platform MacOS).Font    | Should -BeFalse
+            (Get-TerminalCapability -Kind WezTerm -Platform MacOS).Padding | Should -BeFalse
+            (Get-TerminalCapability -Kind WezTerm -Platform Linux).Font    | Should -BeFalse
+            (Get-TerminalCapability -Kind WezTerm -Platform Linux).Padding | Should -BeFalse
+            (Get-TerminalCapability -Kind WezTerm -Platform Windows).Font    | Should -BeTrue
+            (Get-TerminalCapability -Kind WezTerm -Platform Windows).Padding | Should -BeTrue
+        }
+
+        It 'the platform changes nothing else about WezTerm' {
+            $mac = Get-TerminalCapability -Kind WezTerm -Platform MacOS
+            $win = Get-TerminalCapability -Kind WezTerm -Platform Windows
+            foreach ($n in $script:TStylesCapabilityNames | Where-Object { $_ -notin 'Font', 'Padding' }) {
+                $mac[$n] | Should -Be $win[$n] -Because $n
+            }
+        }
+
+        It 'the platform changes nothing for another terminal' {
+            (Get-TerminalCapability -Kind Kitty -Platform Windows).Font | Should -BeFalse
+            (Get-TerminalCapability -Kind WindowsTerminal -Platform MacOS).Font | Should -BeTrue
+        }
+    }
+}
+
 Describe 'Test-TerminalCapability' {
     InModuleScope TerminalStyles {
 

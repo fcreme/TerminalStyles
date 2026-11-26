@@ -75,8 +75,22 @@ BeforeAll {
     }
 
     # Run a command under a real pty and return everything it printed.
+    #
+    # BOUNDED. It waited on `script` for as long as that took, and on
+    # ubuntu-latest one replay probe never ended (run 45207345656, cancelled
+    # by hand after 47 minutes), with a log that said nothing about why. Past
+    # -TimeoutSeconds it kills the whole process tree and THROWS, which fails
+    # the test, with every process still running under `script` (state,
+    # terminal process group, wait channel) and the log so far, so the next
+    # hang names its own cause.
+    #
+    # Both flavours are fed `exit` on stdin. BSD's always was; util-linux's was
+    # fed nothing, so a shell that never reached its rc's own `exit` (a job
+    # left stopped, say, which makes zsh refuse the first exit) waited at its
+    # prompt for good. Run through .NET's Process for the wait: a shell
+    # `timeout` is not on macOS.
     function script:Invoke-UnderPty {
-        param([string]$Command, [string]$LogPath)
+        param([string]$Command, [string]$LogPath, [int]$TimeoutSeconds = 60)
         $isUtilLinux = $false
         try {
             # util-linux prints "util-linux" in its version banner; BSD script
@@ -85,10 +99,59 @@ BeforeAll {
             $isUtilLinux = $v -match 'util-linux'
         } catch { $isUtilLinux = $false }
 
+        $psi = [System.Diagnostics.ProcessStartInfo]::new('script')
+        $psi.UseShellExecute = $false
+        $psi.RedirectStandardInput = $true
+        $psi.RedirectStandardOutput = $true
+        $psi.RedirectStandardError = $true
         if ($isUtilLinux) {
-            & script -q -c $Command $LogPath *> $null
+            foreach ($a in @('-q', '-c', $Command, $LogPath)) { $psi.ArgumentList.Add($a) }
         } else {
-            'exit' | & script -q $LogPath $Command *> $null
+            foreach ($a in @('-q', $LogPath, $Command)) { $psi.ArgumentList.Add($a) }
+        }
+        $p = [System.Diagnostics.Process]::Start($psi)
+        try {
+            # Drained as it comes: `script` copies the session to its stdout
+            # too, and a full pipe would stop it as surely as a stuck shell.
+            $drainOut = $p.StandardOutput.ReadToEndAsync()
+            $drainErr = $p.StandardError.ReadToEndAsync()
+            try {
+                $p.StandardInput.Write("exit`n")
+                $p.StandardInput.Close()
+            } catch { }
+            if (-not $p.WaitForExit($TimeoutSeconds * 1000)) {
+                # Every process under `script`, by parent id, before the kill.
+                $table = @{}
+                foreach ($row in @(& ps -A -o pid=,ppid=)) {
+                    $f = "$row".Trim() -split '\s+'
+                    if ($f.Count -ge 2) { $table[$f[0]] = $f[1] }
+                }
+                $tree = [System.Collections.Generic.List[string]]::new()
+                $tree.Add([string]$p.Id)
+                for ($i = 0; $i -lt $tree.Count; $i++) {
+                    foreach ($k in @($table.Keys)) {
+                        if ($table[$k] -eq $tree[$i] -and -not $tree.Contains($k)) { $tree.Add($k) }
+                    }
+                }
+                $listing = (& ps -o pid,pgid,tpgid,stat,wchan,command -p ($tree -join ',') 2>&1 | Out-String)
+                # The children first, and gently: `script` then sees its child
+                # go, flushes the log it buffers and exits. A SIGKILL to it
+                # loses that buffer. Whatever is left goes hard.
+                foreach ($id in @($tree | Select-Object -Skip 1)) { try { & kill -TERM $id 2>$null } catch { } }
+                [void]$p.WaitForExit(3000)
+                try { $p.Kill($true) } catch { }
+                foreach ($id in $tree) { try { & kill -9 $id 2>$null } catch { } }
+                [void]$p.WaitForExit(5000)
+                $log = ''
+                if (Test-Path -LiteralPath $LogPath) { $log = [System.IO.File]::ReadAllText($LogPath) }
+                throw ("script did not exit within $TimeoutSeconds s, so its process tree was killed: $Command`n" +
+                       "--- still running then ---`n$listing" +
+                       "--- the log so far ($LogPath) ---`n$log")
+            }
+            [void]$drainOut.Wait(5000)
+            [void]$drainErr.Wait(5000)
+        } finally {
+            $p.Dispose()
         }
         if (Test-Path -LiteralPath $LogPath) {
             return [System.IO.File]::ReadAllText($LogPath)
@@ -141,6 +204,48 @@ exit 0
         [System.IO.File]::WriteAllText($w, "#!/bin/sh`n$Exec`n")
         & chmod +x $w
         return $w
+    }
+}
+
+Describe 'the pty helper is bounded' {
+    # A probe whose shell never exits used to hang the whole run: the helper
+    # waited on `script` for as long as it took, and run 45207345656 sat in one
+    # replay probe on ubuntu-latest until it was cancelled by hand 47 minutes
+    # in, with nothing in the log to say why. Now it fails the test, with the
+    # processes still running and the log so far.
+    It 'fails within its bound, naming what was still running, when the command does not exit' -Skip:(-not $script:HasScript) {
+        $root = Join-Path $TestDrive ('pty-hang-' + [guid]::NewGuid().Guid.Substring(0, 8))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        # Not exec: the wrapper's own command line, which holds this unique
+        # path, stays in the process table for the leftover check below.
+        $w = script:New-PtyWrapper -Dir $root -Name 'hang' -Exec "echo PTY-STARTED; sleep 60"
+        $clock = [System.Diagnostics.Stopwatch]::StartNew()
+        $err = $null
+        try {
+            script:Invoke-UnderPty -Command $w -LogPath (Join-Path $root 'log') -TimeoutSeconds 3 | Out-Null
+        } catch { $err = $_ }
+        $clock.Stop()
+
+        $err | Should -Not -BeNullOrEmpty -Because 'a command that does not exit must fail the test, not hang the run'
+        $clock.Elapsed.TotalSeconds | Should -BeLessThan 30
+        "$err" | Should -Match 'did not exit within 3 s'
+        "$err" | Should -Match 'sleep 60' -Because 'the listing names the process it was waiting on'
+        "$err" | Should -Match 'PTY-STARTED' -Because 'and the log shows how far the command got'
+        $left = @(& ps -A -o command= | Where-Object { $_ -like "*$root*" })
+        $left | Should -HaveCount 0 -Because 'the whole process tree is killed, not left running'
+    }
+
+    It 'lets an interactive shell left at its prompt exit on the exit it is fed' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        # No `exit` in the rc. Both flavours of `script` are fed one on stdin;
+        # util-linux's used to be fed nothing, so a shell that never reached
+        # the rc's own exit waited at its prompt for good.
+        $root = Join-Path $TestDrive ('pty-fed-' + [guid]::NewGuid().Guid.Substring(0, 8))
+        New-Item -ItemType Directory -Path $root -Force | Out-Null
+        $rc = Join-Path $root 'rc.sh'
+        [System.IO.File]::WriteAllText($rc, "echo TSPROBE-READY`n")
+        $w = script:New-PtyWrapper -Dir $root -Name 'fed' -Exec "exec bash --init-file '$rc' -i"
+        $text = script:Invoke-UnderPty -Command $w -LogPath (Join-Path $root 'log') -TimeoutSeconds 30
+        $text | Should -Match 'TSPROBE-READY'
     }
 }
 
@@ -660,5 +765,70 @@ exit
         # Lazy across everything, because the template itself is full of `\]`.
         $text | Should -Match 'TSPROBE-A PS1=\[[\s\S]*?PILOT' `
             -Because "bash still gets the style's prompt template"
+    }
+}
+
+Describe 'the palette replay in WezTerm per-tab mode' {
+    # In per-tab mode every tab wears its own style through the generated Lua
+    # module, so a new shell replaying current-style.osc (the LAST applied
+    # style's palette) would paint that style over a tab that should wear
+    # another. The runtime keys on the per-tab marker under the data root plus
+    # WEZTERM_PANE; either one alone must still replay, because the marker
+    # outlives a switch to another terminal and WEZTERM_PANE exists before any
+    # per-tab module does. pwsh asks the same (Test-WezTermPerTabShell).
+    #
+    # Driven through a real pty (ts_load returns early without one) with a
+    # sentinel palette, so the assertion is on bytes the shell really wrote.
+    # The marker is written where the PowerShell side names it for this data
+    # root (Get-WezTermTabMarkerPath), never at a name retyped here, so the
+    # shell half and the PowerShell half cannot drift apart.
+    BeforeAll {
+        function script:Invoke-ReplayProbe {
+            param([string]$Shell, [bool]$Pane, [bool]$Marker)
+            $name = 'replay-' + [guid]::NewGuid().Guid.Substring(0, 8)
+            $root = Join-Path $TestDrive $name
+            $data = Join-Path $root 'data'
+            New-Item -ItemType Directory -Path $data -Force | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path $data 'current-style.osc'), 'XYZ')
+            $markerPath = InModuleScope TerminalStyles -Parameters @{ Data = $data } {
+                param($Data)
+                $saved = $script:TStylesDataRoot
+                try { $script:TStylesDataRoot = $Data; Get-WezTermTabMarkerPath } finally { $script:TStylesDataRoot = $saved }
+            }
+            if ($Marker) { [System.IO.File]::WriteAllText($markerPath, '') }
+            $paneLine = if ($Pane) { "export WEZTERM_PANE=3" } else { "unset WEZTERM_PANE" }
+            $rcText = "export TSTYLES_DATA='$data'`n$paneLine`n. '$($script:runtime)'`nexit`n"
+            if ($Shell -eq 'bash') {
+                $rc = Join-Path $root 'rc.sh'
+                [System.IO.File]::WriteAllText($rc, $rcText)
+                $exec = "exec bash --init-file '$rc' -i"
+            } else {
+                $zdot = Join-Path $root 'zdot'
+                New-Item -ItemType Directory -Path $zdot -Force | Out-Null
+                [System.IO.File]::WriteAllText((Join-Path $zdot '.zshrc'), $rcText)
+                $exec = "ZDOTDIR='$zdot'; export ZDOTDIR`nexec zsh -d -i"
+            }
+            $w = script:New-PtyWrapper -Dir $root -Name 'w' -Exec $exec
+            return script:Invoke-UnderPty -Command $w -LogPath (Join-Path $root 'log')
+        }
+    }
+
+    It 'bash: skips the replay in a WezTerm pane once a per-tab module exists' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'bash' -Pane $true -Marker $true | Should -Not -Match 'XYZ'
+    }
+    It 'bash: still replays in WezTerm without the marker' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'bash' -Pane $true -Marker $false | Should -Match 'XYZ'
+    }
+    It 'bash: still replays outside WezTerm with the marker' -Skip:(-not ($script:HasBash -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'bash' -Pane $false -Marker $true | Should -Match 'XYZ'
+    }
+    It 'zsh: skips the replay in a WezTerm pane once a per-tab module exists' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'zsh' -Pane $true -Marker $true | Should -Not -Match 'XYZ'
+    }
+    It 'zsh: still replays in WezTerm without the marker' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'zsh' -Pane $true -Marker $false | Should -Match 'XYZ'
+    }
+    It 'zsh: still replays outside WezTerm with the marker' -Skip:(-not ($script:HasZsh -and $script:HasScript)) {
+        script:Invoke-ReplayProbe -Shell 'zsh' -Pane $false -Marker $true | Should -Match 'XYZ'
     }
 }

@@ -44,6 +44,90 @@
 # (~/.wezterm.lua, $WEZTERM_CONFIG_FILE), and the next apply would no longer
 # repaint the running windows. A rewritten one stays found and watched, and the
 # rewrite itself is what makes WezTerm reload into the user's own config.
+#
+# PER-TAB MODE (measured 2026-11-20, wezterm 20260917-114457-b09b56c2). Probed in
+# a sandbox instance (`wezterm-gui --config-file <probe.lua> start
+# --always-new-process`) by scripting it from Lua (update-status, gui-startup,
+# a log file), never the user's config:
+#
+#   * Overrides SURVIVE a reload. After window:set_config_overrides{
+#     window_background_opacity = 0.5 }, touching a required module reloaded the
+#     config and window:get_config_overrides() still returned the override, and
+#     effective_config() still showed 0.5. (window-config-reloaded also fires
+#     about once a second while overrides are set, so a handler there must be
+#     cheap and idempotent.)
+#     CORRECTION (2026-11-23, same build): the "about once a second" was the
+#     probe's own doing. WezTerm watches the config file's folder, and the probe
+#     logged into it, so every log write reloaded the config. With nothing
+#     written there, one reload came in 11 s, and it was the touch that poked
+#     it. A handler there still has to be cheap and idempotent, but the event
+#     does not tick on its own.
+#   * color_scheme has no LITERAL "none". Overriding it to '' or to a name that
+#     is not in color_schemes is accepted by set_config_overrides but logs
+#     `ERROR config::config > Your configuration specifies color_scheme=""
+#     but that scheme was not found`, and effective_config().resolved_palette is
+#     left nil (no palette at all). A SYNTHESIZED one works (measured
+#     2026-11-23, same build): register wezterm.color.get_default_colors() in
+#     color_schemes under a name of our own and override color_scheme to that
+#     name. From a 'Builtin Dark' base the effective resolved_palette was
+#     identical, all 273 serialized lines, to get_default_colors(), with no
+#     ERROR in the log; a config that names no scheme at all reports an empty
+#     resolved_palette, i.e. it draws those same defaults. The name is
+#     'TerminalStyles /unstyled', which no style can take: '/' is never in a
+#     style name. `background = {}` works too: it leaves zero layers and the
+#     plain palette background.
+#   * A split starts UNTAGGED. After pane:split{ direction = 'Right' } the new
+#     pane's get_user_vars().TERMINALSTYLES_STYLE is nil, while the sibling still
+#     reads its tag, and window:active_tab():panes() lists both, so the style of
+#     a tab can be read from any of its panes.
+#   * WezTerm's own values for the other keys a look sets (measured 2026-11-23,
+#     same build: effective_config() of a config that sets none of them):
+#     window_background_opacity 1.0, macos_window_background_blur 0,
+#     default_cursor_style 'SteadyBlock', colors nil, background empty.
+#   * An override's color_schemes REPLACES the base config's whole table
+#     (measured 2026-11-23, same build). An override { color_schemes =
+#     { ['TerminalStyles Y'] = <table> }, color_scheme = <a name only the base
+#     config registers> } logged `ERROR config::config > Your configuration
+#     specifies color_scheme="TerminalStyles Base" but that scheme was not
+#     found` and left resolved_palette nil; so did a name the user's own
+#     color_schemes registers. A name WezTerm has built in ('Builtin Light')
+#     still resolved. An override that carries the scheme it names drew it, on a
+#     base config that registers no such name, with no ERROR.
+#   * Such an override OUTLIVES the module (same build). Two windows holding
+#     one kept their whole look, palette included, when the module the base
+#     config required was replaced by one that applies nothing and again when
+#     it was deleted. Each change reloaded the config by itself (a required file
+#     is watched), no ERROR was logged, and a window opened after the delete
+#     drew the user's own config. Re-measured with the generated module: three
+#     windows (kitty, unstyled, the default) kept their palettes through a
+#     rewrite and through the delete. That is why `tstyles uninstall` can say
+#     windows already open keep their look until they are closed.
+#   * The user's `colors` lies over color_scheme KEY BY KEY (same build). With
+#     colors = { background = '#123456' }, an override naming a scheme whose
+#     background is '#abcdef' drew '#123456'; with colors = {} in the override
+#     it drew '#abcdef'; with the synthesized default scheme it drew '#123456'
+#     and the default foreground.
+#   * colors.tab_bar.active_tab needs fg_color whenever it has bg_color (same
+#     build): { bg_color = '#ff0000' } alone is "missing field `fg_color`", and
+#     WezTerm refuses the WHOLE override ("Failed to apply config overrides to
+#     window"), or, in a config, the whole config.
+#
+# DECISION (2026-11-23, final wave; it replaces two earlier ones: "base = the
+# user's own look", recorded on 2026-11-20 while color_scheme seemed to have no
+# "none", and "a window showing the default carries no override", which let a
+# rewrite that moved the default paint the NEW default in such a window until
+# its sync put the old look back). Base = the LAST-APPLIED STYLE, which now only
+# decides a new window's first frame. EVERY window, one showing the default
+# included, carries a COMPLETE override over every key a look sets, filled from
+# the user's own value and then from WezTerm's for a key the style leaves alone,
+# and the override is SELF-CONTAINED: it carries the scheme it names in its own
+# color_schemes (the style's, the synthesized default, or the scheme the user's
+# own color_scheme names when their config registers it), because of the
+# replacement measured above. A styled look drops from its copy of the user's
+# colors every key the style's scheme sets, so the style's palette wins in a
+# styled tab, and an unstyled one keeps them all, so it is exactly the user's
+# own look. Overrides on any other key, and color_schemes entries not named
+# 'TerminalStyles ...', are the user's and are kept.
 
 function Get-WezTermModuleDir {
     <#
@@ -307,6 +391,43 @@ function Get-WezTermWindowOpacity {
     [math]::Round($parsed / 100.0, 4)
 }
 
+function Get-WezTermImageOpacity {
+    <#
+    .SYNOPSIS
+    theme.json backgroundImageOpacity -> the image layer's opacity, always a
+    finite number in 0..1. Both generators use it.
+
+    .DESCRIPTION
+    Not given, not a number ('40%'), or not finite reads as 1, fully opaque,
+    which is what a style naming no image opacity gets. Not finite matters on
+    pwsh 7, where '-1e400' parses as -Infinity: written into the module that is
+    `-Infinity`, unary minus on an undefined global, and the whole module fails
+    to load. Out of range is clamped, as Windows Terminal clamps it. A value in
+    0..1 comes back unchanged, so the single-style module writes every value
+    Windows Terminal accepts exactly as it did when it cast with [double].
+
+    A number is taken as it is, never through a string: Windows PowerShell 5.1
+    formats a double to 15 significant digits, so the round trip could move it.
+    A string is parsed with InvariantCulture, the decimal point JSON uses.
+    #>
+    [CmdletBinding()]
+    [OutputType([double])]
+    param([AllowNull()]$Opacity)
+
+    if ($null -eq $Opacity) { return 1.0 }
+    $parsed = 0.0
+    if ($Opacity -is [string]) {
+        if (-not [double]::TryParse($Opacity, [System.Globalization.NumberStyles]::Float,
+                                    [cultureinfo]::InvariantCulture, [ref]$parsed)) { return 1.0 }
+    } else {
+        try { $parsed = [double]$Opacity } catch { return 1.0 }
+    }
+    if ([double]::IsNaN($parsed) -or [double]::IsInfinity($parsed)) { return 1.0 }
+    if ($parsed -lt 0) { return 0.0 }
+    if ($parsed -gt 1) { return 1.0 }
+    return $parsed
+}
+
 function Get-WezTermTabForeground {
     <#
     .SYNOPSIS
@@ -357,6 +478,50 @@ function Add-WezTermModuleHeader {
     [void]$Builder.AppendLine("--   $(Get-WezTermWiringLine)")
 }
 
+function Add-WezTermSchemeBody {
+    # scheme.json -> the body of one color_schemes entry, appended at $Indent.
+    # The one rule both generated modules use -- the single-style module's
+    # config.color_schemes entry and each per-tab look's `scheme` -- so the two
+    # cannot come to disagree about which keys a style's palette carries.
+    #
+    # ansi and brights are FIXED 8-element arrays in WezTerm
+    # (Option<[RgbaColor; 8]>); seven or sixteen is a config error, so both are
+    # emitted whole or not at all.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][System.Text.StringBuilder]$Builder,
+        [Parameter(Mandatory)]$Scheme,
+        [Parameter(Mandatory)][string]$Indent
+    )
+    $q = { param($v) ConvertTo-WezTermLuaString $v }
+    $map = [ordered]@{
+        foreground   = $Scheme.foreground
+        background   = $Scheme.background
+        cursor_bg    = $Scheme.cursorColor
+        cursor_border= $Scheme.cursorColor   # both, or the block cursor outline is wrong
+        cursor_fg    = $Scheme.background    # no WT equivalent; the text under the block
+        selection_bg = $Scheme.selectionBackground
+        selection_fg = $Scheme.foreground    # no WT equivalent
+    }
+    foreach ($k in $map.Keys) {
+        if (Test-WezTermHexColor $map[$k]) {
+            [void]$Builder.AppendLine("$Indent$k = $(& $q $map[$k]),")
+        }
+    }
+
+    $ansi    = @('black','red','green','yellow','blue','purple','cyan','white')
+    $brights = @('brightBlack','brightRed','brightGreen','brightYellow',
+                 'brightBlue','brightPurple','brightCyan','brightWhite')
+    foreach ($pair in @(@('ansi', $ansi), @('brights', $brights))) {
+        $vals = @(foreach ($n in $pair[1]) { $Scheme.$n })
+        if (@($vals | Where-Object { Test-WezTermHexColor $_ }).Count -eq 8) {
+            [void]$Builder.AppendLine("$Indent$($pair[0]) = {")
+            [void]$Builder.AppendLine("$Indent  " + (($vals | ForEach-Object { & $q $_ }) -join ', '))
+            [void]$Builder.AppendLine("$Indent},")
+        }
+    }
+}
+
 function Get-WezTermStyleLua {
     <#
     .SYNOPSIS
@@ -402,19 +567,6 @@ function Get-WezTermStyleLua {
     $schemeName = "TerminalStyles $StyleName"
     $q = { param($v) ConvertTo-WezTermLuaString $v }
 
-    # scheme.json -> the palette. ansi and brights are FIXED 8-element arrays in
-    # WezTerm (Option<[RgbaColor; 8]>); seven or sixteen is a config error, so
-    # both are emitted whole or not at all.
-    $map = [ordered]@{
-        foreground   = $Scheme.foreground
-        background   = $Scheme.background
-        cursor_bg    = $Scheme.cursorColor
-        cursor_border= $Scheme.cursorColor   # both, or the block cursor outline is wrong
-        cursor_fg    = $Scheme.background    # no WT equivalent; the text under the block
-        selection_bg = $Scheme.selectionBackground
-        selection_fg = $Scheme.foreground    # no WT equivalent
-    }
-
     $sb = [System.Text.StringBuilder]::new()
     Add-WezTermModuleHeader -Builder $sb -What "for style $StyleName"
     [void]$sb.AppendLine("local wezterm = require 'wezterm'")
@@ -423,23 +575,7 @@ function Get-WezTermStyleLua {
     [void]$sb.AppendLine("function M.apply_to_config(config)")
     [void]$sb.AppendLine("  config.color_schemes = config.color_schemes or {}")
     [void]$sb.AppendLine("  config.color_schemes[$(& $q $schemeName)] = {")
-    foreach ($k in $map.Keys) {
-        if (Test-WezTermHexColor $map[$k]) {
-            [void]$sb.AppendLine("    $k = $(& $q $map[$k]),")
-        }
-    }
-
-    $ansi    = @('black','red','green','yellow','blue','purple','cyan','white')
-    $brights = @('brightBlack','brightRed','brightGreen','brightYellow',
-                 'brightBlue','brightPurple','brightCyan','brightWhite')
-    foreach ($pair in @(@('ansi', $ansi), @('brights', $brights))) {
-        $vals = @(foreach ($n in $pair[1]) { $Scheme.$n })
-        if (@($vals | Where-Object { Test-WezTermHexColor $_ }).Count -eq 8) {
-            [void]$sb.AppendLine("    $($pair[0]) = {")
-            [void]$sb.AppendLine("      " + (($vals | ForEach-Object { & $q $_ }) -join ', '))
-            [void]$sb.AppendLine("    },")
-        }
-    }
+    Add-WezTermSchemeBody -Builder $sb -Scheme $Scheme -Indent '    '
     [void]$sb.AppendLine("  }")
     [void]$sb.AppendLine("  config.color_scheme = $(& $q $schemeName)")
 
@@ -559,10 +695,10 @@ function Get-WezTermStyleLua {
 
     # The point of the whole file.
     if ($BackgroundImage) {
+        # The per-tab look's rule: a value Windows Terminal accepts is written
+        # as it always was, and one it does not no longer throws.
         $bgOpacity = 1.0
-        if ($Theme -and $null -ne $Theme.backgroundImageOpacity) {
-            $bgOpacity = [double]$Theme.backgroundImageOpacity
-        }
+        if ($Theme) { $bgOpacity = Get-WezTermImageOpacity $Theme.backgroundImageOpacity }
         $size = Get-WezTermBackgroundSize ($Theme.backgroundImageStretchMode)
         [void]$sb.AppendLine("")
         [void]$sb.AppendLine("  -- Layer 1 is the style's own background colour. With any background")
@@ -687,9 +823,10 @@ function Write-WezTermModuleText {
     written has one place to land. Through here: an apply
     (Write-WezTermStyleModule), the picker's preview (which calls
     Write-WezTermStyleModule), the picker's preview and Esc (Write-FilePreview
-    and Restore-FilePreview), and reset (Clear-WezTermStyleModule). Only the
-    removal of a module a picker session itself created does not go through
-    here.
+    and Restore-FilePreview), reset (Clear-WezTermStyleModule), and every write
+    of the per-tab module (Write-WezTermTabModule: apply, reset, delete and the
+    picker's open, in per-tab mode). Only the removal of a module a picker
+    session itself created does not go through here.
 
     UTF-8 without BOM, not Get-RcFileEncoding. The file belongs wholly to
     TerminalStyles: it is written whole, and read back only by TerminalStyles --
@@ -878,6 +1015,752 @@ function Test-WezTermStyleWired {
             $text = (Read-RcFileText -Path $p).Text
         } catch { return $false }
         return $text -match "require\s*[\(,]?\s*['`"]terminalstyles['`"]"
+    }
+    return $false
+}
+
+# The tag a tab carries: a user variable the generated Lua module reads per tab.
+# A `/` cannot appear in any resolvable style name (Test-StyleNameIsSingleSegment),
+# so the two markers below cannot collide with a style.
+$script:WezTermTagVar           = 'TERMINALSTYLES_STYLE'
+$script:WezTermTagUnstyled      = '/unstyled'
+$script:WezTermTagPreviewPrefix = '/preview/'
+
+function Test-WezTermPerTab {
+    <#
+    .SYNOPSIS
+    Does this session style one WezTerm tab at a time?
+
+    .DESCRIPTION
+    True only inside WezTerm, off Windows, with the require line wired into the
+    config WezTerm loads. -Kind, -Platform and -HomeDir are test seams; -HomeDir
+    is forwarded only when bound, so an unbound one means the live $HOME.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param(
+        [string]$Kind = (Get-TerminalKind),
+        [string]$Platform = (Get-TStylesPlatform),
+        [string]$HomeDir
+    )
+    if ($Kind -ne 'WezTerm') { return $false }
+    if ($Platform -eq 'Windows') { return $false }
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+    return [bool](Test-WezTermStyleWired @splat)
+}
+
+function Get-WezTermTagPacket {
+    <#
+    .SYNOPSIS
+    The escape sequence that sets this tab's TERMINALSTYLES_STYLE user variable.
+
+    .DESCRIPTION
+    ESC ] 1337 ; SetUserVar=NAME=<base64 of UTF-8 Value> BEL. Inside tmux it is
+    wrapped in a DCS passthrough with every ESC doubled. An empty Value is valid
+    and clears the tag.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Value,
+        [bool]$InTmux = [bool]$env:TMUX
+    )
+    $esc = [string][char]27
+    $b64 = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Value))
+    $packet = "$esc]1337;SetUserVar=$($script:WezTermTagVar)=$b64$([char]7)"
+    if ($InTmux) { return "${esc}Ptmux;" + $packet.Replace($esc, "$esc$esc") + "$esc\" }
+    return $packet
+}
+
+function Get-WezTermTabKey {
+    # "<socket>|<pane>" identifies one WezTerm pane across processes; $null when
+    # either half is missing, i.e. outside WezTerm.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    if (-not $env:WEZTERM_UNIX_SOCKET -or -not $env:WEZTERM_PANE) { return $null }
+    return "$($env:WEZTERM_UNIX_SOCKET)|$($env:WEZTERM_PANE)"
+}
+
+function Get-WezTermTabRecordPath {
+    Join-Path $script:TStylesDataRoot 'wezterm-tabs.json'
+}
+
+function Read-WezTermTabRecordTable {
+    # key -> value, as an ordered hashtable. Throws on an unreadable file; a
+    # missing file is an empty table. Walks PSObject.Properties because Windows
+    # PowerShell 5.1 has no ConvertFrom-Json -AsHashtable.
+    $path = Get-WezTermTabRecordPath
+    $table = [ordered]@{}
+    if (-not [System.IO.File]::Exists($path)) { return $table }
+    $text = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false))
+    $obj = $text | ConvertFrom-Json
+    if ($obj -is [System.Management.Automation.PSCustomObject]) {
+        foreach ($p in $obj.PSObject.Properties) { $table[$p.Name] = [string]$p.Value }
+    }
+    return $table
+}
+
+function Set-WezTermTabRecord {
+    <#
+    .SYNOPSIS
+    Remember which style this tab carries, so a later process can read it back.
+
+    .DESCRIPTION
+    Writes wezterm-tabs.json under the data root: key -> value, where '' means
+    unstyled. Every entry whose socket (the part before `|`) no longer exists is
+    dropped, so the file does not grow with every WezTerm session. A socket is
+    not a regular file, hence Test-Path rather than a file-only check. A corrupt
+    existing file is treated as empty and rewritten.
+    Returns 'ok', 'failed', or 'nokey' (not inside WezTerm; nothing written).
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+
+    $key = Get-WezTermTabKey
+    if (-not $key) { return 'nokey' }
+    try {
+        $table = [ordered]@{}
+        try { $table = Read-WezTermTabRecordTable } catch { $table = [ordered]@{} }
+        $kept = [ordered]@{}
+        foreach ($k in $table.Keys) {
+            $sock = $k.Split('|')[0]
+            if ($sock -and (Test-Path -LiteralPath $sock)) { $kept[$k] = $table[$k] }
+        }
+        $kept[$key] = $Value
+        $path = Get-WezTermTabRecordPath
+        $dir = Split-Path -Parent $path
+        if (-not [System.IO.Directory]::Exists($dir)) { [void][System.IO.Directory]::CreateDirectory($dir) }
+        $json = $kept | ConvertTo-Json -Depth 2
+        [System.IO.File]::WriteAllText($path, $json, [System.Text.UTF8Encoding]::new($false))
+        return 'ok'
+    } catch { return 'failed' }
+}
+
+function Get-WezTermTabRecord {
+    <#
+    .SYNOPSIS
+    This tab's recorded value; $null when there is no key, no file, an unreadable
+    file, or no entry. '' (unstyled) is a real answer, distinct from $null.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param()
+    $key = Get-WezTermTabKey
+    if (-not $key) { return $null }
+    try {
+        $table = Read-WezTermTabRecordTable
+        if ($table.Contains($key)) { return [string]$table[$key] }
+    } catch { }
+    return $null
+}
+
+# The comment line that tells a per-tab module from the single-style one an
+# older release wrote: the line right after Add-WezTermModuleHeader's three.
+# Written by Get-WezTermTabModuleLua, read by Test-WezTermTabModule.
+$script:WezTermTabModuleMarker = '-- TerminalStyles per-tab module'
+
+function Get-WezTermTabMarkerPath {
+    # The empty file that says "the WezTerm module is the per-tab one", for the
+    # zsh/bash loader, which cannot ask PowerShell. Written beside the per-tab
+    # record, under the data root.
+    Join-Path $script:TStylesDataRoot 'wezterm-pertab'
+}
+
+function Test-WezTermPerTabShell {
+    <#
+    .SYNOPSIS
+    Should a new shell in this pane skip replaying the last style's palette?
+
+    .DESCRIPTION
+    True in a WezTerm pane (WEZTERM_PANE set) once a per-tab module was
+    written (the marker, Get-WezTermTabMarkerPath). The question the zsh/bash
+    loader asks in sh (shell/tstyles.sh, ts_load), asked the same way here for
+    pwsh, so every shell in a tab agrees on it. Cheap on purpose: it runs at
+    every pwsh start, and reads neither wezterm.lua nor the terminal.
+    Everything else asks Test-WezTermPerTab.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param()
+    if (-not $env:WEZTERM_PANE) { return $false }
+    return (Test-Path -LiteralPath (Get-WezTermTabMarkerPath))
+}
+
+function Get-WezTermBackgroundCandidates {
+    <#
+    .SYNOPSIS
+    The paths a style's look may draw its background from, in order.
+
+    .DESCRIPTION
+    The file in the style's own folder when there is one, else -- for a style
+    tuned from another -- the file in its base's folder: the first two tiers of
+    Get-StyleBundledBackground. Otherwise every background.<ext> in the cache
+    folder that function reads and fetches into (the base's, for a tuned
+    style), in Get-BackgroundImageExtensions order, WHETHER OR NOT THE FILE
+    EXISTS. The module checks them when it builds a window's look, so an image
+    the picker's download job lands after the module was written shows on the
+    next look of that style, with no rewrite. Nothing here fetches.
+
+    Unrolled, so a caller wraps it in @().
+    #>
+    [CmdletBinding()]
+    [OutputType([string[]])]
+    param([Parameter(Mandatory)][string]$StyleDir)
+
+    $own = Get-BackgroundFileIn -Directory $StyleDir
+    if ($own) { return $own }
+    $baseDir = Get-TunedBaseDir -StyleDir $StyleDir
+    if ($baseDir) {
+        $inherited = Get-BackgroundFileIn -Directory $baseDir
+        if ($inherited) { return $inherited }
+    }
+    $cacheDir = Get-StyleBackgroundCacheDir -StyleDir $StyleDir
+    foreach ($ext in @(Get-BackgroundImageExtensions)) { Join-Path $cacheDir "background.$ext" }
+}
+
+function Get-WezTermStyleLook {
+    <#
+    .SYNOPSIS
+    One style's entry in the per-tab module's LOOKS table. Pure.
+
+    .DESCRIPTION
+    Data, not statements: the module's Lua turns it into a window's override
+    (look_of), so every rule that decides a value is here and every rule about
+    what WezTerm does with it is there.
+
+      scheme   the color_schemes body, by Add-WezTermSchemeBody's rule
+      cursor   default_cursor_style            (Get-WezTermCursorStyle)
+      opacity  window_background_opacity, and the base layer's opacity
+                                               (Get-WezTermWindowOpacity)
+      blur     20 when useAcrylic asks for it on a translucent window
+      tab_bg   colors.tab_bar.active_tab.bg_color
+      tab_fg   its readable foreground         (Get-WezTermTabForeground)
+      base     the scheme's background, for the colour layer under the image
+      images   Get-WezTermBackgroundCandidates, every one of them, in order
+      image    the image layer's size, alignment and opacity
+
+    A value the style does not give is left out, never written as nil, so the
+    Lua's `if look.x` is the one test of "the style sets this". No font, size
+    or padding: those stay the user's own, in every tab.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)]$Scheme,
+        [AllowNull()]$Theme,
+        [Parameter(Mandatory)][AllowEmptyCollection()][AllowNull()][string[]]$BackgroundCandidates
+    )
+
+    $q = { param($v) ConvertTo-WezTermLuaString $v }
+    $inv = [cultureinfo]::InvariantCulture
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine("  [$(& $q $StyleName)] = {")
+    [void]$sb.AppendLine('    scheme = {')
+    Add-WezTermSchemeBody -Builder $sb -Scheme $Scheme -Indent '      '
+    [void]$sb.AppendLine('    },')
+
+    $cursor = $null
+    $opacity = $null
+    if ($Theme) {
+        $cursor = Get-WezTermCursorStyle $Theme.cursorShape
+        $opacity = Get-WezTermWindowOpacity $Theme.opacity
+    }
+    if ($cursor) { [void]$sb.AppendLine("    cursor = $(& $q $cursor),") }
+    if ($null -ne $opacity) {
+        [void]$sb.AppendLine("    opacity = $(([double]$opacity).ToString($inv)),")
+        # macOS-only, so the Lua drops it anywhere else: see the blur note in
+        # Get-WezTermStyleLua for what an unknown field costs.
+        if ($Theme.useAcrylic) { [void]$sb.AppendLine('    blur = 20,') }
+    }
+    if ($Theme -and (Test-WezTermHexColor $Theme.tabColor)) {
+        [void]$sb.AppendLine("    tab_bg = $(& $q $Theme.tabColor),")
+        $tabFg = Get-WezTermTabForeground $Theme.tabColor
+        if ($tabFg) { [void]$sb.AppendLine("    tab_fg = $(& $q $tabFg),") }
+    }
+    if (Test-WezTermHexColor $Scheme.background) {
+        [void]$sb.AppendLine("    base = $(& $q $Scheme.background),")
+    }
+
+    $paths = @($BackgroundCandidates | Where-Object { $_ })
+    if ($paths.Count -gt 0) {
+        [void]$sb.AppendLine("    images = { $(($paths | ForEach-Object { & $q $_ }) -join ', ') },")
+        $stretch = $null
+        $align = $null
+        $imageOpacity = 1.0
+        if ($Theme) {
+            $stretch = $Theme.backgroundImageStretchMode
+            $align = $Theme.backgroundImageAlignment
+            $imageOpacity = Get-WezTermImageOpacity $Theme.backgroundImageOpacity
+        }
+        $size = Get-WezTermBackgroundSize $stretch
+        $al = Get-WezTermBackgroundAlignment $align
+        [void]$sb.AppendLine("    image = { width = $(& $q $size), height = $(& $q $size), " +
+                             "h = $(& $q $al.H), v = $(& $q $al.V), opacity = $($imageOpacity.ToString($inv)) },")
+    }
+    [void]$sb.AppendLine('  },')
+    $sb.ToString()
+}
+
+function Get-WezTermTabDefaultLine {
+    # The per-tab module's `local DEFAULT = ...` line: the style new tabs open
+    # in, or nil for none (after a reset). The one rule for its form:
+    # Get-WezTermTabModuleLua writes it and Test-WezTermTabModuleDefault reads
+    # it back, so the two cannot come to disagree about what "no default" looks
+    # like.
+    [CmdletBinding()]
+    [OutputType([string])]
+    param([AllowNull()][AllowEmptyString()][string]$DefaultStyle)
+    if ($DefaultStyle) { return "local DEFAULT = $(ConvertTo-WezTermLuaString $DefaultStyle)" }
+    return 'local DEFAULT = nil'
+}
+
+function Test-WezTermTabModuleDefault {
+    <#
+    .SYNOPSIS
+    Does this per-tab module text name a default style for new tabs?
+
+    .DESCRIPTION
+    $false only when a line is exactly Get-WezTermTabDefaultLine's no-default
+    form (-ceq, so a style named 'nil', written quoted, still counts as a
+    default). Split on CR LF or LF, since AppendLine writes CR LF on Windows.
+    A text with no DEFAULT line at all reads as having one: the caller then says
+    the module styles more, not less, and that is the answer that sends the user
+    to look.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([AllowNull()][AllowEmptyString()][string]$Text)
+    $none = Get-WezTermTabDefaultLine -DefaultStyle $null
+    foreach ($line in ("$Text" -split '\r?\n')) {
+        if ($line -ceq $none) { return $false }
+    }
+    return $true
+}
+
+function Get-WezTermTabModuleLua {
+    <#
+    .SYNOPSIS
+    The per-tab module's text: every style's look, the default, and the event
+    handlers that give each WezTerm window its active tab's look. Pure.
+
+    .DESCRIPTION
+    $Styles items are @{ Name; Scheme; Theme; BackgroundCandidates }.
+    $DefaultStyle is the last-applied style, or $null / '' for none (after a
+    reset); the base config carries it, so a new window and an untagged tab
+    look like it from their first frame. Its line is Get-WezTermTabDefaultLine's.
+
+    GENERATION is the first 16 hex digits of the SHA-256 of this text with the
+    stamp itself blank. Every window stores "<wanted>@<GENERATION>@<user>" once
+    it is synced, <user> being a fingerprint of the user's own values for the
+    keys a look sets (and of the scheme their own color_scheme names), and skips
+    a sync whose stamp matches. So a rewritten module or an edited wezterm.lua
+    re-syncs every window once, and the reload that set_config_overrides itself
+    causes ends at the compare instead of looping.
+
+    Every window gets a complete, self-contained look, the default's included:
+    every key a look sets, and the scheme it names in its own color_schemes.
+    So a rewrite that moves the default shows in no window, and a window keeps
+    its look when the module is deleted (the measurements are in this file's
+    header). A sync replaces only the keys a look sets and our own schemes, and
+    keeps every other override the window holds. apply_to_config runs inside a
+    pcall of its own and writes to config only after every value is worked out,
+    so an error there leaves the user's config as they wrote it.
+
+    The reserved tag values are interpolated from $script:WezTermTagVar and its
+    siblings, never retyped, so the PowerShell that writes a tag and the Lua
+    that reads it cannot drift apart.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Styles,
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyString()][string]$DefaultStyle
+    )
+
+    $q = { param($v) ConvertTo-WezTermLuaString $v }
+
+    $head = [System.Text.StringBuilder]::new()
+    Add-WezTermModuleHeader -Builder $head -What "with every installed style's look"
+    [void]$head.AppendLine($script:WezTermTabModuleMarker)
+    [void]$head.AppendLine("local wezterm = require 'wezterm'")
+    [void]$head.AppendLine('local M = {}')
+
+    $sb = [System.Text.StringBuilder]::new()
+    [void]$sb.AppendLine((Get-WezTermTabDefaultLine -DefaultStyle $DefaultStyle))
+    [void]$sb.AppendLine("local VAR, UNSTYLED, PREVIEW = $(& $q $script:WezTermTagVar), " +
+                         "$(& $q $script:WezTermTagUnstyled), $(& $q $script:WezTermTagPreviewPrefix)")
+    [void]$sb.AppendLine("local DARWIN = wezterm.target_triple:find('darwin') ~= nil")
+    [void]$sb.AppendLine('')
+    [void]$sb.AppendLine('-- Every installed style, by name. A tab names one in its user variable VAR.')
+    [void]$sb.AppendLine('-- No font, size or padding: those stay your own in every tab.')
+    [void]$sb.AppendLine('local LOOKS = {')
+    foreach ($s in $Styles) {
+        [void]$sb.Append((Get-WezTermStyleLook -StyleName $s.Name -Scheme $s.Scheme -Theme $s.Theme `
+                                               -BackgroundCandidates @($s.BackgroundCandidates)))
+    }
+    [void]$sb.AppendLine('}')
+    $lua = @'
+
+-- Every scheme this file registers is named PREFIX .. <style>.
+local PREFIX = 'TerminalStyles '
+
+-- What WezTerm draws for a key nobody set, for a look to fill in. The "none"
+-- scheme is WezTerm's own default palette, under a name no style can take
+-- ('/' is never in a style name).
+local BUILTIN = {
+  color_scheme = PREFIX .. UNSTYLED,
+  background = {},
+  window_background_opacity = 1.0,
+  macos_window_background_blur = 0,
+  default_cursor_style = 'SteadyBlock',
+}
+
+-- Your own values for every key a look sets, and the scheme your own
+-- color_scheme names when your config registers it, read before the default
+-- style is applied over them; and their fingerprint, which is part of every
+-- sync stamp so an edit to your wezterm.lua reaches windows holding an override.
+local USER = {}
+local USER_SCHEME = nil
+local USERPRINT = ''
+local KEYS = { 'color_scheme', 'background', 'window_background_opacity',
+               'macos_window_background_blur', 'default_cursor_style', 'colors' }
+
+local function copy(v)
+  if type(v) ~= 'table' then return v end
+  local t = {}
+  for k, x in pairs(v) do t[k] = copy(x) end
+  return t
+end
+
+-- Sorted keys, because pairs() order differs between Lua states, and plain
+-- values only, so no userdata address enters it: an unchanged config gives
+-- the same string on every evaluation.
+local function fingerprint(v)
+  local kind = type(v)
+  if kind == 'string' then return string.format('%q', v) end
+  if kind == 'number' or kind == 'boolean' then return tostring(v) end
+  if kind ~= 'table' then return kind end
+  local keys = {}
+  for k in pairs(v) do keys[#keys + 1] = k end
+  table.sort(keys, function(a, b)
+    local ta, tb = type(a), type(b)
+    if ta ~= tb then return ta < tb end
+    if ta == 'boolean' then return b and not a end
+    return (ta == 'number' or ta == 'string') and a < b
+  end)
+  local parts = {}
+  for _, k in ipairs(keys) do parts[#parts + 1] = fingerprint(k) .. '=' .. fingerprint(v[k]) end
+  return '{' .. table.concat(parts, ',') .. '}'
+end
+
+local function exists(path)
+  local f = io.open(path, 'rb')
+  if f then f:close() end
+  return f ~= nil
+end
+
+-- A COMPLETE table over KEYS, and the scheme table its color_scheme names (nil
+-- for a name WezTerm has built in). An override replaces only the keys it
+-- carries, so a key left out would show the base config's value. A key the
+-- style leaves alone is yours, else WezTerm's. colors is your own table, with
+-- the style's active tab merged in and without the keys the style's scheme
+-- sets: WezTerm lays colors over the scheme key by key, so your own
+-- background would otherwise draw over every style's.
+local function look_of(name)
+  local t = {}
+  for _, k in ipairs(KEYS) do
+    local v = USER[k]
+    if v == nil then v = BUILTIN[k] end
+    t[k] = copy(v)
+  end
+  t.colors = t.colors or {}
+  local scheme = USER_SCHEME
+  if USER.color_scheme == nil then scheme = wezterm.color.get_default_colors() end
+  local look = LOOKS[name]
+  if look then
+    t.color_scheme = PREFIX .. name
+    scheme = look.scheme
+    for k in pairs(look.scheme) do t.colors[k] = nil end
+    if look.cursor then t.default_cursor_style = look.cursor end
+    if look.opacity then t.window_background_opacity = look.opacity end
+    if look.blur then t.macos_window_background_blur = look.blur end
+    if look.tab_bg then
+      t.colors.tab_bar = t.colors.tab_bar or {}
+      t.colors.tab_bar.active_tab = t.colors.tab_bar.active_tab or {}
+      t.colors.tab_bar.active_tab.bg_color = look.tab_bg
+      if look.tab_fg then t.colors.tab_bar.active_tab.fg_color = look.tab_fg end
+    end
+    -- The style's own colour first: with any layer list WezTerm stops drawing
+    -- the pane's solid background, so whatever the image does not cover would
+    -- show the desktop. Its alpha is the window opacity this look carries
+    -- (the style's, else yours), because with a layer list WezTerm takes the
+    -- layer's alpha and does not multiply in window_background_opacity. The
+    -- image is the first candidate on disk NOW, so one downloaded after this
+    -- file was written is found.
+    local layers = {}
+    if look.base then
+      layers[#layers + 1] = { source = { Color = look.base }, width = '100%', height = '100%',
+                              opacity = look.opacity or t.window_background_opacity }
+    end
+    for _, path in ipairs(look.images or {}) do
+      if exists(path) then
+        local i = look.image
+        layers[#layers + 1] = {
+          source = { File = { path = path } },
+          width = i.width, height = i.height,
+          horizontal_align = i.h, vertical_align = i.v,
+          repeat_x = 'NoRepeat', repeat_y = 'NoRepeat',
+          opacity = i.opacity,
+        }
+        break
+      end
+    end
+    if #layers > 0 then t.background = layers end
+  end
+  if not DARWIN then t.macos_window_background_blur = nil end
+  return t, scheme
+end
+
+-- A tag names a style; a preview tag counts only on the pane that carries it.
+local function resolve(tag, preview_ok)
+  if type(tag) ~= 'string' then return nil end
+  if tag == UNSTYLED then return UNSTYLED end
+  if preview_ok and tag:sub(1, #PREVIEW) == PREVIEW then
+    local name = tag:sub(#PREVIEW + 1)
+    if LOOKS[name] then return name end
+    return nil
+  end
+  if LOOKS[tag] then return tag end
+  return nil
+end
+
+local function tag_of(pane)
+  local vars = pane:get_user_vars()
+  if vars then return vars[VAR] end
+  return nil
+end
+
+-- The style a window should show, one per tab: its active pane's tag, else
+-- another pane's tag in the same tab (a new split starts untagged), else the
+-- pane's pin. A pane is pinned at first sight to what its tab shows then --
+-- another pane's tag, else another pane's pin, else the default -- and the pin
+-- follows another pane's tag, so a split keeps its tab's look after a default
+-- change or after the tagged pane closes. Pins live in wezterm.GLOBAL because
+-- this file's locals reset on every config reload.
+local function wanted(window, pane)
+  local own = resolve(tag_of(pane), true)
+  if own then return own end
+  local key = 'ts_pin_' .. pane:pane_id()
+  local theirs, their_pin = nil, nil
+  local tab = window:active_tab()
+  if tab then
+    for _, other in ipairs(tab:panes()) do
+      if other:pane_id() ~= pane:pane_id() then
+        theirs = resolve(tag_of(other), false)
+        if theirs then break end
+        if their_pin == nil then their_pin = wezterm.GLOBAL['ts_pin_' .. other:pane_id()] end
+      end
+    end
+  end
+  if theirs then
+    if wezterm.GLOBAL[key] ~= theirs then wezterm.GLOBAL[key] = theirs end
+    return theirs
+  end
+  local pin = wezterm.GLOBAL[key]
+  if pin == nil then
+    pin = their_pin or DEFAULT or UNSTYLED
+    wezterm.GLOBAL[key] = pin
+  end
+  return pin
+end
+
+-- set_config_overrides only when the wanted look changed, this file did, or
+-- your own values did. Every window carries a COMPLETE look, the default's
+-- included, so a rewrite that changes the base config shows in no window
+-- before its sync. Each look carries the scheme it names: an override's
+-- color_schemes replaces the base config's whole table, so a window keeps its
+-- palette with this file gone. Only the keys a look sets are replaced, and
+-- only the schemes named PREFIX ..: any other override (a font-size toggle in
+-- your own config, say) is kept.
+local function sync(window, pane)
+  if not window or not pane then return end
+  local want = wanted(window, pane)
+  local stamp = want .. '@' .. GENERATION .. '@' .. USERPRINT
+  local key = 'ts_win_' .. window:window_id()
+  if wezterm.GLOBAL[key] == stamp then return end
+  wezterm.GLOBAL[key] = stamp
+  local overrides = window:get_config_overrides() or {}
+  for _, k in ipairs(KEYS) do overrides[k] = nil end
+  local look, scheme = look_of(want)
+  for k, v in pairs(look) do overrides[k] = v end
+  local schemes = {}
+  for k, v in pairs(overrides.color_schemes or {}) do
+    if type(k) ~= 'string' or k:sub(1, #PREFIX) ~= PREFIX then schemes[k] = v end
+  end
+  if scheme then schemes[look.color_scheme] = scheme end
+  overrides.color_schemes = schemes
+  window:set_config_overrides(overrides)
+end
+
+-- In a pcall of its own: the wiring line's pcall guards only the require, and
+-- an error here would be a config error, which costs you your whole
+-- wezterm.lua. Every value is worked out before the first write to config, so
+-- an error leaves config as you wrote it, and is logged once.
+function M.apply_to_config(config)
+  local ok, err = pcall(function()
+    local user, user_scheme = {}, nil
+    for _, k in ipairs(KEYS) do user[k] = copy(config[k]) end
+    if type(user.color_scheme) == 'string' and type(config.color_schemes) == 'table' then
+      user_scheme = copy(config.color_schemes[user.color_scheme])
+    end
+    USER, USER_SCHEME = user, user_scheme
+    USERPRINT = fingerprint({ user, user_scheme })
+    local schemes = { [BUILTIN.color_scheme] = wezterm.color.get_default_colors() }
+    for name, look in pairs(LOOKS) do schemes[PREFIX .. name] = look.scheme end
+    local base = look_of(DEFAULT or UNSTYLED)
+
+    -- Only writes from here on. The base config draws the default style: a
+    -- new window's first frame, before its own sync.
+    config.color_schemes = config.color_schemes or {}
+    for name, scheme in pairs(schemes) do config.color_schemes[name] = scheme end
+    for k, v in pairs(base) do config[k] = v end
+
+    -- update-status fires on every tab switch as well as on its interval.
+    wezterm.on('update-status', function(window, pane)
+      sync(window, pane)
+    end)
+    -- A tag written by tstyles shows at once.
+    wezterm.on('user-var-changed', function(window, pane, name, value)
+      if name == VAR then sync(window, window:active_pane()) end
+    end)
+    -- A rewrite of this file, or an edit to your own config, changes what a
+    -- window should show; the stamp makes the reload that set_config_overrides
+    -- causes stop at the compare.
+    wezterm.on('window-config-reloaded', function(window, pane)
+      sync(window, window:active_pane())
+    end)
+  end)
+  if not ok then wezterm.log_error('TerminalStyles could not apply its styles; this config load is as you wrote it: ' .. tostring(err)) end
+  return config
+end
+
+return M
+'@
+    # A here-string's line breaks are the script file's; AppendLine's are the
+    # platform's, and the rest of the module is built from those.
+    foreach ($line in ($lua -split '\r?\n')) { [void]$sb.AppendLine($line) }
+    $tail = $sb.ToString()
+
+    $nl = [Environment]::NewLine
+    $blank = $head.ToString() + "local GENERATION = ''" + $nl + $tail
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hash = $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($blank))
+    } finally { $sha.Dispose() }
+    $generation = (-join ($hash | ForEach-Object { $_.ToString('x2') })).Substring(0, 16)
+    $head.ToString() + "local GENERATION = '$generation'" + $nl + $tail
+}
+
+function Write-WezTermTabModule {
+    <#
+    .SYNOPSIS
+    Write the per-tab module for every installed style. Returns 'written' |
+    'unchanged' | 'failed'.
+
+    .DESCRIPTION
+    A style whose scheme.json is missing or will not parse is left out -- it
+    has no palette to show, and one broken user style must not cost every
+    other its look. A theme.json that will not parse reads as no theme, as on
+    apply. The build never fetches: a background not on disk yet is a cache
+    path the module checks when it builds a look.
+
+    The write is Write-WezTermModuleText's. On 'written' or 'unchanged' the
+    marker file (Get-WezTermTabMarkerPath) is written too, for the zsh/bash
+    loader. Best-effort: a data root that cannot take an empty file cannot take
+    the per-tab record either, and the loader without the marker only replays
+    the last-applied palette, as before per-tab mode.
+
+    -HomeDir is the module path's seam, forwarded only when bound (CLAUDE.md);
+    a test also points $script:TStylesDataRoot at $TestDrive, which holds the
+    marker and every cache path.
+    #>
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowNull()][AllowEmptyString()][string]$DefaultStyle,
+        [string]$HomeDir
+    )
+
+    $splat = @{}
+    if ($PSBoundParameters.ContainsKey('HomeDir')) { $splat.HomeDir = $HomeDir }
+    $enc = [System.Text.UTF8Encoding]::new($false)
+
+    $styles = @(foreach ($dir in @(Get-AvailableStyles)) {
+        $scheme = $null
+        try {
+            $scheme = [System.IO.File]::ReadAllText((Join-Path $dir.FullName 'scheme.json'), $enc) |
+                      ConvertFrom-Json -ErrorAction Stop
+        } catch { $scheme = $null }
+        if (-not $scheme) { continue }
+        $theme = $null
+        $themePath = Join-Path $dir.FullName 'theme.json'
+        if ([System.IO.File]::Exists($themePath)) {
+            try {
+                $theme = [System.IO.File]::ReadAllText($themePath, $enc) | ConvertFrom-Json -ErrorAction Stop
+            } catch { $theme = $null }
+        }
+        @{
+            Name                 = $dir.Name
+            Scheme               = $scheme
+            Theme                = $theme
+            BackgroundCandidates = @(Get-WezTermBackgroundCandidates -StyleDir $dir.FullName)
+        }
+    })
+
+    # The default under its listed name, which is what LOOKS is keyed by: the
+    # picker's open writes the recorded name and delete the name it was given,
+    # either of which may be as the user typed it. A name nothing is listed
+    # under is kept as given, and the Lua draws it as unstyled.
+    if ($DefaultStyle) {
+        $listed = Get-ListedStyleName -Name $DefaultStyle -Listed @($styles | ForEach-Object { $_.Name })
+        if ($listed) { $DefaultStyle = $listed }
+    }
+    $lua = Get-WezTermTabModuleLua -Styles $styles -DefaultStyle $DefaultStyle
+    $status = Write-WezTermModuleText -Path (Get-WezTermModulePath @splat) -Text $lua
+    if ($status -ne 'failed') {
+        try {
+            if (-not [System.IO.Directory]::Exists($script:TStylesDataRoot)) {
+                [void][System.IO.Directory]::CreateDirectory($script:TStylesDataRoot)
+            }
+            [System.IO.File]::WriteAllText((Get-WezTermTabMarkerPath), '', $enc)
+        } catch { }
+    }
+    return $status
+}
+
+function Test-WezTermTabModule {
+    <#
+    .SYNOPSIS
+    Is the module at $Path the per-tab one?
+
+    .DESCRIPTION
+    True when the file exists and has the marker line Get-WezTermTabModuleLua
+    writes; false for the single-style module, the module a reset leaves, no
+    file, and a file that cannot be read.
+    #>
+    [CmdletBinding()]
+    [OutputType([bool])]
+    param([Parameter(Mandatory)][string]$Path)
+
+    try {
+        if (-not [System.IO.File]::Exists($Path)) { return $false }
+        $text = [System.IO.File]::ReadAllText($Path, [System.Text.UTF8Encoding]::new($false))
+    } catch { return $false }
+    foreach ($line in ($text -split '\r?\n')) {
+        if ($line -ceq $script:WezTermTabModuleMarker) { return $true }
     }
     return $false
 }

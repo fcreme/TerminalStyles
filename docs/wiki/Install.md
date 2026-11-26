@@ -50,10 +50,10 @@ whichever your `$PROFILE` loads wins; the other is orphaned silently.
     prompt (see ² under [What your terminal can show](Terminals-and-Shells.md#what-your-terminal-can-show))
   - **Terminal.app** — colors, cursor color, and prompt in the current window,
     plus a background image in a new one (`tstyles <name> -NewWindow`)
-  - **WezTerm** — colors, cursor color and shape, prompt, font, padding,
+  - **WezTerm** — colors, cursor color and shape, prompt,
     window transparency (with the macOS blur for an acrylic style), the tab
     accent color, and an **animated** background image, live in the running
-    window, after one line of setup (see [Animated backgrounds on WezTerm](Terminals-and-Shells.md#animated-backgrounds-on-wezterm))
+    tab (on Windows, font and padding too), after one line of setup (see [Animated backgrounds on WezTerm](Terminals-and-Shells.md#animated-backgrounds-on-wezterm))
   - **VS Code**, Insiders, VSCodium, Cursor and Windsurf — colors, cursor
     color and shape, prompt, and font. The colors, font and cursor are
     written into the editor's own `settings.json` once you have said yes to

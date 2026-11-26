@@ -17,6 +17,11 @@ jobs:
   pester:
     name: Pester (${{ matrix.name }})
     runs-on: windows-latest
+    # About three times the slowest normal leg (Windows PowerShell 5.1, 8-10
+    # minutes in November 2026). Without a bound a hung test runs until someone
+    # cancels it or GitHub's six-hour limit: run 45207345656 hung on ubuntu-latest
+    # in one pty probe and was cancelled by hand 47 minutes in.
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       matrix:
@@ -117,6 +122,9 @@ jobs:
   pester-unix:
     name: Pester (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    # About three times the slowest normal leg here (macOS, up to 4.5 minutes
+    # in November 2026); see the bound on the job above for why there is one.
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:

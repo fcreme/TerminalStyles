@@ -626,6 +626,90 @@ Describe 'tstyles uninstall' {
                 $out | Should -Not -Match '(?m)^TerminalStyles uninstalled\.\s*$'
             }
 
+            It 'says open WezTerm windows keep their look when the module it removed was the per-tab one' {
+                # Overrides survive a reload (lib/wezterm.ps1 header), so the
+                # windows already open stay styled after the module is gone.
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'x'), [System.Text.UTF8Encoding]::new($false))
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                Test-Path -LiteralPath $script:wez | Should -BeFalse -Because 'the fixture needs the module gone'
+                $out | Should -Match 'Removed the WezTerm style module'
+                $out | Should -Match '(?m)^  WezTerm windows already open keep their look until you close them or restart WezTerm\.\s*$'
+            }
+
+            It 'does not say that when the module it removed was the single-style one' {
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, "-- generated`n", [System.Text.UTF8Encoding]::new($false))
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'Removed the WezTerm style module'
+                $out | Should -Not -Match 'windows already open'
+            }
+
+            It 'deletes the per-tab marker file with the module, and says nothing about it' {
+                # The zsh/bash loader skips its palette replay while this file
+                # exists; left behind, a reinstall would skip the replay.
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'x'), [System.Text.UTF8Encoding]::new($false))
+                $marker = Get-WezTermTabMarkerPath
+                [System.IO.File]::WriteAllText($marker, '')
+                $marker | Should -Exist
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $marker | Should -Not -Exist
+                $out | Should -Not -Match 'wezterm-pertab'
+            }
+
+            It 'keeps the marker while the module it could not delete is still there' {
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'x'), [System.Text.UTF8Encoding]::new($false))
+                $marker = Get-WezTermTabMarkerPath
+                [System.IO.File]::WriteAllText($marker, '')
+                Mock Remove-Item { & (Get-Command -Name Remove-Item -CommandType Cmdlet) @PesterBoundParameters }
+                Mock Remove-Item { throw 'The process cannot access the file because it is being used by another process.' } `                    -ParameterFilter { $LiteralPath -eq $script:wez }
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'could not remove'
+                $out | Should -Not -Match 'windows already open'
+                $marker | Should -Exist -Because 'the module is still wired in and still per-tab'
+            }
+
+            It 'says a per-tab module it could not delete keeps styling the tabs, with a default set' {
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle 'x'), [System.Text.UTF8Encoding]::new($false))
+                Mock Remove-Item { throw 'locked' } -ParameterFilter { $LiteralPath -eq $script:wez }
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'could not remove'
+                $out | Should -Match 'keeps styling the tabs that wear a style, and new tabs'
+                $out | Should -Not -Match 'keeps applying the last style'
+            }
+
+            It 'says a per-tab module with no default it could not delete styles only the tabs that wear one' {
+                $script:wez = Get-WezTermModulePath -HomeDir $script:h
+                New-Item -ItemType Directory -Path (Split-Path $script:wez -Parent) -Force | Out-Null
+                [System.IO.File]::WriteAllText($script:wez, (Get-WezTermTabModuleLua -Styles @() -DefaultStyle $null), [System.Text.UTF8Encoding]::new($false))
+                Mock Remove-Item { throw 'locked' } -ParameterFilter { $LiteralPath -eq $script:wez }
+
+                $out = Invoke-TerminalStylesUninstall -HomeDir $script:h -Yes -ProfileTarget @() 6>&1 | Out-String -Width 500
+
+                $out | Should -Match 'could not remove'
+                $out | Should -Match 'keeps styling the tabs that wear a style\.'
+                $out | Should -Not -Match 'new tabs'
+                $out | Should -Not -Match 'keeps applying the last style'
+            }
+
             It 'names the data folder when -DeleteData could not remove all of it' {
                 Mock Remove-Item { } -ParameterFilter { $LiteralPath -eq $script:data }
 

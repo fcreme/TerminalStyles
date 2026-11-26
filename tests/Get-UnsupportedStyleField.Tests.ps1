@@ -121,6 +121,7 @@ Describe 'Get-UnsupportedStyleField' {
             # Get-WezTermStyleLua writes config.font, window_padding,
             # default_cursor_style and colors.tab_bar.active_tab. Nothing here
             # was edited when the last two arrived.
+            Mock Get-TStylesPlatform { 'Windows' }
             script:Fields -Kind 'WezTerm' | Should -BeNullOrEmpty
 
             # The counterweight, and the reason this is not just a weaker
@@ -133,6 +134,14 @@ Describe 'Get-UnsupportedStyleField' {
             $g | Should -Contain 'tab color'
         }
 
+        It 'names the font and padding WezTerm off Windows leaves to wezterm.lua, and nothing else' {
+            Mock Get-TStylesPlatform { 'MacOS' }
+            $f = script:Fields -Kind 'WezTerm'
+            $f | Should -Contain 'font'
+            $f | Should -Contain 'padding'
+            @($f).Count | Should -Be 2
+        }
+
         It 'stops naming opacity on WezTerm, which now writes it' {
             # `kitty`'s shape: opacity 80 + acrylic, the one bundled style that
             # asks for transparency. WezTerm gets window_background_opacity, the
@@ -143,6 +152,7 @@ Describe 'Get-UnsupportedStyleField' {
             $t = $script:theme.PSObject.Copy()
             $t.opacity    = 80
             $t.useAcrylic = $true
+            Mock Get-TStylesPlatform { 'Windows' }
             script:Fields -Kind 'WezTerm' -Theme $t | Should -BeNullOrEmpty
             script:Fields -Kind 'AppleTerminal' -Theme $t | Should -Contain 'opacity'
         }

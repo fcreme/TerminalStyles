@@ -1153,7 +1153,10 @@ function Restore-TuneBaseLook {
             $status = 'failed'
         }
     }
-    Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$UseSettingsFile `
+    # Per-tab WezTerm takes the reset too: the window's scheme follows this
+    # tab's tag, and colours set on the pane by OSC would outrank it. For the
+    # packet only; there is no settings file to put back.
+    Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:([bool]$UseSettingsFile -or (Test-WezTermPerTab)) `
         -HadStartingStyle:($null -ne $OpenedScheme) -StartingScheme $OpenedScheme) | Out-Null
     $State.Reverted = $true
     return $status

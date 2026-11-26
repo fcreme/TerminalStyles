@@ -1,8 +1,12 @@
 # WezTerm adds the files it `require`s to its config reload watch list, so
-# rewriting the generated module restyles a RUNNING window. That makes it the one
-# terminal off Windows where arrowing through the picker can preview the whole
-# style -- background, font, padding, cursor shape, opacity -- and not just the
-# palette the OSC retint carries.
+# rewriting the generated module restyles a RUNNING window. Where TerminalStyles
+# styles one tab at a time (off Windows, with the wiring line in wezterm.lua) the
+# picker no longer rewrites the module: each arrow key tags its own pane with a
+# `/preview/<name>` user var, and the module, which already carries every style's
+# look, shows it in that window only. The rewrite-per-arrow preview these tests
+# cover is what Windows WezTerm and an unwired WezTerm still use: there it is the
+# one terminal where arrowing through the picker can preview the style's
+# background and opacity and not just the palette the OSC retint carries.
 #
 # Two properties are load-bearing and neither is obvious from reading the picker:
 # the preview runs on the input thread and must never reach the network, and Esc
@@ -219,6 +223,119 @@ Describe 'previewing a style does not move the layout' {
                 -Because 'the preview has to pass the pin'
             $src | Should -Match '\$wezLayoutTheme = \$null' `
                 -Because 'no applied style must reach the writer as an explicit $null'
+        }
+    }
+}
+
+Describe 'per tab, the picker previews a style in its own tab only' {
+    # Per tab, the module already carries every installed style's look, so the
+    # picker stops rewriting it: an arrow key tags this pane with the preview
+    # tag, which the generated Lua honours only on the pane that carries it, and
+    # Esc puts this tab's own tag back. Built by pure functions, because the
+    # picker body that sends them needs a console no test can give it.
+    #
+    # Compared by bytes (tests/Assert-SameBytes.ps1): on pwsh 7 the string
+    # comparisons ignore ESC and BEL, so they checked only the printable part.
+    InModuleScope TerminalStyles {
+        BeforeAll { . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1') }
+
+        It 'previews by tag, not by rewriting the module' {
+            Assert-SameBytes -Actual (Get-WezTermPickerPreviewPacket -StyleName 'rain') `
+                -Expected (Get-WezTermTagPacket -Value '/preview/rain')
+        }
+
+        It 'Esc puts back this tab''s own tag and hands colours to the window scheme' {
+            # The reset first: the preview's OSC retint painted this pane, and
+            # the window scheme -- this tab's style, through its tag -- has to
+            # show through again.
+            $script:tabRecord = 'kitty'
+            Mock Get-WezTermTabRecord { $script:tabRecord }
+            Assert-SameBytes -Actual (Get-WezTermPickerRevertPacket) `
+                -Expected ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value 'kitty'))
+
+            # A tab with no record was never tagged, so the preview tag is
+            # cleared rather than replaced: the tab shows what it showed before.
+            $script:tabRecord = $null
+            Assert-SameBytes -Actual (Get-WezTermPickerRevertPacket) `
+                -Expected ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value ''))
+            Should -Invoke Get-WezTermTabRecord -Times 2 -Exactly
+        }
+
+        It 'an unstyled tab gets the unstyled tag back, not an empty one' {
+            # '' in the record is a tab reset to unstyled. An empty tag would
+            # clear the variable, and an untagged pane shows its pin -- the
+            # new-tab default it was first seen with, not unstyled.
+            Mock Get-WezTermTabRecord { '' }
+            Assert-SameBytes -Actual (Get-WezTermPickerRevertPacket) `
+                -Expected ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value $script:WezTermTagUnstyled))
+        }
+
+        It 'the revert packet is the reset in per-tab mode' {
+            # A regression pin on the arm the picker's, the tuner's and show's
+            # Esc now select per tab: the window scheme already follows this
+            # tab's tag, and colours set on a pane by OSC outrank it, so a
+            # re-emitted palette would hold the pane instead of its tag.
+            $s = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8'; cursorColor = '#ff3d5a' }
+            Assert-SameBytes -Actual (Get-RevertOscPacket -UseSettingsFile:$true -HadStartingStyle:$true -StartingScheme $s) `
+                -Expected (Get-OscResetPacket)
+        }
+    }
+}
+
+Describe 'per tab, a picker confirm whose module write fails says so and puts the tab back' {
+    # Publish-StyleWezTermConfig prints why it failed and returns nothing, and
+    # the picker clears the screen after it: the notice was wiped, "Style
+    # applied" printed over it, and the pane kept the PREVIEW tag while its
+    # record kept the style it had. Get-WezTermPickerCommit reads the publish's
+    # captured output (6>&1) so the picker body only prints and sends what it
+    # answers. Driven here through the real publisher, sandboxed as above.
+    InModuleScope TerminalStyles {
+        BeforeAll { . (Join-Path $PSScriptRoot 'Assert-SameBytes.ps1') }
+        BeforeEach {
+            $script:savedData = $script:TStylesDataRoot
+            $script:root = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+            $script:h = Join-Path $script:root 'home'
+            New-Item -ItemType Directory -Path $script:h -Force | Out-Null
+            $script:TStylesDataRoot = Join-Path $script:root 'data'
+            New-Item -ItemType Directory -Path $script:TStylesDataRoot -Force | Out-Null
+            $script:scheme = [pscustomobject]@{ background = '#0a0006'; foreground = '#ffe8e8' }
+            Mock Get-StyleBundledBackground { $null }
+            Mock Write-HostOscPacket { $true }
+            Mock Test-WezTermPerTab { $true }
+            Mock Test-WezTermStyleWired { $true }
+            Mock Invoke-WezTermTabTag { 'painted' }
+            Mock Get-WezTermTabRecord { 'eva' }
+            $script:publish = {
+                @(Publish-StyleWezTermConfig -StyleName 'forest' -StyleDir '/tmp/forest' -Scheme $script:scheme `
+                    -Kind 'WezTerm' -HomeDir $script:h 6>&1)
+            }
+        }
+        AfterEach { $script:TStylesDataRoot = $script:savedData }
+
+        It 'a written module is applied: the success line, nothing to send, nothing to add' {
+            Mock Write-WezTermTabModule { 'written' }
+            $c = Get-WezTermPickerCommit -Output (& $script:publish)
+            $c.Applied | Should -BeTrue
+            $c.Label | Should -BeExactly '  Style applied: '
+            $c.NameColor | Should -Be 'Green'
+            $c.Packet | Should -BeNullOrEmpty
+            @($c.Notes).Count | Should -Be 0
+            Should -Invoke Invoke-WezTermTabTag -Times 1 -Exactly -Because 'the publish tagged this tab itself'
+        }
+
+        It 'a failed write is not applied: its notice is kept for below the clear, and this tab goes back' {
+            Mock Write-WezTermTabModule { 'failed' }
+            $c = Get-WezTermPickerCommit -Output (& $script:publish)
+            $c.Applied | Should -BeFalse
+            $c.Label | Should -BeExactly '  Not applied in WezTerm: '
+            $c.NameColor | Should -Be 'Yellow'
+            # The preview tag goes, and this tab's own tag comes back, with the
+            # palette handed to the window scheme that tag selects.
+            Assert-SameBytes -Actual $c.Packet -Expected ((Get-OscResetPacket) + (Get-WezTermTagPacket -Value 'eva'))
+            $text = @($c.Notes | ForEach-Object { "$($_.MessageData)" }) -join "`n"
+            $text | Should -Match ([regex]::Escape('Could not write ' + (Get-WezTermModulePath -HomeDir $script:h)))
+            $text | Should -Match ([regex]::Escape('This tab keeps the colors it has now'))
+            Should -Invoke Invoke-WezTermTabTag -Times 0 -Exactly -Because 'a failed write tags nothing'
         }
     }
 }

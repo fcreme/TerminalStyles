@@ -134,6 +134,12 @@ Describe 'the command tstyles is for is in its own help' {
             $script:RenderedHelp | Should -Match '-BackgroundImage'
         }
 
+        It 'keeps the backticks around the tmux setting it quotes' {
+            # In a double-quoted help line `s and `. are escapes for s and ., so
+            # the quoted setting rendered as plain words ending in a period.
+            $script:RenderedHelp | Should -Match '`set -g allow-passthrough on`'
+        }
+
         It 'puts the apply line in the overview COMMANDS block' {
             # The line a user actually reads. It used to be a literal typed
             # beside the loop that prints every other command, which is how the

@@ -842,10 +842,59 @@ function Get-AvailableStyles {
     @(@($user) + @($bundled | Where-Object { $_.Name -notin $userNames })) | Sort-Object Name
 }
 
+function Get-ListedStyleName {
+    <#
+    .SYNOPSIS
+    The name a style is listed under, for a name typed in any case; $null when
+    no style is listed under it.
+
+    .DESCRIPTION
+    The listed name is the folder's own spelling (Get-AvailableStyles). An
+    exact match wins, else the first that matches ignoring case, which is how
+    the dispatcher has always matched a style argument.
+
+    Why it matters: on a case-insensitive file system Get-StyleDir resolves
+    'EVA' to the folder 'eva', so a miscased name applies, and every later step
+    carried it as typed. In WezTerm per-tab mode that broke the tab: the
+    module's LOOKS table is keyed by folder name and Lua compares strings
+    exactly, so a DEFAULT or a tag of 'EVA' named no look at all. The
+    dispatcher, the per-tab publish and the per-tab module writer all ask here.
+
+    -Listed is the names to search, for a caller that has already listed them.
+    #>
+    [CmdletBinding()]
+    [OutputType([string])]
+    param(
+        [Parameter(Mandatory)][AllowEmptyString()][string]$Name,
+        [string[]]$Listed
+    )
+    if (-not $Name) { return $null }
+    if (-not $PSBoundParameters.ContainsKey('Listed')) {
+        $Listed = @(Get-AvailableStyles | ForEach-Object { $_.Name })
+    }
+    foreach ($n in $Listed) { if ($n -ceq $Name) { return $n } }
+    foreach ($n in $Listed) { if ($n -eq $Name) { return $n } }
+    return $null
+}
+
 function Get-CurrentStyleName {
     # Detects which bundled style is currently active by byte-comparing
     # current-style.ps1 against each style's profile.ps1. Returns $null
     # if nothing matches (custom profile, no current style, etc).
+    #
+    # In WezTerm per-tab mode each tab wears its own style, and the per-tab
+    # record names it, so that answers first: '' is a tab reset to unstyled (no
+    # style, whatever the last applied one was), a name that still resolves is
+    # this tab's style, and no entry -- or a style since deleted -- falls through
+    # to the global answer below. Off per-tab mode the record is not even read.
+    if (Test-WezTermPerTab) {
+        $tab = Get-WezTermTabRecord
+        if ($null -ne $tab) {
+            if ($tab -eq '') { return $null }
+            if (Get-StyleDir -StyleName $tab) { return $tab }
+        }
+    }
+
     if (Test-Path -LiteralPath $script:TStylesCurrent) {
         $current = [System.IO.File]::ReadAllText($script:TStylesCurrent, [System.Text.UTF8Encoding]::new($false))
         foreach ($style in (Get-AvailableStyles)) {
@@ -1047,11 +1096,12 @@ function Invoke-TerminalStyle {
     if ($Arg -eq 'profiles')             { Invoke-TerminalStyleProfiles -Clean:$Clean -Yes:$Yes; return }
     if ($Arg -eq 'vscode')               { Invoke-TerminalStyleVSCode -Action $SubArg; return }
 
-    # If $Arg matches a bundled style, apply it directly (no picker).
+    # If $Arg matches a bundled style, apply it directly (no picker), under the
+    # name it is listed by: 'EVA' applies 'eva' (Get-ListedStyleName says why).
     if ($Arg) {
-        $styleMatch = Get-AvailableStyles | Where-Object Name -eq $Arg | Select-Object -First 1
+        $styleMatch = Get-ListedStyleName -Name $Arg
         if ($styleMatch) {
-            Apply-StyleDirect -StyleName $Arg -Target $Target `
+            Apply-StyleDirect -StyleName $styleMatch -Target $Target `
                 -BackgroundImage $BackgroundImage -BackgroundImageProvided $bgProvided `
                 -KeepPrompt:$KeepPrompt -NewWindow:$NewWindow
             return
@@ -1240,7 +1290,14 @@ function Invoke-TerminalStyle {
     # It is quiet by design: Publish-StyleWezTermConfig prints the not-wired
     # notice and resolves backgrounds, which is right once on confirm and wrong
     # sixty times a minute.
-    $wezPreviewable = ($termKind -eq 'WezTerm') -and (Test-WezTermStyleWired)
+    #
+    # All of the above is WezTerm on Windows now. Per tab ($wezPerTab), the
+    # module already carries every style's look and rewriting it would restyle
+    # every tab, so a preview is a tag on this pane and Esc this tab's own tag
+    # back: no file is written mid-preview, so no session, no recovery and no
+    # layout pin.
+    $wezPerTab = ($termKind -eq 'WezTerm') -and (Test-WezTermPerTab -Kind $termKind)
+    $wezPreviewable = ($termKind -eq 'WezTerm') -and -not $wezPerTab -and (Test-WezTermStyleWired)
     $wezSession = $null
     $wezRecovered = $null
     if ($wezPreviewable) {
@@ -1285,6 +1342,7 @@ function Invoke-TerminalStyle {
 
     $previewWezTerm = {
         param([int]$i)
+        if ($wezPerTab) { Write-HostOscPacket -Packet (Get-WezTermPickerPreviewPacket -StyleName $styles[$i].Name) | Out-Null; return }
         if (-not $wezPreviewable) { return }
         try {
             $sd = $styles[$i].FullName
@@ -1309,6 +1367,7 @@ function Invoke-TerminalStyle {
     }
 
     $restoreWezTerm = {
+        if ($wezPerTab) { Write-HostOscPacket -Packet (Get-WezTermPickerRevertPacket) | Out-Null; return }
         if (-not $wezSession) { return }
         $wr = Restore-FilePreview -Session $wezSession -End
         if ($wr.Status -ne 'none') { $pickerState.WezRestore = $wr }
@@ -1709,6 +1768,12 @@ function Invoke-TerminalStyle {
     # question is never put to a pipe.
     if ($termKind -eq 'VSCode') { $vscodeSession = New-VSCodePreviewSession }
 
+    # Per-tab WezTerm: the module once, so a style made since the last apply
+    # can be previewed too. It is deterministic, so an unchanged set of styles
+    # writes nothing and WezTerm does not reload. Below the console guard, so
+    # a redirected run writes nothing at all.
+    if ($wezPerTab) { [void](Write-WezTermTabModule -DefaultStyle (Get-CurrentStyleRecord).name) }
+
     [Console]::CursorVisible = $false
     $originalTitle = $Host.UI.RawUI.WindowTitle
     # May the preview move the title at all? Asked ONCE, of the same snapshot
@@ -1996,7 +2061,8 @@ function Invoke-TerminalStyle {
             if (-not $useSettingsFile) {
                 # The OSC retint carried the palette; on WezTerm everything else
                 # the style has -- background, font, padding, cursor, opacity --
-                # lives in the generated module, so previewing means rewriting it.
+                # lives in the generated module, so previewing means rewriting it
+                # -- or, per tab, tagging this pane with a look it already holds.
                 & $previewWezTerm $i
                 & $previewVSCode $i
                 if ($canPreviewTitle -and $titles.ContainsKey($i)) { $Host.UI.RawUI.WindowTitle = $titles[$i] }
@@ -2058,7 +2124,7 @@ function Invoke-TerminalStyle {
             try { & $restoreOriginalSettings } catch { $pickerState.SettingsRestoreError = "$_" }
             & $restoreWezTerm
             & $restoreVSCode
-            Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:$useSettingsFile `
+            Write-HostOscPacket -Packet (Get-RevertOscPacket -UseSettingsFile:($useSettingsFile -or $wezPerTab) `
                 -HadStartingStyle:$hadCurrentStyle -StartingScheme $schemes[$startIdx]) | Out-Null
             $pickerState.Reverted = $true
         }
@@ -2158,6 +2224,8 @@ function Invoke-TerminalStyle {
         # What Publish-StyleBackgroundProfile said, from the non-WT arm, for the
         # same reason.
         $backgroundNotes = @()
+        # Per-tab WezTerm only: what the module publish came to and said.
+        $wezCommit = $null
         if ($useSettingsFile) {
             # The commit, first: the preview on disk is the style when the file
             # still holds it; a file that changed while the picker was open has
@@ -2258,12 +2326,22 @@ function Invoke-TerminalStyle {
                         [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
                 } catch { $wtTheme = $null }
             }
-            Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
-                                       -StyleDir $selectedStyle.FullName `
-                                       -Scheme $schemes[$idx] `
-                                       -Theme $wtTheme -Kind $termKind | Out-Null
+            # Per tab, what it says is kept for below the Clear-Host, and a
+            # failed write puts this tab back to its own tag: it has not been
+            # tagged, so it still wears the preview (Get-WezTermPickerCommit).
+            if ($wezPerTab) {
+                $wezCommit = Get-WezTermPickerCommit -Output @(Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
+                                 -StyleDir $selectedStyle.FullName -Scheme $schemes[$idx] -Theme $wtTheme -Kind $termKind 6>&1)
+                if ($wezCommit.Packet) { Write-HostOscPacket -Packet $wezCommit.Packet | Out-Null }
+            } else {
+                Publish-StyleWezTermConfig -StyleName $selectedStyle.Name `
+                                           -StyleDir $selectedStyle.FullName `
+                                           -Scheme $schemes[$idx] `
+                                           -Theme $wtTheme -Kind $termKind | Out-Null
+            }
             # The publish owns the module now; the preview session is over.
-            [void](Complete-FilePreview -Session $wezSession)
+            # Per tab there was none.
+            if ($wezSession) { [void](Complete-FilePreview -Session $wezSession) }
 
             # ...and VS Code's settings.json, the fourth writer. With the
             # session, so the commit undoes the PREVIEW on disk rather than the
@@ -2306,12 +2384,17 @@ function Invoke-TerminalStyle {
 
         Clear-Host
         Write-Host ""
-        Write-Host "  Style applied: " -NoNewline
-        Write-Host $selectedStyle.Name -ForegroundColor Green
+        # Per tab, a failed module write is not "Style applied" (Get-WezTermPickerCommit).
+        $appliedLabel = "  Style applied: "; $appliedColor = 'Green'
+        if ($wezCommit) { $appliedLabel = $wezCommit.Label; $appliedColor = $wezCommit.NameColor }
+        Write-Host $appliedLabel -NoNewline
+        Write-Host $selectedStyle.Name -ForegroundColor $appliedColor
         if ($promptResult) {
             $promptNote = Get-CurrentStylePromptFailureNote -Result $promptResult
             if ($promptNote) { Write-Host $promptNote -ForegroundColor Yellow }
         }
+        # ...and what the WezTerm publish said, kept from before the clear.
+        if ($wezCommit) { Write-HostRecord -Record $wezCommit.Notes }
         Write-Host ""
         Show-FilePreviewResult -Result $pickerState.SettingsCommit
         Show-FilePreviewResult -Result $pickerRecovered
@@ -2523,6 +2606,47 @@ Register-ArgumentCompleter -CommandName Invoke-TerminalStyle -ParameterName Arg 
 # Idempotent; gated by a marker file.
 Invoke-TerminalStylesStateMigration
 
+function Invoke-StartupPaletteReplay {
+    <#
+    .SYNOPSIS
+    Re-emits the applied style's palette into this new shell's terminal.
+
+    .DESCRIPTION
+    Windows Terminal reads its colors from settings.json, which the apply
+    already wrote, so the palette is live before this shell even starts.
+    OSC-driven terminals have no such persistence: the escape sequences only
+    ever touched the tab they were emitted into. Re-emit them here so a new
+    tab/window/split comes up in the applied style instead of the terminal's
+    own default.
+
+    Skipped on WT to avoid fighting its own scheme, and skipped in a WezTerm
+    pane once a per-tab module exists, where each tab wears its own style
+    through the generated Lua module and the LAST applied style's palette would
+    be painted over a tab that should wear another. That is the zsh/bash
+    loader's question (Test-WezTermPerTabShell), so every shell in a tab gets
+    the same answer, and it reads no wezterm.lua. Inside the try with the rest:
+    failures are swallowed -- a missing color is never worth blocking a shell
+    from starting.
+    #>
+    [CmdletBinding()]
+    param()
+    if ((Get-TerminalKind) -eq 'WindowsTerminal') { return }
+    try {
+        if (Test-WezTermPerTabShell) { return }
+        $record = Get-CurrentStyleRecord
+        if ($record -and $record.name) {
+            $styleDir = Get-StyleDir -StyleName $record.name
+            if ($styleDir) {
+                $schemePath = Join-Path $styleDir 'scheme.json'
+                if (Test-Path -LiteralPath $schemePath) {
+                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    [void](Invoke-TerminalStyleOscApply -Scheme $scheme)
+                }
+            }
+        }
+    } catch { }
+}
+
 # === Auto-load the currently selected style at shell startup ===
 # Gated on Test-StyledHost rather than Test-InWindowsTerminal: hosts that cannot
 # render a style (a plain pipe, a dumb console) would show a half-themed look --
@@ -2537,32 +2661,7 @@ Invoke-TerminalStylesStateMigration
 # one. Same shape as $TStylesApplyNoRun / $TStylesInstallNoRun.
 if (-not $TStylesNoAutoLoad -and (Test-StyledHost) -and (Test-HostOutputVisible)) {
 
-    # Windows Terminal reads its colors from settings.json, which the apply
-    # already wrote, so the palette is live before this shell even starts.
-    # OSC-driven terminals have no such persistence: the escape sequences only
-    # ever touched the tab they were emitted into. Re-emit them here so a new
-    # tab/window/split comes up in the applied style instead of the terminal's
-    # own default.
-    #
-    # Skipped on WT to avoid fighting its own scheme, and skipped when the
-    # terminal can persist a real config AND we wrote one (that path handles
-    # itself). Failures are swallowed inside Write-HostOscPacket -- a missing
-    # color is never worth blocking a shell from starting.
-    if ((Get-TerminalKind) -ne 'WindowsTerminal') {
-        try {
-            $record = Get-CurrentStyleRecord
-            if ($record -and $record.name) {
-                $styleDir = Get-StyleDir -StyleName $record.name
-                if ($styleDir) {
-                    $schemePath = Join-Path $styleDir 'scheme.json'
-                    if (Test-Path -LiteralPath $schemePath) {
-                        $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                        [void](Invoke-TerminalStyleOscApply -Scheme $scheme)
-                    }
-                }
-            }
-        } catch { }
-    }
+    Invoke-StartupPaletteReplay
 
     # Guarded, because this runs on EVERY module import -- which means every new
     # shell tab, and (through the generated shim) every `tstyles` command run

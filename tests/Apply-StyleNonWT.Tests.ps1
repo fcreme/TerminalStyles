@@ -723,7 +723,23 @@ Describe 'Apply-StyleNonWT names every field this terminal cannot show' {
             $line[0] | Should -Not -Match 'tab title'
         }
 
+        It 'names font and padding on WezTerm off Windows, where the per-tab module writes neither' {
+            Mock Get-TStylesPlatform { 'MacOS' }
+            # Split on either line ending: Out-String ends lines with the
+            # platform's, which is CR LF on the Windows legs.
+            $line = @(script:Get-ApplyOutput -Kind 'WezTerm' -split '\r?\n' |
+                      Where-Object { $_ -match "can't show" })
+            @($line).Count | Should -Be 1
+            $line[0] | Should -Match 'font'
+            $line[0] | Should -Match 'padding'
+            $line[0] | Should -Not -Match 'cursor shape'
+            $line[0] | Should -Not -Match 'tab color'
+        }
+
         It 'names only what WezTerm really cannot do' {
+            # Windows: the single-style module is the only one there, and it
+            # writes font and padding. Pinned so every CI leg asserts one thing.
+            Mock Get-TStylesPlatform { 'Windows' }
             # The record drives it, and for this style that list is now empty:
             # Get-WezTermStyleLua writes config.font, window_padding,
             # default_cursor_style and colors.tab_bar.active_tab, and the

@@ -1561,13 +1561,30 @@ function Invoke-TerminalStylesUninstall {
     $wezLeft = $null
     $wezLeftAdvice = $null
     if (Test-Path -LiteralPath $wezPath) {
+        # The form is read before the delete: afterwards there is nothing to
+        # read, and the two forms leave different things behind (below).
+        $wezWasPerTab = Test-WezTermTabModule -Path $wezPath
         try { Remove-Item -LiteralPath $wezPath -Force -ErrorAction Stop } catch { }
         # Read back, like every other removal here, and kept for the sign-off
         # as well -- which closed on the plain "TerminalStyles uninstalled." a
         # few lines under the warning.
         if (Test-Path -LiteralPath $wezPath) {
             $wezLeft = $wezPath
-            $wezLeftAdvice = if (Test-WezTermModuleStyled -Path $wezPath) {
+            $wezLeftAdvice = if ($wezWasPerTab) {
+                # Not "the last style": a per-tab module styles the tabs that
+                # wear one, and new tabs only while a default is set -- a
+                # reset leaves none (Get-WezTermTabDefaultLine, the generator's
+                # one rule for that line, read back by the helper below).
+                $wezHasDefault = $false
+                try {
+                    $wezHasDefault = Test-WezTermTabModuleDefault -Text ([System.IO.File]::ReadAllText($wezPath, [System.Text.UTF8Encoding]::new($false)))
+                } catch { }
+                if ($wezHasDefault) {
+                    'Delete it by hand; until then it keeps styling the tabs that wear a style, and new tabs.'
+                } else {
+                    'Delete it by hand; until then it keeps styling the tabs that wear a style.'
+                }
+            } elseif (Test-WezTermModuleStyled -Path $wezPath) {
                 'Delete it by hand; until then WezTerm keeps applying the last style.'
             } else {
                 'Delete it by hand. It applies no style, so WezTerm looks the same until you do.'
@@ -1576,6 +1593,17 @@ function Invoke-TerminalStylesUninstall {
             Write-Host "    $wezLeftAdvice" -ForegroundColor Red
         } else {
             Write-Host "  Removed the WezTerm style module ($wezPath)" -ForegroundColor Green
+            if ($wezWasPerTab) {
+                # Every window holds a complete override that carries its own
+                # scheme, and such an override outlives the module (measured;
+                # header of lib/wezterm.ps1), so deleting the module does not
+                # unstyle windows already open, palette included.
+                Write-Host "  WezTerm windows already open keep their look until you close them or restart WezTerm." -ForegroundColor Gray
+            }
+            # The empty file the zsh/bash loader reads to skip its palette
+            # replay: with the module gone it would make a reinstall skip
+            # the replay until the next apply. Kept while the module is.
+            Remove-Item -LiteralPath (Get-WezTermTabMarkerPath) -Force -ErrorAction SilentlyContinue
         }
     }
 
