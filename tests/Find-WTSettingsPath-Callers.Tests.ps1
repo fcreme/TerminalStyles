@@ -74,9 +74,9 @@ Describe 'the commands that write Windows Terminal settings, through Find-WTSett
                 $styleDir = Join-Path (Join-Path $script:root 'styles') 'fakeStyle'
                 [void][System.IO.Directory]::CreateDirectory($styleDir)
                 [System.IO.File]::WriteAllText((Join-Path $styleDir 'scheme.json'),
-                    '{"name":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+                    '{"name":"fakeStyle"}', [System.Text.UTF8Encoding]::new($false))
                 [System.IO.File]::WriteAllText((Join-Path $styleDir 'theme.json'),
-                    '{"colorScheme":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+                    '{"colorScheme":"fakeStyle"}', [System.Text.UTF8Encoding]::new($false))
 
                 $script:previewExe = Join-Path (Join-Path (Join-Path $script:root 'WindowsApps') 'Microsoft.WindowsTerminalPreview_1.23.2702.0_x64__8wekyb3d8bbwe') 'WindowsTerminal.exe'
 

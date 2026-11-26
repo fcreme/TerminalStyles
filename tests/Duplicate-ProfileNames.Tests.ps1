@@ -344,22 +344,27 @@ Describe 'the merge writes to the profile the session is in' {
 }
 '@ | ConvertFrom-Json
 
-            $styleDir = Join-Path $TestDrive 'styles/dup'
+            # Installed under the data root, as every style an apply sees is:
+            # the merge writes nothing unless the colorScheme names one
+            # (Select-StyleThemeFields), which is how reset finds it again.
+            $savedDataRoot = $script:TStylesDataRoot
+            $script:TStylesDataRoot = Join-Path $TestDrive 'dup-data'
+            $styleDir = Join-Path $script:TStylesDataRoot 'styles/dup'
             New-Item -ItemType Directory -Path $styleDir -Force | Out-Null
-            [System.IO.File]::WriteAllText((Join-Path $styleDir 'scheme.json'), '{"name":"dupscheme"}')
-            [System.IO.File]::WriteAllText((Join-Path $styleDir 'theme.json'), '{"colorScheme":"dupscheme"}')
+            [System.IO.File]::WriteAllText((Join-Path $styleDir 'scheme.json'), '{"name":"dup"}')
+            [System.IO.File]::WriteAllText((Join-Path $styleDir 'theme.json'), '{"colorScheme":"dup"}')
 
             $prev = $env:WT_PROFILE_ID
             try {
                 $env:WT_PROFILE_ID = '{bbbbbbbb-0000-0000-0000-000000000002}'
                 $out = Merge-StyleIntoSettings -Settings $settings -StyleDir $styleDir `
                         -TargetName 'PowerShell' -BackgroundImage '' -BackgroundImageProvided $false
-            } finally { $env:WT_PROFILE_ID = $prev }
+            } finally { $env:WT_PROFILE_ID = $prev; $script:TStylesDataRoot = $savedDataRoot }
 
             $first  = $out.profiles.list | Where-Object { $_.guid -eq '{aaaaaaaa-0000-0000-0000-000000000001}' }
             $second = $out.profiles.list | Where-Object { $_.guid -eq '{bbbbbbbb-0000-0000-0000-000000000002}' }
 
-            $second.colorScheme | Should -Be 'dupscheme' `
+            $second.colorScheme | Should -Be 'dup' `
                 -Because 'the session profile is the one that should change'
             $first.PSObject.Properties.Match('colorScheme').Count | Should -Be 0 `
                 -Because 'an unrelated profile must not be restyled behind the user'

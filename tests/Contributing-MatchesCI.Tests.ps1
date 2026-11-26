@@ -70,6 +70,48 @@ Describe 'CONTRIBUTING.md documents the files CI requires' {
         }
     }
 
+    # Audit #40, re-measured 2026-11-26: a theme added exactly as the by-hand
+    # route said failed ten tests across the files below, none of them named.
+    # These hold the guide to what the suite requires of a new theme.
+
+    It 'lists meta.json in the theme folder layout' {
+        $tree = [regex]::Match($script:contributing, '(?s)```\s*\nstyles/<name>/.*?```').Value
+        $tree | Should -Match 'meta\.json'
+    }
+
+    It 'names the steps outside the folder: <What>' -ForEach @(
+        @{ What = 'the banner script';       Pattern = 'scripts/make-banner\.py' }
+        @{ What = 'the docs site';           Pattern = 'docs/index\.html' }
+        @{ What = 'the README theme count';  Pattern = "README's theme count" }
+    ) {
+        $script:contributing | Should -Match $Pattern
+    }
+
+    It 'points at a banner script that exists' {
+        Test-Path -LiteralPath (Join-Path $script:repoRoot 'scripts/make-banner.py') | Should -BeTrue
+    }
+
+    It 'names <Test>, which a new theme has to pass' -ForEach @(
+        @{ Test = 'Style-Meta' }, @{ Test = 'README-Theme-Count' }, @{ Test = 'README-Banner' }
+        @{ Test = 'Scheme-Contrast' }, @{ Test = 'Shell-Prompt' }, @{ Test = 'Style-PromptParity' }
+        @{ Test = 'Style-PSReadLine-Colours' }, @{ Test = 'Style-README-Accuracy' }
+        @{ Test = 'No-Committed-Backgrounds' }, @{ Test = 'Get-SchemeSwatch' }, @{ Test = 'Style-Submit' }
+    ) {
+        $script:contributing | Should -Match ([regex]::Escape("$Test.Tests.ps1"))
+        Test-Path -LiteralPath (Join-Path $script:repoRoot "tests/$Test.Tests.ps1") | Should -BeTrue
+    }
+
+    It 'does not call a tstyles tune folder submittable' {
+        # tstyles submit refuses a tuned style: it builds on the one it was
+        # tuned from (Get-StyleSubmissionProblems).
+        $script:contributing | Should -Not -Match 'tstyles tune[^.]*submittable'
+    }
+
+    It 'names the data folder on every platform' {
+        $script:contributing | Should -Match ([regex]::Escape('Library/Application Support/TerminalStyles'))
+        $script:contributing | Should -Match ([regex]::Escape('.local/share/TerminalStyles'))
+    }
+
     It 'the requirement it documents is the one the suite enforces' {
         # If someone ever relaxes Shell-Prompt.Tests.ps1, this fails and the doc
         # gets revisited rather than silently becoming wrong in the other

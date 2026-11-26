@@ -365,12 +365,13 @@ function Get-VSCodeStylePlan {
     param([Parameter(Mandatory)][string]$StyleDir)
 
     $enc = [System.Text.UTF8Encoding]::new($false)
-    $scheme = [System.IO.File]::ReadAllText((Join-Path $StyleDir 'scheme.json'), $enc) | ConvertFrom-Json
+    # Read-StyleJson, the reader the apply's gate asks: on Windows PowerShell
+    # 5.1 a bare ConvertFrom-Json refuses the comment the gate accepted, and
+    # this ran after settings.json had already been written.
+    $scheme = Read-StyleJson -StyleDir $StyleDir -FileName 'scheme.json'
+    if ($null -eq $scheme) { throw "TerminalStyles: style '$(Split-Path -Leaf $StyleDir)' has no scheme.json." }
     $theme = $null
-    $themePath = Join-Path $StyleDir 'theme.json'
-    if (Test-Path -LiteralPath $themePath) {
-        try { $theme = [System.IO.File]::ReadAllText($themePath, $enc) | ConvertFrom-Json } catch { }
-    }
+    try { $theme = Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json' } catch { }
 
     $entries = [System.Collections.Generic.List[object]]::new()
 

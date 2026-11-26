@@ -391,11 +391,7 @@ function Get-HintEscape {
             if ($name) {
                 $dir = Get-StyleDir -StyleName $name
                 if ($dir) {
-                    $path = Join-Path $dir 'scheme.json'
-                    if (Test-Path -LiteralPath $path) {
-                        $s = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)) |
-                             ConvertFrom-Json
-                    }
+                    $s = Read-StyleJson -StyleDir $dir -FileName 'scheme.json'
                 }
             }
         } catch { $s = $null }

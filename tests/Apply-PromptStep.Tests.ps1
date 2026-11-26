@@ -271,3 +271,53 @@ Describe 'apply.ps1 leaves no stale prompt and records the style' {
         & $script:currentAt $r.DataRoot | Should -Be 'sober' -Because 'apply.ps1 must write the record'
     }
 }
+
+# The same harness, for what apply.ps1 does with a style it should not apply.
+# These two assert a NEGATIVE result in settings.json, so each also asserts the
+# run's own words: a script that never ran would leave the file alone too.
+Describe 'apply.ps1 refuses a broken style before it touches anything' {
+    It 'names the file, and stops before the settings file is even looked at' {
+        # Audit #20 for the script: it found the settings file, restored any
+        # abandoned picker preview into it, asked which profile and which
+        # background (fetching the bundled one), and only then found that
+        # theme.json would not parse. "Settings file:" is printed before the
+        # restore and both questions, so its absence puts the refusal first.
+        $seed = {
+            param($DataRoot)
+            $d = Join-Path (Join-Path $DataRoot 'styles') 'broken'
+            [void][System.IO.Directory]::CreateDirectory($d)
+            [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), '{"name":"broken"}', $script:utf8)
+            [System.IO.File]::WriteAllText((Join-Path $d 'theme.json'), '{"colorScheme":', $script:utf8)
+        }
+        $r = & $script:runApply -Case 'broken-theme' -ApplyArgs @{ Style = 'broken'; Target = 'PowerShell' } `
+                -ProfileText $script:handProfile -Seed $seed
+
+        $r.Code | Should -Not -Be 0 -Because $r.Out
+        $r.Flat | Should -Match "could not parse broken's theme\.json"
+        $r.Flat | Should -Not -Match 'Settings file:' `
+            -Because 'the refusal comes before the abandoned-preview restore and every question'
+        @($r.Settings.profiles.list | Where-Object { $_.PSObject.Properties.Match('colorScheme').Count }) |
+            Should -BeNullOrEmpty
+    }
+}
+
+Describe 'apply.ps1 writes nothing for a theme.json with nothing it may write' {
+    It 'leaves settings.json alone and says why' {
+        $seed = {
+            param($DataRoot)
+            $d = Join-Path (Join-Path $DataRoot 'styles') 'mine'
+            [void][System.IO.Directory]::CreateDirectory($d)
+            [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), '{"name":"mine"}', $script:utf8)
+            [System.IO.File]::WriteAllText((Join-Path $d 'theme.json'), '{"commandline":"evil.exe"}', $script:utf8)
+        }
+        $r = & $script:runApply -Case 'nothing-applicable' -ApplyArgs @{ Style = 'mine'; Target = 'PowerShell' } `
+                -ProfileText $script:handProfile -Seed $seed
+
+        $r.Code | Should -Be 0 -Because "the run must have reached its end: $($r.Out)"
+        $r.Flat | Should -Match 'Not applied from theme\.json: commandline\. '
+        $r.Flat | Should -Match 'Nothing was written to settings\.json\.'
+        $r.Flat | Should -Not -Match 'Backed up settings'
+        @($r.Settings.profiles.list | Where-Object { $_.PSObject.Properties.Match('commandline').Count -and
+                                                     $_.commandline -eq 'evil.exe' }) | Should -BeNullOrEmpty
+    }
+}

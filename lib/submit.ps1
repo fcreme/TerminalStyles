@@ -31,11 +31,12 @@ function Get-SubmittedThemeProblems {
     Why a submitted theme.json could not ship, as plain sentences.
 
     .DESCRIPTION
-    Merge-StyleIntoSettings copies every theme.json key into the user's
-    Windows Terminal profile as it is, so a key the catalogue does not use
-    is not decoration: "commandline" would run a program for everyone who
-    applies the style, and an "icon" or a backgroundImage on a network path
-    would make Windows Terminal fetch it. So the check is an allow-list --
+    An apply writes only the theme.json keys tstyles reset takes back
+    (Select-StyleThemeFields) and skips the rest, but a submitted style ships
+    to everyone, including users of a release that still copied every key
+    onto the profile as it is, where "commandline" runs a program for
+    everyone who applies the style and an "icon" or a backgroundImage on a
+    network path makes Windows Terminal fetch it. So the check is an allow-list --
     the keys every bundled style and New-CreatedThemeObject write, with the
     value shapes Windows Terminal takes for them -- and backgroundImage
     must be the {{BACKGROUND_IMAGE}} placeholder.
@@ -45,7 +46,10 @@ function Get-SubmittedThemeProblems {
     param([Parameter(Mandatory)]$Theme, [Parameter(Mandatory)][string]$Name)
 
     $p = New-Object System.Collections.Generic.List[string]
-    $isText = { param($v, [int]$max) ($v -is [string]) -and $v.Length -le $max -and ($v -notmatch '[\x00-\x1F\x7F]') }
+    # Plain one-line text by ConvertTo-VisibleText's rule, the one every
+    # display of a style's text uses: no control character (C0, DEL or C1) and
+    # no invisible format character.
+    $isText = { param($v, [int]$max) ($v -is [string]) -and $v.Length -le $max -and ((ConvertTo-VisibleText -Text $v -SingleLine) -ceq $v) }
     $isNum = { param($v) ($v -is [int]) -or ($v -is [long]) -or ($v -is [double]) -or ($v -is [decimal]) }
     $checks = [ordered]@{
         colorScheme                        = { param($v) ($v -is [string]) -and ($v -ceq $Name) }
@@ -296,6 +300,14 @@ function Get-StyleSubmissionProblems {
     }
     if ($quote -and ($quote -match "[`r`n]" -or $quote.Length -gt $limits.Quote)) {
         $p.Add("meta.json's quote must be one line of at most $($limits.Quote) characters (it is $($quote.Length)).")
+    }
+    # The rule Get-StyleMeta shows them by: a description or quote that holds a
+    # control or invisible character would reach every picker row as \xNN, and
+    # the catalogue ships plain text.
+    foreach ($field in @(@{ Name = 'description'; Text = $desc }, @{ Name = 'quote'; Text = $quote })) {
+        if ($field.Text -and (ConvertTo-VisibleText -Text $field.Text) -cne $field.Text) {
+            $p.Add("meta.json's $($field.Name) holds a control or invisible character: $(ConvertTo-VisibleText -Text $field.Text).")
+        }
     }
 
     # Callers wrap in @(): a bare return unrolls to nothing when empty.

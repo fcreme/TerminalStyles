@@ -1175,8 +1175,8 @@ function Invoke-TerminalStyle {
     $unreadable = @($styleSet.Unreadable)
     $styles     = @($styleSet.Styles)
     if (-not $styles) {
-        Write-Error ("No style has a readable scheme.json, so there is nothing to pick from. Unreadable: {0}" -f
-                     ($unreadable -join ', '))
+        Write-Error ("No style can be read, so there is nothing to pick from. Unreadable: {0}" -f
+                     (($unreadable | ForEach-Object { "$_ ($($styleSet.UnreadableFile[$_]))" }) -join ', '))
         return
     }
 
@@ -1330,11 +1330,7 @@ function Invoke-TerminalStyle {
             if ($activeName) {
                 $activeDir = Get-StyleDir -StyleName $activeName
                 if ($activeDir) {
-                    $activeTheme = Join-Path $activeDir 'theme.json'
-                    if (Test-Path -LiteralPath $activeTheme) {
-                        $wezLayoutTheme = [System.IO.File]::ReadAllText(
-                            $activeTheme, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                    }
+                    $wezLayoutTheme = Read-StyleJson -StyleDir $activeDir -FileName 'theme.json'
                 }
             }
         } catch { $wezLayoutTheme = $null }
@@ -1347,12 +1343,7 @@ function Invoke-TerminalStyle {
         try {
             $sd = $styles[$i].FullName
             $theme = $null
-            $tp = Join-Path $sd 'theme.json'
-            if (Test-Path -LiteralPath $tp) {
-                try {
-                    $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                } catch { $theme = $null }
-            }
+            try { $theme = Read-StyleJson -StyleDir $sd -FileName 'theme.json' } catch { $theme = $null }
             $bg = Get-StyleBundledBackground -StyleDir $sd -NoFetch
             # -LayoutTheme is bound explicitly, $null included: this is a
             # preview, and "no layout" is a real answer here rather than the
@@ -1564,12 +1555,7 @@ function Invoke-TerminalStyle {
     # line, constant for the life of the picker, so the in-place redraw keeps a
     # fixed height; it names the folder when there is one to name, which is more
     # than `tstyles list` does for the same file.
-    $unreadableNote = $null
-    if ($unreadable.Count -eq 1) {
-        $unreadableNote = "  ! {0} -- unreadable scheme.json, not shown" -f $unreadable[0]
-    } elseif ($unreadable.Count -gt 1) {
-        $unreadableNote = "  ! {0} styles -- unreadable scheme.json, not shown" -f $unreadable.Count
-    }
+    $unreadableNote = Get-PickerUnreadableNote -Unreadable $unreadable -UnreadableFile $styleSet.UnreadableFile
 
     # Pre-load each style's tabTitle (from theme.json). settings.json's
     # tabTitle isn't honored by Windows Terminal for a tab whose shell has
@@ -1577,16 +1563,12 @@ function Invoke-TerminalStyle {
     # does), so we have to set WindowTitle explicitly on each arrow change
     # to make the title preview live. Themes without a tabTitle simply
     # leave the current title untouched while highlighted.
+    # Through Get-StyleTitlePreview, which shows a control character instead of
+    # handing it to the title setter (audit #89).
     $titles = @{}
     for ($i = 0; $i -lt $styles.Count; $i++) {
-        $tp = Join-Path $styles[$i].FullName 'theme.json'
-        if (-not (Test-Path -LiteralPath $tp)) { continue }
-        try {
-            $theme = [System.IO.File]::ReadAllText($tp, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            if ($theme.PSObject.Properties.Match('tabTitle').Count -gt 0) {
-                $titles[$i] = $theme.tabTitle
-            }
-        } catch { }
+        $title = Get-StyleTitlePreview -StyleDir $styles[$i].FullName
+        if ($null -ne $title) { $titles[$i] = $title }
     }
 
     # Background prefetch: kick off ONE job that downloads any missing GIFs
@@ -2226,6 +2208,9 @@ function Invoke-TerminalStyle {
         $backgroundNotes = @()
         # Per-tab WezTerm only: what the module publish came to and said.
         $wezCommit = $null
+        # Windows Terminal only: the theme.json keys the commit did not write,
+        # the line `tstyles <name>` prints, shown below the clear.
+        $settingsPayload = $null
         if ($useSettingsFile) {
             # The commit, first: the preview on disk is the style when the file
             # still holds it; a file that changed while the picker was open has
@@ -2253,6 +2238,10 @@ function Invoke-TerminalStyle {
                 & $showPendingUpdate
                 return
             }
+            # Asked after Enter, of the style the user confirmed rather than the
+            # last one previewed: Write-StyleSettingsNote says below what of it
+            # did not reach settings.json, in the words `tstyles <name>` uses.
+            $settingsPayload = Get-StyleSettingsPayload -StyleDir $pickedDir
             $isPwshTarget = $false
             if ($Target -eq 'defaults') {
                 $isPwshTarget = $true
@@ -2319,13 +2308,7 @@ function Invoke-TerminalStyle {
             # holds schemes for every style but never parsed a theme, and the
             # WezTerm module carries font and padding as well as colours.
             $wtTheme = $null
-            $wtThemePath = Join-Path $selectedStyle.FullName 'theme.json'
-            if (Test-Path -LiteralPath $wtThemePath) {
-                try {
-                    $wtTheme = [System.IO.File]::ReadAllText($wtThemePath,
-                        [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                } catch { $wtTheme = $null }
-            }
+            try { $wtTheme = Read-StyleJson -StyleDir $selectedStyle.FullName -FileName 'theme.json' } catch { $wtTheme = $null }
             # Per tab, what it says is kept for below the Clear-Host, and a
             # failed write puts this tab back to its own tag: it has not been
             # tagged, so it still wears the preview (Get-WezTermPickerCommit).
@@ -2399,6 +2382,15 @@ function Invoke-TerminalStyle {
         Show-FilePreviewResult -Result $pickerState.SettingsCommit
         Show-FilePreviewResult -Result $pickerRecovered
         Show-FilePreviewResult -Result $wezRecovered
+        if ($settingsPayload) {
+            # Captured and replayed only to know whether to close it with a
+            # blank line; the printer is the same one `tstyles <name>` uses.
+            $settingsNote = @(Write-StyleSettingsNote -StyleName $selectedStyle.Name -Payload $settingsPayload 6>&1)
+            if ($settingsNote.Count -gt 0) {
+                Write-HostRecord -Record $settingsNote
+                Write-Host ""
+            }
+        }
 
         # The same notice `tstyles <name>` prints, from the same function, so the
         # two doors say the same thing about the same failure. This is the door
@@ -2432,25 +2424,12 @@ function Invoke-TerminalStyle {
             Write-Host ""
         }
 
-        # The same qualifier `tstyles <name>` prints, from the same function, so
-        # the two doors give the same answer. Without it the picker claimed a
-        # bare success for a style Windows Terminal was never told about. The
-        # Set-CurrentStyleRecord above is still right -- off settings.json the
-        # style really is applied, as the prompt and the palette, and the record
-        # is what makes `tstyles current` work at all -- but "Style applied" on
-        # its own reads as "settings.json now has it", and it does not.
-        #
-        # Re-asked here rather than remembered from the preview: the answer is
-        # about the style the user actually confirmed, and it names the file
-        # that is missing rather than assuming which one it was.
-        if ($useSettingsFile) {
-            $confirmPayload = Get-StyleSettingsPayload -StyleDir $selectedStyle.FullName
-            if (-not $confirmPayload.Ok) {
-                Write-Host ("  '{0}' ships no {1}, so nothing was written to settings.json." -f
-                            $selectedStyle.Name, $confirmPayload.Missing) -ForegroundColor DarkGray
-                Write-Host ""
-            }
-        }
+        # The qualifier under "Style applied" -- what of the style settings.json
+        # did not get -- comes from the Write-StyleSettingsNote call earlier in
+        # this block, the printer `tstyles <name>` and apply.ps1 use. The Set-CurrentStyleRecord
+        # above is still right: off settings.json the style really is applied,
+        # as the prompt and the palette, and the record is what makes `tstyles
+        # current` work at all.
         & $showPendingUpdate
 
         # Live-reload: dot-source the newly active profile so the title,
@@ -2637,11 +2616,8 @@ function Invoke-StartupPaletteReplay {
         if ($record -and $record.name) {
             $styleDir = Get-StyleDir -StyleName $record.name
             if ($styleDir) {
-                $schemePath = Join-Path $styleDir 'scheme.json'
-                if (Test-Path -LiteralPath $schemePath) {
-                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-                    [void](Invoke-TerminalStyleOscApply -Scheme $scheme)
-                }
+                $scheme = Read-StyleJson -StyleDir $styleDir -FileName 'scheme.json'
+                if ($scheme) { [void](Invoke-TerminalStyleOscApply -Scheme $scheme) }
             }
         }
     } catch { }

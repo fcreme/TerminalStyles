@@ -75,6 +75,36 @@ Describe 'Get-PickerStyleSet' {
             @($set.Unreadable)                           | Should -Be @('bbb')
         }
 
+        It 'drops a style whose theme.json will not parse, and says which file' {
+            # A theme.json the merge cannot read takes the Windows Terminal
+            # preview down as surely as a broken scheme takes the swatch (audit
+            # #20), so the same rule drops it -- and says which file, because
+            # "unreadable scheme.json" would send the user to the wrong one.
+            $good = script:New-GoodStyle -Name 'a'
+            $bad  = script:New-GoodStyle -Name 'b'
+            [System.IO.File]::WriteAllText((Join-Path $bad.FullName 'theme.json'), '{"colorScheme": ',
+                [System.Text.UTF8Encoding]::new($false))
+            $truncated = script:New-FakeStyle -Name 'c' -Scheme $script:TruncatedScheme
+
+            $set = Get-PickerStyleSet -Styles @($good, $bad, $truncated)
+            @($set.Styles | ForEach-Object Name) | Should -Be @('a')
+            @($set.Unreadable)                   | Should -Be @('b', 'c')
+            $set.UnreadableFile['b']             | Should -Be 'theme.json'
+            $set.UnreadableFile['c']             | Should -Be 'scheme.json'
+        }
+
+        It 'names the file in the note: <Case>' -ForEach @(
+            @{ Case = 'one style';               Names = @('b');      Files = @{ b = 'theme.json' };                      Note = '  ! b -- unreadable theme.json, not shown' }
+            @{ Case = 'several, the same file';  Names = @('b', 'c'); Files = @{ b = 'scheme.json'; c = 'scheme.json' }; Note = '  ! 2 styles -- unreadable scheme.json, not shown' }
+            @{ Case = 'several, different files'; Names = @('b', 'c'); Files = @{ b = 'theme.json'; c = 'scheme.json' }; Note = '  ! 2 styles -- unreadable style files, not shown' }
+        ) {
+            Get-PickerUnreadableNote -Unreadable $Names -UnreadableFile $Files | Should -BeExactly $Note
+        }
+
+        It 'has no note when nothing was dropped' {
+            Get-PickerUnreadableNote -Unreadable @() -UnreadableFile @{} | Should -BeNullOrEmpty
+        }
+
         It 'pairs every style it keeps with its OWN scheme' {
             # The failure this exists for is not a crash. Under pwsh's default
             # $ErrorActionPreference the old parse was statement-terminating, so
@@ -212,9 +242,9 @@ Describe 'the picker itself' {
             Mock Invoke-PickerLoop { throw 'the picker loop must not start with no styles' }
 
             { Invoke-TerminalStyle } | Should -Not -Throw
-            ($errors -join "`n") | Should -Match 'readable scheme\.json'
-            ($errors -join "`n") | Should -Match 'aaa-bad' `
-                -Because 'the raw .NET error named a line of tstyles.ps1 and never the folder at fault'
+            ($errors -join "`n") | Should -Match 'nothing to pick from'
+            ($errors -join "`n") | Should -Match 'aaa-bad \(scheme\.json\)' `
+                -Because 'the raw .NET error named a line of tstyles.ps1 and never the folder, or the file, at fault'
         }
 
         It 'holds no unguarded parse of a user-authored file' {
@@ -309,10 +339,15 @@ Describe 'the picker itself' {
             # afterwards. A style that simply vanished from the list, with the
             # explanation scrolled away, would leave `tstyles list` and the
             # picker disagreeing about what exists and nothing saying why.
+            # The wording itself is Get-PickerUnreadableNote's, tested in its own
+            # Describe above; here the picker has to use it.
             $fn  = (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast
-            $src = $fn.Extent.Text
-            $src | Should -Match 'unreadable scheme\.json' `
-                -Because 'the wording `tstyles list` already uses for the same file'
+            $note = @($fn.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and
+                $n.Left.Extent.Text -eq '$unreadableNote' }, $true))
+            @($note).Count | Should -Be 1
+            $note[0].Right.Extent.Text | Should -Match 'Get-PickerUnreadableNote' `
+                -Because 'the note has to name the file that was actually unreadable'
 
             $draw = @($fn.FindAll({ param($n)
                 $n -is [System.Management.Automation.Language.AssignmentStatementAst] -and

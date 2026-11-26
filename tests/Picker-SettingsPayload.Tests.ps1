@@ -322,16 +322,33 @@ Describe 'the picker says the same thing the direct path says' {
     # nothing at all.
     InModuleScope TerminalStyles {
 
-        It 'both paths carry the same "nothing was written" sentence' {
-            $picker = (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast.Extent.Text
-            $direct = (Get-Command Apply-StyleDirect).ScriptBlock.Ast.Extent.Text
-            $picker | Should -Not -BeNullOrEmpty
-            $direct | Should -Not -BeNullOrEmpty
+        It '<Name> says what it wrote to settings.json through the one printer, and words none of it itself' -ForEach @(
+            @{ Name = 'the picker' }, @{ Name = 'Apply-StyleDirect' }, @{ Name = 'apply.ps1' }
+        ) {
+            # One printer (Write-StyleSettingsNote) because three drifted: the
+            # picker's own copy printed "'mine' ships no , so nothing was
+            # written" for a theme.json with nothing to write. A literal of
+            # that wording left in a caller is a second copy waiting to drift.
+            $ast = switch ($Name) {
+                'the picker'     { (Get-Command Invoke-TerminalStyle).ScriptBlock.Ast }
+                'Apply-StyleDirect' { (Get-Command Apply-StyleDirect).ScriptBlock.Ast }
+                'apply.ps1'      {
+                    [System.Management.Automation.Language.Parser]::ParseFile(
+                        (Join-Path (Get-Module TerminalStyles).ModuleBase 'apply.ps1'), [ref]$null, [ref]$null)
+                }
+            }
+            $ast | Should -Not -BeNullOrEmpty
+            $called = @($ast.FindAll({ param($n)
+                $n -is [System.Management.Automation.Language.CommandAst] }, $true) |
+                ForEach-Object { $_.GetCommandName() } | Where-Object { $_ })
+            $called | Should -Contain 'Write-StyleSettingsNote'
 
-            $direct | Should -Match 'ships no .*so nothing was written to settings\.json' `
-                -Because 'this is the sentence the direct path has printed since 0.8.18'
-            $picker | Should -Match 'ships no .*so nothing was written to settings\.json' `
-                -Because 'the picker must qualify its green success line the same way'
+            $wording = @($ast.FindAll({ param($n)
+                ($n -is [System.Management.Automation.Language.StringConstantExpressionAst] -or
+                 $n -is [System.Management.Automation.Language.ExpandableStringExpressionAst]) -and
+                $n.Value -match '(?i)ships no theme|ships no \{|nothing was written to settings|Not applied from theme' }, $true) |
+                ForEach-Object { $_.Extent.Text })
+            $wording | Should -BeNullOrEmpty -Because 'the wording lives in Write-StyleSettingsNote alone'
         }
 
         It 'and the picker still records the style, because off settings.json it really is applied' {

@@ -57,12 +57,27 @@ To contribute your theme back to the bundled catalog, see
 under `styles/<name>/` on `main`, background image (if any) flat-named
 on the `gifs` branch, and the maintainer curates what gets bundled.
 
-- **scheme.json** must contain a unique `name`. See
-  [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
+- **scheme.json** must contain a `name`, and it must be the folder's name.
+  See [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
+- **theme.json**'s `colorScheme` must be that same name. A profile finds
+  the scheme by it, and `tstyles reset` knows a profile is styled by it.
+  A `theme.json` whose `colorScheme` is missing, or names no installed
+  style, writes nothing to Windows Terminal, and the apply says how to
+  fix it.
 - **theme.json** uses the literal string `"{{BACKGROUND_IMAGE}}"` for
   the background image field; `tstyles` substitutes the bundled
   `background.*` (or the user's `-BackgroundImage` flag if passed) and
-  strips the field if neither is available.
+  strips the field if neither is available. Only the keys `tstyles reset`
+  takes back off a Windows Terminal profile are applied: `colorScheme`,
+  `tabTitle`, `tabColor`, `cursorShape`, `useAcrylic`, `opacity`,
+  `experimental.retroTerminalEffect`, `font`, `padding`, `backgroundImage`,
+  `backgroundImageOpacity`, `backgroundImageStretchMode` and
+  `backgroundImageAlignment`, spelled exactly so. Any other key, and a
+  `backgroundImage` that is a network path or a URL rather than a file on
+  this computer, is skipped, and the apply names it.
+- A style whose **scheme.json** or **theme.json** will not parse is listed
+  as unreadable and refused before anything is written, with a message
+  naming the file.
 - **profile.ps1** is copied to `current-style.ps1` on apply and
   dot-sourced from `$PROFILE` on shell startup.
 - **background.gif / .png / .jpg / .jpeg** is auto-applied when the style

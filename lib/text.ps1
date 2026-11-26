@@ -62,3 +62,25 @@ function Get-SentenceSummary {
     # One very long opening sentence: fall back to a hard cut, marked as one.
     return $t.Substring(0, [Math]::Max(1, $MaxLength - 1)).TrimEnd() + [char]0x2026
 }
+
+function ConvertTo-VisibleText {
+    # Text somebody else wrote, safe to print: every control character but
+    # newline and tab is shown as \xNN, so an escape sequence in it is read,
+    # not obeyed by the terminal; and every invisible format character
+    # (\p{Cf}: bidi overrides, zero-width characters) as \uNNNN, so text cannot
+    # display as something other than what it is.
+    #
+    # The maintainer's review script had this for submitted files; the module
+    # needed it for a style's description, quote and tab title (audit #89),
+    # which reached the terminal as written whenever styles were listed or
+    # browsed. One copy, here: scripts/review-submission.ps1 dot-sources this
+    # file. -SingleLine first turns each run of CR, LF and tab into one space,
+    # for fields that are one line by contract.
+    param([AllowEmptyString()][string]$Text, [switch]$SingleLine)
+    if ($SingleLine) { $Text = $Text -replace '[\r\n\t]+', ' ' }
+    [regex]::Replace($Text, '[\x00-\x08\x0B-\x1F\x7F\u0080-\u009F]|\p{Cf}', {
+        param($m)
+        $c = [int][char]$m.Value
+        if ($c -le 0xFF) { '\x{0:x2}' -f $c } else { '\u{0:x4}' -f $c }
+    })
+}

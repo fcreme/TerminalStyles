@@ -126,6 +126,13 @@ if (-not $styleDir) {
 }
 Write-Host "Style: $Style" -ForegroundColor Green
 
+# A style whose scheme.json or theme.json will not parse is refused here:
+# before the settings file is looked at (Restore-AbandonedFilePreview below can
+# write it), before either question, and before the bundled background is
+# fetched -- the order `tstyles <name>` keeps (audit #20).
+$unreadable = Get-StyleUnreadableFile -StyleDir $styleDir
+if ($unreadable) { throw $unreadable.Message }
+
 # --- Settings.json location ---
 if (-not $SettingsPath) { $SettingsPath = Find-WTSettingsPath }
 if (-not (Test-Path -LiteralPath $SettingsPath)) {
@@ -215,6 +222,11 @@ $payload = Get-StyleSettingsPayload -StyleDir $styleDir
 if ($payload.Missing -eq 'scheme.json') {
     throw "Style '$Style' has no scheme.json -- nothing to apply."
 }
+# Before the timestamped backup below: a style whose JSON will not parse has
+# nothing to write, and the message says which file and how to fix it.
+if ($payload.Unreadable) {
+    throw $payload.Unreadable
+}
 
 if ($payload.Ok) {
     # --- Backup settings.json ---
@@ -234,9 +246,10 @@ if ($payload.Ok) {
     # --- Save settings.json (UTF-8, atomic, full depth; keeps any BOM) ---
     Write-SettingsFile -Path $SettingsPath -Settings $settings
     Write-Host "settings.json updated." -ForegroundColor Green
-} else {
-    Write-Host "'$Style' ships no theme.json, so settings.json was not changed." -ForegroundColor DarkGray
 }
+# What was not written, and why, worded once for every apply
+# (Write-StyleSettingsNote); silent when the whole theme.json was.
+Write-StyleSettingsNote -StyleName $Style -Payload $payload
 
 # --- The prompt ---
 # Through Set-CurrentStylePrompt, the helper every apply path uses; this script

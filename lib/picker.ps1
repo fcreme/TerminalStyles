@@ -39,10 +39,34 @@ function Get-StyleMeta {
         $m = [System.IO.File]::ReadAllText($path, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
     } catch { return $empty }
     if (-not $m) { return $empty }
+    # Shown, not obeyed (audit #89): list, show and the picker print these, so
+    # an escape sequence in them acted on the terminal while the style was
+    # only being browsed. One line each, by contract.
     @{
-        Description = "$($m.description)".Trim()
-        Quote       = "$($m.quote)".Trim()
+        Description = ConvertTo-VisibleText -Text "$($m.description)".Trim() -SingleLine
+        Quote       = ConvertTo-VisibleText -Text "$($m.quote)".Trim() -SingleLine
     }
+}
+
+function Get-StyleTitlePreview {
+    <#
+    .SYNOPSIS
+    The tab title the picker previews for a style, safe to set: its theme.json
+    tabTitle through ConvertTo-VisibleText, or $null when there is none.
+
+    .DESCRIPTION
+    The picker sets $Host.UI.RawUI.WindowTitle to it on every arrow key, and
+    off Windows that setter writes an OSC title sequence with the text inside
+    it -- so a BEL or ESC in a tabTitle ended the sequence early and sent the
+    rest to the terminal, for a style that was only highlighted (audit #89).
+    $null too for a theme.json that will not parse (Read-StyleJson): the
+    picker drops such a style before it gets here.
+    #>
+    [CmdletBinding()]
+    param([Parameter(Mandatory)][string]$StyleDir)
+    try { $theme = Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json' } catch { return $null }
+    if ($null -eq $theme -or -not $theme.PSObject.Properties.Match('tabTitle').Count) { return $null }
+    ConvertTo-VisibleText -Text "$($theme.tabTitle)" -SingleLine
 }
 
 function Get-PickerFramePlan {
@@ -184,16 +208,23 @@ function Get-PickerStyleSet {
     # dropped, or the picker becomes the one command that answers "where did my
     # style go?" with silence.
     #
+    # theme.json is held to the same rule (audit #20): the Windows Terminal
+    # preview merges it, and a merge that cannot read it took the picker down.
+    # Read through Get-StyleUnreadableFile, the question every apply asks, so
+    # the picker never offers a style the apply would refuse.
+    #
     # Returns @{ Styles = @(...); Schemes = @{i->obj}; Swatches = @{i->string};
-    #            Unreadable = @(names) } -- the two hashtables keyed by index
-    # into Styles, which is how the picker indexes them.
+    #            Unreadable = @(names); UnreadableFile = @{name->file} } -- the
+    # two index-keyed hashtables keyed by position into Styles, which is how the
+    # picker indexes them; UnreadableFile says which file, for the note.
     [CmdletBinding()]
     param([Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Styles)
 
-    $keep       = @()
-    $schemes    = @{}
-    $swatches   = @{}
-    $unreadable = @()
+    $keep           = @()
+    $schemes        = @{}
+    $swatches       = @{}
+    $unreadable     = @()
+    $unreadableFile = @{}
 
     foreach ($s in $Styles) {
         # Cleared per iteration, deliberately: inheriting the previous style's
@@ -201,9 +232,14 @@ function Get-PickerStyleSet {
         # statement that should have replaced it did not complete.
         $scheme = $null
         $swatch = $null
+        $bad = Get-StyleUnreadableFile -StyleDir $s.FullName
+        if ($bad) {
+            $unreadable += $s.Name
+            $unreadableFile[$s.Name] = $bad.File
+            continue
+        }
         try {
-            $scheme = [System.IO.File]::ReadAllText((Join-Path $s.FullName 'scheme.json'),
-                          [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            $scheme = Read-StyleJson -StyleDir $s.FullName -FileName 'scheme.json'
             # The swatch is built inside the guard for the same reason
             # Show-StyleList builds its own inside one: a file that parses is
             # not necessarily a scheme, and a row the picker cannot draw is as
@@ -221,7 +257,11 @@ function Get-PickerStyleSet {
         # is the other half of a truncated write, and ConvertFrom-Json returns
         # $null for it on pwsh 7 rather than raising -- and $null is unusable
         # everywhere downstream, where -Scheme is Mandatory and refuses to bind.
-        if ($null -eq $scheme) { $unreadable += $s.Name; continue }
+        if ($null -eq $scheme) {
+            $unreadable += $s.Name
+            $unreadableFile[$s.Name] = 'scheme.json'
+            continue
+        }
 
         $i = $keep.Count
         $keep       += $s
@@ -230,11 +270,30 @@ function Get-PickerStyleSet {
     }
 
     return @{
-        Styles     = @($keep)
-        Schemes    = $schemes
-        Swatches   = $swatches
-        Unreadable = @($unreadable)
+        Styles         = @($keep)
+        Schemes        = $schemes
+        Swatches       = $swatches
+        Unreadable     = @($unreadable)
+        UnreadableFile = $unreadableFile
     }
+}
+
+function Get-PickerUnreadableNote {
+    # The one line the picker's frame carries about the styles it dropped, or
+    # $null when it dropped none. It names the FILE, because a style dropped
+    # for its theme.json, labelled "unreadable scheme.json", sends the user to
+    # the file that is fine; several share one label only when they share one
+    # file.
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory)][AllowEmptyCollection()][string[]]$Unreadable,
+        [Parameter(Mandatory)][hashtable]$UnreadableFile
+    )
+    if ($Unreadable.Count -eq 0) { return $null }
+    $files = @($Unreadable | ForEach-Object { $UnreadableFile[$_] } | Select-Object -Unique)
+    $what = if ($files.Count -eq 1 -and $files[0]) { "unreadable $($files[0])" } else { 'unreadable style files' }
+    if ($Unreadable.Count -eq 1) { return "  ! $($Unreadable[0]) -- $what, not shown" }
+    return "  ! $($Unreadable.Count) styles -- $what, not shown"
 }
 
 
@@ -1078,8 +1137,7 @@ function Invoke-TerminalStyleShow {
 
     $scheme = $null
     try {
-        $scheme = [System.IO.File]::ReadAllText((Join-Path $dir 'scheme.json'),
-                    [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        $scheme = Read-StyleJson -StyleDir $dir -FileName 'scheme.json'
     } catch { }
     if (-not $scheme) {
         # A style whose scheme.json will not parse is exactly what
@@ -1118,8 +1176,7 @@ function Invoke-TerminalStyleShow {
         $curDir = Get-StyleDir -StyleName $current
         if ($curDir) {
             try {
-                $startScheme = [System.IO.File]::ReadAllText((Join-Path $curDir 'scheme.json'),
-                                 [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                $startScheme = Read-StyleJson -StyleDir $curDir -FileName 'scheme.json'
             } catch { }
         }
     }

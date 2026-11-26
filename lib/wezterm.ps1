@@ -1770,18 +1770,10 @@ function Write-WezTermTabModule {
 
     $styles = @(foreach ($dir in @(Get-AvailableStyles)) {
         $scheme = $null
-        try {
-            $scheme = [System.IO.File]::ReadAllText((Join-Path $dir.FullName 'scheme.json'), $enc) |
-                      ConvertFrom-Json -ErrorAction Stop
-        } catch { $scheme = $null }
+        try { $scheme = Read-StyleJson -StyleDir $dir.FullName -FileName 'scheme.json' } catch { $scheme = $null }
         if (-not $scheme) { continue }
         $theme = $null
-        $themePath = Join-Path $dir.FullName 'theme.json'
-        if ([System.IO.File]::Exists($themePath)) {
-            try {
-                $theme = [System.IO.File]::ReadAllText($themePath, $enc) | ConvertFrom-Json -ErrorAction Stop
-            } catch { $theme = $null }
-        }
+        try { $theme = Read-StyleJson -StyleDir $dir.FullName -FileName 'theme.json' } catch { $theme = $null }
         @{
             Name                 = $dir.Name
             Scheme               = $scheme
