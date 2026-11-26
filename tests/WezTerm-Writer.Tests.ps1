@@ -843,6 +843,49 @@ Describe 'Test-WezTermStyleWired' {
             Test-WezTermStyleWired -HomeDir $script:h | Out-Null
             Test-Path -LiteralPath (Join-Path $script:h '.config/wezterm/wezterm.lua') | Should -BeFalse
         }
+
+        Context 'the ambient config paths' {
+            BeforeEach {
+                # A wired config outside the sandbox: what WEZTERM_CONFIG_FILE
+                # names in every WezTerm pane (WezTerm sets it), and what
+                # XDG_CONFIG_HOME leads to on a machine that sets that.
+                $script:elsewhere = Join-Path $TestDrive ([guid]::NewGuid().ToString('n'))
+                New-Item -ItemType Directory -Path (Join-Path $script:elsewhere 'wezterm') -Force | Out-Null
+                $script:wired = Join-Path (Join-Path $script:elsewhere 'wezterm') 'wezterm.lua'
+                [System.IO.File]::WriteAllText($script:wired, (Get-WezTermWiringLine) + "`n")
+                $script:savedEnv = @{}
+                foreach ($n in 'WEZTERM_CONFIG_FILE', 'XDG_CONFIG_HOME') {
+                    $script:savedEnv[$n] = [Environment]::GetEnvironmentVariable($n)
+                    [Environment]::SetEnvironmentVariable($n, $null)
+                }
+                $script:envValue = @{ WEZTERM_CONFIG_FILE = $script:wired; XDG_CONFIG_HOME = $script:elsewhere }
+            }
+            AfterEach {
+                foreach ($n in $script:savedEnv.Keys) { [Environment]::SetEnvironmentVariable($n, $script:savedEnv[$n]) }
+            }
+
+            It 'keeps a bound -HomeDir away from <Var>' -ForEach @(
+                @{ Var = 'WEZTERM_CONFIG_FILE' }
+                @{ Var = 'XDG_CONFIG_HOME' }
+            ) {
+                # A bound -HomeDir is a sandbox, as it is for Get-WezTermModuleDir
+                # (CLAUDE.md). Run inside WezTerm, the 'is false' cases above
+                # read the operator's own wezterm.lua through this variable, and
+                # failed when it was wired.
+                [Environment]::SetEnvironmentVariable($Var, $script:envValue[$Var])
+                Test-WezTermStyleWired -HomeDir $script:h | Should -BeFalse
+            }
+
+            It 'still puts <Var> first when no -HomeDir is bound' -ForEach @(
+                @{ Var = 'WEZTERM_CONFIG_FILE' }
+                @{ Var = 'XDG_CONFIG_HOME' }
+            ) {
+                # WezTerm's own lookup order, which the real check must keep
+                # following: these come before ~/.config/wezterm/wezterm.lua.
+                [Environment]::SetEnvironmentVariable($Var, $script:envValue[$Var])
+                @(Get-WezTermConfigCandidate)[0] | Should -Be $script:wired
+            }
+        }
     }
 }
 

@@ -989,13 +989,20 @@ function Get-WezTermConfigCandidate {
     WezTerm stops at the FIRST of these that exists, and a parse failure there
     does not fall through to the next -- so only the first existing file can be
     the one carrying the wiring line.
+
+    -HomeDir is a test seam, as in Get-WezTermModuleDir: bound, it is a sandbox,
+    and the ambient WEZTERM_CONFIG_FILE and XDG_CONFIG_HOME are left out. WezTerm
+    sets WEZTERM_CONFIG_FILE in every pane, so a test run inside WezTerm read
+    the operator's own wezterm.lua through it.
     #>
     [CmdletBinding()]
     param([string]$HomeDir = $HOME)
 
     $c = @()
-    if ($env:WEZTERM_CONFIG_FILE) { $c += $env:WEZTERM_CONFIG_FILE }
-    if ($env:XDG_CONFIG_HOME) { $c += (Join-Path (Join-Path $env:XDG_CONFIG_HOME 'wezterm') 'wezterm.lua') }
+    if (-not $PSBoundParameters.ContainsKey('HomeDir')) {
+        if ($env:WEZTERM_CONFIG_FILE) { $c += $env:WEZTERM_CONFIG_FILE }
+        if ($env:XDG_CONFIG_HOME) { $c += (Join-Path (Join-Path $env:XDG_CONFIG_HOME 'wezterm') 'wezterm.lua') }
+    }
     $c += (Join-Path (Join-Path (Join-Path $HomeDir '.config') 'wezterm') 'wezterm.lua')
     $c += (Join-Path $HomeDir '.wezterm.lua')
     $c
