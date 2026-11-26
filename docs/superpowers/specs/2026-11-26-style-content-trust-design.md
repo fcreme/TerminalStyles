@@ -39,9 +39,10 @@ its own values, so the 13 keys are not shape-checked beyond `backgroundImage`.
    placeholder or a path on this machine (no `\\server` or `//server` path,
    no URL other than `ms-appdata:`, `ms-appx:` or `file:///`). Everything
    else is returned as skipped, with a reason. The merge writes only the
-   picked fields; the two applies that write settings.json (`tstyles <name>`
-   and `apply.ps1`) name the skipped keys once. `-BackgroundImage` from the
-   command line is the user's own choice and is not checked.
+   picked fields; every apply that writes settings.json (`tstyles <name>`,
+   the picker's Enter and `apply.ps1`) names the skipped keys once.
+   `-BackgroundImage` from the command line is the user's own choice and is
+   not checked.
 2. **#89.** `ConvertTo-VisibleText` moves from `scripts/review-submission.ps1`
    into the module (`lib/text.ps1`); the script dot-sources it, so there is
    one rule. It shows control characters as `\xNN` and invisible format
@@ -56,7 +57,8 @@ its own values, so the 13 keys are not shape-checked beyond `backgroundImage`.
    it. A readability check built on it answers "can this style be applied?"
    - Every apply refuses an unreadable style before any backup, write, record
      or prompt.
-   - The picker lists it but never previews it, and says why on its row.
+   - The picker leaves it out and names it, and the file, in its frame: the
+     mechanism it already had for an unreadable scheme.json.
    - `random` skips it.
    - `tstyles list` marks it, as it already does for an unreadable scheme.
    - `tstyles tune <name>` refuses it up front.
