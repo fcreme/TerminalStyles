@@ -215,6 +215,11 @@ $payload = Get-StyleSettingsPayload -StyleDir $styleDir
 if ($payload.Missing -eq 'scheme.json') {
     throw "Style '$Style' has no scheme.json -- nothing to apply."
 }
+# Before the timestamped backup below: a style whose JSON will not parse has
+# nothing to write, and the message says which file and how to fix it.
+if ($payload.Unreadable) {
+    throw $payload.Unreadable
+}
 
 if ($payload.Ok) {
     # --- Backup settings.json ---

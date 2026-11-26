@@ -257,17 +257,26 @@ function Get-StyleSettingsPayload {
     style -- so this is not an error, it is "nothing for THIS writer to do".
     A missing scheme.json is different: the directory changed under us, and
     the caller should say so rather than throw from inside the merge.
+
+    So is a file that is there and will not parse (Get-StyleUnreadableFile):
+    Unreadable carries Read-StyleJson's message, naming the style and the file,
+    for the caller to refuse with BEFORE it spends the backup -- the merge would
+    only throw after it.
     #>
     [CmdletBinding()]
     param([Parameter(Mandatory)][string]$StyleDir)
 
     if (-not (Test-Path -LiteralPath (Join-Path $StyleDir 'scheme.json'))) {
-        return [pscustomobject]@{ Ok = $false; Missing = 'scheme.json' }
+        return [pscustomobject]@{ Ok = $false; Missing = 'scheme.json'; Unreadable = $null }
+    }
+    $bad = Get-StyleUnreadableFile -StyleDir $StyleDir
+    if ($bad) {
+        return [pscustomobject]@{ Ok = $false; Missing = $null; Unreadable = $bad.Message }
     }
     if (-not (Test-Path -LiteralPath (Join-Path $StyleDir 'theme.json'))) {
-        return [pscustomobject]@{ Ok = $false; Missing = 'theme.json' }
+        return [pscustomobject]@{ Ok = $false; Missing = 'theme.json'; Unreadable = $null }
     }
-    return [pscustomobject]@{ Ok = $true; Missing = $null }
+    return [pscustomobject]@{ Ok = $true; Missing = $null; Unreadable = $null }
 }
 
 function Get-WTProfileShape {
@@ -952,7 +961,12 @@ function Merge-StyleIntoSettings {
         [bool]$BackgroundImageProvided
     )
 
-    $scheme = [System.IO.File]::ReadAllText((Join-Path $StyleDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    # Read-StyleJson, the reader every caller's gate asked first: a file that
+    # turned unreadable since then throws its message, naming the style.
+    $scheme = Read-StyleJson -StyleDir $StyleDir -FileName 'scheme.json'
+    if ($null -eq $scheme) {
+        throw "TerminalStyles: style '$(Split-Path -Leaf $StyleDir)' has no scheme.json."
+    }
 
     # Resolve / validate the target FIRST. A non-existent named profile must not
     # cause us to inject the color scheme -- that would leave an orphan scheme in
@@ -981,7 +995,7 @@ function Merge-StyleIntoSettings {
     # the missing-theme.json route into it was left open next to it.
     $themePath = Join-Path $StyleDir 'theme.json'
     if (-not (Test-Path -LiteralPath $themePath)) { return $Settings }
-    $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    $theme = Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json'
 
     # The lazy creation, guarded rather than assumed (Initialize-WTDefaultsEntry,
     # shared with Set-ProfileFont; it covers an absent key and a null). Add-Member needs a

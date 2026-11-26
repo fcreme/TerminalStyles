@@ -16,6 +16,13 @@ function Get-UnreadableSchemeSwatch {
     return "$(Get-HintEscape)(unreadable scheme.json)$([char]27)[0m"
 }
 
+function Get-UnreadableThemeNote {
+    # Its theme.json sibling, for the row of a style whose scheme reads (so it
+    # keeps its swatch) but whose theme.json does not -- a style every apply now
+    # refuses, which the listing must not offer without saying so.
+    return "$(Get-HintEscape)(unreadable theme.json)$([char]27)[0m"
+}
+
 function Get-ConsoleWidth {
     <#
     .SYNOPSIS
@@ -112,15 +119,20 @@ function Show-StyleList {
         # to throw here, mid-loop -- so `tstyles list` printed a raw .NET
         # exception and then stopped, hiding every style after it. One bad
         # folder should cost its own row, not the listing.
-        $schemePath = Join-Path $s.FullName 'scheme.json'
         $swatch = ''
         try {
-            $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+            # Read-StyleJson, the reader every apply refuses with, so the
+            # listing and the apply agree about which styles can be read.
+            $scheme = Read-StyleJson -StyleDir $s.FullName -FileName 'scheme.json'
             # Through the note-aware reader: a scheme this tool can read no
             # colour out of prints a reason, not an empty column.
             $swatch = Get-SchemeSwatchOrNote -Scheme $scheme
         } catch {
             $swatch = Get-UnreadableSchemeSwatch
+        }
+        $themeNote = ''
+        try { [void](Read-StyleJson -StyleDir $s.FullName -FileName 'theme.json') } catch {
+            $themeNote = '  ' + (Get-UnreadableThemeNote)
         }
         # Which styles are YOURS. Deliberately trailing text rather than a
         # column: the picker draws rows at the same width and its viewport
@@ -145,10 +157,10 @@ function Show-StyleList {
         # the swatch and badge actually occupy. Measured, not assumed: both are
         # mostly SGR bytes that take no columns, and the swatch degrades to a
         # written note on a scheme this tool cannot read.
-        $rowUsed = 22 + (Get-VisibleLength $swatch) + (Get-VisibleLength $badge)
+        $rowUsed = 22 + (Get-VisibleLength $swatch) + (Get-VisibleLength $themeNote) + (Get-VisibleLength $badge)
         $desc = Get-ListRowDescription -Width $listWidth -Used $rowUsed `
                     -Description (Get-StyleMeta -StyleDir $s.FullName).Description -HintEscape $hintEsc
-        Write-Host ("  {0} {1,-16}  {2}{3}{4}" -f $marker, $s.Name, $swatch, $badge, $desc)
+        Write-Host ("  {0} {1,-16}  {2}{3}{4}{5}" -f $marker, $s.Name, $swatch, $themeNote, $badge, $desc)
     }
     Write-Host ""
     if ($current) {
@@ -198,7 +210,7 @@ function Show-CurrentStyle {
                 # never learned it. Both halves now read the same three lines,
                 # note-aware reader included, so neither can drift again.
                 try {
-                    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                    $scheme = Read-StyleJson -StyleDir $styleDir -FileName 'scheme.json'
                     $swatch = Get-SchemeSwatchOrNote -Scheme $scheme
                 } catch { $swatch = Get-UnreadableSchemeSwatch }
             }
@@ -242,7 +254,10 @@ function Invoke-RandomStyle {
     )
     Show-UpdateNoticeIfAvailable
     $current = Get-CurrentStyleName
-    $candidates = @(Get-AvailableStyles | Where-Object { $_.Name -ne $current })
+    # Never a style the apply would refuse: rolling one turned the dice into an
+    # error message.
+    $candidates = @(Get-AvailableStyles | Where-Object {
+        $_.Name -ne $current -and -not (Get-StyleUnreadableFile -StyleDir $_.FullName) })
     if (-not $candidates) {
         Write-Host "No other styles to switch to." -ForegroundColor Yellow
         return
@@ -1168,7 +1183,17 @@ function Apply-StyleNonWT {
         Write-Error "Style '$StyleName' has no scheme.json."
         return
     }
-    $scheme = [System.IO.File]::ReadAllText($schemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    # Refused before the VS Code consent, the OSC, the record and the staging
+    # below: an unguarded parse here printed "Style applied" and recorded a
+    # style whose scheme never parsed (pwsh's default preference), or escaped
+    # as a raw error naming this module (zsh/bash). Apply-StyleDirect asks the
+    # same question; this is for every other caller of this function.
+    $unreadable = Get-StyleUnreadableFile -StyleDir $StyleDir
+    if ($unreadable) {
+        Write-Error $unreadable.Message
+        return
+    }
+    $scheme = Read-StyleJson -StyleDir $StyleDir -FileName 'scheme.json'
 
     # VS Code: ask (once per editor) whether its settings.json may be written,
     # BEFORE anything below reads the capability table. The "can't show"
@@ -1272,13 +1297,10 @@ function Apply-StyleNonWT {
     # named tab color and stayed silent about the font, cursor shape and padding
     # it had just dropped, all three of them $false in the table for the express
     # purpose of being named here.
+    # The same reader as the gate at the top, which has already refused a
+    # theme.json that will not parse; the guard stays for one that changed since.
     $theme = $null
-    $themePath = Join-Path $StyleDir 'theme.json'
-    if (Test-Path -LiteralPath $themePath) {
-        try {
-            $theme = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-        } catch { $theme = $null }
-    }
+    try { $theme = Read-StyleJson -StyleDir $StyleDir -FileName 'theme.json' } catch { $theme = $null }
     Show-UnsupportedStyleField -Kind $kind -Field @(
         Get-UnsupportedStyleField -Theme $theme -StyleDir $StyleDir -Kind $kind)
 
@@ -1346,6 +1368,15 @@ function Apply-StyleDirect {
         Write-Error "Style '$StyleName' not found. Run 'tstyles list' to see available styles."
         return
     }
+    # A style whose JSON will not parse is refused here, before either path
+    # touches anything. Windows Terminal's spent settings.json.bak (the undo of
+    # the user's LAST apply) before the merge threw; the other terminals
+    # recorded the style and printed "Style applied" over a parse error.
+    $unreadable = Get-StyleUnreadableFile -StyleDir $styleDir
+    if ($unreadable) {
+        Write-Error $unreadable.Message
+        return
+    }
 
     Show-UpdateNoticeIfAvailable
 
@@ -1402,6 +1433,12 @@ function Apply-StyleDirect {
     $payload = Get-StyleSettingsPayload -StyleDir $styleDir
     if ($payload.Missing -eq 'scheme.json') {
         Write-Error "Style '$StyleName' has no scheme.json -- nothing to apply."
+        return
+    }
+    # The gate at the top refused this already; a file that broke since must
+    # not read as "ships no theme.json" in the branch below.
+    if ($payload.Unreadable) {
+        Write-Error $payload.Unreadable
         return
     }
     if (-not $payload.Ok) {

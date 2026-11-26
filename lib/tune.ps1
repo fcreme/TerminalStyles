@@ -1213,6 +1213,14 @@ function Invoke-TerminalStyleTune {
         Write-Error "Style '$StyleName' not found. Run 'tstyles list' to see available styles."
         return
     }
+    # Before the screen is taken and before any settings file is read: the
+    # tuner's live preview merges the style, and a merge that cannot read it
+    # threw from inside the key loop.
+    $unreadable = Get-StyleUnreadableFile -StyleDir $styleDir
+    if ($unreadable) {
+        Write-Error $unreadable.Message
+        return
+    }
 
     $settingsPath = $null
     $tuneRecovered = $null

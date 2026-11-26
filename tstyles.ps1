@@ -1175,8 +1175,8 @@ function Invoke-TerminalStyle {
     $unreadable = @($styleSet.Unreadable)
     $styles     = @($styleSet.Styles)
     if (-not $styles) {
-        Write-Error ("No style has a readable scheme.json, so there is nothing to pick from. Unreadable: {0}" -f
-                     ($unreadable -join ', '))
+        Write-Error ("No style can be read, so there is nothing to pick from. Unreadable: {0}" -f
+                     (($unreadable | ForEach-Object { "$_ ($($styleSet.UnreadableFile[$_]))" }) -join ', '))
         return
     }
 
@@ -1564,12 +1564,7 @@ function Invoke-TerminalStyle {
     # line, constant for the life of the picker, so the in-place redraw keeps a
     # fixed height; it names the folder when there is one to name, which is more
     # than `tstyles list` does for the same file.
-    $unreadableNote = $null
-    if ($unreadable.Count -eq 1) {
-        $unreadableNote = "  ! {0} -- unreadable scheme.json, not shown" -f $unreadable[0]
-    } elseif ($unreadable.Count -gt 1) {
-        $unreadableNote = "  ! {0} styles -- unreadable scheme.json, not shown" -f $unreadable.Count
-    }
+    $unreadableNote = Get-PickerUnreadableNote -Unreadable $unreadable -UnreadableFile $styleSet.UnreadableFile
 
     # Pre-load each style's tabTitle (from theme.json). settings.json's
     # tabTitle isn't honored by Windows Terminal for a tab whose shell has
