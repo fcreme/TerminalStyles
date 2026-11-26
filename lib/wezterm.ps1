@@ -110,7 +110,22 @@
 #   * colors.tab_bar.active_tab needs fg_color whenever it has bg_color (same
 #     build): { bg_color = '#ff0000' } alone is "missing field `fg_color`", and
 #     WezTerm refuses the WHOLE override ("Failed to apply config overrides to
-#     window"), or, in a config, the whole config.
+#     window"), or, in a config, the whole config. Re-measured 2026-11-26 with
+#     '#fff000000': refused alone; with an fg_color it drew #ff0000, and
+#     '#0000ffff0000' drew #00ff00. A 9- or 12-digit colour keeps each
+#     channel's top 8 bits, as XParseColor does (Get-WezTermTabForeground).
+#   * A runtime color_scheme over an override that carries color_schemes
+#     (2026-11-26, same build): a key binding's set_config_overrides naming a
+#     scheme only the base config registers logged "scheme was not found" and
+#     left resolved_palette nil; with that scheme in the override's own
+#     color_schemes it drew. So every override carries the user's own schemes.
+#   * A background image whose file is deleted under an open window
+#     (2026-11-26, same build): the override stands, palette included, and at
+#     the next config reload WezTerm logs "Failed to load background: getting
+#     metadata for <path>: No such file or directory" and drops that layer and
+#     only that. load_background_image (wezterm-gui termwindow/background.rs at
+#     b09b56c2) skips a layer that fails to load and keeps the others, so the
+#     style's colour layer still draws. Hence uninstall's -DeleteData wording.
 #
 # DECISION (2026-11-23, final wave; it replaces two earlier ones: "base = the
 # user's own look", recorded on 2026-11-20 while color_scheme seemed to have no
@@ -123,11 +138,14 @@
 # and the override is SELF-CONTAINED: it carries the scheme it names in its own
 # color_schemes (the style's, the synthesized default, or the scheme the user's
 # own color_scheme names when their config registers it), because of the
-# replacement measured above. A styled look drops from its copy of the user's
-# colors every key the style's scheme sets, so the style's palette wins in a
-# styled tab, and an unstyled one keeps them all, so it is exactly the user's
-# own look. Overrides on any other key, and color_schemes entries not named
-# 'TerminalStyles ...', are the user's and are kept.
+# replacement measured above, and every scheme the user's config registers,
+# as the config has it now (2026-11-26: a color_scheme of theirs set at
+# runtime found its scheme only there). A styled look drops from its copy of
+# the user's colors every key the style's scheme sets, so the style's palette
+# wins in a styled tab, and an unstyled one keeps them all, so it is exactly
+# the user's own look. Overrides on any other key, and color_schemes entries
+# not named 'TerminalStyles ...', are the user's and are kept; one their config
+# also registers is refreshed from it.
 
 function Get-WezTermModuleDir {
     <#
@@ -1439,12 +1457,14 @@ local BUILTIN = {
   default_cursor_style = 'SteadyBlock',
 }
 
--- Your own values for every key a look sets, and the scheme your own
--- color_scheme names when your config registers it, read before the default
--- style is applied over them; and their fingerprint, which is part of every
--- sync stamp so an edit to your wezterm.lua reaches windows holding an override.
+-- Your own values for every key a look sets, the scheme your own color_scheme
+-- names when your config registers it, and every scheme your config registers,
+-- read before the default style is applied over them; and their fingerprint,
+-- which is part of every sync stamp so an edit to your wezterm.lua reaches
+-- windows holding an override.
 local USER = {}
 local USER_SCHEME = nil
+local USER_SCHEMES = {}
 local USERPRINT = ''
 local KEYS = { 'color_scheme', 'background', 'window_background_opacity',
                'macos_window_background_blur', 'default_cursor_style', 'colors' }
@@ -1603,9 +1623,12 @@ end
 -- included, so a rewrite that changes the base config shows in no window
 -- before its sync. Each look carries the scheme it names: an override's
 -- color_schemes replaces the base config's whole table, so a window keeps its
--- palette with this file gone. Only the keys a look sets are replaced, and
--- only the schemes named PREFIX ..: any other override (a font-size toggle in
--- your own config, say) is kept.
+-- palette with this file gone. For the same reason it carries every scheme
+-- your own config registers, as your config has it now: a color_scheme of
+-- yours set at runtime (a key binding, say) finds its scheme only there. Only
+-- the keys a look sets are replaced, and only the schemes named PREFIX .. and
+-- your config's own: any other override (a font-size toggle in your own
+-- config, say) is kept.
 local function sync(window, pane)
   if not window or not pane then return end
   local want = wanted(window, pane)
@@ -1621,6 +1644,7 @@ local function sync(window, pane)
   for k, v in pairs(overrides.color_schemes or {}) do
     if type(k) ~= 'string' or k:sub(1, #PREFIX) ~= PREFIX then schemes[k] = v end
   end
+  for k, v in pairs(USER_SCHEMES) do schemes[k] = v end
   if scheme then schemes[look.color_scheme] = scheme end
   overrides.color_schemes = schemes
   window:set_config_overrides(overrides)
@@ -1632,13 +1656,18 @@ end
 -- an error leaves config as you wrote it, and is logged once.
 function M.apply_to_config(config)
   local ok, err = pcall(function()
-    local user, user_scheme = {}, nil
+    local user, user_scheme, user_schemes = {}, nil, {}
     for _, k in ipairs(KEYS) do user[k] = copy(config[k]) end
     if type(user.color_scheme) == 'string' and type(config.color_schemes) == 'table' then
       user_scheme = copy(config.color_schemes[user.color_scheme])
     end
-    USER, USER_SCHEME = user, user_scheme
-    USERPRINT = fingerprint({ user, user_scheme })
+    if type(config.color_schemes) == 'table' then
+      for name, s in pairs(config.color_schemes) do
+        if type(name) ~= 'string' or name:sub(1, #PREFIX) ~= PREFIX then user_schemes[name] = copy(s) end
+      end
+    end
+    USER, USER_SCHEME, USER_SCHEMES = user, user_scheme, user_schemes
+    USERPRINT = fingerprint({ user, user_scheme, user_schemes })
     local schemes = { [BUILTIN.color_scheme] = wezterm.color.get_default_colors() }
     for name, look in pairs(LOOKS) do schemes[PREFIX .. name] = look.scheme end
     local base = look_of(DEFAULT or UNSTYLED)

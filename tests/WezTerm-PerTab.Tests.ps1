@@ -544,11 +544,13 @@ Describe 'Get-WezTermTabModuleLua' {
             # The scheme the user's own color_scheme names is part of it: an
             # unstyled window carries a copy of that scheme (see the test of
             # self-contained looks below), so an edit to it must reach them.
+            # So is every scheme their config registers: every window carries
+            # those too.
             $lines = @((Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty) -split '\r?\n' | ForEach-Object { $_.Trim() })
             $lines -ccontains "local stamp = want .. '@' .. GENERATION .. '@' .. USERPRINT" | Should -BeTrue
             $capture = [array]::IndexOf($lines, 'for _, k in ipairs(KEYS) do user[k] = copy(config[k]) end')
             $scheme = [array]::IndexOf($lines, 'user_scheme = copy(config.color_schemes[user.color_scheme])')
-            $print = [array]::IndexOf($lines, 'USERPRINT = fingerprint({ user, user_scheme })')
+            $print = [array]::IndexOf($lines, 'USERPRINT = fingerprint({ user, user_scheme, user_schemes })')
             $base = [array]::IndexOf($lines, 'local base = look_of(DEFAULT or UNSTYLED)')
             $capture | Should -BeGreaterThan -1
             $scheme | Should -BeGreaterThan $capture
@@ -592,6 +594,29 @@ Describe 'Get-WezTermTabModuleLua' {
             $own | Should -BeGreaterThan $keep
             $put | Should -BeGreaterThan $own
             $set | Should -BeGreaterThan $put
+        }
+
+        It 'carries every scheme of the user''s own into every override, fresh from their config' {
+            # Measured (2026-11-26, same build): once a window's override
+            # carries color_schemes, a color_scheme the user sets at runtime
+            # (a key binding of theirs) that names a scheme only their
+            # wezterm.lua registers is "not found" and leaves no palette; with
+            # that scheme in the override it draws. So apply_to_config copies
+            # the user's own schemes before it adds any of ours, they enter the
+            # sync stamp (an edit to one reaches every window), and a sync lays
+            # them over the window's table, so a stale copy is replaced.
+            $lines = @((Get-WezTermTabModuleLua -Styles $script:styles -DefaultStyle kitty) -split '\r?\n' | ForEach-Object { $_.Trim() })
+            $copy = [array]::IndexOf($lines, 'if type(name) ~= ''string'' or name:sub(1, #PREFIX) ~= PREFIX then user_schemes[name] = copy(s) end')
+            $print = [array]::IndexOf($lines, 'USERPRINT = fingerprint({ user, user_scheme, user_schemes })')
+            $ours = [array]::IndexOf($lines, 'config.color_schemes = config.color_schemes or {}')
+            $copy | Should -BeGreaterThan -1
+            $print | Should -BeGreaterThan $copy
+            $ours | Should -BeGreaterThan $print
+            $keep = [array]::IndexOf($lines, 'if type(k) ~= ''string'' or k:sub(1, #PREFIX) ~= PREFIX then schemes[k] = v end')
+            $users = [array]::IndexOf($lines, 'for k, v in pairs(USER_SCHEMES) do schemes[k] = v end')
+            $own = [array]::IndexOf($lines, 'if scheme then schemes[look.color_scheme] = scheme end')
+            $users | Should -BeGreaterThan $keep
+            $own | Should -BeGreaterThan $users
         }
 
         It 'gives an unstyled look the scheme it draws: WezTerm''s default, or the user''s own registered one' {
