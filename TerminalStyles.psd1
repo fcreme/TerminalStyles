@@ -1,6 +1,6 @@
 @{
     RootModule        = 'TerminalStyles.psm1'
-    ModuleVersion     = '0.9.9'
+    ModuleVersion     = '0.10.0'
     GUID              = '50bee3d1-bbcc-479d-852a-df363b207ef5'
     Author            = 'Felipe Cremerius'
     CompanyName       = 'fcreme'
@@ -18,7 +18,7 @@
             Tags         = @('WindowsTerminal', 'Terminal', 'Theme', 'ColorScheme', 'Prompt', 'Cursor', 'Background', 'Font', 'Customization', 'Console', 'Dotfiles', 'pwsh', 'iTerm2', 'zsh', 'bash', 'ANSI', 'PSEdition_Core', 'PSEdition_Desktop', 'Windows', 'MacOS', 'Linux')
             LicenseUri   = 'https://github.com/fcreme/TerminalStyles/blob/main/LICENSE'
             ProjectUri   = 'https://github.com/fcreme/TerminalStyles'
-            ReleaseNotes = 'v0.9.9: Fixes. koholint, phosphor and skyline now set every PSReadLine colour, so switching to them no longer keeps three colours from the previous style until a new tab. tstyles current prints nothing when its output is captured and no style is active, so a script can test it. The bootstrap installer no longer stops in a session that has strict mode on.'
+            ReleaseNotes = 'v0.10.0: In WezTerm on macOS and Linux, tstyles now restyles only the tab it runs in, once wezterm.lua has the one require line, and a style no longer sets font, size or padding there (tstyles font prints the line for your wezterm.lua). Fixes: a WezTerm tab colour with 9 or 12 hex digits no longer breaks your config, tstyles EVA applies the style listed as eva, and tstyles update from zsh or bash no longer ends on a PowerShell command.'
         }
     }
 }

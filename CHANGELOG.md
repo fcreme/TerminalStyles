@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-11-26
+
 ### Changed
 
 - **In WezTerm off Windows, `tstyles <style>` restyles only the tab it runs in.** Every WezTerm window and tab loads the one generated module, `terminalstyles.lua`, and each apply rewrote it, so WezTerm reloaded and every window took the new background, opacity, cursor and tab colour at once while only the tab you ran it in got the palette. Now, when your `wezterm.lua` carries the one `require` line (nothing to edit; a copy without it behaves as before), the module holds the look of every installed style. `tstyles` tags the tab it runs in with an OSC 1337 user variable (`TERMINALSTYLES_STYLE`), the module gives each window overrides from the tag of its active tab, and a per-tab record, `wezterm-tabs.json` in the data folder, remembers what each tab wears, since a tag cannot be read back. What you see:
@@ -1774,7 +1776,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - themes live-reload on confirm — colors and tab title update without opening a new tab
 
-[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.9.9...HEAD
+[Unreleased]: https://github.com/fcreme/TerminalStyles/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/fcreme/TerminalStyles/compare/v0.9.9...v0.10.0
 [0.9.9]: https://github.com/fcreme/TerminalStyles/compare/v0.9.8...v0.9.9
 [0.9.8]: https://github.com/fcreme/TerminalStyles/compare/v0.9.7...v0.9.8
 [0.9.7]: https://github.com/fcreme/TerminalStyles/compare/v0.9.6...v0.9.7
