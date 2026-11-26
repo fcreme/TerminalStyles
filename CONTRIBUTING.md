@@ -77,8 +77,14 @@ styles/<name>/
 ├── theme.json     # profile-level overrides (optional)
 ├── profile.ps1    # PowerShell prompt/banner (optional)
 ├── prompt.sh      # the same prompt for zsh/bash (REQUIRED by CI)
+├── meta.json      # one-line description and quote for the picker (REQUIRED by CI)
 └── README.md      # description (optional)
 ```
+
+`meta.json` holds `"description"` (one line, what the picker shows beside
+the name, at most 90 characters) and an optional `"quote"`; copy one from
+any bundled style. Plain text only: control characters and invisible
+formatting characters are refused.
 
 > **`prompt.sh` is not optional in practice.** The module treats it as
 > optional, but `tests/Shell-Prompt.Tests.ps1` walks every folder under
@@ -89,9 +95,12 @@ styles/<name>/
 > existing style's `prompt.sh` and adapt it; `styles/sober/prompt.sh` is
 > the smallest, `styles/gitbash/prompt.sh` shows git-branch detection.
 
-To develop one, iterate locally first: drop the folder into
-`%LOCALAPPDATA%\TerminalStyles\styles\<name>\` and `tstyles` picks it
-up on next module load (see [Creating a Style](docs/wiki/Creating-a-Style.md)).
+To develop one, iterate locally first: drop the folder into the `styles`
+folder of your data folder (`%LOCALAPPDATA%\TerminalStyles\styles\<name>\`
+on Windows, `~/Library/Application Support/TerminalStyles/styles/<name>/`
+on macOS, `~/.local/share/TerminalStyles/styles/<name>/` on Linux) and
+`tstyles` picks it up on next module load (see
+[Creating a Style](docs/wiki/Creating-a-Style.md)).
 
 ### scheme.json rules
 
@@ -125,7 +134,8 @@ Code and images live on different branches — `main` stays binary-free:
 
 1. **Code on `main`:** fork the repo, add the code-only folder
    (`scheme.json` / `theme.json` / `profile.ps1` / `prompt.sh` /
-   `README.md` — **no background image**) under `styles/<name>/`, and open
+   `meta.json` / `README.md` — **no background image**) under
+   `styles/<name>/`, plus the changes below the folder needs, and open
    a PR against `main`.
 2. **Image on `gifs`:** if your theme ships a background, put the file
    at the **root** of the [`gifs` branch](https://github.com/fcreme/TerminalStyles/tree/gifs)
@@ -139,10 +149,40 @@ Image rules:
 - If multiple formats exist, the priority order is
   `.gif > .png > .jpg > .jpeg`.
 
+### What else a new theme changes
+
+The folder is not the whole change: CI holds the rest of the repo to the
+styles that exist, so the same PR updates:
+
+- **The README's theme count.** The README says how many themes ship, in
+  digits or in words, in more than one place, and every one must equal the
+  number of folders under `styles/` (`tests/README-Theme-Count.Tests.ps1`).
+- **The banner.** It states the count and paints one swatch per style. Run
+  `python3 scripts/make-banner.py`: it rewrites `docs/banner.png` and
+  `docs/banner.json`, the record `tests/README-Banner.Tests.ps1` compares
+  with `styles/`.
+- **The docs site.** `docs/index.html` lists every style in `const STYLES`
+  and its image in `const IMG`, and both must name exactly the folders under
+  `styles/` (`tests/Style-Meta.Tests.ps1`).
+
 ### CI checks on theme PRs
 
-Every PR runs the full Pester suite on both pwsh 7 and Windows
-PowerShell 5.1. Three checks exist specifically to guard themes:
+Every PR runs the full Pester suite on pwsh 7, Windows PowerShell 5.1,
+macOS and Linux. The files that check a new theme, beyond the three above,
+are:
+
+- `tests/Style-Meta.Tests.ps1`: a `meta.json` with a description that fits
+  a picker row.
+- `tests/Get-SchemeSwatch.Tests.ps1`: a swatch distinct from every other
+  style's, so your scheme cannot be a copy.
+- `tests/Style-PromptParity.Tests.ps1`: `profile.ps1` and `prompt.sh`
+  render the same prompt, byte for byte.
+- `tests/Style-PSReadLine-Colours.Tests.ps1`: `profile.ps1` sets every
+  PSReadLine colour the other styles set.
+- `tests/Style-Submit.Tests.ps1`: the style passes the checks
+  `tstyles submit` runs, which are never stricter than the catalogue.
+
+And these, described in more detail:
 
 - **Contrast floor** (`tests/Scheme-Contrast.Tests.ps1`): every
   chromatic ANSI color (`red`, `green`, `yellow`, `blue`, `purple`,
@@ -195,10 +235,11 @@ maintainer can do this step for you.
 
 ### Curation model
 
-Anyone may submit a theme — through `tstyles submit`, or by hand, including one you made with `tstyles tune`
-(the tuner's saved folder in `%LOCALAPPDATA%\TerminalStyles\styles\<name>\`
-is exactly the submittable format). **Inclusion in the bundled catalog
-is at the maintainer's discretion.** A theme is accepted when:
+Anyone may submit a theme, through `tstyles submit` or by hand. A style
+saved by `tstyles tune` builds on the style it was tuned from, so
+`tstyles submit` refuses it; make a style whole with `tstyles create`
+instead. **Inclusion in the bundled catalog is at the maintainer's
+discretion.** A theme is accepted when:
 
 - it passes the CI checks above,
 - it's visually distinct from the existing bundled themes,
