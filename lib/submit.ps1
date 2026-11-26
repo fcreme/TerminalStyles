@@ -31,11 +31,12 @@ function Get-SubmittedThemeProblems {
     Why a submitted theme.json could not ship, as plain sentences.
 
     .DESCRIPTION
-    Merge-StyleIntoSettings copies every theme.json key into the user's
-    Windows Terminal profile as it is, so a key the catalogue does not use
-    is not decoration: "commandline" would run a program for everyone who
-    applies the style, and an "icon" or a backgroundImage on a network path
-    would make Windows Terminal fetch it. So the check is an allow-list --
+    An apply writes only the theme.json keys tstyles reset takes back
+    (Select-StyleThemeFields) and skips the rest, but a submitted style ships
+    to everyone, including users of a release that still copied every key
+    onto the profile as it is, where "commandline" runs a program for
+    everyone who applies the style and an "icon" or a backgroundImage on a
+    network path makes Windows Terminal fetch it. So the check is an allow-list --
     the keys every bundled style and New-CreatedThemeObject write, with the
     value shapes Windows Terminal takes for them -- and backgroundImage
     must be the {{BACKGROUND_IMAGE}} placeholder.

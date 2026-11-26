@@ -23,12 +23,8 @@ function New-TunedThemeObject {
         [string]$FontFace,
         [int]$FontSize
     )
-    $themeSrc = Join-Path $BaseStyleDir 'theme.json'
-    $theme = if (Test-Path -LiteralPath $themeSrc) {
-        try {
-            [System.IO.File]::ReadAllText($themeSrc, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-        } catch { $null }
-    } else { $null }
+    $theme = $null
+    try { $theme = Read-StyleJson -StyleDir $BaseStyleDir -FileName 'theme.json' } catch { $theme = $null }
 
     # A base theme.json that is empty, truncated, or holds a bare JSON scalar
     # or array parses to something Add-Member cannot extend. Those failures are
@@ -786,7 +782,7 @@ function Resolve-TuneSeed {
         $themePath = Join-Path $Dir 'theme.json'
         if (Test-Path -LiteralPath $themePath) {
             try {
-                $t = [System.IO.File]::ReadAllText($themePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                $t = Read-StyleJson -StyleDir $Dir -FileName 'theme.json'
                 if ($t -is [System.Management.Automation.PSCustomObject]) {
                     if ($t.PSObject.Properties.Match('opacity').Count) { $out.Opacity = [int]$t.opacity }
                     if ($t.PSObject.Properties.Match('font').Count -and
@@ -992,7 +988,7 @@ function Resolve-TuneSeed {
         $baseThemePath = Join-Path $seed.BaseDir 'theme.json'
         if (Test-Path -LiteralPath $baseThemePath) {
             try {
-                $baseTheme = [System.IO.File]::ReadAllText($baseThemePath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                $baseTheme = Read-StyleJson -StyleDir $seed.BaseDir -FileName 'theme.json'
                 if ($baseTheme.PSObject.Properties.Match('opacity').Count) { $seed.Opacity = [int]$baseTheme.opacity }
                 if ($baseTheme.PSObject.Properties.Match('font').Count) {
                     if ($baseTheme.font.PSObject.Properties.Match('face').Count) { $seed.FontFace = [string]$baseTheme.font.face }
@@ -1094,9 +1090,10 @@ function Resolve-TuneOpenedScheme {
 
     if (Test-SameStyleDirectory -A $StyleDir -B $BaseDir) { return $BaseScheme }
     try {
-        return ([System.IO.File]::ReadAllText((Join-Path $StyleDir 'scheme.json'),
-            [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json)
-    } catch { return $BaseScheme }
+        $opened = Read-StyleJson -StyleDir $StyleDir -FileName 'scheme.json'
+        if ($null -ne $opened) { return $opened }
+    } catch { }
+    return $BaseScheme
 }
 
 function Restore-TuneBaseLook {
@@ -1298,7 +1295,8 @@ function Invoke-TerminalStyleTune {
     # unavailable at the last save, and about a tune.json that could not be read
     # -- is Get-TuneSeedNotice's, and $drawMenu below prints whatever it returns.
 
-    $baseScheme = [System.IO.File]::ReadAllText((Join-Path $baseDir 'scheme.json'), [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+    $baseScheme = Read-StyleJson -StyleDir $baseDir -FileName 'scheme.json'
+    if ($null -eq $baseScheme) { throw "TerminalStyles: style '$(Split-Path -Leaf $baseDir)' has no scheme.json." }
 
     # What Esc has to put back is the style the user OPENED the tuner on, which
     # is not always the working base. Tuning `eva-night` (a tuned style whose

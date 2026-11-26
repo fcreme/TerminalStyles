@@ -38,9 +38,14 @@ its own values, so the 13 keys are not shape-checked beyond `backgroundImage`.
    the 13 keys, and `backgroundImage` only as the `{{BACKGROUND_IMAGE}}`
    placeholder or a path on this machine (no `\\server` or `//server` path,
    no URL other than `ms-appdata:`, `ms-appx:` or `file:///`). Everything
-   else is returned as skipped, with a reason. The merge writes only the
-   picked fields; every apply that writes settings.json (`tstyles <name>`,
-   the picker's Enter and `apply.ps1`) names the skipped keys once.
+   else is returned as skipped, with a reason. And none is picked unless the
+   `colorScheme` among them names an installed style: that is the mark
+   reset recognises a styled profile by, so without it every key written
+   would be one reset refuses. (Final review: the creator's live-preview
+   scheme counts as one, because reset should clear it too.) The merge
+   writes only the picked fields; every apply that writes settings.json
+   (`tstyles <name>`, the picker's Enter and `apply.ps1`) says what it
+   skipped and why through one printer, Write-StyleSettingsNote.
    `-BackgroundImage` from the command line is the user's own choice and is
    not checked.
 2. **#89.** `ConvertTo-VisibleText` moves from `scripts/review-submission.ps1`
@@ -54,7 +59,10 @@ its own values, so the 13 keys are not shape-checked beyond `backgroundImage`.
 3. **#20.** One reader parses a style's `scheme.json` or `theme.json`
    (through `ConvertFrom-JsoncText`; an empty file or a JSON `null` counts as
    unreadable) and throws a message naming the style, the file and how to fix
-   it. A readability check built on it answers "can this style be applied?"
+   it. Every other parse of those files in the module goes through it (final
+   review: a second parser disagreed with it on Windows PowerShell 5.1), and
+   a test walks the source for new ones. A readability check built on it
+   answers "can this style be applied?"
    - Every apply refuses an unreadable style before any backup, write, record
      or prompt.
    - The picker leaves it out and names it, and the file, in its frame: the

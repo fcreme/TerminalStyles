@@ -8,7 +8,10 @@
 # module, a picker that died on its first frame, or "Style applied" printed
 # over a style that applied nothing. One reader, and one question built on it,
 # make a broken file fail the same way everywhere: before anything is
-# touched, naming the style, the file and what to do about it.
+# touched, naming the style, the file and what to do about it. A second parse
+# is a second rule -- on Windows PowerShell 5.1 ConvertFrom-Json refuses the
+# comment this one accepts -- so tests/Style-Json-One-Reader.Tests.ps1 fails
+# on any parse of these files outside Read-StyleJson.
 
 function Read-StyleJson {
     <#

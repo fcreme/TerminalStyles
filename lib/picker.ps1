@@ -1137,8 +1137,7 @@ function Invoke-TerminalStyleShow {
 
     $scheme = $null
     try {
-        $scheme = [System.IO.File]::ReadAllText((Join-Path $dir 'scheme.json'),
-                    [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+        $scheme = Read-StyleJson -StyleDir $dir -FileName 'scheme.json'
     } catch { }
     if (-not $scheme) {
         # A style whose scheme.json will not parse is exactly what
@@ -1177,8 +1176,7 @@ function Invoke-TerminalStyleShow {
         $curDir = Get-StyleDir -StyleName $current
         if ($curDir) {
             try {
-                $startScheme = [System.IO.File]::ReadAllText((Join-Path $curDir 'scheme.json'),
-                                 [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
+                $startScheme = Read-StyleJson -StyleDir $curDir -FileName 'scheme.json'
             } catch { }
         }
     }

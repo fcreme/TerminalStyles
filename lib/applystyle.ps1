@@ -1442,15 +1442,11 @@ function Apply-StyleDirect {
         return
     }
     if (-not $payload.Ok) {
-        if ($payload.NothingApplicable) {
-            # theme.json is there but holds no key the merge writes: nothing
-            # for settings.json, said once with the keys it skipped.
-            Write-Host (Get-ThemeSkippedNote -Skipped $payload.Skipped -NothingWritten) -ForegroundColor Yellow
-        } else {
-            # theme.json absent: nothing for Windows Terminal's settings.json, but
-            # the prompt/banner half below is still the style's whole job off WT.
-            Write-Host "  '$StyleName' ships no theme.json, so nothing was written to settings.json." -ForegroundColor DarkGray
-        }
+        # Nothing for Windows Terminal's settings.json -- no theme.json, or
+        # none of its keys an apply may write -- but the prompt/banner half
+        # below is still the style's whole job off WT. Said by the printer
+        # the picker and apply.ps1 share.
+        Write-StyleSettingsNote -StyleName $StyleName -Payload $payload
     } else {
         # Rolling backup: the on-disk settings.json to settings.json.bak before
         # any mutation. One file, overwritten on each direct apply -- a one-line
@@ -1493,8 +1489,7 @@ function Apply-StyleDirect {
         Write-SettingsFile -Path $settingsPath -Settings $settings
         # The keys of theme.json the merge did not write (Select-StyleThemeFields),
         # named once; nothing when there were none.
-        $skippedNote = Get-ThemeSkippedNote -Skipped $payload.Skipped
-        if ($skippedNote) { Write-Host $skippedNote -ForegroundColor Yellow }
+        Write-StyleSettingsNote -StyleName $StyleName -Payload $payload
     }
 
     # Detect pwsh target for profile.ps1 install + live reload
@@ -1742,18 +1737,26 @@ function Test-TerminalStylesSchemeName {
     # The ownership marker the reset is built on, in one place because it is now
     # asked twice: once of the profile's own entry, and once of profiles.defaults
     # (whose colorScheme the profile falls back to the moment the entry's is
-    # stripped). An apply always writes colorScheme and writes it last, so there
-    # is no way to be styled by this tool and not carry it.
+    # stripped). An apply writes nothing to a profile unless it writes a
+    # colorScheme this answers yes for -- Select-StyleThemeFields asks it before
+    # the merge writes a key -- so there is no way to be styled by this tool and
+    # not carry it.
     #
     # -KnownStyleName is one name the CALLER has already proved is ours, for the
     # window where `tstyles delete` has moved the style out of styles/ and
     # Get-AvailableStyles can no longer see it.
+    #
+    # The creator's live preview is the one scheme this tool writes that is not
+    # an installed style: it is applied for real, under its own name, while the
+    # user works, and a session that dies before restoring leaves it on the
+    # profile. It is ours, and reset is the way to clear it.
     param(
         [AllowNull()][AllowEmptyString()][string]$Name,
         [AllowNull()][AllowEmptyString()][string]$KnownStyleName
     )
     if ([string]::IsNullOrEmpty($Name)) { return $false }
     if ($KnownStyleName -and $Name -eq $KnownStyleName) { return $true }
+    if ($Name -eq $script:CreatorPreviewName) { return $true }
     return (@(Get-AvailableStyles | Where-Object { $_.Name -eq $Name }).Count -gt 0)
 }
 
@@ -1842,9 +1845,9 @@ function Reset-StyleDirect {
     # exists so that a background the USER set is not cleared by a style that
     # ships none. Reset simply never asked the question.
     #
-    # colorScheme naming one of our styles is the marker, because an apply always
-    # writes it and writes it last: there is no way to be styled by this tool and
-    # not carry it. A profile without it is one we never touched, and the honest
+    # colorScheme naming one of our styles is the marker, because an apply writes
+    # nothing to a profile without it (Select-StyleThemeFields): there is no way
+    # to be styled by this tool and not carry it. A profile without it is one we never touched, and the honest
     # answer is to change nothing rather than guess. This runs BEFORE the backup
     # on purpose -- see Save-SettingsBackup below, whose rolling .bak is the
     # user's only undo and must not be spent on a call that writes nothing.

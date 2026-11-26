@@ -161,9 +161,9 @@ Describe 'Merge-StyleIntoSettings makes the same judgement as the resolver' {
             $script:shapeStyle = Join-Path $TestDrive 'styles/shape'
             New-Item -ItemType Directory -Path $script:shapeStyle -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $script:shapeStyle 'scheme.json'),
-                '{"name":"shapescheme"}', [System.Text.UTF8Encoding]::new($false))
+                '{"name":"shape"}', [System.Text.UTF8Encoding]::new($false))
             [System.IO.File]::WriteAllText((Join-Path $script:shapeStyle 'theme.json'),
-                '{"colorScheme":"shapescheme","opacity":90}', [System.Text.UTF8Encoding]::new($false))
+                '{"colorScheme":"shape","opacity":90}', [System.Text.UTF8Encoding]::new($false))
         }
         AfterEach { $script:TStylesDataRoot = $script:savedDataRoot }
 
@@ -185,7 +185,7 @@ Describe 'Merge-StyleIntoSettings makes the same judgement as the resolver' {
             $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:shapeStyle `
                 -TargetName 'defaults' -BackgroundImage '' -BackgroundImageProvided $false
 
-            @($out.schemes | Where-Object { $_.name -eq 'shapescheme' }).Count | Should -Be 0 `
+            @($out.schemes | Where-Object { $_.name -eq 'shape' }).Count | Should -Be 0 `
                 -Because 'a scheme no profile can reference is one Reset can never clean up'
             # `$null -ne $_` first: piping a scalar $null sends ONE item down
             # the pipeline, so the member access alone would throw here for the
@@ -207,9 +207,9 @@ every profile in the list and wrote the whole theme where WT ignores it.
             $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:shapeStyle `
                 -TargetName 'defaults' -BackgroundImage '' -BackgroundImageProvided $false
 
-            $out.profiles.defaults.colorScheme | Should -Be 'shapescheme'
+            $out.profiles.defaults.colorScheme | Should -Be 'shape'
             $out.profiles.defaults.opacity     | Should -Be 90
-            @($out.schemes | Where-Object { $null -ne $_ -and $_.name -eq 'shapescheme' }).Count | Should -Be 1
+            @($out.schemes | Where-Object { $null -ne $_ -and $_.name -eq 'shape' }).Count | Should -Be 1
             (@($out.profiles.PSObject.Properties | ForEach-Object { $_.Name }) -join ',') |
                 Should -Be ($before -join ',') -Because 'a null is replaced in place, not re-added after list'
         }
@@ -234,7 +234,7 @@ every profile in the list and wrote the whole theme where WT ignores it.
             $s = '{"profiles":{"list":[{"guid":"{a}","name":"PowerShell"}]}}' | ConvertFrom-Json
             $out = Merge-StyleIntoSettings -Settings $s -StyleDir $script:shapeStyle `
                 -TargetName 'defaults' -BackgroundImage '' -BackgroundImageProvided $false
-            $out.profiles.defaults.colorScheme | Should -Be 'shapescheme'
+            $out.profiles.defaults.colorScheme | Should -Be 'shape'
             $out.profiles.defaults.opacity     | Should -Be 90
         }
     }
@@ -250,9 +250,9 @@ Describe 'an apply to a settings.json that has no profiles object costs the user
             $script:shapeStyle = Join-Path $TestDrive 'styles/shape'
             New-Item -ItemType Directory -Path $script:shapeStyle -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $script:shapeStyle 'scheme.json'),
-                '{"name":"shapescheme"}', [System.Text.UTF8Encoding]::new($false))
+                '{"name":"shape"}', [System.Text.UTF8Encoding]::new($false))
             [System.IO.File]::WriteAllText((Join-Path $script:shapeStyle 'theme.json'),
-                '{"colorScheme":"shapescheme","opacity":90}', [System.Text.UTF8Encoding]::new($false))
+                '{"colorScheme":"shape","opacity":90}', [System.Text.UTF8Encoding]::new($false))
 
             # TestDrive is shared across the Its in this file, and the positive
             # control below legitimately writes a style record. Clear it, or the
@@ -350,7 +350,7 @@ already dropped every comment, so any write at all deletes the user's own notes.
             Apply-StyleDirect -StyleName 'shape' -Target 'defaults'
 
             $after = [System.IO.File]::ReadAllText($script:sPath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            $after.profiles.defaults.colorScheme | Should -Be 'shapescheme'
+            $after.profiles.defaults.colorScheme | Should -Be 'shape'
             Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Style applied' }
             [System.IO.File]::ReadAllText("$script:sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
                 Should -Be $live -Because 'a real apply is exactly when the rolling backup SHOULD be spent'
@@ -369,8 +369,8 @@ already dropped every comment, so any write at all deletes the user's own notes.
             Apply-StyleDirect -StyleName 'shape' -Target 'defaults'
 
             $after = [System.IO.File]::ReadAllText($script:sPath, [System.Text.UTF8Encoding]::new($false)) | ConvertFrom-Json
-            $after.profiles.defaults.colorScheme | Should -Be 'shapescheme' -Because '"Style applied" is a claim about this file'
-            @($after.schemes | Where-Object { $null -ne $_ -and $_.name -eq 'shapescheme' }).Count | Should -Be 1
+            $after.profiles.defaults.colorScheme | Should -Be 'shape' -Because '"Style applied" is a claim about this file'
+            @($after.schemes | Where-Object { $null -ne $_ -and $_.name -eq 'shape' }).Count | Should -Be 1
             Should -Invoke Write-Host -ParameterFilter { "$Object" -match 'Style applied' }
             [System.IO.File]::ReadAllText("$script:sPath.bak", [System.Text.UTF8Encoding]::new($false)) |
                 Should -Be $live -Because 'the .bak holds the file as it was, comments and all: the documented way back'

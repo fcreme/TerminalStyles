@@ -33,13 +33,13 @@ Describe 'Apply-StyleDirect target validation' {
             $script:styleDir = Join-Path $TestDrive 'styles/fakeStyle'
             New-Item -ItemType Directory -Path $script:styleDir -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'scheme.json'),
-                '{"name":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+                '{"name":"fakeStyle"}', [System.Text.UTF8Encoding]::new($false))
             # theme.json too: without it the style is scheme-only, which now
             # correctly writes NOTHING to settings.json (and takes no backup),
             # because Merge-StyleIntoSettings has nothing to merge. The fixture
             # was modelling a style that could never really apply.
             [System.IO.File]::WriteAllText((Join-Path $script:styleDir 'theme.json'),
-                '{"colorScheme":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+                '{"colorScheme":"fakeStyle"}', [System.Text.UTF8Encoding]::new($false))
 
             # A settings.json carrying a comment, so we can prove it survives.
             $script:fakeSettings = Join-Path $TestDrive 'fake-settings.json'
@@ -136,13 +136,13 @@ Describe 'picker target validation' {
             $script:pStyleDir = Join-Path $TestDrive 'styles/fakeStyle'
             New-Item -ItemType Directory -Path $script:pStyleDir -Force | Out-Null
             [System.IO.File]::WriteAllText((Join-Path $script:pStyleDir 'scheme.json'),
-                '{"name":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+                '{"name":"fakeStyle"}', [System.Text.UTF8Encoding]::new($false))
             # theme.json too: without it the style is scheme-only, which now
             # correctly writes NOTHING to settings.json (and takes no backup),
             # because Merge-StyleIntoSettings has nothing to merge. The fixture
             # was modelling a style that could never really apply.
             [System.IO.File]::WriteAllText((Join-Path $script:pStyleDir 'theme.json'),
-                '{"colorScheme":"fakeScheme"}', [System.Text.UTF8Encoding]::new($false))
+                '{"colorScheme":"fakeStyle"}', [System.Text.UTF8Encoding]::new($false))
 
             $script:pSettings = Join-Path $TestDrive 'picker-settings.json'
             $script:pWithComment = @'

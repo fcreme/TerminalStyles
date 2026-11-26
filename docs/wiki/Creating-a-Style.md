@@ -57,8 +57,13 @@ To contribute your theme back to the bundled catalog, see
 under `styles/<name>/` on `main`, background image (if any) flat-named
 on the `gifs` branch, and the maintainer curates what gets bundled.
 
-- **scheme.json** must contain a unique `name`. See
-  [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
+- **scheme.json** must contain a `name`, and it must be the folder's name.
+  See [Microsoft's docs](https://learn.microsoft.com/en-us/windows/terminal/customize-settings/color-schemes).
+- **theme.json**'s `colorScheme` must be that same name. A profile finds
+  the scheme by it, and `tstyles reset` knows a profile is styled by it.
+  A `theme.json` whose `colorScheme` is missing, or names no installed
+  style, writes nothing to Windows Terminal, and the apply says how to
+  fix it.
 - **theme.json** uses the literal string `"{{BACKGROUND_IMAGE}}"` for
   the background image field; `tstyles` substitutes the bundled
   `background.*` (or the user's `-BackgroundImage` flag if passed) and

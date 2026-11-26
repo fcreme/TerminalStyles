@@ -126,6 +126,13 @@ if (-not $styleDir) {
 }
 Write-Host "Style: $Style" -ForegroundColor Green
 
+# A style whose scheme.json or theme.json will not parse is refused here:
+# before the settings file is looked at (Restore-AbandonedFilePreview below can
+# write it), before either question, and before the bundled background is
+# fetched -- the order `tstyles <name>` keeps (audit #20).
+$unreadable = Get-StyleUnreadableFile -StyleDir $styleDir
+if ($unreadable) { throw $unreadable.Message }
+
 # --- Settings.json location ---
 if (-not $SettingsPath) { $SettingsPath = Find-WTSettingsPath }
 if (-not (Test-Path -LiteralPath $SettingsPath)) {
@@ -239,14 +246,10 @@ if ($payload.Ok) {
     # --- Save settings.json (UTF-8, atomic, full depth; keeps any BOM) ---
     Write-SettingsFile -Path $SettingsPath -Settings $settings
     Write-Host "settings.json updated." -ForegroundColor Green
-    # theme.json keys the module's merge did not write, named once.
-    $skippedNote = Get-ThemeSkippedNote -Skipped $payload.Skipped
-    if ($skippedNote) { Write-Host $skippedNote -ForegroundColor Yellow }
-} elseif ($payload.NothingApplicable) {
-    Write-Host (Get-ThemeSkippedNote -Skipped $payload.Skipped -NothingWritten) -ForegroundColor Yellow
-} else {
-    Write-Host "'$Style' ships no theme.json, so settings.json was not changed." -ForegroundColor DarkGray
 }
+# What was not written, and why, worded once for every apply
+# (Write-StyleSettingsNote); silent when the whole theme.json was.
+Write-StyleSettingsNote -StyleName $Style -Payload $payload
 
 # --- The prompt ---
 # Through Set-CurrentStylePrompt, the helper every apply path uses; this script

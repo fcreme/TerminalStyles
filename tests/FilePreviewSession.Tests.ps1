@@ -40,7 +40,10 @@ Describe 'a Windows Terminal preview session' {
             [System.IO.File]::WriteAllText($script:p, $script:original, $script:enc)
 
             foreach ($n in 'probe', 'probe2') {
-                $d = Join-Path (Join-Path $sand 'styles') $n
+                # Under the data root's styles/, where Get-AvailableStyles looks:
+                # the merge writes nothing unless the colorScheme names an
+                # installed style, which is how reset finds the profile again.
+                $d = Join-Path (Join-Path $script:TStylesDataRoot 'styles') $n
                 [void][System.IO.Directory]::CreateDirectory($d)
                 [System.IO.File]::WriteAllText((Join-Path $d 'scheme.json'), ('{"name":"' + $n + '","background":"#101010","foreground":"#f0f0f0"}'), $script:enc)
                 [System.IO.File]::WriteAllText((Join-Path $d 'theme.json'), ('{"colorScheme":"' + $n + '","opacity":85,"font":{"face":"Menlo"}}'), $script:enc)

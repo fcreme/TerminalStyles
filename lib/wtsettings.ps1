@@ -240,25 +240,36 @@ function Test-LocalImagePath {
     Terminal would fetch from somewhere else?
 
     .DESCRIPTION
-    False for a network path (\\server\share, //server/share) and for a URL,
-    except the schemes that name local files: ms-appdata:, ms-appx: and
-    file:/// (three slashes: no host). Environment variables are expanded
-    first, the way Windows Terminal expands them, so %LOGONSERVER%\share\x.png
-    is the network path it becomes. A theme.json is the one input here other
-    people write, and a network path in it makes the user's machine reach out
-    to that one, with the user's credentials on Windows, every time the tab
-    draws.
+    False for a network path and for a URL, except the app's own storage
+    (ms-appdata:///, ms-appx:///) and a file: URL that names a drive
+    (file:///C:/...). A theme.json is the one input here other people write,
+    and a network path in it makes the user's machine reach out to that host,
+    with the user's credentials on Windows, every time the tab draws.
+
+    Environment variables are expanded first, the way Windows Terminal
+    expands them, so %LOGONSERVER%\share\x.png is the network path it
+    becomes. A share has more spellings than \\server: Win32 reads two
+    leading separators of either kind as one (\/server, /\server), \??\UNC\
+    is the NT path to the same place, .NET reads file:////server and
+    file:///\\server as shares, and whitespace or an invisible character in
+    front hides any of them from a check of the first two characters. So
+    this is an allow-list where it can be: nothing a path needs (control or
+    format characters, whitespace at either end), no leading pair of
+    separators, and a file: URL only with a drive letter after its three
+    slashes. Every comparison is ordinal: String.StartsWith('\\') compares
+    by culture, which ignores a zero-width space in front.
     #>
     [CmdletBinding()]
     [OutputType([bool])]
     param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
 
     $v = [Environment]::ExpandEnvironmentVariables($Value)
-    if ($v.StartsWith('\\') -or $v.StartsWith('//')) { return $false }
+    if ($v -match '[\p{Cc}\p{Cf}]' -or $v -cne $v.Trim()) { return $false }
+    if ($v -match '^[\\/]{2}' -or $v -match '^[\\/]\?\?[\\/]') { return $false }
     if ($v -match '^([A-Za-z][A-Za-z0-9+.\-]+):') {
         $uriScheme = $Matches[1].ToLowerInvariant()
-        if ($uriScheme -in 'ms-appdata', 'ms-appx') { return $true }
-        if ($uriScheme -eq 'file') { return ($v -match '^(?i)file:///') }
+        if ($uriScheme -in 'ms-appdata', 'ms-appx') { return ($v -match '^(?i)ms-app(?:data|x):///(?![\\/])') }
+        if ($uriScheme -eq 'file') { return ($v -match '^(?i)file:///[A-Za-z]:[\\/]') }
         return $false
     }
     return $true
@@ -276,7 +287,9 @@ function Select-StyleThemeFields {
     used to be copied, a commandline included, and reset left it). Matched
     case-sensitively, because Windows Terminal's keys are: `TabTitle` is not
     `tabTitle`. A backgroundImage is kept only as the {{BACKGROUND_IMAGE}}
-    placeholder or a local file (Test-LocalImagePath).
+    placeholder or a local file (Test-LocalImagePath). And none is kept
+    unless the colorScheme among them is reset's marker: a theme.json with no
+    colorScheme, or one naming no installed style, wrote keys reset refused.
 
     Returns @{ Fields = [ordered] name -> value; Skipped = @(@{ Name; Reason }) }.
     #>
@@ -303,33 +316,87 @@ function Select-StyleThemeFields {
             $fields[$name] = $prop.Value
         }
     }
+    # Reset clears a profile only when its colorScheme names something this
+    # tool wrote (Test-TerminalStylesSchemeName), and refuses it otherwise. So
+    # the same question is asked here, before anything is written: without that
+    # colorScheme every other key would land on a profile reset then refuses.
+    if ($fields.Count -gt 0) {
+        $scheme = if ($fields.Contains('colorScheme')) { [string]$fields['colorScheme'] } else { $null }
+        if (-not (Test-TerminalStylesSchemeName -Name $scheme)) {
+            foreach ($name in @($fields.Keys)) {
+                $skipped.Add([pscustomobject]@{ Name = $name; Reason = 'tstyles reset could not tell the profile was styled' })
+            }
+            $fields = [ordered]@{}
+        }
+    }
     # ToArray, not @(): on pwsh 7.7 @() over an EMPTY generic List throws
     # "Argument types do not match" (measured on 7.7.0-preview.4).
     [pscustomobject]@{ Fields = $fields; Skipped = $skipped.ToArray() }
 }
 
-function Get-ThemeSkippedNote {
+function Write-StyleSettingsNote {
     <#
     .SYNOPSIS
-    The one line an apply prints about the theme.json keys it did not write, or
-    $null when it skipped none.
+    Say what an apply did not write to settings.json for this style, and why.
 
     .DESCRIPTION
-    Each key by name, with its reason only where it is not the usual one (a
-    backgroundImage that is not a local file). -NothingWritten for the apply
-    whose theme.json had no key left to write, which therefore wrote nothing.
+    The one printer for the three applies that write the file: `tstyles
+    <name>` (Apply-StyleDirect), the picker's Enter and apply.ps1. Each used
+    to word this itself, and they drifted: the picker printed "'mine' ships
+    no , so nothing was written to settings.json." for a theme.json with
+    nothing to write, because it formatted Missing, which only a style with no
+    theme.json sets; and a theme.json of {} applied in silence everywhere.
+
+    Silent when the whole theme.json was written. Otherwise one line per
+    reason a key was skipped, each a sentence true of the keys it names (a
+    background that is not a local file is not blamed on reset), and a last
+    line when nothing reached the file. The style's name and its key names
+    come from the style's files, so they are shown by ConvertTo-VisibleText's
+    rule: a key holding an escape sequence is printed, not obeyed. No -f
+    format string is built from them, because a brace in one would throw.
     #>
     [CmdletBinding()]
     param(
-        [Parameter(Mandatory)][AllowEmptyCollection()][object[]]$Skipped,
-        [switch]$NothingWritten
+        [Parameter(Mandatory)][string]$StyleName,
+        [Parameter(Mandatory)]$Payload
     )
-    if ($Skipped.Count -eq 0) { return $null }
-    $names = foreach ($s in $Skipped) {
-        if ($s.Reason -eq 'tstyles reset could not take it back') { $s.Name } else { "$($s.Name) ($($s.Reason))" }
+    $name = ConvertTo-VisibleText -Text $StyleName -SingleLine
+    if ($Payload.Unreadable) {
+        Write-Host ('  ' + (ConvertTo-VisibleText -Text ([string]$Payload.Unreadable) -SingleLine)) -ForegroundColor Yellow
+        Write-Host '  Nothing was written to settings.json.' -ForegroundColor Yellow
+        return
     }
-    $tail = if ($NothingWritten) { ', so nothing was written to settings.json.' } else { '.' }
-    "  Not applied from theme.json: $($names -join ', '). A style sets only what tstyles reset can take back off a profile$tail"
+    if ($Payload.Missing) {
+        Write-Host ("  '" + $name + "' ships no " + $Payload.Missing + ', so nothing was written to settings.json.') -ForegroundColor DarkGray
+        return
+    }
+    $skipped = @($Payload.Skipped | Where-Object { $null -ne $_ })
+    if ($Payload.NothingApplicable -and $skipped.Count -eq 0) {
+        Write-Host ("  '" + $name + "' ships a theme.json that sets nothing, so nothing was written to settings.json.") -ForegroundColor DarkGray
+        return
+    }
+    # Select-StyleThemeFields' reasons, each with the sentence that is true of it.
+    $tail = [ordered]@{
+        'tstyles reset could not take it back' =
+            '. A style sets only what tstyles reset can take back off a profile.'
+        'not a file on this computer' =
+            ', which is not a file on this computer.'
+        'tstyles reset could not tell the profile was styled' =
+            (". Its colorScheme must name an installed style, which is how tstyles reset knows a profile" +
+             " is styled: set it, and the name in scheme.json, to '" + $name + "'.")
+    }
+    $reasons = @($tail.Keys) + @($skipped | ForEach-Object { [string]$_.Reason } |
+                                 Where-Object { -not $tail.Contains($_) } | Select-Object -Unique)
+    foreach ($reason in $reasons) {
+        $names = @($skipped | Where-Object { [string]$_.Reason -eq $reason } |
+                   ForEach-Object { ConvertTo-VisibleText -Text ([string]$_.Name) -SingleLine })
+        if ($names.Count -eq 0) { continue }
+        $end = if ($tail.Contains($reason)) { $tail[$reason] } else { ' (' + $reason + ').' }
+        Write-Host ('  Not applied from theme.json: ' + ($names -join ', ') + $end) -ForegroundColor Yellow
+    }
+    if ($Payload.NothingApplicable) {
+        Write-Host '  Nothing was written to settings.json.' -ForegroundColor Yellow
+    }
 }
 
 function Get-StyleSettingsPayload {
